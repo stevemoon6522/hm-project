@@ -1144,6 +1144,7 @@ const Storage = {
         if (!byProduct[l.product_id]) byProduct[l.product_id] = {};
         byProduct[l.product_id][l.region] = {
           shop_item_id: l.shop_item_id,
+          shop_model_id: l.shop_model_id,
           global_item_id: l.global_item_id,
           status: l.status,
           published_at: l.published_at,
@@ -1847,7 +1848,9 @@ async function _shopeeUpdatePrices() {
     const calc = calcRow(row, region);
     const price = calc?.listing;
     if (!Number.isFinite(price) || price <= 0) return;
-    targets.push({ region, item_id, price, statusEl: div.querySelector('.sp-row-status') });
+    // Pull shop_model_id from existing mapping — present only for variant SKUs (multi-model items)
+    const model_id = (row.shopeeListings || {})[region]?.shop_model_id || null;
+    targets.push({ region, item_id, model_id, price, statusEl: div.querySelector('.sp-row-status') });
   });
 
   if (targets.length === 0) {
@@ -1868,11 +1871,13 @@ async function _shopeeUpdatePrices() {
   // Fire all region updates in parallel — one slow region won't block others
   const results = await Promise.all(targets.map(async (t) => {
     try {
+      // model_id present → variant-level price update; absent → item-level (single-SKU listing)
+      const priceEntry = t.model_id ? { model_id: t.model_id, original_price: t.price } : { original_price: t.price };
       const r = await fetch(SHOPEE_BRIDGE + '/update_price', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           region: t.region, item_id: t.item_id,
-          price_list: [{ original_price: t.price }],  // model_id 없으면 단일 SKU 로 처리됨
+          price_list: [priceEntry],
         }),
       });
       const j = await r.json();
@@ -1881,9 +1886,10 @@ async function _shopeeUpdatePrices() {
         t.statusEl.style.color = '#15803d';
         await Storage.upsertShopeeListing(row.id, t.region, {
           shop_item_id: t.item_id,
+          shop_model_id: t.model_id,
           last_synced_price: t.price, last_synced_at: new Date().toISOString(),
         });
-        return { region: t.region, ok: true, price: t.price };
+        return { region: t.region, ok: true, price: t.price, model_id: t.model_id };
       }
       const err = j.result?.error || j.result?.message || j.error || 'unknown';
       t.statusEl.textContent = '✕';
@@ -1996,10 +2002,10 @@ async function _shopeeSyncStart() {
     for (const region of SHOPEE_REGIONS) {
       const rm = regionMap[region];
       if (!rm || !rm.ok) { matches[region] = { method: 'error' }; continue; }
-      // 1차: SKU 정확 매칭
+      // 1차: SKU 정확 매칭 (다중 model 상품은 list_items 가 model SKU 를 펼쳐서 제공함 → model_id 도 함께 캡처)
       if (skuKey && rm.skuIndex.has(skuKey)) {
         const it = rm.skuIndex.get(skuKey);
-        matches[region] = { method: 'sku', item_id: it.item_id, item_name: it.item_name, item_sku: it.item_sku };
+        matches[region] = { method: 'sku', item_id: it.item_id, model_id: it.model_id || null, item_name: it.item_name, item_sku: it.item_sku };
         continue;
       }
       // 2차: 이름 매칭 (정규화 후 정확 일치만 — 안전)
@@ -2007,7 +2013,7 @@ async function _shopeeSyncStart() {
         const list = rm.nameIndex.get(nameKey);
         if (list.length === 1) {
           const it = list[0];
-          matches[region] = { method: 'name', item_id: it.item_id, item_name: it.item_name, item_sku: it.item_sku };
+          matches[region] = { method: 'name', item_id: it.item_id, model_id: it.model_id || null, item_name: it.item_name, item_sku: it.item_sku };
         } else {
           matches[region] = { method: 'name_dup', candidates: list.length };
         }
@@ -2056,14 +2062,23 @@ async function _shopeeSyncStart() {
     const tds = SHOPEE_REGIONS.map(region => {
       const m = pm.matches[region];
       const cur = (pm.row.shopeeListings || {})[region]?.shop_item_id;
+      const curModel = (pm.row.shopeeListings || {})[region]?.shop_model_id;
       let cell = '—', color = '#9a9aa6', title = '미매칭';
-      if (m.method === 'sku') { cell = m.item_id; color = '#15803d'; title = `SKU 매칭: ${m.item_sku || '(SKU 없음)'} — ${m.item_name}`; }
-      else if (m.method === 'name') { cell = m.item_id; color = '#0d9488'; title = `이름 매칭: ${m.item_name}`; }
-      else if (m.method === 'name_dup') { cell = '?'; color = '#b45309'; title = `이름 중복 ${m.candidates}건 — 수동 처리 필요`; }
+      if (m.method === 'sku') {
+        cell = m.model_id ? `${m.item_id}<br><span style="color:#5a5a66;font-size:9px;">·${m.model_id}</span>` : m.item_id;
+        color = '#15803d';
+        title = `SKU 매칭: ${m.item_sku || '(SKU 없음)'} — ${m.item_name}` + (m.model_id ? ` · model_id ${m.model_id}` : '');
+      } else if (m.method === 'name') {
+        cell = m.model_id ? `${m.item_id}<br><span style="color:#5a5a66;font-size:9px;">·${m.model_id}</span>` : m.item_id;
+        color = '#0d9488';
+        title = `이름 매칭: ${m.item_name}` + (m.model_id ? ` · model_id ${m.model_id}` : '');
+      } else if (m.method === 'name_dup') { cell = '?'; color = '#b45309'; title = `이름 중복 ${m.candidates}건 — 수동 처리 필요`; }
       else if (m.method === 'error') { cell = '!'; color = '#d62754'; title = 'region fetch 실패'; }
-      const overwrite = (cur && cur !== m.item_id && (m.method === 'sku' || m.method === 'name'));
+      const newKey = m.method === 'sku' || m.method === 'name' ? `${m.item_id}/${m.model_id||''}` : null;
+      const curKey = cur ? `${cur}/${curModel||''}` : null;
+      const overwrite = (curKey && newKey && curKey !== newKey);
       const bg = overwrite ? 'background:#fef3c7;' : '';
-      return `<td style="${bg}padding:5px 8px;text-align:center;color:${color};font-family:monospace;font-size:10px;border-bottom:1px solid #f0f0f4;" title="${title}${overwrite ? ` · 기존값(${cur}) 덮어씀` : ''}">${cell}</td>`;
+      return `<td style="${bg}padding:5px 8px;text-align:center;color:${color};font-family:monospace;font-size:10px;border-bottom:1px solid #f0f0f4;" title="${title}${overwrite ? ` · 기존(${curKey}) 덮어씀` : ''}">${cell}</td>`;
     }).join('');
     return `<tr><td style="padding:5px 8px;border-bottom:1px solid #f0f0f4;font-size:11px;font-family:monospace;"><b>${pm.row.sku || '—'}</b><br><span style="color:#5a5a66;font-size:10px;">${(pm.row.option || '').slice(0, 50)}</span></td>${tds}</tr>`;
   }).join('');
@@ -2086,7 +2101,7 @@ async function _shopeeSyncApply() {
     for (const region of SHOPEE_REGIONS) {
       const m = pm.matches[region];
       if (m.method === 'sku' || m.method === 'name') {
-        upserts.push({ productId: pm.row.id, region, item_id: m.item_id, row: pm.row });
+        upserts.push({ productId: pm.row.id, region, item_id: m.item_id, model_id: m.model_id || null, row: pm.row });
       }
     }
   }
@@ -2097,9 +2112,9 @@ async function _shopeeSyncApply() {
     const batch = upserts.slice(i, i + 8);
     await Promise.all(batch.map(async (u) => {
       try {
-        await Storage.upsertShopeeListing(u.productId, u.region, { shop_item_id: u.item_id });
+        await Storage.upsertShopeeListing(u.productId, u.region, { shop_item_id: u.item_id, shop_model_id: u.model_id });
         u.row.shopeeListings = u.row.shopeeListings || {};
-        u.row.shopeeListings[u.region] = { ...(u.row.shopeeListings[u.region] || {}), shop_item_id: u.item_id };
+        u.row.shopeeListings[u.region] = { ...(u.row.shopeeListings[u.region] || {}), shop_item_id: u.item_id, shop_model_id: u.model_id };
         ok++;
       } catch (e) { fail++; console.error('upsert failed', u, e); }
     }));

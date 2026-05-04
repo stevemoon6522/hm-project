@@ -653,6 +653,7 @@
     <div class="toolbar-right">
       <button class="btn primary" id="add-row">+ 상품 추가</button>
       <button class="btn" id="refresh-all-staronemall" title="Staronemall URL이 있는 모든 행 재크롤링">🔄 전체 재크롤링</button>
+      <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
       <button class="btn" id="export-csv">CSV 내보내기</button>
       <button class="btn" id="import-csv">CSV 가져오기</button>
       <input type="file" id="csv-file" accept=".csv" style="display:none;">
@@ -869,6 +870,29 @@
       <button class="btn" id="sp-cancel">취소</button>
       <button class="btn" id="sp-test-image">🖼 이미지 테스트</button>
       <button class="btn primary" id="sp-update-prices">💰 가격 일괄 갱신</button>
+    </div>
+  </div>
+</div>
+
+<!-- Shopee SKU 매핑 동기화 모달 -->
+<div class="modal-overlay" id="shopee-sync-modal">
+  <div class="modal" style="max-width:880px;">
+    <h3>Shopee SKU 매핑 동기화</h3>
+    <p style="color:#5a5a66;font-size:11px;margin-bottom:14px;line-height:1.5;">
+      6개 region (SG/TW/TH/MY/PH/BR) 에서 활성 상품 목록을 가져와 대시보드의 SKU 와 자동 매칭합니다.
+      <br>1차: SKU 정확 일치 → 2차: 상품명 정규화 매칭. 결과를 검토 후 일괄 적용 가능.
+    </p>
+
+    <div id="sync-progress" style="display:flex;flex-direction:column;gap:6px;font-family:monospace;font-size:11px;background:#fafafc;border:1px solid #d8d8e0;border-radius:3px;padding:10px;margin-bottom:12px;"></div>
+
+    <div id="sync-summary" style="display:none;font-size:12px;margin-bottom:12px;padding:10px;background:#f0fdf4;border:1px solid #15803d40;border-radius:3px;"></div>
+
+    <div id="sync-preview" style="display:none;max-height:380px;overflow:auto;border:1px solid #d8d8e0;border-radius:3px;margin-bottom:12px;"></div>
+
+    <div class="modal-actions">
+      <button class="btn" id="sync-cancel">닫기</button>
+      <button class="btn primary" id="sync-start">🔄 동기화 시작</button>
+      <button class="btn primary" id="sync-apply" style="display:none;">✓ 매칭 결과 일괄 적용</button>
     </div>
   </div>
 </div>
@@ -1894,6 +1918,220 @@ async function _shopeeUpdatePrices() {
     cancel.addEventListener('click', () => modal.classList.remove('show'));
     testImg.addEventListener('click', _shopeeTestImage);
     updatePrices.addEventListener('click', _shopeeUpdatePrices);
+  };
+  init();
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   SHOPEE SKU 매핑 동기화 — /list_items 호출 → SKU/이름 매칭 → 일괄 upsert
+   ════════════════════════════════════════════════════════════════════ */
+function _normalize(s) {
+  return String(s || '').trim().toLowerCase().replace(/\s+/g, '').replace(/[\[\](){}]/g, '');
+}
+
+let _syncMatches = null;  // {regionMap, productMatches} — sync-apply 가 사용
+
+async function _shopeeSyncFetchRegion(region, progressEl) {
+  const t0 = Date.now();
+  progressEl.innerHTML = `<span style="color:#b45309;">⏳ ${region}</span> · 조회 중...`;
+  try {
+    const r = await fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&max_items=2000');
+    const j = await r.json();
+    const dur = ((Date.now() - t0) / 1000).toFixed(1);
+    if (j.ok) {
+      progressEl.innerHTML = `<span style="color:#15803d;">✓ ${region}</span> · ${j.count}개 상품 (${dur}s)`;
+      return { region, ok: true, items: j.items || [] };
+    }
+    progressEl.innerHTML = `<span style="color:#d62754;">✕ ${region}</span> · ${j.error || 'unknown'}`;
+    return { region, ok: false, error: j.error, items: [] };
+  } catch (e) {
+    progressEl.innerHTML = `<span style="color:#d62754;">✕ ${region}</span> · ${e.message}`;
+    return { region, ok: false, error: e.message, items: [] };
+  }
+}
+
+async function _shopeeSyncStart() {
+  const progress = document.getElementById('sync-progress');
+  const summary = document.getElementById('sync-summary');
+  const preview = document.getElementById('sync-preview');
+  const startBtn = document.getElementById('sync-start');
+  const applyBtn = document.getElementById('sync-apply');
+  summary.style.display = 'none';
+  preview.style.display = 'none';
+  applyBtn.style.display = 'none';
+  startBtn.disabled = true;
+
+  // 1) Render per-region progress rows
+  progress.innerHTML = SHOPEE_REGIONS.map(r =>
+    `<div id="sync-row-${r}" style="color:#5a5a66;">⋯ ${r} · 대기 중</div>`
+  ).join('');
+
+  // 2) Fetch all 6 regions in parallel
+  const results = await Promise.all(SHOPEE_REGIONS.map(r =>
+    _shopeeSyncFetchRegion(r, document.getElementById('sync-row-' + r))
+  ));
+
+  // 3) Build per-region SKU index + name index
+  const regionMap = {};  // { region: { skuIndex: Map<sku, item>, nameIndex: Map<normName, item[]> } }
+  for (const res of results) {
+    const skuIndex = new Map();
+    const nameIndex = new Map();
+    for (const it of (res.items || [])) {
+      const skuKey = _normalize(it.item_sku);
+      if (skuKey) skuIndex.set(skuKey, it);
+      const nameKey = _normalize(it.item_name);
+      if (nameKey) {
+        if (!nameIndex.has(nameKey)) nameIndex.set(nameKey, []);
+        nameIndex.get(nameKey).push(it);
+      }
+    }
+    regionMap[res.region] = { ok: res.ok, items: res.items, skuIndex, nameIndex };
+  }
+
+  // 4) For each dashboard row, attempt match per region (SKU first, then name)
+  const productMatches = state.rows.map(row => {
+    const matches = {};
+    const skuKey = _normalize(row.sku);
+    const nameKey = _normalize(row.option || '');  // option 이 product name 으로 쓰임
+    for (const region of SHOPEE_REGIONS) {
+      const rm = regionMap[region];
+      if (!rm || !rm.ok) { matches[region] = { method: 'error' }; continue; }
+      // 1차: SKU 정확 매칭
+      if (skuKey && rm.skuIndex.has(skuKey)) {
+        const it = rm.skuIndex.get(skuKey);
+        matches[region] = { method: 'sku', item_id: it.item_id, item_name: it.item_name, item_sku: it.item_sku };
+        continue;
+      }
+      // 2차: 이름 매칭 (정규화 후 정확 일치만 — 안전)
+      if (nameKey && rm.nameIndex.has(nameKey)) {
+        const list = rm.nameIndex.get(nameKey);
+        if (list.length === 1) {
+          const it = list[0];
+          matches[region] = { method: 'name', item_id: it.item_id, item_name: it.item_name, item_sku: it.item_sku };
+        } else {
+          matches[region] = { method: 'name_dup', candidates: list.length };
+        }
+        continue;
+      }
+      matches[region] = { method: 'none' };
+    }
+    return { row, matches };
+  });
+
+  _syncMatches = { regionMap, productMatches };
+
+  // 5) Render summary
+  let totalMatched = 0, totalMissing = 0, totalDup = 0, totalErr = 0;
+  const perRegion = {};
+  for (const region of SHOPEE_REGIONS) perRegion[region] = { sku: 0, name: 0, none: 0, dup: 0, err: 0 };
+  for (const pm of productMatches) {
+    for (const region of SHOPEE_REGIONS) {
+      const m = pm.matches[region];
+      if (m.method === 'sku') { perRegion[region].sku++; totalMatched++; }
+      else if (m.method === 'name') { perRegion[region].name++; totalMatched++; }
+      else if (m.method === 'name_dup') { perRegion[region].dup++; totalDup++; }
+      else if (m.method === 'error') { perRegion[region].err++; totalErr++; }
+      else { perRegion[region].none++; totalMissing++; }
+    }
+  }
+  summary.style.display = 'block';
+  summary.innerHTML =
+    `<b>전체 ${productMatches.length}행 × 6 region = ${productMatches.length * 6} 셀</b><br>` +
+    `매칭 <b style="color:#15803d;">${totalMatched}</b> · ` +
+    `미매칭 <b style="color:#5a5a66;">${totalMissing}</b> · ` +
+    `중복 <b style="color:#b45309;">${totalDup}</b> · ` +
+    `에러 <b style="color:#d62754;">${totalErr}</b><br>` +
+    `<div style="font-family:monospace;font-size:10px;margin-top:6px;color:#5a5a66;">` +
+    SHOPEE_REGIONS.map(r => {
+      const p = perRegion[r];
+      return `${r}: SKU ${p.sku} · 이름 ${p.name} · 미매칭 ${p.none}` + (p.dup ? ` · 중복 ${p.dup}` : '') + (p.err ? ` · 에러 ${p.err}` : '');
+    }).join('<br>') +
+    `</div>`;
+
+  // 6) Render preview table
+  preview.style.display = 'block';
+  const headerCells = '<th style="position:sticky;top:0;background:#fafafc;border-bottom:1px solid #d8d8e0;padding:6px 8px;text-align:left;font-weight:600;">SKU / 옵션</th>' +
+    SHOPEE_REGIONS.map(r => `<th style="position:sticky;top:0;background:#fafafc;border-bottom:1px solid #d8d8e0;padding:6px 8px;text-align:center;font-weight:600;color:var(--c-${r.toLowerCase()});">${r}</th>`).join('');
+  const bodyRows = productMatches.map(pm => {
+    const tds = SHOPEE_REGIONS.map(region => {
+      const m = pm.matches[region];
+      const cur = (pm.row.shopeeListings || {})[region]?.shop_item_id;
+      let cell = '—', color = '#9a9aa6', title = '미매칭';
+      if (m.method === 'sku') { cell = m.item_id; color = '#15803d'; title = `SKU 매칭: ${m.item_sku || '(SKU 없음)'} — ${m.item_name}`; }
+      else if (m.method === 'name') { cell = m.item_id; color = '#0d9488'; title = `이름 매칭: ${m.item_name}`; }
+      else if (m.method === 'name_dup') { cell = '?'; color = '#b45309'; title = `이름 중복 ${m.candidates}건 — 수동 처리 필요`; }
+      else if (m.method === 'error') { cell = '!'; color = '#d62754'; title = 'region fetch 실패'; }
+      const overwrite = (cur && cur !== m.item_id && (m.method === 'sku' || m.method === 'name'));
+      const bg = overwrite ? 'background:#fef3c7;' : '';
+      return `<td style="${bg}padding:5px 8px;text-align:center;color:${color};font-family:monospace;font-size:10px;border-bottom:1px solid #f0f0f4;" title="${title}${overwrite ? ` · 기존값(${cur}) 덮어씀` : ''}">${cell}</td>`;
+    }).join('');
+    return `<tr><td style="padding:5px 8px;border-bottom:1px solid #f0f0f4;font-size:11px;font-family:monospace;"><b>${pm.row.sku || '—'}</b><br><span style="color:#5a5a66;font-size:10px;">${(pm.row.option || '').slice(0, 50)}</span></td>${tds}</tr>`;
+  }).join('');
+  preview.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:11px;"><thead><tr>${headerCells}</tr></thead><tbody>${bodyRows}</tbody></table>`;
+
+  startBtn.disabled = false;
+  applyBtn.style.display = 'inline-block';
+  applyBtn.disabled = (totalMatched === 0);
+}
+
+async function _shopeeSyncApply() {
+  if (!_syncMatches) return;
+  const applyBtn = document.getElementById('sync-apply');
+  const summary = document.getElementById('sync-summary');
+  applyBtn.disabled = true;
+  applyBtn.textContent = '⏳ 적용 중...';
+
+  const upserts = [];
+  for (const pm of _syncMatches.productMatches) {
+    for (const region of SHOPEE_REGIONS) {
+      const m = pm.matches[region];
+      if (m.method === 'sku' || m.method === 'name') {
+        upserts.push({ productId: pm.row.id, region, item_id: m.item_id, row: pm.row });
+      }
+    }
+  }
+
+  let ok = 0, fail = 0;
+  // Run in batches of 8 to avoid overwhelming Supabase
+  for (let i = 0; i < upserts.length; i += 8) {
+    const batch = upserts.slice(i, i + 8);
+    await Promise.all(batch.map(async (u) => {
+      try {
+        await Storage.upsertShopeeListing(u.productId, u.region, { shop_item_id: u.item_id });
+        u.row.shopeeListings = u.row.shopeeListings || {};
+        u.row.shopeeListings[u.region] = { ...(u.row.shopeeListings[u.region] || {}), shop_item_id: u.item_id };
+        ok++;
+      } catch (e) { fail++; console.error('upsert failed', u, e); }
+    }));
+  }
+
+  applyBtn.textContent = '✓ 매칭 결과 일괄 적용';
+  applyBtn.disabled = false;
+  summary.innerHTML += `<br><br><b style="color:#15803d;">✓ 적용 완료: ${ok}건 저장</b>` + (fail ? ` · <b style="color:#d62754;">실패: ${fail}건</b>` : '');
+  renderTableBody();  // region badges 색상 갱신
+}
+
+(function bindShopeeSyncModal() {
+  const init = () => {
+    const trigger = document.getElementById('shopee-sync-mapping');
+    const modal = document.getElementById('shopee-sync-modal');
+    const cancel = document.getElementById('sync-cancel');
+    const start = document.getElementById('sync-start');
+    const apply = document.getElementById('sync-apply');
+    if (!trigger || !modal || !cancel || !start || !apply) { document.addEventListener('DOMContentLoaded', init); return; }
+    if (trigger.dataset.bound) return;
+    trigger.dataset.bound = '1';
+    trigger.addEventListener('click', () => {
+      _syncMatches = null;
+      document.getElementById('sync-progress').innerHTML = '<span style="color:#5a5a66;">대기 중 — "동기화 시작" 클릭</span>';
+      document.getElementById('sync-summary').style.display = 'none';
+      document.getElementById('sync-preview').style.display = 'none';
+      apply.style.display = 'none';
+      modal.classList.add('show');
+    });
+    cancel.addEventListener('click', () => modal.classList.remove('show'));
+    start.addEventListener('click', _shopeeSyncStart);
+    apply.addEventListener('click', _shopeeSyncApply);
   };
   init();
 })();

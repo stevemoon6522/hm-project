@@ -29,8 +29,6 @@
     --c-my: #c4651a;
     --c-ph: #8b3fb8;
     --c-br: #c93a1f;
-    --c-vn: #be185d;
-    --c-mx: #047857;
     --c-jm: #0d9488;
 
     --display: 'Fraunces', serif;
@@ -827,7 +825,7 @@
   <div class="modal" style="max-width:520px;">
     <h3>Shopee 다중 region 등록</h3>
     <p style="color:#5a5a66;font-size:11px;margin-bottom:14px;line-height:1.5;">
-      KRSC main_account 모델 — 한 글로벌 SKU 로 8개 region (SG/TW/TH/MY/PH/BR/VN/MX) 동시 등록. 이미지는 1번만 업로드, 모든 region CDN 자동 매핑됨.
+      KRSC main_account 모델 — 한 글로벌 SKU 로 6개 region (SG/TW/TH/MY/PH/BR) 동시 등록. 이미지는 1번만 업로드, 모든 region CDN 자동 매핑됨.
     </p>
 
     <div class="field">
@@ -840,7 +838,7 @@
         <span style="color:#5a5a66;font-size:10px;font-weight:normal;">(셀러센터에서 등록된 상품 ID 입력 → 가격 자동 갱신)</span>
       </label>
       <div id="sp-region-items" style="display:flex;flex-direction:column;gap:6px;">
-        <!-- region별 줄 동적 생성 (SHOPEE_REGIONS — 8개) -->
+        <!-- region별 줄 동적 생성 (SHOPEE_REGIONS — 6개) -->
       </div>
     </div>
 
@@ -914,18 +912,6 @@ const DEFAULT_COUNTRIES = {
     name: 'Brazil', currency: 'BRL', color: 'var(--c-br)',
     exchangeRate: 240, pgFee: 2.00, salesFee: 13.35, fspFee: 0.00,
     otherFee: 0.00, settlementFee: 0.90, gst: 0.00, fspCcb: 0.00,
-    importDuty: 0.00, fixedServiceFee: 0.00,
-  },
-  VN: {
-    name: 'Vietnam', currency: 'VND', color: 'var(--c-vn)',
-    exchangeRate: 0.055, pgFee: 0.00, salesFee: 0.00, fspFee: 0.00,
-    otherFee: 0.00, settlementFee: 0.00, gst: 0.00, fspCcb: 0.00,
-    importDuty: 0.00, fixedServiceFee: 0.00,
-  },
-  MX: {
-    name: 'Mexico', currency: 'MXN', color: 'var(--c-mx)',
-    exchangeRate: 75, pgFee: 0.00, salesFee: 0.00, fspFee: 0.00,
-    otherFee: 0.00, settlementFee: 0.00, gst: 0.00, fspCcb: 0.00,
     importDuty: 0.00, fixedServiceFee: 0.00,
   },
   JM: {
@@ -1689,7 +1675,7 @@ async function _joomDeleteRow(row) {
    SHOPEE — multi-region (KRSC) — bridge URL + cell + modal
    ════════════════════════════════════════════════════════════════════ */
 const SHOPEE_BRIDGE = SUPABASE_URL + '/functions/v1/shopee-bridge';
-const SHOPEE_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'VN', 'MX'];
+const SHOPEE_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
 let _shopeeTokens = null;  // 캐시
 let _shopeeCurrentRow = null;
 

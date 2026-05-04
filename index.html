@@ -29,6 +29,8 @@
     --c-my: #c4651a;
     --c-ph: #8b3fb8;
     --c-br: #c93a1f;
+    --c-vn: #be185d;
+    --c-mx: #047857;
     --c-jm: #0d9488;
 
     --display: 'Fraunces', serif;
@@ -914,6 +916,18 @@ const DEFAULT_COUNTRIES = {
     otherFee: 0.00, settlementFee: 0.90, gst: 0.00, fspCcb: 0.00,
     importDuty: 0.00, fixedServiceFee: 0.00,
   },
+  VN: {
+    name: 'Vietnam', currency: 'VND', color: 'var(--c-vn)',
+    exchangeRate: 0.055, pgFee: 0.00, salesFee: 0.00, fspFee: 0.00,
+    otherFee: 0.00, settlementFee: 0.00, gst: 0.00, fspCcb: 0.00,
+    importDuty: 0.00, fixedServiceFee: 0.00,
+  },
+  MX: {
+    name: 'Mexico', currency: 'MXN', color: 'var(--c-mx)',
+    exchangeRate: 75, pgFee: 0.00, salesFee: 0.00, fspFee: 0.00,
+    otherFee: 0.00, settlementFee: 0.00, gst: 0.00, fspCcb: 0.00,
+    importDuty: 0.00, fixedServiceFee: 0.00,
+  },
   JM: {
     name: 'Joom (Global)', currency: 'USD', color: 'var(--c-jm)',
     exchangeRate: 1380, pgFee: 0.00, salesFee: 15.00, fspFee: 0.00,
@@ -1675,7 +1689,7 @@ async function _joomDeleteRow(row) {
    SHOPEE — multi-region (KRSC) — bridge URL + cell + modal
    ════════════════════════════════════════════════════════════════════ */
 const SHOPEE_BRIDGE = SUPABASE_URL + '/functions/v1/shopee-bridge';
-const SHOPEE_REGIONS = ['SG', 'TW', 'TH'];
+const SHOPEE_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'VN', 'MX'];
 let _shopeeTokens = null;  // 캐시
 let _shopeeCurrentRow = null;
 
@@ -1833,12 +1847,16 @@ async function _shopeeUpdatePrices() {
   }
 
   status.style.color = '#5a5a66';
-  status.textContent = '⏳ ' + targets.length + ' 개 region 가격 push 중...';
+  status.textContent = '⏳ ' + targets.length + ' 개 region 병렬 push 중...';
 
-  const results = [];
+  // Mark all targets in-flight
   for (const t of targets) {
     t.statusEl.textContent = '⏳';
     t.statusEl.style.color = '#b45309';
+  }
+
+  // Fire all region updates in parallel — one slow region won't block others
+  const results = await Promise.all(targets.map(async (t) => {
     try {
       const r = await fetch(SHOPEE_BRIDGE + '/update_price', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1849,27 +1867,26 @@ async function _shopeeUpdatePrices() {
       });
       const j = await r.json();
       if (j.ok && !j.result?.error) {
-        results.push({ region: t.region, ok: true, price: t.price });
         t.statusEl.textContent = '✓';
         t.statusEl.style.color = '#15803d';
         await Storage.upsertShopeeListing(row.id, t.region, {
           shop_item_id: t.item_id,
           last_synced_price: t.price, last_synced_at: new Date().toISOString(),
         });
-      } else {
-        const err = j.result?.error || j.result?.message || j.error || 'unknown';
-        results.push({ region: t.region, ok: false, error: err });
-        t.statusEl.textContent = '✕';
-        t.statusEl.style.color = '#d62754';
-        t.statusEl.title = err;
+        return { region: t.region, ok: true, price: t.price };
       }
+      const err = j.result?.error || j.result?.message || j.error || 'unknown';
+      t.statusEl.textContent = '✕';
+      t.statusEl.style.color = '#d62754';
+      t.statusEl.title = err;
+      return { region: t.region, ok: false, error: err };
     } catch (e) {
-      results.push({ region: t.region, ok: false, error: e.message });
       t.statusEl.textContent = '✕';
       t.statusEl.style.color = '#d62754';
       t.statusEl.title = e.message;
+      return { region: t.region, ok: false, error: e.message };
     }
-  }
+  }));
 
   const okCount = results.filter(r => r.ok).length;
   const failCount = results.length - okCount;

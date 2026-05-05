@@ -1121,21 +1121,32 @@ let state = {
   rows: [],
   search: '',
   nextId: 1,
+  bundleSkus: new Set(), // kpop-wms inventory 의 bundle SKU 목록 (📦 SET 배지용)
 };
 
 /* ─── Supabase Storage 인터페이스 ─────────────────────────────── */
 const Storage = {
   // 모든 products + country_settings + shopee 매핑 불러오기
   async loadAll() {
-    const [productsRes, countriesRes, listingsRes] = await Promise.all([
+    const [productsRes, countriesRes, listingsRes, bundleSkusRes] = await Promise.all([
       db.from('products').select('*').order('position', { ascending: true }).order('created_at', { ascending: true }),
       db.from('country_settings').select('*'),
       db.from('product_shopee_listings').select('*'),
+      // kpop-wms inventory 에서 bundle 인 SKU 만 가져옴 (📦 SET 배지용 — 시각 표시 전용)
+      db.from('inventory').select('sku').not('bundle_components', 'is', null),
     ]);
 
     if (productsRes.error) throw productsRes.error;
     if (countriesRes.error) throw countriesRes.error;
     // listingsRes.error 는 fail-soft (테이블 없어도 무시)
+
+    // bundleSkus: kpop-wms 가 같은 supabase 프로젝트를 공유하므로 직접 조회 가능
+    state.bundleSkus = new Set();
+    if (!bundleSkusRes.error && bundleSkusRes.data) {
+      for (const r of bundleSkusRes.data) {
+        if (r.sku) state.bundleSkus.add(r.sku);
+      }
+    }
 
     const rows = productsRes.data.map(dbRowToProduct);
     if (!listingsRes.error && listingsRes.data) {
@@ -2328,7 +2339,7 @@ function renderTableBody() {
       <tr class="row" data-id="${row.id}">
         <td class="staronemall-cell" data-field="staronemallUrl" title="${row.staronemallUrl || ''}">${renderStaronemallCell(row)}</td>
         <td class="itemid editable" data-field="itemId" title="${row.itemId || ''}">${row.itemId || '<span style="color:var(--text-faint);">—</span>'}</td>
-        <td class="sku editable" data-field="sku" title="${row.sku}">${row.sku}</td>
+        <td class="sku editable" data-field="sku" title="${row.sku}">${row.sku}${row.sku && state.bundleSkus.has(row.sku) ? ' <span title="kpop-wms 에서 번들로 등록된 SKU — 출고 시 컴포넌트로 분해됨" style="display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;background:rgba(124,77,255,0.15);color:#7c4dff;font-size:9px;font-weight:600;letter-spacing:0.3px">📦 SET</span>' : ''}</td>
         <td class="option editable" data-field="option">${row.option || ''}</td>
         <td class="numeric editable" data-field="cost">${fmtKRW(row.cost)}</td>
         <td class="numeric editable" data-field="weight">${row.weight ? row.weight.toLocaleString() : '—'}</td>

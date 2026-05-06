@@ -764,11 +764,6 @@
       대시보드 행의 매입가/무게/Staronemall URL을 사용해 자동으로 가격 산출(USD) 후 등록합니다. 옵션마다 별도 SKU/재고 부여.
     </p>
 
-    <div class="field">
-      <label>상품 SKU (Joom)</label>
-      <input type="text" id="jm-sku" placeholder="예: ATEEZ-LS-V3">
-    </div>
-
     <div class="field" style="display:flex;gap:8px;">
       <div style="flex:1;">
         <label>Artist (영문) *</label>
@@ -796,7 +791,7 @@
     </div>
 
     <div class="field">
-      <label>옵션 (variants) — 옵션명 + 재고</label>
+      <label>옵션 (variants) — 옵션명 / SKU / 무게(g) / 재고</label>
       <div id="jm-variants" style="margin-top:6px;"></div>
       <button id="jm-add-variant" style="margin-top:6px;background:transparent;border:1px dashed #d8d8e0;color:#5a5a66;padding:6px 10px;border-radius:3px;cursor:pointer;font-size:11px;width:100%;">+ 옵션 추가</button>
     </div>
@@ -1518,7 +1513,6 @@ async function _joomScrapeAssets(url) {
 function openJoomModal(row) {
   _joomCurrentRow = row;
   const modal = document.getElementById('joom-modal');
-  document.getElementById('jm-sku').value = row.sku || '';
   document.getElementById('jm-prefix').value = '[READY STOCK] ';
   document.getElementById('jm-artist').value = '';
   document.getElementById('jm-album').value = '';
@@ -1542,14 +1536,16 @@ function openJoomModal(row) {
   modal.classList.add('show');
 }
 
-function _joomAddVariantRow(name, qty) {
+function _joomAddVariantRow(name, qty, sku, weight) {
   const wrap = document.getElementById('jm-variants');
   const div = document.createElement('div');
   div.className = 'jm-variant';
-  div.style.cssText = 'display:flex;gap:8px;margin-bottom:6px;align-items:center;';
+  div.style.cssText = 'display:flex;gap:6px;margin-bottom:6px;align-items:center;flex-wrap:wrap;';
   div.innerHTML = [
-    '<input type="text" class="jm-v-name" placeholder="옵션명 (예: Hongjoong)" value="' + (name || '') + '" style="flex:1;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:6px 8px;border-radius:3px;font-size:12px;">',
-    '<input type="number" class="jm-v-qty" placeholder="재고" value="' + (qty || 0) + '" min="0" style="width:80px;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:6px 8px;border-radius:3px;font-size:12px;text-align:right;">',
+    '<input type="text" class="jm-v-name" placeholder="옵션명 (예: Hongjoong)" value="' + (name || '') + '" style="flex:2;min-width:90px;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:6px 8px;border-radius:3px;font-size:12px;">',
+    '<input type="text" class="jm-v-sku" placeholder="SKU (예: ATEEZ-HJ)" value="' + (sku || '') + '" style="flex:2;min-width:90px;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:6px 8px;border-radius:3px;font-size:12px;">',
+    '<input type="number" class="jm-v-weight" placeholder="무게(g)" value="' + (weight || '') + '" min="10" step="1" style="width:72px;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:6px 8px;border-radius:3px;font-size:12px;text-align:right;">',
+    '<input type="number" class="jm-v-qty" placeholder="재고" value="' + (qty || 0) + '" min="0" style="width:60px;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:6px 8px;border-radius:3px;font-size:12px;text-align:right;">',
     '<button class="jm-v-remove" title="제거" style="background:transparent;border:1px solid #d8d8e0;color:#5a5a66;padding:4px 8px;border-radius:3px;cursor:pointer;font-size:12px;">✕</button>',
   ].join('');
   div.querySelector('.jm-v-remove').addEventListener('click', () => div.remove());
@@ -1560,8 +1556,10 @@ function _joomCollectVariants() {
   const items = [];
   document.querySelectorAll('#jm-variants .jm-variant').forEach(div => {
     const name = div.querySelector('.jm-v-name').value.trim();
+    const sku = div.querySelector('.jm-v-sku').value.trim();
+    const weight = parseFloat(div.querySelector('.jm-v-weight').value) || null;
     const qty = parseInt(div.querySelector('.jm-v-qty').value, 10) || 0;
-    if (name) items.push({ name, inventory: qty });
+    if (name) items.push({ name, sku: sku || undefined, weight: weight || undefined, inventory: qty });
   });
   return items;
 }
@@ -1609,9 +1607,9 @@ async function _joomSubmit({ dryRun }) {
   const body = {
     row: {
       staronemallUrl: row.staronemallUrl,
-      sku: document.getElementById('jm-sku').value.trim() || row.sku,
+      sku: row.sku,  // per-variant SKU now set in variantsConfig[].sku
       cost: row.cost,
-      weight: row.weight,
+      weight: row.weight,  // product-level fallback weight
     },
     scrapedAssets,
     variantsConfig: _joomCollectVariants(),

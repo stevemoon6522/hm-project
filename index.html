@@ -102,6 +102,52 @@
   }
   @keyframes pulse { 0%,100% {opacity:1;} 50% {opacity:0.3;} }
 
+  /* ─── Main Tab Nav ─── */
+  .main-nav {
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--border);
+    margin-bottom: 24px;
+  }
+  .main-tab {
+    background: transparent;
+    border: none;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    padding: 13px 22px;
+    cursor: pointer;
+    position: relative;
+    transition: color 0.15s ease;
+    white-space: nowrap;
+  }
+  .main-tab:hover { color: var(--text); }
+  .main-tab.active {
+    color: var(--accent);
+  }
+  .main-tab.active::after {
+    content: '';
+    position: absolute;
+    bottom: -2px; left: 0;
+    width: 100%; height: 2px;
+    background: var(--accent);
+  }
+
+  /* ─── Joom Register Table ─── */
+  .joom-status-badge {
+    display: inline-block;
+    padding: 2px 7px;
+    border-radius: 2px;
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+  .joom-status-badge.registered { background: rgba(21,128,61,0.1); color: var(--green); }
+  .joom-status-badge.none { background: var(--bg-elev); color: var(--text-faint); }
+
   /* ─── Toolbar ─── */
   .toolbar {
     display: flex;
@@ -634,14 +680,23 @@
 
   <header>
     <div>
-      <h1 class="title">Shopee <em>판매가</em> 대시보드</h1>
-      <div class="subtitle">매입가 + 무게 입력 → 6개국 판매가 대량 산출</div>
+      <h1 class="title">판매 관리 <em>대시보드</em></h1>
+      <div class="subtitle">가격 수정 · 상품 등록</div>
     </div>
     <div class="meta">
       <div class="live">실시간 계산 · 자동 저장</div>
       <div id="last-updated" style="margin-top:6px;">—</div>
     </div>
   </header>
+
+  <!-- Main Tab Nav -->
+  <div class="main-nav">
+    <button class="main-tab active" data-tab="price">💰 가격 수정</button>
+    <button class="main-tab" data-tab="register">📦 상품 등록</button>
+  </div>
+
+  <!-- ── 가격 수정 패널 ── -->
+  <div id="tab-price" class="main-panel">
 
   <!-- Toolbar -->
   <div class="toolbar">
@@ -705,7 +760,38 @@
     <div class="settings-content" id="settings-content"></div>
   </section>
 
-</div>
+  </div><!-- /tab-price -->
+
+  <!-- ── 상품 등록 패널 ── -->
+  <div id="tab-register" class="main-panel" style="display:none">
+
+    <!-- Joom -->
+    <div class="section-head">
+      <span class="num">01</span>
+      <h2>Joom 상품 등록</h2>
+      <div class="rule"></div>
+      <span class="count" id="joom-reg-count">0 ITEMS</span>
+    </div>
+    <div class="table-wrap">
+      <table class="master" style="min-width:900px;">
+        <thead>
+          <tr>
+            <th style="width:240px;">SKU</th>
+            <th style="width:160px;">옵션명</th>
+            <th style="width:110px;">Joom 상태</th>
+            <th style="width:180px;">Joom Product ID</th>
+            <th style="width:150px;">등록일</th>
+            <th style="width:100px;">Staronemall</th>
+            <th>액션</th>
+          </tr>
+        </thead>
+        <tbody id="joom-reg-tbody"></tbody>
+      </table>
+    </div>
+
+  </div><!-- /tab-register -->
+
+</div><!-- /container -->
 
 <!-- Add Row Modal -->
 <div class="modal-overlay" id="add-modal">
@@ -2441,6 +2527,10 @@ function renderTableBody() {
   });
 
   document.getElementById('row-count').textContent = state.rows.length + ' ITEMS';
+
+  if (document.getElementById('tab-register')?.style.display !== 'none') {
+    renderRegisterTab();
+  }
 }
 
 function filterRows() {
@@ -3046,6 +3136,69 @@ async function showApp(session) {
 function showLogin() {
   document.getElementById('login-overlay').style.display = 'flex';
   document.getElementById('user-info').style.display = 'none';
+}
+
+/* ════════════════════════════════════════════════════════════════════
+   MAIN TAB NAV
+   ════════════════════════════════════════════════════════════════════ */
+function switchMainTab(tab) {
+  document.querySelectorAll('.main-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.tab === tab);
+  });
+  document.getElementById('tab-price').style.display    = tab === 'price'    ? '' : 'none';
+  document.getElementById('tab-register').style.display = tab === 'register' ? '' : 'none';
+  if (tab === 'register') renderRegisterTab();
+}
+
+document.querySelectorAll('.main-tab').forEach(btn => {
+  btn.addEventListener('click', () => switchMainTab(btn.dataset.tab));
+});
+
+function renderRegisterTab() {
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const tbody = document.getElementById('joom-reg-tbody');
+  const countEl = document.getElementById('joom-reg-count');
+  if (!tbody) return;
+  const rows = (typeof state !== 'undefined' ? state.rows : []);
+  countEl.textContent = rows.length + ' ITEMS';
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty-state" style="padding:60px;text-align:center;color:#9a9aa6;">상품 없음</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(row => {
+    const hasJoom = !!row.joomProductId;
+    const statusBadge = hasJoom
+      ? `<span class="joom-status-badge registered">${esc(row.joomStatus) || '등록됨'}</span>`
+      : `<span class="joom-status-badge none">미등록</span>`;
+    const publishedAt = row.joomPublishedAt
+      ? new Date(row.joomPublishedAt).toLocaleDateString('ko-KR', {year:'2-digit',month:'2-digit',day:'2-digit'})
+      : '—';
+    const pno = row.staronemallUrl ? (row.staronemallUrl.match(/[?&]pno=([^&]+)/)?.[1]?.slice(0,8) + '…' || 'link') : '—';
+    const staronemallCell = row.staronemallUrl
+      ? `<a href="${esc(row.staronemallUrl)}" target="_blank" style="color:var(--text-dim);font-size:10px;text-decoration:none;" title="${esc(row.staronemallUrl)}">${esc(pno)}</a>`
+      : `<span style="color:var(--text-faint);font-size:10px;">—</span>`;
+    return `<tr class="row">
+      <td class="sku">${esc(row.sku)}</td>
+      <td class="option">${esc(row.option)}</td>
+      <td>${statusBadge}</td>
+      <td class="itemid" style="max-width:180px;">${hasJoom ? esc(row.joomProductId) : '—'}</td>
+      <td style="font-size:10px;color:var(--text-dim);">${publishedAt}</td>
+      <td>${staronemallCell}</td>
+      <td style="text-align:center;">
+        <button class="row-action-btn joom-reg-open" data-sku="${esc(row.sku)}" title="Joom 등록 모달 열기"
+          style="font-size:11px;padding:4px 10px;border:1px solid var(--border-strong);border-radius:3px;color:var(--c-jm);">
+          ${hasJoom ? '✏️ 수정' : '📤 등록'}
+        </button>
+      </td>
+    </tr>`;
+  }).join('');
+
+  tbody.querySelectorAll('.joom-reg-open').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = rows.find(r => r.sku === btn.dataset.sku);
+      if (row) openJoomModal(row);
+    });
+  });
 }
 
 document.getElementById('login-form').addEventListener('submit', async (e) => {

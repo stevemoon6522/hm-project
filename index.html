@@ -2153,7 +2153,7 @@ async function _shopeeSyncFetchRegion(region, progressEl) {
   const t0 = Date.now();
   progressEl.innerHTML = `<span style="color:#b45309;">⏳ ${region}</span> · 조회 중...`;
   try {
-    const r = await fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&max_items=2000');
+    const r = await fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&max_items=500');
     const j = await r.json();
     const dur = ((Date.now() - t0) / 1000).toFixed(1);
     if (j.ok) {

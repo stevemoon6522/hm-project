@@ -713,6 +713,7 @@
       <button class="btn primary" id="add-row">+ 상품 추가</button>
       <button class="btn" id="refresh-all-staronemall" title="Staronemall URL이 있는 모든 행 재크롤링">🔄 전체 재크롤링</button>
       <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
+      <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
       <button class="btn" id="export-csv">CSV 내보내기</button>
       <button class="btn" id="import-csv">CSV 가져오기</button>
       <input type="file" id="csv-file" accept=".csv" style="display:none;">
@@ -1381,6 +1382,16 @@ async function initStorage() {
     state.nextId = rows.length > 0 ? Math.max(...rows.map((_,i) => i)) + 2 : 1;
 
     renderTableHeader();
+    document.getElementById('select-all-rows').addEventListener('change', function() {
+      const tbody = document.getElementById('tbody');
+      const allCbs = tbody.querySelectorAll('.row-select');
+      allCbs.forEach(cb => { cb.checked = this.checked; });
+      const btn = document.getElementById('shopee-bulk-sync');
+      const countEl = document.getElementById('bulk-sync-count');
+      const count = this.checked ? allCbs.length : 0;
+      if (btn) btn.disabled = count === 0;
+      if (countEl) countEl.textContent = count;
+    });
     renderTableBody();
     renderSettings();
     renderVerify();
@@ -2046,6 +2057,73 @@ async function _shopeeUpdatePrices() {
     + JSON.stringify(results, null, 2) + '</pre>';
 }
 
+async function _shopeeBulkSync() {
+  const tbody = document.getElementById('tbody');
+  const checkedIds = [...tbody.querySelectorAll('.row-select:checked')].map(cb => cb.dataset.id);
+  if (checkedIds.length === 0) return;
+
+  const btn = document.getElementById('shopee-bulk-sync');
+  const origHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.textContent = '⏳ 동기화 중...';
+
+  const targets = [];
+  for (const id of checkedIds) {
+    const row = state.rows.find(r => String(r.id) === id);
+    if (!row) continue;
+    const listings = row.shopeeListings || {};
+    for (const region of SHOPEE_REGIONS) {
+      const listing = listings[region];
+      if (!listing?.shop_item_id) continue;
+      const item_id = parseInt(listing.shop_item_id);
+      if (!Number.isFinite(item_id) || item_id <= 0) continue;
+      const price = calcRow(row, region)?.listing;
+      if (!Number.isFinite(price) || price <= 0) continue;
+      targets.push({ row, region, item_id, model_id: listing.shop_model_id || null, price });
+    }
+  }
+
+  if (targets.length === 0) {
+    alert('동기화할 Shopee 매핑이 없습니다. Shopee 매핑 동기화를 먼저 실행하세요.');
+    btn.disabled = false;
+    btn.innerHTML = origHtml;
+    return;
+  }
+
+  const results = await Promise.allSettled(targets.map(async t => {
+    const priceEntry = t.model_id
+      ? { model_id: t.model_id, original_price: t.price }
+      : { original_price: t.price };
+    const r = await fetch(SHOPEE_BRIDGE + '/update_price', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ region: t.region, item_id: t.item_id, price_list: [priceEntry] }),
+    });
+    const j = await r.json();
+    if (j.ok && !j.result?.error) {
+      await Storage.upsertShopeeListing(t.row.id, t.region, {
+        shop_item_id: t.item_id, shop_model_id: t.model_id,
+        last_synced_price: t.price, last_synced_at: new Date().toISOString(),
+      });
+      return { ok: true };
+    }
+    throw new Error(j.result?.error || j.error || 'unknown');
+  }));
+
+  const ok = results.filter(r => r.status === 'fulfilled').length;
+  const fail = results.length - ok;
+  const statusEl = document.getElementById('save-status');
+  if (statusEl) {
+    statusEl.textContent = fail > 0
+      ? `Shopee: ${ok}건 성공 / ${fail}건 실패`
+      : `✓ Shopee ${ok}건 가격 업데이트 완료`;
+    statusEl.style.color = fail > 0 ? '#d62754' : '#15803d';
+    setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 5000);
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = origHtml;
+}
+
 (function bindShopeeModal() {
   const init = () => {
     const cancel = document.getElementById('sp-cancel');
@@ -2285,6 +2363,17 @@ async function _shopeeSyncApply() {
   init();
 })();
 
+(function bindShopeeBulkSync() {
+  const init = () => {
+    const btn = document.getElementById('shopee-bulk-sync');
+    if (!btn) { document.addEventListener('DOMContentLoaded', init); return; }
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', _shopeeBulkSync);
+  };
+  init();
+})();
+
 /* ════════════════════════════════════════════════════════════════════
    STARONEMALL — render + refresh helpers
    ════════════════════════════════════════════════════════════════════ */
@@ -2408,6 +2497,7 @@ function startEditUrl(td) {
 function renderTableHeader() {
   const headEl = document.getElementById('thead-row');
   let html = `
+    <th style="width:32px;text-align:center;padding:0;"><input type="checkbox" id="select-all-rows" title="전체 선택/해제"></th>
     <th style="width:120px;">Shopee Item ID</th>
     <th style="width:200px;">SKU</th>
     <th style="width:140px;">옵션명</th>
@@ -2436,7 +2526,7 @@ function renderTableBody() {
 
   if (filtered.length === 0) {
     tbody.innerHTML = `
-      <tr><td colspan="${8 + COUNTRY_CODES.length * 2 + 1}">
+      <tr><td colspan="${9 + COUNTRY_CODES.length * 2 + 1}">
         <div class="empty-state">
           <h3>${state.rows.length === 0 ? '아직 상품이 없습니다' : '검색 결과 없음'}</h3>
           <p>${state.rows.length === 0 ? '아래 + 행 추가 버튼으로 시작하세요' : '다른 키워드로 시도해보세요'}</p>
@@ -2459,6 +2549,7 @@ function renderTableBody() {
 
     return `
       <tr class="row" data-id="${row.id}">
+        <td style="text-align:center;padding:0;"><input type="checkbox" class="row-select" data-id="${row.id}"></td>
         <td class="itemid editable" data-field="itemId" title="${row.itemId || ''}">${row.itemId || '<span style="color:var(--text-faint);">—</span>'}</td>
         <td class="sku editable" data-field="sku" title="${row.sku}">${row.sku}${row.sku && state.bundleSkus.has(row.sku) ? ' <span title="kpop-wms 에서 번들로 등록된 SKU — 출고 시 컴포넌트로 분해됨" style="display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;background:rgba(124,77,255,0.15);color:#7c4dff;font-size:9px;font-weight:600;letter-spacing:0.3px">📦 SET</span>' : ''}</td>
         <td class="option editable" data-field="option">${row.option || ''}</td>
@@ -2552,6 +2643,23 @@ function renderTableBody() {
       }
     });
   });
+
+  // Checkbox selection handlers
+  function _updateBulkBtn() {
+    const checked = tbody.querySelectorAll('.row-select:checked');
+    const btn = document.getElementById('shopee-bulk-sync');
+    const countEl = document.getElementById('bulk-sync-count');
+    if (btn) btn.disabled = checked.length === 0;
+    if (countEl) countEl.textContent = checked.length;
+    const allBox = document.getElementById('select-all-rows');
+    if (allBox) {
+      const all = tbody.querySelectorAll('.row-select');
+      allBox.indeterminate = checked.length > 0 && checked.length < all.length;
+      allBox.checked = all.length > 0 && checked.length === all.length;
+    }
+  }
+  tbody.querySelectorAll('.row-select').forEach(cb => cb.addEventListener('change', _updateBulkBtn));
+  _updateBulkBtn();
 
   document.getElementById('row-count').textContent = state.rows.filter(r => r.purpose !== 'registration').length + ' ITEMS';
 

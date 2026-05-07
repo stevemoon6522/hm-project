@@ -220,6 +220,10 @@
     letter-spacing: 0.2em;
   }
   .section-head .rule { flex: 1; height: 1px; background: var(--border); }
+  .section-head.collapsible-head { cursor: pointer; user-select: none; }
+  .section-head.collapsible-head:hover h2 { color: var(--accent); }
+  .collapse-arrow { color: var(--text-faint); font-size: 12px; transition: transform 0.2s; }
+  .collapse-body { overflow: hidden; }
   .section-head .count {
     color: var(--text-dim);
     font-size: 11px;
@@ -737,28 +741,32 @@
   </button>
 
   <!-- Verification Tabs -->
-  <div class="section-head">
+  <div class="section-head collapsible-head" onclick="toggleSection('verify')" id="toggle-verify">
     <span class="num">02</span>
     <h2>국가별 계산 검증</h2>
     <div class="rule"></div>
+    <span class="collapse-arrow" id="arrow-verify">▼</span>
+  </div>
+  <div id="body-verify" class="collapse-body" style="display:none">
+    <section class="settings">
+      <div class="settings-tabs" id="verify-tabs"></div>
+      <div class="settings-content" id="verify-content" style="padding:0;overflow:auto;"></div>
+    </section>
   </div>
 
-  <section class="settings">
-    <div class="settings-tabs" id="verify-tabs"></div>
-    <div class="settings-content" id="verify-content" style="padding:0;overflow:auto;"></div>
-  </section>
-
   <!-- Settings -->
-  <div class="section-head">
+  <div class="section-head collapsible-head" onclick="toggleSection('settings')" id="toggle-settings">
     <span class="num">03</span>
     <h2>수수료 / 환율 설정</h2>
     <div class="rule"></div>
+    <span class="collapse-arrow" id="arrow-settings">▼</span>
   </div>
-
-  <section class="settings">
-    <div class="settings-tabs" id="settings-tabs"></div>
-    <div class="settings-content" id="settings-content"></div>
-  </section>
+  <div id="body-settings" class="collapse-body" style="display:none">
+    <section class="settings">
+      <div class="settings-tabs" id="settings-tabs"></div>
+      <div class="settings-content" id="settings-content"></div>
+    </section>
+  </div>
 
   </div><!-- /tab-price -->
 
@@ -2383,7 +2391,6 @@ function renderTableHeader() {
       <th class="sale-col" style="--country-color:${c.color};">${code} Sale</th>
     `;
   });
-  html += `<th style="width:140px;">Joom</th>`;
   html += `<th style="width:160px;">Shopee</th>`;
   html += `<th class="actions-col">·</th>`;
   headEl.innerHTML = html;
@@ -2428,7 +2435,6 @@ function renderTableBody() {
         <td class="numeric editable" data-field="cost">${fmtKRW(row.cost)}</td>
         <td class="numeric editable" data-field="weight">${row.weight ? row.weight.toLocaleString() : '—'}</td>
         ${cells}
-        <td class="joom-cell">${renderJoomCell(row)}</td>
         <td class="shopee-cell">${renderShopeeCell(row)}</td>
         <td class="actions-col">
           <button class="row-action-btn" data-action="delete" title="삭제">×</button>
@@ -2487,28 +2493,6 @@ function renderTableBody() {
           btn.textContent = '🔄';
           btn.disabled = false;
         }
-      });
-    });
-  });
-
-  // Joom 셀 핸들러
-  tbody.querySelectorAll('td.joom-cell').forEach(td => {
-    td.querySelectorAll('.joom-publish').forEach(btn => {
-      btn.addEventListener('click', e => {
-        e.stopPropagation();
-        const tr = btn.closest('tr');
-        const id = tr.dataset.id;
-        const row = state.rows.find(r => String(r.id) === String(id));
-        if (row) openJoomModal(row);
-      });
-    });
-    td.querySelectorAll('.joom-delete').forEach(btn => {
-      btn.addEventListener('click', e => {
-        e.stopPropagation();
-        const tr = btn.closest('tr');
-        const id = tr.dataset.id;
-        const row = state.rows.find(r => String(r.id) === String(id));
-        if (row) _joomDeleteRow(row);
       });
     });
   });
@@ -3152,6 +3136,27 @@ function switchMainTab(tab) {
 
 document.querySelectorAll('.main-tab').forEach(btn => {
   btn.addEventListener('click', () => switchMainTab(btn.dataset.tab));
+});
+
+function toggleSection(key) {
+  const body = document.getElementById('body-' + key);
+  const arrow = document.getElementById('arrow-' + key);
+  if (!body) return;
+  const isOpen = body.style.display !== 'none';
+  body.style.display = isOpen ? 'none' : '';
+  arrow.textContent = isOpen ? '▼' : '▲';
+  try { localStorage.setItem('sd-section-' + key, isOpen ? '0' : '1'); } catch {}
+}
+
+// Restore collapse state from localStorage (default: closed)
+['verify', 'settings'].forEach(key => {
+  try {
+    if (localStorage.getItem('sd-section-' + key) === '1') {
+      const body = document.getElementById('body-' + key);
+      const arrow = document.getElementById('arrow-' + key);
+      if (body) { body.style.display = ''; arrow.textContent = '▲'; }
+    }
+  } catch {}
 });
 
 function renderRegisterTab() {

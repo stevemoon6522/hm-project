@@ -198,6 +198,30 @@
     transition: border-color 0.15s ease;
   }
   .search-box input:focus { border-color: var(--accent); }
+  #tag-filter {
+    background: var(--bg-elev); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--mono); font-size: 12px; padding: 9px 10px;
+    border-radius: 2px; outline: none; cursor: pointer; max-width: 160px;
+  }
+  #tag-filter:focus { border-color: var(--accent); }
+  .tag-badge {
+    display: inline-block; margin: 2px 2px 0 0; padding: 1px 5px;
+    border-radius: 2px; font-size: 9px; font-weight: 600; letter-spacing: 0.05em;
+    cursor: pointer; background: rgba(214,39,84,0.1); color: var(--accent);
+    border: 1px solid rgba(214,39,84,0.25); user-select: none;
+  }
+  .tag-badges-wrap { min-height: 12px; }
+  .tag-edit-input {
+    display: block; margin-top: 2px; width: 100%;
+    background: transparent; border: none; border-bottom: 1px solid var(--accent);
+    color: var(--text); font-family: var(--mono); font-size: 11px;
+    padding: 1px 0; outline: none;
+  }
+  .country-item-id {
+    display: block; font-size: 9px; font-family: var(--mono);
+    color: var(--text-faint); margin-top: 2px; cursor: pointer; letter-spacing: 0;
+  }
+  .country-item-id:hover { color: var(--accent); }
   .search-box::before {
     content: '🔍'; position: absolute; left: 10px; top: 50%;
     transform: translateY(-50%); opacity: 0.4; font-size: 11px;
@@ -708,6 +732,7 @@
       <div class="search-box">
         <input type="text" id="search" placeholder="SKU / 옵션명 검색...">
       </div>
+      <select id="tag-filter"><option value="">모든 태그</option></select>
     </div>
     <div class="toolbar-right">
       <button class="btn primary" id="add-row">+ 상품 추가</button>
@@ -1151,6 +1176,7 @@ function dbRowToProduct(row) {
     joomStatus: row.joom_status || '',
     joomPublishedAt: row.joom_published_at || null,
     purpose: row.purpose || 'price_edit',
+    tags: row.tags || [],
     shopeeListings: {},  // {SG: {shop_item_id, last_synced_price, status}, TW:{...}, TH:{...}} — Storage.loadAll 에서 채움
   };
 }
@@ -1169,6 +1195,7 @@ function productToDbRow(p) {
     joom_status: p.joomStatus || null,
     joom_published_at: p.joomPublishedAt || null,
     purpose: p.purpose || 'price_edit',
+    tags: (p.tags && p.tags.length) ? p.tags : null,
   };
 }
 
@@ -1219,6 +1246,7 @@ let state = {
   activeTab: 'SG',
   rows: [],
   search: '',
+  tagFilter: '',
   nextId: 1,
   bundleSkus: new Set(), // kpop-wms inventory 의 bundle SKU 목록 (📦 SET 배지용)
 };
@@ -2557,6 +2585,15 @@ function renderTableBody() {
   const tbody = document.getElementById('tbody');
   const filtered = filterRows();
 
+  // Rebuild tag filter dropdown preserving selection
+  const allTags = [...new Set(state.rows.flatMap(r => r.tags || []))].sort();
+  const tagSel = document.getElementById('tag-filter');
+  if (tagSel) {
+    const cur = tagSel.value;
+    tagSel.innerHTML = '<option value="">모든 태그</option>' +
+      allTags.map(t => `<option value="${t}"${t === cur ? ' selected' : ''}>${t}</option>`).join('');
+  }
+
   if (filtered.length === 0) {
     tbody.innerHTML = `
       <tr><td colspan="${11 + COUNTRY_CODES.length * 2 + 1}">
@@ -2574,18 +2611,28 @@ function renderTableBody() {
     const cells = COUNTRY_CODES.map(code => {
       const c = state.countries[code];
       const r = calcRow(row, code);
+      const sid = (row.shopeeListings || {})[code]?.shop_item_id;
+      const itemIdHtml = sid ? `<span class="country-item-id" data-copy="${sid}" title="클릭하여 복사">${sid}</span>` : '';
       return `
-        <td class="country-col" style="--country-color:${c.color};">${fmt(r.listing)}</td>
+        <td class="country-col" style="--country-color:${c.color};">${fmt(r.listing)}${itemIdHtml}</td>
         <td class="sale-col">${fmt(r.sales)}</td>
       `;
     }).join('');
+
+    const bundleBadge = (row.sku && state.bundleSkus.has(row.sku))
+      ? ' <span title="kpop-wms 에서 번들로 등록된 SKU — 출고 시 컴포넌트로 분해됨" style="display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;background:rgba(124,77,255,0.15);color:#7c4dff;font-size:9px;font-weight:600;letter-spacing:0.3px">📦 SET</span>'
+      : '';
+    const tagBadgesHtml = (row.tags && row.tags.length)
+      ? row.tags.map(t => `<span class="tag-badge">${t}</span>`).join('')
+      : '<span style="font-size:9px;color:var(--text-faint);cursor:pointer;">+ 태그</span>';
 
     return `
       <tr class="row" data-id="${row.id}">
         <td style="text-align:center;padding:0;"><input type="checkbox" class="row-select" data-id="${row.id}"></td>
         <td class="master-url-cell" data-id="${row.id}" title="더블클릭하여 URL 편집" style="width:140px;">${renderStaronemallCell(row)}</td>
         <td class="itemid editable" data-field="itemId" title="${row.itemId || ''}">${row.itemId || '<span style="color:var(--text-faint);">—</span>'}</td>
-        <td class="sku editable" data-field="sku" title="${row.sku}">${row.sku}${row.sku && state.bundleSkus.has(row.sku) ? ' <span title="kpop-wms 에서 번들로 등록된 SKU — 출고 시 컴포넌트로 분해됨" style="display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;background:rgba(124,77,255,0.15);color:#7c4dff;font-size:9px;font-weight:600;letter-spacing:0.3px">📦 SET</span>' : ''}</td>
+        <td class="sku editable" data-field="sku" title="${row.sku}">${row.sku}${bundleBadge}
+          <div class="tag-badges-wrap" data-id="${row.id}">${tagBadgesHtml}</div></td>
         <td class="option editable" data-field="option">${row.option || ''}</td>
         <td class="numeric editable" data-field="sourcingPrice" style="color:var(--text-dim);">${row.sourcingPrice ? fmtKRW(row.sourcingPrice) : '<span style="color:var(--text-faint);">—</span>'}</td>
         <td class="numeric editable" data-field="cost">${fmtKRW(row.cost)}</td>
@@ -2606,6 +2653,53 @@ function renderTableBody() {
   // Bind edit clicks
   tbody.querySelectorAll('td.editable').forEach(td => {
     td.addEventListener('click', () => startEdit(td));
+  });
+
+  // Tag badge area — click to edit tags inline (stop propagation to prevent startEdit on SKU td)
+  tbody.querySelectorAll('.tag-badges-wrap').forEach(wrap => {
+    wrap.addEventListener('click', e => {
+      e.stopPropagation();
+      if (wrap.querySelector('.tag-edit-input')) return;
+      const id = wrap.dataset.id;
+      const row = state.rows.find(r => String(r.id) === String(id));
+      if (!row) return;
+      const input = document.createElement('input');
+      input.className = 'tag-edit-input';
+      input.type = 'text';
+      input.value = (row.tags || []).join(', ');
+      input.placeholder = '태그 (쉼표 구분, 예: BTS, STRAY KIDS)';
+      wrap.innerHTML = '';
+      wrap.appendChild(input);
+      input.focus(); input.select();
+      let done = false;
+      const commit = async () => {
+        if (done) return; done = true;
+        const newTags = input.value.split(',').map(s => s.trim()).filter(Boolean);
+        if (JSON.stringify(newTags) !== JSON.stringify(row.tags || [])) {
+          row.tags = newTags;
+          markProductDirty(row);
+        }
+        renderTableBody();
+      };
+      input.addEventListener('blur', commit);
+      input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+        if (e.key === 'Escape') { e.preventDefault(); done = true; renderTableBody(); }
+      });
+    });
+  });
+
+  // country-item-id click → copy to clipboard
+  tbody.querySelectorAll('.country-item-id').forEach(span => {
+    span.addEventListener('click', async e => {
+      e.stopPropagation();
+      try {
+        await navigator.clipboard.writeText(span.dataset.copy);
+        const orig = span.textContent;
+        span.textContent = '✓';
+        setTimeout(() => { span.textContent = orig; }, 1500);
+      } catch (_) {}
+    });
   });
 
   // Staronemall URL cell — click to add, dblclick to edit, refresh button
@@ -2731,9 +2825,11 @@ function renderTableBody() {
 
 function filterRows() {
   const q = state.search.toLowerCase().trim();
+  const t = state.tagFilter;
   const base = state.rows.filter(r => r.purpose !== 'registration');
-  if (!q) return base;
-  return base.filter(r =>
+  const byTag = t ? base.filter(r => (r.tags || []).includes(t)) : base;
+  if (!q) return byTag;
+  return byTag.filter(r =>
     (r.sku || '').toLowerCase().includes(q) ||
     (r.option || '').toLowerCase().includes(q) ||
     (r.itemId || '').toLowerCase().includes(q) ||
@@ -3094,6 +3190,12 @@ function parseCsvLine(line) {
 /* Search */
 document.getElementById('search').addEventListener('input', e => {
   state.search = e.target.value;
+  renderTableBody();
+});
+
+/* Tag filter */
+document.getElementById('tag-filter').addEventListener('change', e => {
+  state.tagFilter = e.target.value;
   renderTableBody();
 });
 

@@ -784,12 +784,12 @@
       <table class="master" style="min-width:900px;">
         <thead>
           <tr>
-            <th style="width:240px;">SKU</th>
-            <th style="width:160px;">옵션명</th>
-            <th style="width:110px;">Joom 상태</th>
-            <th style="width:180px;">Joom Product ID</th>
-            <th style="width:150px;">등록일</th>
-            <th style="width:140px;">Staronemall</th>
+            <th style="width:160px;">Staronemall</th>
+            <th style="width:220px;">SKU</th>
+            <th style="width:100px;text-align:right;">매입가 (KRW)</th>
+            <th style="width:80px;text-align:right;">무게 (g)</th>
+            <th class="country-col" style="--country-color:var(--c-jm);width:80px;">JM</th>
+            <th class="sale-col" style="--country-color:var(--c-jm);width:80px;">JM SALE</th>
             <th>액션</th>
             <th style="width:72px;"></th>
           </tr>
@@ -2384,7 +2384,6 @@ function startEditUrl(td) {
 function renderTableHeader() {
   const headEl = document.getElementById('thead-row');
   let html = `
-    <th style="width:130px;">Staronemall</th>
     <th style="width:120px;">Shopee Item ID</th>
     <th style="width:200px;">SKU</th>
     <th style="width:140px;">옵션명</th>
@@ -2435,7 +2434,6 @@ function renderTableBody() {
 
     return `
       <tr class="row" data-id="${row.id}">
-        <td class="staronemall-cell" data-field="staronemallUrl" title="${row.staronemallUrl || ''}">${renderStaronemallCell(row)}</td>
         <td class="itemid editable" data-field="itemId" title="${row.itemId || ''}">${row.itemId || '<span style="color:var(--text-faint);">—</span>'}</td>
         <td class="sku editable" data-field="sku" title="${row.sku}">${row.sku}${row.sku && state.bundleSkus.has(row.sku) ? ' <span title="kpop-wms 에서 번들로 등록된 SKU — 출고 시 컴포넌트로 분해됨" style="display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;background:rgba(124,77,255,0.15);color:#7c4dff;font-size:9px;font-weight:600;letter-spacing:0.3px">📦 SET</span>' : ''}</td>
         <td class="option editable" data-field="option">${row.option || ''}</td>
@@ -2477,42 +2475,6 @@ function renderTableBody() {
         renderTableBody();
         renderVerify();
       }
-    });
-  });
-
-  // Staronemall URL 셀 핸들러
-  tbody.querySelectorAll('td.staronemall-cell').forEach(td => {
-    td.querySelectorAll('.staronemall-add').forEach(span => {
-      span.addEventListener('click', e => { e.stopPropagation(); startEditUrl(td); });
-    });
-    td.addEventListener('dblclick', e => {
-      if (e.target.closest('.staronemall-refresh')) return;
-      e.stopPropagation();
-      startEditUrl(td);
-    });
-    td.querySelectorAll('.staronemall-link').forEach(a => {
-      a.addEventListener('click', e => e.stopPropagation());
-    });
-    td.querySelectorAll('.staronemall-refresh').forEach(btn => {
-      btn.addEventListener('click', async e => {
-        e.stopPropagation();
-        e.preventDefault();
-        const tr = btn.closest('tr');
-        const id = tr.dataset.id;
-        const row = state.rows.find(r => String(r.id) === String(id));
-        if (!row) return;
-        btn.textContent = '⏳';
-        btn.disabled = true;
-        const r = await refreshRowFromStaronemall(row);
-        if (r.ok) {
-          renderTableBody();
-          renderVerify();
-        } else {
-          alert('재크롤링 실패: ' + r.error);
-          btn.textContent = '🔄';
-          btn.disabled = false;
-        }
-      });
     });
   });
 
@@ -3216,25 +3178,20 @@ function renderRegisterTab() {
   }
   tbody.innerHTML = rows.map(row => {
     const hasJoom = !!row.joomProductId;
-    const statusBadge = hasJoom
-      ? `<span class="joom-status-badge registered">${esc(row.joomStatus) || '등록됨'}</span>`
-      : `<span class="joom-status-badge none">미등록</span>`;
-    const publishedAt = row.joomPublishedAt
-      ? new Date(row.joomPublishedAt).toLocaleDateString('ko-KR', {year:'2-digit',month:'2-digit',day:'2-digit'})
-      : '—';
     const pno = row.staronemallUrl ? (row.staronemallUrl.match(/[?&]pno=([^&]+)/)?.[1]?.slice(0,8) + '…' || 'link') : '';
     const staronemallInner = row.staronemallUrl
       ? `<a href="${esc(row.staronemallUrl)}" target="_blank" style="color:var(--text-dim);font-size:10px;text-decoration:none;margin-right:4px;" title="${esc(row.staronemallUrl)}">${esc(pno)}</a><button class="reg-url-refresh-btn" data-id="${esc(row.id)}" title="재크롤링" style="background:none;border:none;cursor:pointer;font-size:11px;padding:0 2px;vertical-align:middle;">🔄</button>`
       : `<span class="reg-url-add" style="color:var(--c-jm);cursor:pointer;font-size:11px;">+ URL 추가</span>`;
+    const jm = calcRow(row, 'JM');
     return `<tr class="row" data-id="${esc(row.id)}">
-      <td class="sku">${esc(row.sku)}</td>
-      <td class="option">${esc(row.option)}</td>
-      <td>${statusBadge}</td>
-      <td class="itemid" style="max-width:180px;">${hasJoom ? esc(row.joomProductId) : '—'}</td>
-      <td style="font-size:10px;color:var(--text-dim);">${publishedAt}</td>
       <td class="reg-url-cell" data-id="${esc(row.id)}" title="더블클릭하여 URL 편집">${staronemallInner}</td>
+      <td class="editable reg-editable" data-field="sku">${esc(row.sku) || '<span style="color:var(--text-faint)">—</span>'}</td>
+      <td class="numeric editable reg-editable" data-field="cost" style="text-align:right;">${fmtKRW(row.cost)}</td>
+      <td class="numeric editable reg-editable" data-field="weight" style="text-align:right;">${row.weight ? row.weight.toLocaleString() : '—'}</td>
+      <td class="country-col" style="--country-color:var(--c-jm);">${fmt(jm.listing)}</td>
+      <td class="sale-col">${fmt(jm.sales)}</td>
       <td style="text-align:center;">
-        <button class="row-action-btn joom-reg-open" data-sku="${esc(row.sku)}" title="Joom 등록 모달 열기"
+        <button class="row-action-btn joom-reg-open" data-id="${esc(row.id)}" title="Joom 등록 모달 열기"
           style="font-size:11px;padding:4px 10px;border:1px solid var(--border-strong);border-radius:3px;color:var(--c-jm);">
           ${hasJoom ? '✏️ 수정' : '📤 등록'}
         </button>
@@ -3250,9 +3207,13 @@ function renderRegisterTab() {
 
   tbody.querySelectorAll('.joom-reg-open').forEach(btn => {
     btn.addEventListener('click', () => {
-      const row = rows.find(r => r.sku === btn.dataset.sku);
+      const row = state.rows.find(r => String(r.id) === String(btn.dataset.id));
       if (row) openJoomModal(row);
     });
+  });
+
+  tbody.querySelectorAll('td.reg-editable').forEach(td => {
+    td.addEventListener('click', () => startEdit(td));
   });
 
   tbody.querySelectorAll('.reg-move-btn').forEach(btn => {

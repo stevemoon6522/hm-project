@@ -1755,7 +1755,7 @@ function _joomCollectVariants() {
     const sku = div.querySelector('.jm-v-sku').value.trim();
     const weight = parseFloat(div.querySelector('.jm-v-weight').value) || null;
     const qty = parseInt(div.querySelector('.jm-v-qty').value, 10) || 0;
-    if (name) items.push({ name, sku: sku || undefined, weight: weight || undefined, inventory: qty });
+    if (name) items.push({ name, sku: sku, weight: weight || undefined, inventory: qty });
   });
   return items;
 }

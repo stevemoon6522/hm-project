@@ -2529,6 +2529,7 @@ function renderTableHeader() {
   const headEl = document.getElementById('thead-row');
   let html = `
     <th style="width:32px;text-align:center;padding:0;"><input type="checkbox" id="select-all-rows" title="전체 선택/해제"></th>
+    <th style="width:140px;">Staronemall</th>
     <th style="width:120px;">Shopee Item ID</th>
     <th style="width:200px;">SKU</th>
     <th style="width:140px;">옵션명</th>
@@ -2558,7 +2559,7 @@ function renderTableBody() {
 
   if (filtered.length === 0) {
     tbody.innerHTML = `
-      <tr><td colspan="${10 + COUNTRY_CODES.length * 2 + 1}">
+      <tr><td colspan="${11 + COUNTRY_CODES.length * 2 + 1}">
         <div class="empty-state">
           <h3>${state.rows.length === 0 ? '아직 상품이 없습니다' : '검색 결과 없음'}</h3>
           <p>${state.rows.length === 0 ? '아래 + 행 추가 버튼으로 시작하세요' : '다른 키워드로 시도해보세요'}</p>
@@ -2582,6 +2583,7 @@ function renderTableBody() {
     return `
       <tr class="row" data-id="${row.id}">
         <td style="text-align:center;padding:0;"><input type="checkbox" class="row-select" data-id="${row.id}"></td>
+        <td class="master-url-cell" data-id="${row.id}" title="더블클릭하여 URL 편집" style="width:140px;">${renderStaronemallCell(row)}</td>
         <td class="itemid editable" data-field="itemId" title="${row.itemId || ''}">${row.itemId || '<span style="color:var(--text-faint);">—</span>'}</td>
         <td class="sku editable" data-field="sku" title="${row.sku}">${row.sku}${row.sku && state.bundleSkus.has(row.sku) ? ' <span title="kpop-wms 에서 번들로 등록된 SKU — 출고 시 컴포넌트로 분해됨" style="display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;background:rgba(124,77,255,0.15);color:#7c4dff;font-size:9px;font-weight:600;letter-spacing:0.3px">📦 SET</span>' : ''}</td>
         <td class="option editable" data-field="option">${row.option || ''}</td>
@@ -2604,6 +2606,32 @@ function renderTableBody() {
   // Bind edit clicks
   tbody.querySelectorAll('td.editable').forEach(td => {
     td.addEventListener('click', () => startEdit(td));
+  });
+
+  // Staronemall URL cell — click to add, dblclick to edit, refresh button
+  tbody.querySelectorAll('td.master-url-cell').forEach(td => {
+    td.querySelector('.staronemall-add')?.addEventListener('click', () => startEditUrl(td));
+    td.addEventListener('dblclick', e => {
+      if (!e.target.closest('a') && !e.target.closest('.staronemall-refresh')) startEditUrl(td);
+    });
+    td.querySelector('.staronemall-refresh')?.addEventListener('click', async e => {
+      e.stopPropagation();
+      const row = state.rows.find(r => String(r.id) === String(td.dataset.id));
+      if (!row) return;
+      const btn = e.currentTarget;
+      btn.textContent = '⏳';
+      btn.disabled = true;
+      const result = await refreshRowFromStaronemall(row);
+      if (result.ok) {
+        await Storage.updateProduct(row.id, row);
+        renderTableBody();
+        renderVerify();
+      } else {
+        btn.textContent = '🔄';
+        btn.disabled = false;
+        alert('재크롤링 실패: ' + result.error);
+      }
+    });
   });
   tbody.querySelectorAll('button[data-action="move-to-register"]').forEach(btn => {
     btn.addEventListener('click', async e => {

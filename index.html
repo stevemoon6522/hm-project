@@ -2179,14 +2179,33 @@ async function _shopeeSyncStart() {
   applyBtn.style.display = 'none';
   startBtn.disabled = true;
 
-  // 1) Render per-region progress rows
+  // 1) Compute which regions have at least one unmapped product — skip the rest
+  const rowsToSync = state.rows.filter(r => r.purpose !== 'registration');
+  const regionsNeeded = new Set();
+  for (const row of rowsToSync) {
+    for (const region of SHOPEE_REGIONS) {
+      if (!(row.shopeeListings || {})[region]?.shop_item_id) regionsNeeded.add(region);
+    }
+  }
+
+  // Render per-region progress rows (show skip status immediately for already-complete regions)
   progress.innerHTML = SHOPEE_REGIONS.map(r =>
-    `<div id="sync-row-${r}" style="color:#5a5a66;">⋯ ${r} · 대기 중</div>`
+    regionsNeeded.has(r)
+      ? `<div id="sync-row-${r}" style="color:#5a5a66;">⋯ ${r} · 대기 중</div>`
+      : `<div id="sync-row-${r}" style="color:#9a9aa6;">↩ ${r} · 전체 매핑 완료 (건너뜀)</div>`
   ).join('');
 
-  // 2) Fetch all 6 regions in parallel
+  if (regionsNeeded.size === 0) {
+    progress.innerHTML += '<br><span style="color:#15803d;font-weight:600;">모든 상품이 이미 매핑되어 있습니다.</span>';
+    startBtn.disabled = false;
+    return;
+  }
+
+  // 2) Fetch only needed regions in parallel
   const results = await Promise.all(SHOPEE_REGIONS.map(r =>
-    _shopeeSyncFetchRegion(r, document.getElementById('sync-row-' + r))
+    regionsNeeded.has(r)
+      ? _shopeeSyncFetchRegion(r, document.getElementById('sync-row-' + r))
+      : Promise.resolve({ region: r, ok: true, items: [], _skipped: true })
   ));
 
   // 3) Build per-region SKU index + name index
@@ -2206,12 +2225,15 @@ async function _shopeeSyncStart() {
     regionMap[res.region] = { ok: res.ok, items: res.items, skuIndex, nameIndex };
   }
 
-  // 4) For each dashboard row, attempt match per region (SKU first, then name)
-  const productMatches = state.rows.map(row => {
+  // 4) For each dashboard row, attempt match only for unmapped (row, region) pairs
+  const productMatches = rowsToSync.map(row => {
     const matches = {};
     const skuKey = _normalize(row.sku);
     const nameKey = _normalize(row.option || '');  // option 이 product name 으로 쓰임
     for (const region of SHOPEE_REGIONS) {
+      // Already mapped — preserve and skip re-matching
+      const existingId = (row.shopeeListings || {})[region]?.shop_item_id;
+      if (existingId) { matches[region] = { method: 'existing', item_id: existingId }; continue; }
       const rm = regionMap[region];
       if (!rm || !rm.ok) { matches[region] = { method: 'error' }; continue; }
       // 1차: SKU 정확 매칭 (다중 model 상품은 list_items 가 model SKU 를 펼쳐서 제공함 → model_id 도 함께 캡처)
@@ -2239,13 +2261,14 @@ async function _shopeeSyncStart() {
   _syncMatches = { regionMap, productMatches };
 
   // 5) Render summary
-  let totalMatched = 0, totalMissing = 0, totalDup = 0, totalErr = 0;
+  let totalMatched = 0, totalExisting = 0, totalMissing = 0, totalDup = 0, totalErr = 0;
   const perRegion = {};
-  for (const region of SHOPEE_REGIONS) perRegion[region] = { sku: 0, name: 0, none: 0, dup: 0, err: 0 };
+  for (const region of SHOPEE_REGIONS) perRegion[region] = { sku: 0, name: 0, existing: 0, none: 0, dup: 0, err: 0 };
   for (const pm of productMatches) {
     for (const region of SHOPEE_REGIONS) {
       const m = pm.matches[region];
-      if (m.method === 'sku') { perRegion[region].sku++; totalMatched++; }
+      if (m.method === 'existing') { perRegion[region].existing++; totalExisting++; }
+      else if (m.method === 'sku') { perRegion[region].sku++; totalMatched++; }
       else if (m.method === 'name') { perRegion[region].name++; totalMatched++; }
       else if (m.method === 'name_dup') { perRegion[region].dup++; totalDup++; }
       else if (m.method === 'error') { perRegion[region].err++; totalErr++; }
@@ -2255,14 +2278,17 @@ async function _shopeeSyncStart() {
   summary.style.display = 'block';
   summary.innerHTML =
     `<b>전체 ${productMatches.length}행 × 6 region = ${productMatches.length * 6} 셀</b><br>` +
-    `매칭 <b style="color:#15803d;">${totalMatched}</b> · ` +
+    `신규 매칭 <b style="color:#15803d;">${totalMatched}</b> · ` +
+    `기존 유지 <b style="color:#b0b0bc;">${totalExisting}</b> · ` +
     `미매칭 <b style="color:#5a5a66;">${totalMissing}</b> · ` +
     `중복 <b style="color:#b45309;">${totalDup}</b> · ` +
     `에러 <b style="color:#d62754;">${totalErr}</b><br>` +
     `<div style="font-family:monospace;font-size:10px;margin-top:6px;color:#5a5a66;">` +
     SHOPEE_REGIONS.map(r => {
       const p = perRegion[r];
-      return `${r}: SKU ${p.sku} · 이름 ${p.name} · 미매칭 ${p.none}` + (p.dup ? ` · 중복 ${p.dup}` : '') + (p.err ? ` · 에러 ${p.err}` : '');
+      const skipped = !regionsNeeded.has(r);
+      if (skipped) return `${r}: 전체 기존 매핑 (건너뜀)`;
+      return `${r}: SKU ${p.sku} · 이름 ${p.name} · 기존 ${p.existing} · 미매칭 ${p.none}` + (p.dup ? ` · 중복 ${p.dup}` : '') + (p.err ? ` · 에러 ${p.err}` : '');
     }).join('<br>') +
     `</div>`;
 
@@ -2276,7 +2302,9 @@ async function _shopeeSyncStart() {
       const cur = (pm.row.shopeeListings || {})[region]?.shop_item_id;
       const curModel = (pm.row.shopeeListings || {})[region]?.shop_model_id;
       let cell = '—', color = '#9a9aa6', title = '미매칭';
-      if (m.method === 'sku') {
+      if (m.method === 'existing') {
+        cell = m.item_id; color = '#b0b0bc'; title = '이미 매핑됨 (유지)';
+      } else if (m.method === 'sku') {
         cell = m.model_id ? `${m.item_id}<br><span style="color:#5a5a66;font-size:9px;">·${m.model_id}</span>` : m.item_id;
         color = '#15803d';
         title = `SKU 매칭: ${m.item_sku || '(SKU 없음)'} — ${m.item_name}` + (m.model_id ? ` · model_id ${m.model_id}` : '');

@@ -797,6 +797,10 @@
       </table>
     </div>
 
+    <button class="btn add-row-btn" id="add-row-register" style="margin-top:12px;width:100%;padding:14px;border-style:dashed;font-size:11px;">
+      + 행 추가 (SKU·매입가 입력 후 Joom 등록)
+    </button>
+
   </div><!-- /tab-register -->
 
 </div><!-- /container -->
@@ -2729,6 +2733,29 @@ document.getElementById('add-row-inline').addEventListener('click', async () => 
       if (skuCell) startEdit(skuCell);
     }
   }, 50);
+});
+
+/* 상품 등록 탭 — 행 추가 (가격 수정 탭으로 이동해서 편집) */
+document.getElementById('add-row-register').addEventListener('click', async () => {
+  const newProduct = {
+    itemId: '', sku: '', option: '', cost: 0, weight: 0,
+    position: state.rows.length, staronemallUrl: '',
+    joomProductId: '', joomStatus: '', joomPublishedAt: null,
+  };
+  const newId = await Storage.insertProduct(newProduct);
+  if (!newId) { alert('행 추가 실패'); return; }
+  newProduct.id = newId;
+  state.rows.push(newProduct);
+  switchMainTab('price');
+  renderTableBody();
+  setTimeout(() => {
+    const tr = document.querySelector(`tr[data-id="${newProduct.id}"]`);
+    if (tr) {
+      tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      const skuCell = tr.querySelector('td[data-field="sku"]');
+      if (skuCell) startEdit(skuCell);
+    }
+  }, 100);
 });
 
 /* CSV export */

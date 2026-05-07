@@ -1147,6 +1147,7 @@ function dbRowToProduct(row) {
     joomProductId: row.joom_product_id || '',
     joomStatus: row.joom_status || '',
     joomPublishedAt: row.joom_published_at || null,
+    purpose: row.purpose || 'price_edit',
     shopeeListings: {},  // {SG: {shop_item_id, last_synced_price, status}, TW:{...}, TH:{...}} — Storage.loadAll 에서 채움
   };
 }
@@ -1163,6 +1164,7 @@ function productToDbRow(p) {
     joom_product_id: p.joomProductId || null,
     joom_status: p.joomStatus || null,
     joom_published_at: p.joomPublishedAt || null,
+    purpose: p.purpose || 'price_edit',
   };
 }
 
@@ -2416,7 +2418,7 @@ function renderTableBody() {
         </div>
       </td></tr>
     `;
-    document.getElementById('row-count').textContent = state.rows.length + ' ITEMS';
+    document.getElementById('row-count').textContent = state.rows.filter(r => r.purpose !== 'registration').length + ' ITEMS';
     return;
   }
 
@@ -2441,6 +2443,7 @@ function renderTableBody() {
         ${cells}
         <td class="shopee-cell">${renderShopeeCell(row)}</td>
         <td class="actions-col">
+          <button class="row-action-btn price-move-btn" data-action="move-to-register" title="상품 등록 탭으로 이동" style="font-size:10px;margin-right:4px;">→ 등록</button>
           <button class="row-action-btn" data-action="delete" title="삭제">×</button>
         </td>
       </tr>
@@ -2451,6 +2454,17 @@ function renderTableBody() {
   tbody.querySelectorAll('td.editable').forEach(td => {
     td.addEventListener('click', () => startEdit(td));
   });
+  tbody.querySelectorAll('button[data-action="move-to-register"]').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      const id = e.target.closest('tr').dataset.id;
+      const row = state.rows.find(r => String(r.id) === String(id));
+      if (!row) return;
+      row.purpose = 'registration';
+      await Storage.updateProduct(row);
+      renderTableBody();
+    });
+  });
+
   tbody.querySelectorAll('button[data-action="delete"]').forEach(btn => {
     btn.addEventListener('click', async e => {
       const id = e.target.closest('tr').dataset.id;
@@ -2514,7 +2528,7 @@ function renderTableBody() {
     });
   });
 
-  document.getElementById('row-count').textContent = state.rows.length + ' ITEMS';
+  document.getElementById('row-count').textContent = state.rows.filter(r => r.purpose !== 'registration').length + ' ITEMS';
 
   if (document.getElementById('tab-register')?.style.display !== 'none') {
     renderRegisterTab();
@@ -2523,8 +2537,9 @@ function renderTableBody() {
 
 function filterRows() {
   const q = state.search.toLowerCase().trim();
-  if (!q) return state.rows;
-  return state.rows.filter(r =>
+  const base = state.rows.filter(r => r.purpose !== 'registration');
+  if (!q) return base;
+  return base.filter(r =>
     (r.sku || '').toLowerCase().includes(q) ||
     (r.option || '').toLowerCase().includes(q) ||
     (r.itemId || '').toLowerCase().includes(q) ||
@@ -2715,6 +2730,7 @@ document.getElementById('add-row-inline').addEventListener('click', async () => 
     joomProductId: '',
     joomStatus: '',
     joomPublishedAt: null,
+    purpose: 'price_edit',
   };
   const newId = await Storage.insertProduct(newProduct);
   if (!newId) {
@@ -2741,6 +2757,7 @@ document.getElementById('add-row-register').addEventListener('click', async () =
     itemId: '', sku: '', option: '', cost: 0, weight: 0,
     position: state.rows.length, staronemallUrl: '',
     joomProductId: '', joomStatus: '', joomPublishedAt: null,
+    purpose: 'registration',
   };
   const newId = await Storage.insertProduct(newProduct);
   if (!newId) { alert('행 추가 실패'); return; }
@@ -3191,10 +3208,10 @@ function renderRegisterTab() {
   const tbody = document.getElementById('joom-reg-tbody');
   const countEl = document.getElementById('joom-reg-count');
   if (!tbody) return;
-  const rows = (typeof state !== 'undefined' ? state.rows : []);
+  const rows = (typeof state !== 'undefined' ? state.rows : []).filter(r => r.purpose === 'registration');
   countEl.textContent = rows.length + ' ITEMS';
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="7" class="empty-state" style="padding:60px;text-align:center;color:#9a9aa6;">상품 없음</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="padding:60px;text-align:center;color:#9a9aa6;">상품 없음 — 아래 "+ 행 추가" 버튼으로 추가하세요</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map(row => {
@@ -3209,7 +3226,7 @@ function renderRegisterTab() {
     const staronemallCell = row.staronemallUrl
       ? `<a href="${esc(row.staronemallUrl)}" target="_blank" style="color:var(--text-dim);font-size:10px;text-decoration:none;" title="${esc(row.staronemallUrl)}">${esc(pno)}</a>`
       : `<span style="color:var(--text-faint);font-size:10px;">—</span>`;
-    return `<tr class="row">
+    return `<tr class="row" data-id="${esc(row.id)}">
       <td class="sku">${esc(row.sku)}</td>
       <td class="option">${esc(row.option)}</td>
       <td>${statusBadge}</td>
@@ -3222,6 +3239,12 @@ function renderRegisterTab() {
           ${hasJoom ? '✏️ 수정' : '📤 등록'}
         </button>
       </td>
+      <td style="text-align:center;">
+        <button class="reg-move-btn" data-id="${esc(row.id)}" title="가격 수정 탭으로 이동"
+          style="font-size:10px;padding:3px 7px;border:1px solid var(--border-strong);border-radius:3px;background:none;color:var(--text-dim);cursor:pointer;">
+          ← 가격탭
+        </button>
+      </td>
     </tr>`;
   }).join('');
 
@@ -3229,6 +3252,17 @@ function renderRegisterTab() {
     btn.addEventListener('click', () => {
       const row = rows.find(r => r.sku === btn.dataset.sku);
       if (row) openJoomModal(row);
+    });
+  });
+
+  tbody.querySelectorAll('.reg-move-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const row = state.rows.find(r => String(r.id) === String(btn.dataset.id));
+      if (!row) return;
+      row.purpose = 'price_edit';
+      await Storage.updateProduct(row);
+      renderRegisterTab();
+      renderTableBody();
     });
   });
 }

@@ -789,8 +789,9 @@
             <th style="width:110px;">Joom 상태</th>
             <th style="width:180px;">Joom Product ID</th>
             <th style="width:150px;">등록일</th>
-            <th style="width:100px;">Staronemall</th>
+            <th style="width:140px;">Staronemall</th>
             <th>액션</th>
+            <th style="width:72px;"></th>
           </tr>
         </thead>
         <tbody id="joom-reg-tbody"></tbody>
@@ -2763,14 +2764,13 @@ document.getElementById('add-row-register').addEventListener('click', async () =
   if (!newId) { alert('행 추가 실패'); return; }
   newProduct.id = newId;
   state.rows.push(newProduct);
-  switchMainTab('price');
-  renderTableBody();
+  renderRegisterTab();
   setTimeout(() => {
-    const tr = document.querySelector(`tr[data-id="${newProduct.id}"]`);
+    const tr = document.querySelector(`#joom-reg-tbody tr[data-id="${newProduct.id}"]`);
     if (tr) {
       tr.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      const skuCell = tr.querySelector('td[data-field="sku"]');
-      if (skuCell) startEdit(skuCell);
+      const urlCell = tr.querySelector('td.reg-url-cell');
+      if (urlCell) startEditRegisterUrl(urlCell);
     }
   }, 100);
 });
@@ -3222,17 +3222,17 @@ function renderRegisterTab() {
     const publishedAt = row.joomPublishedAt
       ? new Date(row.joomPublishedAt).toLocaleDateString('ko-KR', {year:'2-digit',month:'2-digit',day:'2-digit'})
       : '—';
-    const pno = row.staronemallUrl ? (row.staronemallUrl.match(/[?&]pno=([^&]+)/)?.[1]?.slice(0,8) + '…' || 'link') : '—';
-    const staronemallCell = row.staronemallUrl
-      ? `<a href="${esc(row.staronemallUrl)}" target="_blank" style="color:var(--text-dim);font-size:10px;text-decoration:none;" title="${esc(row.staronemallUrl)}">${esc(pno)}</a>`
-      : `<span style="color:var(--text-faint);font-size:10px;">—</span>`;
+    const pno = row.staronemallUrl ? (row.staronemallUrl.match(/[?&]pno=([^&]+)/)?.[1]?.slice(0,8) + '…' || 'link') : '';
+    const staronemallInner = row.staronemallUrl
+      ? `<a href="${esc(row.staronemallUrl)}" target="_blank" style="color:var(--text-dim);font-size:10px;text-decoration:none;margin-right:4px;" title="${esc(row.staronemallUrl)}">${esc(pno)}</a><button class="reg-url-refresh-btn" data-id="${esc(row.id)}" title="재크롤링" style="background:none;border:none;cursor:pointer;font-size:11px;padding:0 2px;vertical-align:middle;">🔄</button>`
+      : `<span class="reg-url-add" style="color:var(--c-jm);cursor:pointer;font-size:11px;">+ URL 추가</span>`;
     return `<tr class="row" data-id="${esc(row.id)}">
       <td class="sku">${esc(row.sku)}</td>
       <td class="option">${esc(row.option)}</td>
       <td>${statusBadge}</td>
       <td class="itemid" style="max-width:180px;">${hasJoom ? esc(row.joomProductId) : '—'}</td>
       <td style="font-size:10px;color:var(--text-dim);">${publishedAt}</td>
-      <td>${staronemallCell}</td>
+      <td class="reg-url-cell" data-id="${esc(row.id)}" title="더블클릭하여 URL 편집">${staronemallInner}</td>
       <td style="text-align:center;">
         <button class="row-action-btn joom-reg-open" data-sku="${esc(row.sku)}" title="Joom 등록 모달 열기"
           style="font-size:11px;padding:4px 10px;border:1px solid var(--border-strong);border-radius:3px;color:var(--c-jm);">
@@ -3264,6 +3264,59 @@ function renderRegisterTab() {
       renderRegisterTab();
       renderTableBody();
     });
+  });
+
+  tbody.querySelectorAll('td.reg-url-cell').forEach(td => {
+    td.querySelector('.reg-url-add')?.addEventListener('click', () => startEditRegisterUrl(td));
+    td.addEventListener('dblclick', e => {
+      if (!e.target.closest('a') && !e.target.closest('.reg-url-refresh-btn')) startEditRegisterUrl(td);
+    });
+    td.querySelector('.reg-url-refresh-btn')?.addEventListener('click', async e => {
+      e.stopPropagation();
+      const row = state.rows.find(r => String(r.id) === String(td.dataset.id));
+      if (!row) return;
+      const r = await refreshRowFromStaronemall(row);
+      if (r.ok) {
+        await Storage.updateProduct(row);
+        renderRegisterTab();
+        renderTableBody();
+      } else {
+        alert('재크롤링 실패: ' + r.error);
+      }
+    });
+  });
+}
+
+function startEditRegisterUrl(td) {
+  if (td.querySelector('input')) return;
+  const row = state.rows.find(r => String(r.id) === String(td.dataset.id));
+  if (!row) return;
+  const current = row.staronemallUrl || '';
+  td.innerHTML = '<input type="text" value="' + current.replace(/"/g, '&quot;') + '" placeholder="https://www.staronemall.com/shop/detail.php?pno=..." style="width:100%;font-size:11px;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:4px 6px;border-radius:4px;">';
+  const input = td.querySelector('input');
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = async () => {
+    if (done) return;
+    done = true;
+    const val = input.value.trim();
+    if (val !== current) {
+      row.staronemallUrl = val;
+      markProductDirty(row);
+      if (val && val.indexOf('staronemall.com') !== -1) {
+        await refreshRowFromStaronemall(row);
+      }
+      await Storage.updateProduct(row);
+    }
+    renderRegisterTab();
+    renderTableBody();
+  };
+  const cancel = () => { if (done) return; done = true; renderRegisterTab(); };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { e.preventDefault(); cancel(); }
   });
 }
 

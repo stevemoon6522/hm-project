@@ -1879,12 +1879,11 @@ let _shopeeTokens = null;  // 캐시
 let _shopeeCurrentRow = null;
 
 function renderShopeeCell(row) {
-  // row.shopeeListings = { SG: { global_item_id, status }, TW: {...}, TH: {...} } (Phase: 미구현)
   const listings = row.shopeeListings || {};
   const badges = SHOPEE_REGIONS.map(r => {
     const reg = listings[r];
-    const color = reg?.global_item_id ? '#15803d' : '#b8b8c4';
-    return `<span title="${r}${reg?.global_item_id ? ' #' + reg.global_item_id : ' (미등록)'}"
+    const color = reg?.shop_item_id ? '#15803d' : '#b8b8c4';
+    return `<span title="${r}${reg?.shop_item_id ? ' #' + reg.shop_item_id : ' (미등록)'}"
       style="display:inline-block;padding:1px 5px;background:${color}20;color:${color};border:1px solid ${color}50;border-radius:2px;font-size:9px;letter-spacing:0.05em;font-family:monospace;">${r}</span>`;
   }).join(' ');
   return [
@@ -2496,7 +2495,7 @@ async function refreshAllStaronemallRows() {
   let okCount = 0, failCount = 0;
   for (const row of targets) {
     const r = await refreshRowFromStaronemall(row);
-    if (r.ok) okCount++; else failCount++;
+    if (r.ok) { await Storage.updateProduct(row.id, row); okCount++; } else failCount++;
     await new Promise(res => setTimeout(res, 300));
   }
   if (btn) { btn.disabled = false; btn.textContent = '🔄 전체 재크롤링'; }

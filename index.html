@@ -2458,9 +2458,9 @@ function renderTableBody() {
         <td class="numeric editable" data-field="cost">${fmtKRW(row.cost)}</td>
         <td class="numeric editable" data-field="weight">${row.weight ? row.weight.toLocaleString() : '—'}</td>
         ${cells}
-        <td style="text-align:center;">${(row.sku && row.sku.trim())
-          ? `<button class="joom-price-sync" data-id="${row.id}" title="Joom 가격 업데이트 (SKU: ${row.sku})" style="font-size:10px;padding:2px 7px;border:1px solid var(--c-jm);border-radius:3px;background:none;color:var(--c-jm);cursor:pointer;">↑</button>`
-          : `<span style="color:var(--text-faint);font-size:10px);">—</span>`}</td>
+        <td style="text-align:center;">${(row.joomProductId && row.sku && row.sku.trim())
+          ? `<button class="joom-price-sync" data-id="${row.id}" title="Joom 가격 업데이트\nProduct ID: ${row.joomProductId}\nSKU: ${row.sku}" style="font-size:10px;padding:2px 7px;border:1px solid var(--c-jm);border-radius:3px;background:none;color:var(--c-jm);cursor:pointer;">↑</button>`
+          : `<span style="color:var(--text-faint);font-size:10px;" title="${row.joomProductId ? 'SKU 없음' : 'Joom 미등록'}">—</span>`}</td>
         <td class="shopee-cell">${renderShopeeCell(row)}</td>
         <td class="actions-col">
           <button class="row-action-btn price-move-btn" data-action="move-to-register" title="상품 등록 탭으로 이동" style="font-size:10px;margin-right:4px;">→ 등록</button>
@@ -2527,7 +2527,7 @@ function renderTableBody() {
         const headers = await _joomAuthHeaders();
         const r = await fetch(JOOM_BRIDGE + '/update-price', {
           method: 'POST', headers,
-          body: JSON.stringify({ sku: row.sku, price: priceUsd }),
+          body: JSON.stringify({ productId: row.joomProductId, sku: row.sku, price: priceUsd }),
         });
         const j = await r.json();
         if (j.ok) {

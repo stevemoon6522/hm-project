@@ -1351,7 +1351,13 @@ async function flushSaveQueue() {
   for (const code of countryUpdates) {
     promises.push(Storage.updateCountry(code, state.countries[code]));
   }
-  await Promise.all(promises);
+  const results = await Promise.allSettled(promises);
+  const failed = results.filter(r => r.status === 'rejected');
+  if (failed.length) {
+    console.error('[autoSave] failed:', failed.map(f => f.reason));
+    const el = document.getElementById('save-status');
+    if (el) { el.textContent = `⚠️ 저장 실패 ${failed.length}건`; el.style.color = '#d62754'; setTimeout(() => { el.textContent = ''; }, 5000); }
+  }
 }
 
 // 변경 추적용 헬퍼
@@ -1851,7 +1857,8 @@ function renderShopeeCell(row) {
 
 async function _shopeeFetchTokens() {
   try {
-    const r = await fetch(SHOPEE_BRIDGE + '/tokens');
+    const headers = await _joomAuthHeaders();
+    const r = await fetch(SHOPEE_BRIDGE + '/tokens', { headers });
     const j = await r.json();
     if (j.ok) _shopeeTokens = j.tokens;
     return _shopeeTokens || [];
@@ -2480,7 +2487,7 @@ function renderTableBody() {
       const row = state.rows.find(r => String(r.id) === String(id));
       if (!row) return;
       row.purpose = 'registration';
-      await Storage.updateProduct(row);
+      await Storage.updateProduct(row.id, row);
       renderTableBody();
     });
   });
@@ -3276,7 +3283,7 @@ function renderRegisterTab() {
       const row = state.rows.find(r => String(r.id) === String(btn.dataset.id));
       if (!row) return;
       row.purpose = 'price_edit';
-      await Storage.updateProduct(row);
+      await Storage.updateProduct(row.id, row);
       renderRegisterTab();
       renderTableBody();
     });
@@ -3293,7 +3300,7 @@ function renderRegisterTab() {
       if (!row) return;
       const r = await refreshRowFromStaronemall(row);
       if (r.ok) {
-        await Storage.updateProduct(row);
+        await Storage.updateProduct(row.id, row);
         renderRegisterTab();
         renderTableBody();
       } else {
@@ -3323,7 +3330,7 @@ function startEditRegisterUrl(td) {
       if (val && val.indexOf('staronemall.com') !== -1) {
         await refreshRowFromStaronemall(row);
       }
-      await Storage.updateProduct(row);
+      await Storage.updateProduct(row.id, row);
     }
     renderRegisterTab();
     renderTableBody();

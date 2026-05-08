@@ -716,6 +716,40 @@ serve(async (req)=>{
       const r = await fetchTracking(sid, sn, pk);
       return j(r, r.ok ? 200 : 502);
     }
+    if(p==="/debug-order" && req.method==="GET"){
+      const sid=u.searchParams.get("shop_id")||"";
+      const sn=u.searchParams.get("order_sn")||"";
+      if(!sid||!sn) return j({ ok:false, error:"shop_id and order_sn required" }, 400);
+      const ext = `shopee:${sid}:${sn}`;
+      const { data: dbOrder } = await supa.from("marketplace_orders")
+        .select("id, external_id, status, received_at, tracking_number, raw_payload")
+        .eq("marketplace","shopee").eq("external_id", ext).maybeSingle();
+      const { data: dbItems } = dbOrder
+        ? await supa.from("marketplace_order_items")
+            .select("sku, variant_sku, product_name, variant_name, qty, unit_price")
+            .eq("order_id", dbOrder.id)
+        : { data: [] as any[] };
+
+      const { data: shop, error: se } = await supa.from("shopee_shops").select("*").eq("shop_id", sid).single();
+      if (se || !shop) return j({ ok:true, external_id: ext, db_order: dbOrder || null, db_items: dbItems || [], live: { ok:false, error:"shop not found" } });
+      const at = await freshToken(shop);
+      const host = hostFor(shop.region);
+      const live = await orderDetail(host, at, shop.shop_id, sn);
+      const liveOrder = live?.response?.order_list?.[0] || null;
+      const liveStatus = liveOrder?.order_status || null;
+      return j({
+        ok: true,
+        external_id: ext,
+        db_order: dbOrder || null,
+        db_items: dbItems || [],
+        live: {
+          ok: !live?.error,
+          error: live?.error || null,
+          status: liveStatus,
+          mapped: liveStatus ? mapStatus(liveStatus) : null,
+        }
+      });
+    }
     if(p==="/shops" && req.method==="GET"){
       const { data, error }=await supa.from("shopee_shops").select("shop_id, region, shop_name, status, expires_at, last_polled_at, authorized_at, merchant_id").order("region",{ ascending:true }).order("authorized_at",{ ascending:false });
       if(error) return j({ error:error.message }, 500);

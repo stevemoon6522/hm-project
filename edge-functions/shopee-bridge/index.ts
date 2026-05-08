@@ -1,4 +1,5 @@
-// Shopee Bridge — v20: added /proxy_image, POST /upload_image (base64), /add_item for product registration.
+// Shopee Bridge — v23: merchantApiCall uses getValidToken instead of always refreshing (prevents race condition on token rotation).
+// v20: added /proxy_image, POST /upload_image (base64), /add_item for product registration.
 // v19: /list_items expands has_model items via get_model_list, returning per-model rows.
 // Also: /update_price accepts model_id in price_list, /update_stock supports model-level stock.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
@@ -88,14 +89,14 @@ async function shopApiCall(region: string, path: string, opts: any = {}) {
 
 async function merchantApiCall(region: string, path: string, opts: any = {}) {
   const app = await getApp();
-  const t = await refreshMerchantToken(region);
+  const t = await getValidToken(region, 'merchant');
   const ts = Math.floor(Date.now() / 1000);
   const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}${t.access_token}${t.merchant_id}`);
   const baseQuery: Record<string, string> = { partner_id: String(app.partner_id), timestamp: String(ts), access_token: t.access_token, merchant_id: String(t.merchant_id), sign };
   if (opts.query) for (const [k, v] of Object.entries(opts.query)) baseQuery[k] = String(v);
   const url = `https://${host(app.is_sandbox)}${path}?${new URLSearchParams(baseQuery)}`;
   const r = await fetch(url, { method: opts.method || 'GET', headers: opts.body ? { 'Content-Type': 'application/json' } : {}, body: opts.body ? JSON.stringify(opts.body) : undefined });
-  return { http_status: r.status, ...(await r.json()), _refresh_response: t.raw };
+  return { http_status: r.status, ...(await r.json()) };
 }
 
 // /list_items — paginated get_item_list + batch get_item_base_info + per-item get_model_list (when has_model=true).
@@ -217,7 +218,7 @@ Deno.serve(async (req) => {
   try {
     if (action === 'health') {
       const app = await getApp();
-      return jsonResp({ ok: true, service: 'shopee-bridge', version: 21, env: { partner_id: app.partner_id, is_sandbox: app.is_sandbox, has_env_partner_id: !!ENV_PARTNER_ID, has_env_partner_key: !!ENV_PARTNER_KEY } });
+      return jsonResp({ ok: true, service: 'shopee-bridge', version: 23, env: { partner_id: app.partner_id, is_sandbox: app.is_sandbox, has_env_partner_id: !!ENV_PARTNER_ID, has_env_partner_key: !!ENV_PARTNER_KEY } });
     }
     if (action === 'tokens') {
       const { data } = await supabase.from('shopee_tokens').select('region, shop_id, merchant_id, expires_at, is_sandbox');

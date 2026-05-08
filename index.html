@@ -749,7 +749,7 @@
       <button class="btn" id="refresh-all-staronemall" title="Staronemall URL이 있는 모든 행 재크롤링">🔄 전체 재크롤링</button>
       <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
       <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
-      <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품을 키워드로 검색해 가격 일괄 수정">🌐 Global 가격 수정</button>
+      <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품 검색 후 상품 마스터에 추가">🔍 상품 검색</button>
       <button class="btn" id="export-csv">CSV 내보내기</button>
       <button class="btn" id="import-csv">CSV 가져오기</button>
       <input type="file" id="csv-file" accept=".csv" style="display:none;">
@@ -1107,12 +1107,12 @@
   </div>
 </div>
 
-<!-- Global 가격 수정 모달 -->
+<!-- 상품 검색 모달 -->
 <div class="modal-overlay" id="keyword-price-modal">
-  <div class="modal" style="max-width:1020px;">
-    <h3>🌐 Global 가격 수정</h3>
+  <div class="modal" style="max-width:900px;">
+    <h3>🔍 상품 검색</h3>
     <p style="color:#5a5a66;font-size:11px;margin-bottom:14px;line-height:1.5;">
-      Shopee Global SKU 상품을 불러온 뒤 키워드로 필터링합니다. Multi-model 상품은 ▶ 버튼으로 펼쳐 각 모델을 개별 선택할 수 있습니다. 가격은 Global 단위로 적용됩니다 (한 번에 모든 region 적용).
+      Shopee Global SKU 상품을 키워드로 검색합니다. 선택 후 확인을 누르면 상품 마스터에 추가됩니다 (SKU + 상품명). Multi-model 상품은 ▶로 펼쳐 확인할 수 있습니다 (아이템 단위로 1행 삽입).
     </p>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
       <div>
@@ -1123,13 +1123,13 @@
     </div>
     <div id="gkp-status" style="font-size:11px;color:#5a5a66;min-height:16px;margin-bottom:8px;"></div>
     <div id="gkp-results-wrap" style="display:none;">
-      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
         <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;">
           <input type="checkbox" id="gkp-select-all"> 전체선택 (<span id="gkp-total-count">0</span>건)
         </label>
-        <button class="btn primary" id="gkp-apply" disabled style="margin-left:auto;">적용 (<span id="gkp-checked-count">0</span>건)</button>
+        <span style="margin-left:auto;font-size:11px;color:#5a5a66;"><span id="gkp-checked-count">0</span>건 선택됨</span>
       </div>
-      <div style="max-height:400px;overflow-y:auto;border:1px solid #d8d8e0;border-radius:4px;">
+      <div style="max-height:420px;overflow-y:auto;border:1px solid #d8d8e0;border-radius:4px;">
         <table style="width:100%;border-collapse:collapse;font-size:11px;">
           <thead>
             <tr style="background:#f3f3f8;position:sticky;top:0;z-index:1;">
@@ -1137,8 +1137,6 @@
               <th style="padding:6px 8px;text-align:center;width:30px;border-bottom:1px solid #d8d8e0;"></th>
               <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">상품명</th>
               <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">SKU</th>
-              <th style="padding:6px 8px;text-align:right;border-bottom:1px solid #d8d8e0;">현재가 (SGD)</th>
-              <th style="padding:6px 8px;text-align:center;border-bottom:1px solid #d8d8e0;">새 가격</th>
               <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">Global ID</th>
             </tr>
           </thead>
@@ -1146,9 +1144,10 @@
         </table>
       </div>
     </div>
-    <div id="gkp-apply-log" style="display:none;max-height:160px;overflow-y:auto;font-family:monospace;font-size:11px;background:#fafafc;border:1px solid #d8d8e0;border-radius:3px;padding:8px;margin-top:10px;white-space:pre;"></div>
-    <div style="text-align:right;margin-top:14px;">
+    <div id="gkp-import-log" style="display:none;max-height:120px;overflow-y:auto;font-family:monospace;font-size:11px;background:#fafafc;border:1px solid #d8d8e0;border-radius:3px;padding:8px;margin-top:10px;white-space:pre;"></div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
       <button class="btn" id="gkp-cancel">닫기</button>
+      <button class="btn primary" id="gkp-apply" disabled>확인 (<span id="gkp-apply-count">0</span>건 추가)</button>
     </div>
   </div>
 </div>
@@ -4212,33 +4211,42 @@ function _gkpBuildRows(filteredItems) {
 function _gkpRenderResults() {
   const tbody = document.getElementById('gkp-results-body');
   const rows = _gkpRows;
-  const selectableCount = rows.filter(r => r.rowType !== 'model_header').length;
+  // Selectable = item rows + model_header rows (one DB row per item regardless of model count)
+  const selectableCount = rows.filter(r => r.rowType !== 'model').length;
   document.getElementById('gkp-total-count').textContent = selectableCount;
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="padding:16px;text-align:center;color:#888;">검색 결과 없음</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="5" style="padding:16px;text-align:center;color:#888;">검색 결과 없음</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((row, i) => {
     if (row.rowType === 'model_header') {
       const expanded = _gkpExpanded.has(row.global_item_id);
-      return `<tr data-idx="${i}" data-gid="${row.global_item_id}" class="gkp-header-row" style="background:#f3f3f8;border-bottom:1px solid #d8d8e0;">
-        <td style="padding:5px 8px;text-align:center;"></td>
+      return `<tr data-idx="${i}" style="background:#f7f7fb;border-bottom:1px solid #d8d8e0;">
+        <td style="padding:5px 8px;text-align:center;"><input type="checkbox" class="gkp-row-chk" data-idx="${i}"></td>
         <td style="padding:5px 8px;text-align:center;">
           <button class="gkp-expand-btn" data-gid="${row.global_item_id}" style="background:none;border:none;cursor:pointer;font-size:12px;padding:2px 4px;">${expanded ? '▼' : '▶'}</button>
         </td>
-        <td colspan="4" style="padding:5px 8px;font-weight:600;" title="${esc(row.item_name)}">${esc(row.item_name)} <span style="font-size:10px;color:#888;font-weight:400;">(${row.modelCount}개 모델)</span></td>
+        <td style="padding:5px 8px;font-weight:600;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(row.item_name)}">${esc(row.item_name)} <span style="font-size:10px;color:#888;font-weight:400;">(${row.modelCount}개 모델)</span></td>
+        <td style="padding:5px 8px;font-family:monospace;font-size:10px;">${esc(row.item_sku)}</td>
         <td style="padding:5px 8px;font-family:monospace;font-size:10px;color:#888;">${row.global_item_id}</td>
       </tr>`;
     }
-    const indent = row.rowType === 'model' ? 'padding-left:24px;' : '';
-    const priceVal = row.price !== '' ? Number(row.price).toFixed(2) : '';
-    return `<tr data-idx="${i}" style="border-bottom:1px solid #ebebf0;${row.rowType==='model'?'background:#fcfcff;':''}">
+    if (row.rowType === 'model') {
+      // Reference only — not selectable
+      return `<tr data-idx="${i}" style="background:#fafafe;border-bottom:1px solid #ebebf0;">
+        <td></td>
+        <td></td>
+        <td style="padding:4px 8px 4px 28px;font-size:10px;color:#666;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(row.item_name)}">└ ${esc(row.item_name)}</td>
+        <td style="padding:4px 8px;font-family:monospace;font-size:10px;color:#888;">${esc(row.item_sku)}</td>
+        <td></td>
+      </tr>`;
+    }
+    // item row
+    return `<tr data-idx="${i}" style="border-bottom:1px solid #ebebf0;">
       <td style="padding:5px 8px;text-align:center;"><input type="checkbox" class="gkp-row-chk" data-idx="${i}"></td>
       <td></td>
-      <td style="padding:5px 8px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${indent}" title="${esc(row.item_name)}">${esc(row.item_name)}</td>
+      <td style="padding:5px 8px;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(row.item_name)}">${esc(row.item_name)}</td>
       <td style="padding:5px 8px;font-family:monospace;font-size:10px;">${esc(row.item_sku)}</td>
-      <td style="padding:5px 8px;text-align:right;font-family:monospace;">${priceVal || '-'}</td>
-      <td style="padding:5px 8px;text-align:center;"><input type="number" class="gkp-price-input" data-idx="${i}" min="0" step="0.01" value="${priceVal}" placeholder="새 가격" style="width:90px;padding:3px 6px;border:1px solid #d0d0dd;border-radius:3px;font-size:11px;"></td>
       <td style="padding:5px 8px;font-family:monospace;font-size:10px;color:#888;">${row.global_item_id}</td>
     </tr>`;
   }).join('');
@@ -4247,8 +4255,8 @@ function _gkpRenderResults() {
 
 function _gkpUpdateCheckedCount() {
   const checked = document.querySelectorAll('.gkp-row-chk:checked').length;
-  const countEl = document.getElementById('gkp-checked-count');
-  if (countEl) countEl.textContent = checked;
+  document.getElementById('gkp-checked-count').textContent = checked;
+  document.getElementById('gkp-apply-count').textContent = checked;
   const applyBtn = document.getElementById('gkp-apply');
   if (applyBtn) applyBtn.disabled = checked === 0;
 }
@@ -4257,62 +4265,30 @@ async function _gkpApply() {
   const checked = Array.from(document.querySelectorAll('.gkp-row-chk:checked'));
   if (!checked.length) return;
 
-  // Validate: every checked row must have a price entered
-  for (const chk of checked) {
-    const idx = Number(chk.dataset.idx);
-    const priceInput = document.querySelector(`.gkp-price-input[data-idx="${idx}"]`);
-    const v = parseFloat(priceInput?.value);
-    if (!v || v <= 0) {
-      alert('선택한 모든 항목에 새 가격을 입력해주세요.');
-      priceInput?.focus();
-      return;
-    }
-  }
+  const toInsert = checked.map(chk => {
+    const row = _gkpRows[Number(chk.dataset.idx)];
+    if (!row) return null;
+    return { sku: row.item_sku || null, product_name: row.item_name || null };
+  }).filter(r => r && r.sku);
 
-  const logEl = document.getElementById('gkp-apply-log');
+  if (!toInsert.length) { alert('SKU가 있는 상품을 선택해주세요.'); return; }
+
+  const logEl = document.getElementById('gkp-import-log');
   logEl.style.display = 'block';
-  logEl.textContent = '';
+  logEl.textContent = '저장 중…';
   document.getElementById('gkp-apply').disabled = true;
 
-  // Group checked rows by global_item_id to batch into one API call per item
-  const byItem = new Map(); // global_item_id → [{ global_model_id, original_price }]
-  for (const chk of checked) {
-    const idx = Number(chk.dataset.idx);
-    const row = _gkpRows[idx];
-    if (!row) continue;
-    const priceInput = document.querySelector(`.gkp-price-input[data-idx="${idx}"]`);
-    const newPrice = parseFloat(priceInput?.value);
-    if (!byItem.has(row.global_item_id)) byItem.set(row.global_item_id, []);
-    const entry = { original_price: newPrice };
-    if (row.global_model_id != null) entry.global_model_id = row.global_model_id;
-    byItem.get(row.global_item_id).push(entry);
+  const { data, error } = await db.from('products').upsert(toInsert, { onConflict: 'sku', ignoreDuplicates: true });
+  if (error) {
+    logEl.textContent = `❌ 오류: ${error.message}`;
+    document.getElementById('gkp-apply').disabled = false;
+    return;
   }
-
-  const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
-  let ok = 0, fail = 0;
-  for (const [globalItemId, priceList] of byItem) {
-    const label = _gkpRows.find(r => r.global_item_id === globalItemId)?.item_name || String(globalItemId);
-    try {
-      const res = await fetch(`${SHOPEE_BRIDGE}/update_global_price`, {
-        method: 'POST',
-        headers: { ...{ 'Content-Type': 'application/json' }, ..._bh },
-        body: JSON.stringify({ region: 'SG', global_item_id: globalItemId, global_price_list: priceList }),
-      }).then(x => x.json());
-      if (res.ok) {
-        logEl.textContent += `✅ ${label} (${priceList.length}개) 적용\n`;
-        ok++;
-      } else {
-        logEl.textContent += `❌ ${label}: ${res.error || JSON.stringify(res)}\n`;
-        fail++;
-      }
-    } catch (e) {
-      logEl.textContent += `❌ ${label}: ${e.message}\n`;
-      fail++;
-    }
-    logEl.scrollTop = logEl.scrollHeight;
-  }
-  logEl.textContent += `\n완료: 성공 ${ok}건, 실패 ${fail}건`;
-  document.getElementById('gkp-apply').disabled = false;
+  logEl.textContent = `✅ ${toInsert.length}건 추가 완료 (이미 존재하는 SKU는 건너뜀). 상품 마스터 새로고침 중…`;
+  setTimeout(async () => {
+    document.getElementById('keyword-price-modal').classList.remove('show');
+    await initStorage();
+  }, 1000);
 }
 
 (function bindGlobalPriceModal() {
@@ -4332,7 +4308,8 @@ async function _gkpApply() {
       _gkpEnrichedFiltered = [];
       _gkpExpanded.clear();
       document.getElementById('gkp-results-wrap').style.display = 'none';
-      document.getElementById('gkp-apply-log').style.display = 'none';
+      document.getElementById('gkp-import-log').style.display = 'none';
+      document.getElementById('gkp-import-log').textContent = '';
       document.getElementById('gkp-status').textContent = '';
       document.getElementById('gkp-results-body').innerHTML = '';
       document.getElementById('gkp-keyword').value = '';
@@ -4344,8 +4321,8 @@ async function _gkpApply() {
     searchBtn.addEventListener('click', async () => {
       searchBtn.disabled = true;
       document.getElementById('gkp-results-wrap').style.display = 'none';
-      document.getElementById('gkp-apply-log').style.display = 'none';
-      document.getElementById('gkp-apply-log').textContent = '';
+      document.getElementById('gkp-import-log').style.display = 'none';
+      document.getElementById('gkp-import-log').textContent = '';
       const statusEl = document.getElementById('gkp-status');
       try {
         const allGlobal = await _gkpFetchAllGlobalItems(statusEl);

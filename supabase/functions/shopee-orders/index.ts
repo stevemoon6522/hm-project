@@ -21,7 +21,14 @@ const supa = createClient(SUPA_URL, SUPA_KEY, { auth:{ persistSession:false } })
 
 const LABEL_ELIGIBLE = new Set(["READY_TO_SHIP","PROCESSED","RETRY_SHIP"]);
 const SHIPPED_DONE = new Set(["SHIPPED","COMPLETED","TO_CONFIRM_RECEIVE"]);
-const EXCLUDED = new Set(["UNPAID","IN_CANCEL","INVOICE_PENDING"]);
+const EXCLUDED = new Set([
+  "UNPAID",
+  "IN_CANCEL",
+  "INVOICE_PENDING",
+  "PENDING",
+  "PENDING_PAYMENT",
+  "TO_PAY",
+]);
 const CANCELLED_S = new Set(["CANCELLED"]);
 const SHIP_DONE = new Set(["SHIPPED","PROCESSED","COMPLETED","TO_CONFIRM_RECEIVE","IN_CANCEL"]);
 

@@ -1,4 +1,4 @@
-// Shopee Bridge — v24: refreshMerchantToken uses merchant_id_list (array) per CBSC spec; full response exposed in error.
+// Shopee Bridge — v25: merchantApiCall uses shop access_token with merchant_id in signature (avoids merchant-only refresh).
 // v20: added /proxy_image, POST /upload_image (base64), /add_item for product registration.
 // v19: /list_items expands has_model items via get_model_list, returning per-model rows.
 // Also: /update_price accepts model_id in price_list, /update_stock supports model-level stock.
@@ -89,7 +89,10 @@ async function shopApiCall(region: string, path: string, opts: any = {}) {
 
 async function merchantApiCall(region: string, path: string, opts: any = {}) {
   const app = await getApp();
-  const t = await getValidToken(region, 'merchant');
+  // Use shop token (auto-refreshes via shop flow) + merchant_id in signature for CBSC global product APIs.
+  // Avoids a separate merchant token refresh which fails when only shop-level refresh_token is stored.
+  const t = await getValidToken(region, 'shop');
+  if (!t.merchant_id) throw new Error(`merchant_id missing for region ${region}`);
   const ts = Math.floor(Date.now() / 1000);
   const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}${t.access_token}${t.merchant_id}`);
   const baseQuery: Record<string, string> = { partner_id: String(app.partner_id), timestamp: String(ts), access_token: t.access_token, merchant_id: String(t.merchant_id), sign };
@@ -218,7 +221,7 @@ Deno.serve(async (req) => {
   try {
     if (action === 'health') {
       const app = await getApp();
-      return jsonResp({ ok: true, service: 'shopee-bridge', version: 24, env: { partner_id: app.partner_id, is_sandbox: app.is_sandbox, has_env_partner_id: !!ENV_PARTNER_ID, has_env_partner_key: !!ENV_PARTNER_KEY } });
+      return jsonResp({ ok: true, service: 'shopee-bridge', version: 25, env: { partner_id: app.partner_id, is_sandbox: app.is_sandbox, has_env_partner_id: !!ENV_PARTNER_ID, has_env_partner_key: !!ENV_PARTNER_KEY } });
     }
     if (action === 'tokens') {
       const { data } = await supabase.from('shopee_tokens').select('region, shop_id, merchant_id, expires_at, is_sandbox');

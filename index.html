@@ -4169,8 +4169,8 @@ async function _gkpEnrichItems(items, statusEl) {
         } else {
           const mres = await fetch(`${SHOPEE_BRIDGE}/global_model_list?region=SG&global_item_id=${item.global_item_id}`, { headers: _bh })
             .then(x => x.json()).catch(() => null);
-          // Bridge response: { ok, result: { response: { model: [...] } } }
-          const models = (mres && mres.ok) ? (mres.result?.response?.model || []) : [];
+          // Bridge response: { ok, result: { response: { global_model: [...] } } }
+          const models = (mres && mres.ok) ? (mres.result?.response?.global_model || []) : [];
           enriched.push({ type: 'model_header', global_item_id: item.global_item_id, item_name: it.item_name || item.item_name || '', item_sku: it.item_sku || item.item_sku || '', price: '', models });
         }
       } catch (_) {
@@ -4190,7 +4190,7 @@ function _gkpFilter(enrichedItems, keyword) {
   return enrichedItems.filter(it =>
     it.item_name.toLowerCase().includes(kw) ||
     it.item_sku.toLowerCase().includes(kw) ||
-    (it.models && it.models.some(m => (m.model_sku || '').toLowerCase().includes(kw) || (m.model_name || '').toLowerCase().includes(kw)))
+    (it.models && it.models.some(m => (m.global_model_sku || '').toLowerCase().includes(kw)))
   );
 }
 
@@ -4204,8 +4204,9 @@ function _gkpBuildRows(filteredItems) {
       rows.push({ rowType: 'model_header', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, modelCount: it.models.length });
       if (_gkpExpanded.has(it.global_item_id)) {
         for (const m of it.models) {
-          const priceInfo = m.price_info?.[0] || {};
-          rows.push({ rowType: 'model', global_item_id: it.global_item_id, item_name: it.item_name + (m.model_name ? ` · ${m.model_name}` : ''), item_sku: m.model_sku || '', price: priceInfo.original_price ?? '', global_model_id: m.global_model_id });
+          const priceInfo = m.price_info || {};
+          const modelLabel = m.tier_index ? m.tier_index.join('-') : '';
+          rows.push({ rowType: 'model', global_item_id: it.global_item_id, item_name: it.item_name + (modelLabel ? ` · ${modelLabel}` : ''), item_sku: m.global_model_sku || '', price: priceInfo.original_price ?? '', global_model_id: m.global_model_id });
         }
       }
     }

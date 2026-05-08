@@ -4127,14 +4127,19 @@ async function _gkpFetchAllGlobalItems(statusEl) {
   while (hasMore) {
     statusEl.textContent = `Global 상품 목록 로딩 중… (${allItems.length}건)`;
     const res = await fetch(`${SHOPEE_BRIDGE}/global_items?region=SG&page_size=${pageSize}&offset=${offset}`, { headers: _bh })
-      .then(x => x.json()).catch(() => ({ ok: false }));
-    if (!res.ok) break;
-    // Bridge wraps Shopee response as: { ok, result: { response: { global_item_list, has_next_page } } }
-    const page = res.result?.response?.global_item_list || [];
+      .then(x => x.json()).catch(e => ({ ok: false, _fetchErr: e.message }));
+    if (!res.ok) {
+      const errDetail = res.result?.error || res.error || res._fetchErr || JSON.stringify(res).slice(0, 200);
+      throw new Error(`global_items 오류: ${errDetail}`);
+    }
+    // Bridge wraps Shopee response as: { ok, result: { response: { ... } } }
+    // Shopee may use 'item_list' or 'global_item_list' — try both
+    const respData = res.result?.response || {};
+    const page = respData.global_item_list || respData.item_list || [];
     if (!page.length) break;
     allItems = allItems.concat(page);
     offset += page.length;
-    hasMore = res.result?.response?.has_next_page ?? (page.length === pageSize);
+    hasMore = respData.has_next_page ?? (page.length === pageSize);
   }
   return allItems;
 }

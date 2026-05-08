@@ -2367,9 +2367,10 @@ async function _shopeeSyncFetchRegion(region, progressEl) {
   progressEl.innerHTML = `<span style="color:#b45309;">⏳ ${region}</span> · 조회 중...`;
   try {
     // Fetch NORMAL + UNLIST in parallel to catch all registered items regardless of status
+    const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
     const [rNormal, rUnlist] = await Promise.all([
-      fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&item_status=NORMAL&max_items=500').then(r => r.json()),
-      fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&item_status=UNLIST&max_items=500').then(r => r.json()),
+      fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&item_status=NORMAL&max_items=500', { headers: _bh }).then(r => r.json()),
+      fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&item_status=UNLIST&max_items=500', { headers: _bh }).then(r => r.json()),
     ]);
     const dur = ((Date.now() - t0) / 1000).toFixed(1);
     const items = [...(rNormal.ok ? rNormal.items || [] : []), ...(rUnlist.ok ? rUnlist.items || [] : [])];
@@ -4120,9 +4121,10 @@ async function _kpmFetchAll(regions) {
   const statusEl = document.getElementById('kpm-status');
   statusEl.textContent = '데이터 로딩 중…';
   const results = await Promise.all(regions.map(async r => {
+    const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
     const [rN, rU] = await Promise.all([
-      fetch(`${SHOPEE_BRIDGE}/list_items?region=${r}&item_status=NORMAL&max_items=500`).then(x => x.json()).catch(() => ({ ok: false })),
-      fetch(`${SHOPEE_BRIDGE}/list_items?region=${r}&item_status=UNLIST&max_items=500`).then(x => x.json()).catch(() => ({ ok: false })),
+      fetch(`${SHOPEE_BRIDGE}/list_items?region=${r}&item_status=NORMAL&max_items=500`, { headers: _bh }).then(x => x.json()).catch(() => ({ ok: false })),
+      fetch(`${SHOPEE_BRIDGE}/list_items?region=${r}&item_status=UNLIST&max_items=500`, { headers: _bh }).then(x => x.json()).catch(() => ({ ok: false })),
     ]);
     const items = [...(rN.ok ? rN.items || [] : []), ...(rU.ok ? rU.items || [] : [])];
     // deduplicate

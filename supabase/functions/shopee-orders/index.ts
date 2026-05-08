@@ -597,9 +597,11 @@ async function pollShop(shop:any, opts:{ days?: number, exact?: boolean }={}){
       if (_giftFromApi.length > 0) {
         const { data: _existZero } = await supa.from("marketplace_order_items").select("id").eq("order_id", ex.id).eq("unit_price", 0).limit(1);
         if (!_existZero || _existZero.length === 0) {
-          await supa.from("marketplace_order_items").insert(
-            _giftFromApi.map((it:any) => ({ ...mapOrderItemRow(ex.id, it), unit_price: 0 }))
-          ).catch(()=>{});
+          try {
+            await supa.from("marketplace_order_items").insert(
+              _giftFromApi.map((it:any) => ({ ...mapOrderItemRow(ex.id, it), unit_price: 0 }))
+            );
+          } catch (_) {}
         }
       }
       const prevStatus = (ex.raw_payload as any)?.order_status;

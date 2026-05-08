@@ -1027,6 +1027,81 @@
   </div>
 </div>
 
+<!-- Shopee 신규 상품 등록 모달 -->
+<div class="modal-overlay" id="shopee-reg-modal">
+  <div class="modal" style="max-width:580px;max-height:90vh;overflow-y:auto;">
+    <h3>Shopee 신규 상품 등록</h3>
+    <p style="color:#5a5a66;font-size:11px;margin-bottom:14px;line-height:1.5;">
+      StarOneMall 이미지에 STARPHOTOCARD 레이어를 합성하여 Shopee에 상품을 등록합니다 (UNLIST 상태로 생성).
+    </p>
+
+    <!-- Composited image preview -->
+    <div style="text-align:center;margin-bottom:16px;padding:12px;background:#fafafc;border:1px solid #d8d8e0;border-radius:4px;min-height:60px;">
+      <div id="srm-preview-msg" style="color:#5a5a66;font-size:11px;margin-bottom:8px;">이미지 로딩 중...</div>
+      <canvas id="srm-preview-canvas" width="200" height="200" style="display:none;border-radius:4px;border:1px solid #d8d8e0;"></canvas>
+    </div>
+
+    <div class="field">
+      <label>상품명 *</label>
+      <input type="text" id="srm-name" placeholder="[READY STOCK] ARTIST - Album Name">
+    </div>
+
+    <div class="field">
+      <label>카테고리</label>
+      <select id="srm-category" style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-size:13px;">
+        <option value="300740">CD, DVD &amp; Bluray (앨범)</option>
+        <option value="301390">Idol Collectibles (응원봉/포카/굿즈)</option>
+        <option value="300743">Photo Albums (포토북)</option>
+        <option value="301722">Stuffed Toys (인형/플러시)</option>
+        <option value="301385">Action Figurines (피규어)</option>
+        <option value="301396">Keychains (키링)</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>재고 (stock)</label>
+      <input type="number" id="srm-stock" value="0" min="0" style="width:120px;">
+    </div>
+
+    <div class="field">
+      <label>Region 별 가격 <span style="color:#5a5a66;font-size:10px;">(체크 + 가격 입력된 region만 등록)</span></label>
+      <div style="display:grid;grid-template-columns:auto 36px 1fr 36px;gap:5px 8px;align-items:center;margin-top:6px;">
+        <input type="checkbox" id="srm-chk-SG"><label for="srm-chk-SG" style="margin:0;font-size:12px;font-weight:600;color:var(--c-sg);">SG</label>
+        <input type="number" id="srm-price-SG" placeholder="0.00" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
+        <span style="font-size:10px;color:#5a5a66;">SGD</span>
+
+        <input type="checkbox" id="srm-chk-MY"><label for="srm-chk-MY" style="margin:0;font-size:12px;font-weight:600;color:var(--c-my);">MY</label>
+        <input type="number" id="srm-price-MY" placeholder="0.00" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
+        <span style="font-size:10px;color:#5a5a66;">MYR</span>
+
+        <input type="checkbox" id="srm-chk-TW"><label for="srm-chk-TW" style="margin:0;font-size:12px;font-weight:600;color:var(--c-tw);">TW</label>
+        <input type="number" id="srm-price-TW" placeholder="0.00" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
+        <span style="font-size:10px;color:#5a5a66;">TWD</span>
+
+        <input type="checkbox" id="srm-chk-TH"><label for="srm-chk-TH" style="margin:0;font-size:12px;font-weight:600;color:var(--c-th);">TH</label>
+        <input type="number" id="srm-price-TH" placeholder="0.00" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
+        <span style="font-size:10px;color:#5a5a66;">THB</span>
+
+        <input type="checkbox" id="srm-chk-PH"><label for="srm-chk-PH" style="margin:0;font-size:12px;font-weight:600;color:var(--c-ph);">PH</label>
+        <input type="number" id="srm-price-PH" placeholder="0.00" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
+        <span style="font-size:10px;color:#5a5a66;">PHP</span>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>설명 <span style="color:#5a5a66;font-size:10px;">(비워두면 기본 K-POP 문구 자동 생성)</span></label>
+      <textarea id="srm-desc" rows="3" placeholder="K-POP Official Merchandise..." style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:13px;resize:vertical;"></textarea>
+    </div>
+
+    <div id="srm-status" style="display:none;font-size:11px;margin:10px 0;padding:10px;background:#fafafc;border:1px solid #d8d8e0;border-radius:3px;line-height:1.8;white-space:pre-line;font-family:monospace;"></div>
+
+    <div class="modal-actions">
+      <button class="btn" id="srm-cancel">취소</button>
+      <button class="btn primary" id="srm-submit">📤 등록</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ════════════════════════════════════════════════════════════════════
    COUNTRY CONFIG — fees and exchange rates
@@ -3638,10 +3713,14 @@ function renderRegisterTab() {
       <td class="numeric editable reg-editable" data-field="weight" style="text-align:right;">${row.weight ? row.weight.toLocaleString() : '—'}</td>
       <td class="country-col" style="--country-color:var(--c-jm);">${fmt(jm.listing)}</td>
       <td class="sale-col">${fmt(jm.sales)}</td>
-      <td style="text-align:center;">
+      <td style="text-align:center;white-space:nowrap;">
         <button class="row-action-btn joom-reg-open" data-id="${esc(row.id)}" title="Joom 등록 모달 열기"
-          style="font-size:11px;padding:4px 10px;border:1px solid var(--border-strong);border-radius:3px;color:var(--c-jm);">
-          ${hasJoom ? '✏️ 수정' : '📤 등록'}
+          style="font-size:11px;padding:4px 8px;border:1px solid var(--border-strong);border-radius:3px;color:var(--c-jm);">
+          ${hasJoom ? '✏️ JM' : '📤 JM'}
+        </button>
+        <button class="row-action-btn shopee-reg-open" data-id="${esc(row.id)}" title="Shopee 신규 등록"
+          style="font-size:11px;padding:4px 8px;border:1px solid var(--border-strong);border-radius:3px;color:#ee4d2d;margin-left:4px;">
+          📦 SP
         </button>
       </td>
       <td style="text-align:center;">
@@ -3657,6 +3736,13 @@ function renderRegisterTab() {
     btn.addEventListener('click', () => {
       const row = state.rows.find(r => String(r.id) === String(btn.dataset.id));
       if (row) openJoomModal(row);
+    });
+  });
+
+  tbody.querySelectorAll('.shopee-reg-open').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const row = state.rows.find(r => String(r.id) === String(btn.dataset.id));
+      if (row) openShopeeRegModal(row);
     });
   });
 
@@ -3766,6 +3852,184 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
   } else {
     showLogin();
   }
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   SHOPEE REGISTRATION — canvas composite + product creation
+   ════════════════════════════════════════════════════════════════════ */
+const STARPHOTOCARD_LAYER = './starphotocard-layer.png';
+const SHOPEE_REG_REGIONS = [
+  { code: 'SG', currency: 'SGD' },
+  { code: 'MY', currency: 'MYR' },
+  { code: 'TW', currency: 'TWD' },
+  { code: 'TH', currency: 'THB' },
+  { code: 'PH', currency: 'PHP' },
+];
+
+let _shopeeRegRow = null;
+let _shopeeRegCompositeDataUrl = null;
+
+function _loadImage(src, crossOrigin) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    if (crossOrigin) img.crossOrigin = crossOrigin;
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('이미지 로드 실패: ' + src));
+    img.src = src;
+  });
+}
+
+async function applyShopLayer(productImageUrl) {
+  const [layerImg, productImg] = await Promise.all([
+    _loadImage(STARPHOTOCARD_LAYER, null),
+    _loadImage(productImageUrl, 'anonymous'),
+  ]);
+  const size = Math.min(Math.max(productImg.naturalWidth, productImg.naturalHeight, 600), 800);
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, size, size);
+  const scale = Math.min(size / productImg.naturalWidth, size / productImg.naturalHeight);
+  const w = productImg.naturalWidth * scale;
+  const h = productImg.naturalHeight * scale;
+  ctx.drawImage(productImg, (size - w) / 2, (size - h) / 2, w, h);
+  ctx.drawImage(layerImg, 0, 0, size, size);
+  return canvas.toDataURL('image/jpeg', 0.92);
+}
+
+async function openShopeeRegModal(row) {
+  _shopeeRegRow = row;
+  _shopeeRegCompositeDataUrl = null;
+
+  const modal = document.getElementById('shopee-reg-modal');
+  const previewMsg = document.getElementById('srm-preview-msg');
+  const previewCanvas = document.getElementById('srm-preview-canvas');
+  const statusEl = document.getElementById('srm-status');
+
+  previewMsg.textContent = '이미지 스크래핑 중...';
+  previewMsg.style.color = '#5a5a66';
+  previewCanvas.style.display = 'none';
+  document.getElementById('srm-name').value = '[READY STOCK] ' + (row.sku || '');
+  document.getElementById('srm-stock').value = '0';
+  document.getElementById('srm-desc').value = '';
+  statusEl.style.display = 'none';
+  SHOPEE_REG_REGIONS.forEach(({ code }) => {
+    document.getElementById('srm-chk-' + code).checked = true;
+    document.getElementById('srm-price-' + code).value = '';
+  });
+
+  modal.classList.add('show');
+
+  if (!row.staronemallUrl) {
+    previewMsg.textContent = 'Staronemall URL 없음 — 이미지 없이 진행 가능';
+    previewMsg.style.color = '#d62754';
+    return;
+  }
+
+  try {
+    const assets = await _joomScrapeAssets(row.staronemallUrl);
+    if (!assets.mainImage) throw new Error('mainImage 없음');
+    previewMsg.textContent = '레이어 합성 중...';
+    const proxyUrl = SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(assets.mainImage);
+    const dataUrl = await applyShopLayer(proxyUrl);
+    _shopeeRegCompositeDataUrl = dataUrl;
+    // Show composited preview on canvas
+    const ctx = previewCanvas.getContext('2d');
+    const img = await _loadImage(dataUrl, null);
+    ctx.drawImage(img, 0, 0, 200, 200);
+    previewCanvas.style.display = 'block';
+    previewMsg.textContent = '합성 완료 ✓';
+    previewMsg.style.color = '#15803d';
+  } catch (e) {
+    previewMsg.textContent = '이미지 실패: ' + e.message;
+    previewMsg.style.color = '#d62754';
+  }
+}
+
+async function _shopeeRegSubmit() {
+  const row = _shopeeRegRow;
+  if (!row) return;
+
+  const name = document.getElementById('srm-name').value.trim();
+  const category_id = document.getElementById('srm-category').value;
+  const stock = parseInt(document.getElementById('srm-stock').value) || 0;
+  const description = document.getElementById('srm-desc').value.trim();
+  const statusEl = document.getElementById('srm-status');
+
+  if (!name) { alert('상품명을 입력하세요.'); return; }
+
+  const targets = SHOPEE_REG_REGIONS.filter(({ code }) => {
+    const chk = document.getElementById('srm-chk-' + code);
+    const price = parseFloat(document.getElementById('srm-price-' + code).value);
+    return chk.checked && price > 0;
+  });
+
+  if (targets.length === 0) {
+    alert('체크된 region이 없거나 가격이 입력되지 않았습니다.');
+    return;
+  }
+
+  if (!_shopeeRegCompositeDataUrl && !confirm('합성 이미지가 없습니다. 이미지 없이 등록할까요?')) return;
+
+  statusEl.style.display = 'block';
+  statusEl.style.color = '#5a5a66';
+  statusEl.textContent = '등록 시작...';
+  document.getElementById('srm-submit').disabled = true;
+
+  const authHeaders = await _joomAuthHeaders();
+  const results = [];
+
+  for (const { code } of targets) {
+    const price = parseFloat(document.getElementById('srm-price-' + code).value);
+    let image_url = '';
+    try {
+      if (_shopeeRegCompositeDataUrl) {
+        statusEl.textContent = `[${code}] 이미지 업로드 중...`;
+        const uploadResp = await fetch(SHOPEE_BRIDGE + '/upload_image', {
+          method: 'POST', headers: authHeaders,
+          body: JSON.stringify({ region: code, image_base64: _shopeeRegCompositeDataUrl }),
+        });
+        const uploadJson = await uploadResp.json();
+        if (!uploadJson.ok) throw new Error('이미지 업로드 실패: ' + (uploadJson.error || JSON.stringify(uploadJson)));
+        image_url = uploadJson.image_url || '';
+      }
+
+      statusEl.textContent = `[${code}] 상품 등록 중...`;
+      const addResp = await fetch(SHOPEE_BRIDGE + '/add_item', {
+        method: 'POST', headers: authHeaders,
+        body: JSON.stringify({
+          region: code, name, sku: row.sku, price,
+          stock, weight_g: row.weight || 100,
+          category_id, image_url, description,
+        }),
+      });
+      const addJson = await addResp.json();
+      if (!addJson.ok) throw new Error((addJson.error || 'unknown') + (addJson.message ? ': ' + addJson.message : ''));
+      results.push(`[${code}] ✓ item_id=${addJson.item_id}`);
+    } catch (e) {
+      results.push(`[${code}] ✗ ${e.message}`);
+    }
+  }
+
+  statusEl.textContent = results.join('\n');
+  statusEl.style.color = results.every(r => r.includes('✓')) ? '#15803d' : '#d62754';
+  document.getElementById('srm-submit').disabled = false;
+}
+
+(function bindShopeeRegModal() {
+  const init = () => {
+    const modal = document.getElementById('shopee-reg-modal');
+    const cancel = document.getElementById('srm-cancel');
+    const submit = document.getElementById('srm-submit');
+    if (!cancel || !submit) { document.addEventListener('DOMContentLoaded', init); return; }
+    if (cancel.dataset.bound) return;
+    cancel.dataset.bound = '1';
+    cancel.addEventListener('click', () => modal.classList.remove('show'));
+    submit.addEventListener('click', _shopeeRegSubmit);
+  };
+  init();
 })();
 </script>
 </body>

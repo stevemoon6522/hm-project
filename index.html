@@ -1738,6 +1738,7 @@ function calcRow(row, countryCode) {
 /* ════════════════════════════════════════════════════════════════════
    FORMATTERS
    ════════════════════════════════════════════════════════════════════ */
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function fmt(n, d = 2) {
   if (!isFinite(n) || n === 0) return '—';
   return n.toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });

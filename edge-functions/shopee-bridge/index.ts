@@ -194,6 +194,7 @@ async function listItemsForRegion(region: string, item_status = 'NORMAL', max_it
       enriched.push({
         item_id: base.item_id, model_id: m.model_id,
         item_sku: m.model_sku,
+        base_sku: base.item_sku,
         item_name: base.item_name + (m.model_name ? ` · ${m.model_name}` : ''),
         current_price: m.current_price ?? base.current_price,
         original_price: m.original_price ?? base.original_price,
@@ -216,7 +217,7 @@ Deno.serve(async (req) => {
   try {
     if (action === 'health') {
       const app = await getApp();
-      return jsonResp({ ok: true, service: 'shopee-bridge', version: 20, env: { partner_id: app.partner_id, is_sandbox: app.is_sandbox, has_env_partner_id: !!ENV_PARTNER_ID, has_env_partner_key: !!ENV_PARTNER_KEY } });
+      return jsonResp({ ok: true, service: 'shopee-bridge', version: 21, env: { partner_id: app.partner_id, is_sandbox: app.is_sandbox, has_env_partner_id: !!ENV_PARTNER_ID, has_env_partner_key: !!ENV_PARTNER_KEY } });
     }
     if (action === 'tokens') {
       const { data } = await supabase.from('shopee_tokens').select('region, shop_id, merchant_id, expires_at, is_sandbox');

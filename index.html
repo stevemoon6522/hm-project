@@ -2440,6 +2440,11 @@ async function _shopeeSyncStart() {
     for (const it of (res.items || [])) {
       const skuKey = _normalize(it.item_sku);
       if (skuKey) skuIndex.set(skuKey, it);
+      // Fallback: also index by base item SKU for multi-model items
+      if (it.base_sku) {
+        const baseSkuKey = _normalize(it.base_sku);
+        if (baseSkuKey && !skuIndex.has(baseSkuKey)) skuIndex.set(baseSkuKey, it);
+      }
       const nameKey = _normalize(it.item_name);
       if (nameKey) {
         if (!nameIndex.has(nameKey)) nameIndex.set(nameKey, []);

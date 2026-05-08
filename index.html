@@ -749,7 +749,7 @@
       <button class="btn" id="refresh-all-staronemall" title="Staronemall URL이 있는 모든 행 재크롤링">🔄 전체 재크롤링</button>
       <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
       <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
-      <button class="btn" id="keyword-price-open" title="키워드로 Shopee 상품을 검색해 가격 일괄 수정">🔍 키워드 가격 일괄수정</button>
+      <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품을 키워드로 검색해 가격 일괄 수정">🌐 Global 가격 수정</button>
       <button class="btn" id="export-csv">CSV 내보내기</button>
       <button class="btn" id="import-csv">CSV 가져오기</button>
       <input type="file" id="csv-file" accept=".csv" style="display:none;">
@@ -1107,63 +1107,48 @@
   </div>
 </div>
 
-<!-- 키워드 가격 일괄수정 모달 -->
+<!-- Global 가격 수정 모달 -->
 <div class="modal-overlay" id="keyword-price-modal">
-  <div class="modal" style="max-width:960px;">
-    <h3>🔍 키워드 가격 일괄수정</h3>
+  <div class="modal" style="max-width:1020px;">
+    <h3>🌐 Global 가격 수정</h3>
     <p style="color:#5a5a66;font-size:11px;margin-bottom:14px;line-height:1.5;">
-      선택된 region에서 Shopee 상품을 전부 불러온 뒤 키워드로 필터링합니다. 결과 항목을 선택하고 새 가격을 입력해 일괄 적용합니다.
+      Shopee Global SKU 상품을 불러온 뒤 키워드로 필터링합니다. Multi-model 상품은 ▶ 버튼으로 펼쳐 각 모델을 개별 선택할 수 있습니다. 가격은 Global 단위로 적용됩니다 (한 번에 모든 region 적용).
     </p>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
       <div>
         <label style="font-size:11px;display:block;margin-bottom:4px;font-weight:600;">키워드</label>
-        <input id="kpm-keyword" type="text" placeholder="예: ENHYPEN, BOYNEXTDOOR" style="width:220px;padding:6px 8px;border:1px solid #d0d0dd;border-radius:4px;font-size:12px;">
+        <input id="gkp-keyword" type="text" placeholder="예: ENHYPEN, BOYNEXTDOOR" style="width:240px;padding:6px 8px;border:1px solid #d0d0dd;border-radius:4px;font-size:12px;">
       </div>
-      <div>
-        <label style="font-size:11px;display:block;margin-bottom:4px;font-weight:600;">Region</label>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="SG" checked> SG</label>
-          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="MY" checked> MY</label>
-          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="TW" checked> TW</label>
-          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="TH" checked> TH</label>
-          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="PH" checked> PH</label>
-          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="BR"> BR</label>
-        </div>
-      </div>
-      <button class="btn primary" id="kpm-search" style="height:32px;">검색</button>
+      <button class="btn primary" id="gkp-search" style="height:32px;">검색</button>
     </div>
-    <div id="kpm-status" style="font-size:11px;color:#5a5a66;min-height:16px;margin-bottom:8px;"></div>
-    <div id="kpm-results-wrap" style="display:none;">
+    <div id="gkp-status" style="font-size:11px;color:#5a5a66;min-height:16px;margin-bottom:8px;"></div>
+    <div id="gkp-results-wrap" style="display:none;">
       <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
         <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;">
-          <input type="checkbox" id="kpm-select-all"> 전체선택 (<span id="kpm-total-count">0</span>건)
+          <input type="checkbox" id="gkp-select-all"> 전체선택 (<span id="gkp-total-count">0</span>건)
         </label>
-        <div style="display:flex;gap:6px;align-items:center;margin-left:auto;">
-          <label style="font-size:11px;font-weight:600;">새 가격 (각 region 통화 단위):</label>
-          <input id="kpm-new-price" type="number" min="0" step="0.01" placeholder="예: 12.50" style="width:100px;padding:4px 8px;border:1px solid #d0d0dd;border-radius:4px;font-size:12px;">
-          <button class="btn primary" id="kpm-apply" disabled>적용 (<span id="kpm-checked-count">0</span>건)</button>
-        </div>
+        <button class="btn primary" id="gkp-apply" disabled style="margin-left:auto;">적용 (<span id="gkp-checked-count">0</span>건)</button>
       </div>
-      <div style="max-height:360px;overflow-y:auto;border:1px solid #d8d8e0;border-radius:4px;">
+      <div style="max-height:400px;overflow-y:auto;border:1px solid #d8d8e0;border-radius:4px;">
         <table style="width:100%;border-collapse:collapse;font-size:11px;">
           <thead>
             <tr style="background:#f3f3f8;position:sticky;top:0;z-index:1;">
-              <th style="padding:6px 8px;text-align:center;width:36px;border-bottom:1px solid #d8d8e0;"></th>
-              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">Region</th>
-              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">Item Name</th>
+              <th style="padding:6px 8px;text-align:center;width:32px;border-bottom:1px solid #d8d8e0;"></th>
+              <th style="padding:6px 8px;text-align:center;width:30px;border-bottom:1px solid #d8d8e0;"></th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">상품명</th>
               <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">SKU</th>
-              <th style="padding:6px 8px;text-align:right;border-bottom:1px solid #d8d8e0;">현재가</th>
-              <th style="padding:6px 8px;text-align:center;border-bottom:1px solid #d8d8e0;">Status</th>
-              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">Item ID</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:1px solid #d8d8e0;">현재가 (SGD)</th>
+              <th style="padding:6px 8px;text-align:center;border-bottom:1px solid #d8d8e0;">새 가격</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">Global ID</th>
             </tr>
           </thead>
-          <tbody id="kpm-results-body"></tbody>
+          <tbody id="gkp-results-body"></tbody>
         </table>
       </div>
     </div>
-    <div id="kpm-apply-log" style="display:none;max-height:160px;overflow-y:auto;font-family:monospace;font-size:11px;background:#fafafc;border:1px solid #d8d8e0;border-radius:3px;padding:8px;margin-top:10px;white-space:pre;"></div>
+    <div id="gkp-apply-log" style="display:none;max-height:160px;overflow-y:auto;font-family:monospace;font-size:11px;background:#fafafc;border:1px solid #d8d8e0;border-radius:3px;padding:8px;margin-top:10px;white-space:pre;"></div>
     <div style="text-align:right;margin-top:14px;">
-      <button class="btn" id="kpm-cancel">닫기</button>
+      <button class="btn" id="gkp-cancel">닫기</button>
     </div>
   </div>
 </div>
@@ -4126,172 +4111,280 @@ async function _shopeeRegSubmit() {
 })();
 
 /* ════════════════════════════════════════════════════════════════════
-   KEYWORD BULK PRICE UPDATE
+   GLOBAL SKU BULK PRICE UPDATE
    ════════════════════════════════════════════════════════════════════ */
-let _kpmItems = []; // flat array of { region, item_id, model_id, item_name, item_sku, price, status }
 
-async function _kpmFetchAll(regions) {
-  const statusEl = document.getElementById('kpm-status');
-  statusEl.textContent = '데이터 로딩 중…';
-  const results = await Promise.all(regions.map(async r => {
-    const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
-    const [rN, rU] = await Promise.all([
-      fetch(`${SHOPEE_BRIDGE}/list_items?region=${r}&item_status=NORMAL&max_items=500`, { headers: _bh }).then(x => x.json()).catch(() => ({ ok: false })),
-      fetch(`${SHOPEE_BRIDGE}/list_items?region=${r}&item_status=UNLIST&max_items=500`, { headers: _bh }).then(x => x.json()).catch(() => ({ ok: false })),
-    ]);
-    const items = [...(rN.ok ? rN.items || [] : []), ...(rU.ok ? rU.items || [] : [])];
-    // deduplicate
-    const seen = new Set();
-    return items.filter(it => {
-      const k = `${it.item_id}-${it.model_id ?? ''}`;
-      if (seen.has(k)) return false;
-      seen.add(k); return true;
-    }).map(it => ({
-      region: r,
-      item_id: it.item_id,
-      model_id: it.model_id ?? null,
-      item_name: it.item_name || '',
-      item_sku: it.item_sku || '',
-      price: it.current_price ?? it.original_price ?? '',
-      currency: it.currency || '',
-      status: it.status || '',
-    }));
-  }));
-  return results.flat();
+// Flat display rows: type='item' | type='model_header' | type='model'
+// item/model rows are selectable; model_header rows are not
+let _gkpRows = [];
+let _gkpEnrichedFiltered = []; // enriched+filtered items, kept for expand/collapse rebuilds
+// expanded state per global_item_id
+const _gkpExpanded = new Set();
+
+async function _gkpFetchAllGlobalItems(statusEl) {
+  const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
+  const pageSize = 50;
+  let offset = 0, allItems = [], hasMore = true;
+  while (hasMore) {
+    statusEl.textContent = `Global 상품 목록 로딩 중… (${allItems.length}건)`;
+    const res = await fetch(`${SHOPEE_BRIDGE}/global_items?region=SG&page_size=${pageSize}&offset=${offset}`, { headers: _bh })
+      .then(x => x.json()).catch(() => ({ ok: false }));
+    if (!res.ok || !res.items || !res.items.length) break;
+    allItems = allItems.concat(res.items);
+    offset += res.items.length;
+    hasMore = res.has_next_page ?? (res.items.length === pageSize);
+  }
+  return allItems;
 }
 
-function _kpmFilter(items, keyword) {
-  if (!keyword.trim()) return items;
+async function _gkpEnrichItems(items, statusEl) {
+  const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
+  // Fetch info + models for has_model items in parallel (batched 10 at a time)
+  const enriched = [];
+  const batchSize = 10;
+  for (let i = 0; i < items.length; i += batchSize) {
+    statusEl.textContent = `상품 정보 로딩 중… (${Math.min(i + batchSize, items.length)}/${items.length})`;
+    const batch = items.slice(i, i + batchSize);
+    await Promise.all(batch.map(async item => {
+      try {
+        const info = await fetch(`${SHOPEE_BRIDGE}/global_item_info?region=SG&global_item_id=${item.global_item_id}`, { headers: _bh })
+          .then(x => x.json()).catch(() => null);
+        if (!info || !info.ok) {
+          enriched.push({ type: 'item', global_item_id: item.global_item_id, item_name: item.item_name || String(item.global_item_id), item_sku: item.item_sku || '', price: '', models: [] });
+          return;
+        }
+        const it = info.item || info;
+        const hasModel = it.has_model ?? false;
+        if (!hasModel) {
+          const priceInfo = it.price_info?.[0] || {};
+          enriched.push({ type: 'item', global_item_id: item.global_item_id, item_name: it.item_name || '', item_sku: it.item_sku || '', price: priceInfo.original_price ?? '', models: [] });
+        } else {
+          const mres = await fetch(`${SHOPEE_BRIDGE}/global_model_list?region=SG&global_item_id=${item.global_item_id}`, { headers: _bh })
+            .then(x => x.json()).catch(() => null);
+          const models = (mres && mres.ok && mres.models) ? mres.models : [];
+          enriched.push({ type: 'model_header', global_item_id: item.global_item_id, item_name: it.item_name || '', item_sku: it.item_sku || '', price: '', models });
+        }
+      } catch (_) {
+        enriched.push({ type: 'item', global_item_id: item.global_item_id, item_name: item.item_name || String(item.global_item_id), item_sku: '', price: '', models: [] });
+      }
+    }));
+  }
+  // sort back to original order (Promise.all can arrive out of order)
+  const idOrder = items.map(it => it.global_item_id);
+  enriched.sort((a, b) => idOrder.indexOf(a.global_item_id) - idOrder.indexOf(b.global_item_id));
+  return enriched;
+}
+
+function _gkpFilter(enrichedItems, keyword) {
+  if (!keyword.trim()) return enrichedItems;
   const kw = keyword.trim().toLowerCase();
-  return items.filter(it =>
-    it.item_name.toLowerCase().includes(kw) || it.item_sku.toLowerCase().includes(kw)
+  return enrichedItems.filter(it =>
+    it.item_name.toLowerCase().includes(kw) ||
+    it.item_sku.toLowerCase().includes(kw) ||
+    (it.models && it.models.some(m => (m.model_sku || '').toLowerCase().includes(kw) || (m.model_name || '').toLowerCase().includes(kw)))
   );
 }
 
-function _kpmRenderResults(filtered) {
-  const tbody = document.getElementById('kpm-results-body');
-  const countEl = document.getElementById('kpm-total-count');
-  countEl.textContent = filtered.length;
-  if (!filtered.length) {
+function _gkpBuildRows(filteredItems) {
+  const rows = [];
+  for (const it of filteredItems) {
+    if (it.type === 'item') {
+      rows.push({ rowType: 'item', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, price: it.price, global_model_id: null });
+    } else {
+      // model_header row
+      rows.push({ rowType: 'model_header', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, modelCount: it.models.length });
+      if (_gkpExpanded.has(it.global_item_id)) {
+        for (const m of it.models) {
+          const priceInfo = m.price_info?.[0] || {};
+          rows.push({ rowType: 'model', global_item_id: it.global_item_id, item_name: it.item_name + (m.model_name ? ` · ${m.model_name}` : ''), item_sku: m.model_sku || '', price: priceInfo.original_price ?? '', global_model_id: m.global_model_id });
+        }
+      }
+    }
+  }
+  return rows;
+}
+
+function _gkpRenderResults() {
+  const tbody = document.getElementById('gkp-results-body');
+  const rows = _gkpRows;
+  const selectableCount = rows.filter(r => r.rowType !== 'model_header').length;
+  document.getElementById('gkp-total-count').textContent = selectableCount;
+  if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="7" style="padding:16px;text-align:center;color:#888;">검색 결과 없음</td></tr>';
     return;
   }
-  tbody.innerHTML = filtered.map((it, i) => `
-    <tr data-idx="${i}" style="border-bottom:1px solid #ebebf0;">
-      <td style="padding:5px 8px;text-align:center;"><input type="checkbox" class="kpm-row-chk" data-idx="${i}"></td>
-      <td style="padding:5px 8px;"><span style="font-weight:600;color:${it.region==='SG'?'#f90':'#007aff'}">${it.region}</span></td>
-      <td style="padding:5px 8px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(it.item_name)}">${esc(it.item_name)}</td>
-      <td style="padding:5px 8px;font-family:monospace;">${esc(it.item_sku)}</td>
-      <td style="padding:5px 8px;text-align:right;">${it.price !== '' ? `${Number(it.price).toFixed(2)} ${esc(it.currency)}` : '-'}</td>
-      <td style="padding:5px 8px;text-align:center;"><span style="font-size:10px;padding:2px 5px;border-radius:3px;background:${it.status==='NORMAL'?'#dcfce7':'#fef9c3'};color:${it.status==='NORMAL'?'#166534':'#854d0e'}">${it.status||'-'}</span></td>
-      <td style="padding:5px 8px;font-family:monospace;font-size:10px;color:#888;">${it.item_id}</td>
-    </tr>`).join('');
-  _kpmUpdateCheckedCount();
+  tbody.innerHTML = rows.map((row, i) => {
+    if (row.rowType === 'model_header') {
+      const expanded = _gkpExpanded.has(row.global_item_id);
+      return `<tr data-idx="${i}" data-gid="${row.global_item_id}" class="gkp-header-row" style="background:#f3f3f8;border-bottom:1px solid #d8d8e0;">
+        <td style="padding:5px 8px;text-align:center;"></td>
+        <td style="padding:5px 8px;text-align:center;">
+          <button class="gkp-expand-btn" data-gid="${row.global_item_id}" style="background:none;border:none;cursor:pointer;font-size:12px;padding:2px 4px;">${expanded ? '▼' : '▶'}</button>
+        </td>
+        <td colspan="4" style="padding:5px 8px;font-weight:600;" title="${esc(row.item_name)}">${esc(row.item_name)} <span style="font-size:10px;color:#888;font-weight:400;">(${row.modelCount}개 모델)</span></td>
+        <td style="padding:5px 8px;font-family:monospace;font-size:10px;color:#888;">${row.global_item_id}</td>
+      </tr>`;
+    }
+    const indent = row.rowType === 'model' ? 'padding-left:24px;' : '';
+    const priceVal = row.price !== '' ? Number(row.price).toFixed(2) : '';
+    return `<tr data-idx="${i}" style="border-bottom:1px solid #ebebf0;${row.rowType==='model'?'background:#fcfcff;':''}">
+      <td style="padding:5px 8px;text-align:center;"><input type="checkbox" class="gkp-row-chk" data-idx="${i}"></td>
+      <td></td>
+      <td style="padding:5px 8px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;${indent}" title="${esc(row.item_name)}">${esc(row.item_name)}</td>
+      <td style="padding:5px 8px;font-family:monospace;font-size:10px;">${esc(row.item_sku)}</td>
+      <td style="padding:5px 8px;text-align:right;font-family:monospace;">${priceVal || '-'}</td>
+      <td style="padding:5px 8px;text-align:center;"><input type="number" class="gkp-price-input" data-idx="${i}" min="0" step="0.01" value="${priceVal}" placeholder="새 가격" style="width:90px;padding:3px 6px;border:1px solid #d0d0dd;border-radius:3px;font-size:11px;"></td>
+      <td style="padding:5px 8px;font-family:monospace;font-size:10px;color:#888;">${row.global_item_id}</td>
+    </tr>`;
+  }).join('');
+  _gkpUpdateCheckedCount();
 }
 
-function _kpmUpdateCheckedCount() {
-  const checked = document.querySelectorAll('.kpm-row-chk:checked').length;
-  const countEl = document.getElementById('kpm-checked-count');
+function _gkpUpdateCheckedCount() {
+  const checked = document.querySelectorAll('.gkp-row-chk:checked').length;
+  const countEl = document.getElementById('gkp-checked-count');
   if (countEl) countEl.textContent = checked;
-  const applyBtn = document.getElementById('kpm-apply');
+  const applyBtn = document.getElementById('gkp-apply');
   if (applyBtn) applyBtn.disabled = checked === 0;
 }
 
-async function _kpmApply() {
-  const price = parseFloat(document.getElementById('kpm-new-price').value);
-  if (!price || price <= 0) { alert('새 가격을 입력해주세요.'); return; }
-  const checked = Array.from(document.querySelectorAll('.kpm-row-chk:checked'));
+async function _gkpApply() {
+  const checked = Array.from(document.querySelectorAll('.gkp-row-chk:checked'));
   if (!checked.length) return;
-  const logEl = document.getElementById('kpm-apply-log');
-  logEl.style.display = 'block';
-  logEl.textContent = '';
-  document.getElementById('kpm-apply').disabled = true;
-  let ok = 0, fail = 0;
+
+  // Validate: every checked row must have a price entered
   for (const chk of checked) {
     const idx = Number(chk.dataset.idx);
-    const it = _kpmItems[idx];
-    if (!it) continue;
+    const priceInput = document.querySelector(`.gkp-price-input[data-idx="${idx}"]`);
+    const v = parseFloat(priceInput?.value);
+    if (!v || v <= 0) {
+      alert('선택한 모든 항목에 새 가격을 입력해주세요.');
+      priceInput?.focus();
+      return;
+    }
+  }
+
+  const logEl = document.getElementById('gkp-apply-log');
+  logEl.style.display = 'block';
+  logEl.textContent = '';
+  document.getElementById('gkp-apply').disabled = true;
+
+  // Group checked rows by global_item_id to batch into one API call per item
+  const byItem = new Map(); // global_item_id → [{ global_model_id, original_price }]
+  for (const chk of checked) {
+    const idx = Number(chk.dataset.idx);
+    const row = _gkpRows[idx];
+    if (!row) continue;
+    const priceInput = document.querySelector(`.gkp-price-input[data-idx="${idx}"]`);
+    const newPrice = parseFloat(priceInput?.value);
+    if (!byItem.has(row.global_item_id)) byItem.set(row.global_item_id, []);
+    const entry = { original_price: newPrice };
+    if (row.global_model_id != null) entry.global_model_id = row.global_model_id;
+    byItem.get(row.global_item_id).push(entry);
+  }
+
+  const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
+  let ok = 0, fail = 0;
+  for (const [globalItemId, priceList] of byItem) {
+    const label = _gkpRows.find(r => r.global_item_id === globalItemId)?.item_name || String(globalItemId);
     try {
-      const priceEntry = it.model_id != null
-        ? { model_id: it.model_id, original_price: price }
-        : { original_price: price };
-      const body = { region: it.region, item_id: it.item_id, price_list: [priceEntry] };
-      const r = await fetch(`${SHOPEE_BRIDGE}/update_price`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+      const res = await fetch(`${SHOPEE_BRIDGE}/update_global_price`, {
+        method: 'POST',
+        headers: { ...{ 'Content-Type': 'application/json' }, ..._bh },
+        body: JSON.stringify({ region: 'SG', global_item_id: globalItemId, global_price_list: priceList }),
       }).then(x => x.json());
-      if (r.ok) {
-        logEl.textContent += `✅ [${it.region}] ${it.item_name} → ${price}\n`;
+      if (res.ok) {
+        logEl.textContent += `✅ ${label} (${priceList.length}개) 적용\n`;
         ok++;
       } else {
-        logEl.textContent += `❌ [${it.region}] ${it.item_name}: ${r.error || JSON.stringify(r)}\n`;
+        logEl.textContent += `❌ ${label}: ${res.error || JSON.stringify(res)}\n`;
         fail++;
       }
     } catch (e) {
-      logEl.textContent += `❌ [${it.region}] ${it.item_name}: ${e.message}\n`;
+      logEl.textContent += `❌ ${label}: ${e.message}\n`;
       fail++;
     }
     logEl.scrollTop = logEl.scrollHeight;
   }
   logEl.textContent += `\n완료: 성공 ${ok}건, 실패 ${fail}건`;
-  document.getElementById('kpm-apply').disabled = false;
+  document.getElementById('gkp-apply').disabled = false;
 }
 
-(function bindKeywordPriceModal() {
+(function bindGlobalPriceModal() {
   const init = () => {
     const openBtn = document.getElementById('keyword-price-open');
     const modal = document.getElementById('keyword-price-modal');
-    const cancelBtn = document.getElementById('kpm-cancel');
-    const searchBtn = document.getElementById('kpm-search');
-    const applyBtn = document.getElementById('kpm-apply');
-    const selectAll = document.getElementById('kpm-select-all');
+    const cancelBtn = document.getElementById('gkp-cancel');
+    const searchBtn = document.getElementById('gkp-search');
+    const applyBtn = document.getElementById('gkp-apply');
+    const selectAll = document.getElementById('gkp-select-all');
     if (!openBtn || !modal) { document.addEventListener('DOMContentLoaded', init); return; }
     if (openBtn.dataset.bound) return;
     openBtn.dataset.bound = '1';
 
     openBtn.addEventListener('click', () => {
-      _kpmItems = [];
-      document.getElementById('kpm-results-wrap').style.display = 'none';
-      document.getElementById('kpm-apply-log').style.display = 'none';
-      document.getElementById('kpm-status').textContent = '';
-      document.getElementById('kpm-results-body').innerHTML = '';
-      document.getElementById('kpm-keyword').value = '';
+      _gkpRows = [];
+      _gkpEnrichedFiltered = [];
+      _gkpExpanded.clear();
+      document.getElementById('gkp-results-wrap').style.display = 'none';
+      document.getElementById('gkp-apply-log').style.display = 'none';
+      document.getElementById('gkp-status').textContent = '';
+      document.getElementById('gkp-results-body').innerHTML = '';
+      document.getElementById('gkp-keyword').value = '';
       modal.classList.add('show');
     });
 
     cancelBtn.addEventListener('click', () => modal.classList.remove('show'));
 
     searchBtn.addEventListener('click', async () => {
-      const regions = Array.from(document.querySelectorAll('.kpm-region:checked')).map(el => el.value);
-      if (!regions.length) { alert('Region을 하나 이상 선택해주세요.'); return; }
       searchBtn.disabled = true;
-      document.getElementById('kpm-results-wrap').style.display = 'none';
-      document.getElementById('kpm-apply-log').style.display = 'none';
-      document.getElementById('kpm-apply-log').textContent = '';
+      document.getElementById('gkp-results-wrap').style.display = 'none';
+      document.getElementById('gkp-apply-log').style.display = 'none';
+      document.getElementById('gkp-apply-log').textContent = '';
+      const statusEl = document.getElementById('gkp-status');
       try {
-        const all = await _kpmFetchAll(regions);
-        const keyword = document.getElementById('kpm-keyword').value;
-        _kpmItems = _kpmFilter(all, keyword);
-        document.getElementById('kpm-status').textContent = `전체 ${all.length}개 중 "${keyword || '(필터없음)'}" 매칭: ${_kpmItems.length}건`;
-        document.getElementById('kpm-results-wrap').style.display = 'block';
-        _kpmRenderResults(_kpmItems);
+        const allGlobal = await _gkpFetchAllGlobalItems(statusEl);
+        statusEl.textContent = `전체 ${allGlobal.length}건 로드. 상품 정보 조회 중…`;
+        const keyword = document.getElementById('gkp-keyword').value.trim();
+        // Quick name filter before enrichment to avoid fetching everything
+        const preFiltered = keyword
+          ? allGlobal.filter(it => (it.item_name || '').toLowerCase().includes(keyword.toLowerCase()))
+          : allGlobal;
+        const enriched = await _gkpEnrichItems(preFiltered, statusEl);
+        const filtered = _gkpFilter(enriched, keyword);
+        statusEl.textContent = `전체 ${allGlobal.length}개 중 "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`;
+        _gkpExpanded.clear();
+        _gkpEnrichedFiltered = filtered;
+        _gkpRows = _gkpBuildRows(filtered);
+        document.getElementById('gkp-results-wrap').style.display = 'block';
+        _gkpRenderResults();
       } catch (e) {
-        document.getElementById('kpm-status').textContent = '오류: ' + e.message;
+        statusEl.textContent = '오류: ' + e.message;
       } finally {
         searchBtn.disabled = false;
       }
     });
 
-    document.getElementById('kpm-results-body').addEventListener('change', e => {
-      if (e.target.classList.contains('kpm-row-chk')) _kpmUpdateCheckedCount();
+    // Expand/collapse toggle
+    document.getElementById('gkp-results-body').addEventListener('click', e => {
+      const btn = e.target.closest('.gkp-expand-btn');
+      if (!btn) return;
+      const gid = Number(btn.dataset.gid);
+      if (_gkpExpanded.has(gid)) _gkpExpanded.delete(gid); else _gkpExpanded.add(gid);
+      _gkpRows = _gkpBuildRows(_gkpEnrichedFiltered);
+      _gkpRenderResults();
+    });
+
+    document.getElementById('gkp-results-body').addEventListener('change', e => {
+      if (e.target.classList.contains('gkp-row-chk')) _gkpUpdateCheckedCount();
     });
 
     selectAll.addEventListener('change', e => {
-      document.querySelectorAll('.kpm-row-chk').forEach(chk => { chk.checked = e.target.checked; });
-      _kpmUpdateCheckedCount();
+      document.querySelectorAll('.gkp-row-chk').forEach(chk => { chk.checked = e.target.checked; });
+      _gkpUpdateCheckedCount();
     });
 
-    applyBtn.addEventListener('click', _kpmApply);
+    applyBtn.addEventListener('click', _gkpApply);
   };
   init();
 })();

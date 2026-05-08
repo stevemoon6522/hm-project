@@ -4129,10 +4129,13 @@ async function _gkpFetchAllGlobalItems(statusEl) {
     statusEl.textContent = `Global 상품 목록 로딩 중… (${allItems.length}건)`;
     const res = await fetch(`${SHOPEE_BRIDGE}/global_items?region=SG&page_size=${pageSize}&offset=${offset}`, { headers: _bh })
       .then(x => x.json()).catch(() => ({ ok: false }));
-    if (!res.ok || !res.items || !res.items.length) break;
-    allItems = allItems.concat(res.items);
-    offset += res.items.length;
-    hasMore = res.has_next_page ?? (res.items.length === pageSize);
+    if (!res.ok) break;
+    // Bridge wraps Shopee response as: { ok, result: { response: { global_item_list, has_next_page } } }
+    const page = res.result?.response?.global_item_list || [];
+    if (!page.length) break;
+    allItems = allItems.concat(page);
+    offset += page.length;
+    hasMore = res.result?.response?.has_next_page ?? (page.length === pageSize);
   }
   return allItems;
 }
@@ -4153,16 +4156,18 @@ async function _gkpEnrichItems(items, statusEl) {
           enriched.push({ type: 'item', global_item_id: item.global_item_id, item_name: item.item_name || String(item.global_item_id), item_sku: item.item_sku || '', price: '', models: [] });
           return;
         }
-        const it = info.item || info;
+        // Bridge response: { ok, result: { response: { global_item_list: [...] } } }
+        const it = info.result?.response?.global_item_list?.[0] || {};
         const hasModel = it.has_model ?? false;
         if (!hasModel) {
           const priceInfo = it.price_info?.[0] || {};
-          enriched.push({ type: 'item', global_item_id: item.global_item_id, item_name: it.item_name || '', item_sku: it.item_sku || '', price: priceInfo.original_price ?? '', models: [] });
+          enriched.push({ type: 'item', global_item_id: item.global_item_id, item_name: it.item_name || item.item_name || '', item_sku: it.item_sku || item.item_sku || '', price: priceInfo.original_price ?? '', models: [] });
         } else {
           const mres = await fetch(`${SHOPEE_BRIDGE}/global_model_list?region=SG&global_item_id=${item.global_item_id}`, { headers: _bh })
             .then(x => x.json()).catch(() => null);
-          const models = (mres && mres.ok && mres.models) ? mres.models : [];
-          enriched.push({ type: 'model_header', global_item_id: item.global_item_id, item_name: it.item_name || '', item_sku: it.item_sku || '', price: '', models });
+          // Bridge response: { ok, result: { response: { model: [...] } } }
+          const models = (mres && mres.ok) ? (mres.result?.response?.model || []) : [];
+          enriched.push({ type: 'model_header', global_item_id: item.global_item_id, item_name: it.item_name || item.item_name || '', item_sku: it.item_sku || item.item_sku || '', price: '', models });
         }
       } catch (_) {
         enriched.push({ type: 'item', global_item_id: item.global_item_id, item_name: item.item_name || String(item.global_item_id), item_sku: '', price: '', models: [] });

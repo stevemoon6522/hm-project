@@ -749,6 +749,7 @@
       <button class="btn" id="refresh-all-staronemall" title="Staronemall URL이 있는 모든 행 재크롤링">🔄 전체 재크롤링</button>
       <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
       <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
+      <button class="btn" id="keyword-price-open" title="키워드로 Shopee 상품을 검색해 가격 일괄 수정">🔍 키워드 가격 일괄수정</button>
       <button class="btn" id="export-csv">CSV 내보내기</button>
       <button class="btn" id="import-csv">CSV 가져오기</button>
       <input type="file" id="csv-file" accept=".csv" style="display:none;">
@@ -1098,6 +1099,67 @@
     <div class="modal-actions">
       <button class="btn" id="srm-cancel">취소</button>
       <button class="btn primary" id="srm-submit">📤 등록</button>
+    </div>
+  </div>
+</div>
+
+<!-- 키워드 가격 일괄수정 모달 -->
+<div class="modal-overlay" id="keyword-price-modal">
+  <div class="modal" style="max-width:960px;">
+    <h3>🔍 키워드 가격 일괄수정</h3>
+    <p style="color:#5a5a66;font-size:11px;margin-bottom:14px;line-height:1.5;">
+      선택된 region에서 Shopee 상품을 전부 불러온 뒤 키워드로 필터링합니다. 결과 항목을 선택하고 새 가격을 입력해 일괄 적용합니다.
+    </p>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+      <div>
+        <label style="font-size:11px;display:block;margin-bottom:4px;font-weight:600;">키워드</label>
+        <input id="kpm-keyword" type="text" placeholder="예: ENHYPEN, BOYNEXTDOOR" style="width:220px;padding:6px 8px;border:1px solid #d0d0dd;border-radius:4px;font-size:12px;">
+      </div>
+      <div>
+        <label style="font-size:11px;display:block;margin-bottom:4px;font-weight:600;">Region</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="SG" checked> SG</label>
+          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="MY" checked> MY</label>
+          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="TW" checked> TW</label>
+          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="TH" checked> TH</label>
+          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="PH" checked> PH</label>
+          <label style="font-size:12px;"><input type="checkbox" class="kpm-region" value="BR"> BR</label>
+        </div>
+      </div>
+      <button class="btn primary" id="kpm-search" style="height:32px;">검색</button>
+    </div>
+    <div id="kpm-status" style="font-size:11px;color:#5a5a66;min-height:16px;margin-bottom:8px;"></div>
+    <div id="kpm-results-wrap" style="display:none;">
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+        <label style="font-size:11px;display:flex;align-items:center;gap:4px;cursor:pointer;">
+          <input type="checkbox" id="kpm-select-all"> 전체선택 (<span id="kpm-total-count">0</span>건)
+        </label>
+        <div style="display:flex;gap:6px;align-items:center;margin-left:auto;">
+          <label style="font-size:11px;font-weight:600;">새 가격 (각 region 통화 단위):</label>
+          <input id="kpm-new-price" type="number" min="0" step="0.01" placeholder="예: 12.50" style="width:100px;padding:4px 8px;border:1px solid #d0d0dd;border-radius:4px;font-size:12px;">
+          <button class="btn primary" id="kpm-apply" disabled>적용 (<span id="kpm-checked-count">0</span>건)</button>
+        </div>
+      </div>
+      <div style="max-height:360px;overflow-y:auto;border:1px solid #d8d8e0;border-radius:4px;">
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead>
+            <tr style="background:#f3f3f8;position:sticky;top:0;z-index:1;">
+              <th style="padding:6px 8px;text-align:center;width:36px;border-bottom:1px solid #d8d8e0;"></th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">Region</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">Item Name</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">SKU</th>
+              <th style="padding:6px 8px;text-align:right;border-bottom:1px solid #d8d8e0;">현재가</th>
+              <th style="padding:6px 8px;text-align:center;border-bottom:1px solid #d8d8e0;">Status</th>
+              <th style="padding:6px 8px;text-align:left;border-bottom:1px solid #d8d8e0;">Item ID</th>
+            </tr>
+          </thead>
+          <tbody id="kpm-results-body"></tbody>
+        </table>
+      </div>
+    </div>
+    <div id="kpm-apply-log" style="display:none;max-height:160px;overflow-y:auto;font-family:monospace;font-size:11px;background:#fafafc;border:1px solid #d8d8e0;border-radius:3px;padding:8px;margin-top:10px;white-space:pre;"></div>
+    <div style="text-align:right;margin-top:14px;">
+      <button class="btn" id="kpm-cancel">닫기</button>
     </div>
   </div>
 </div>
@@ -2304,15 +2366,26 @@ async function _shopeeSyncFetchRegion(region, progressEl) {
   const t0 = Date.now();
   progressEl.innerHTML = `<span style="color:#b45309;">⏳ ${region}</span> · 조회 중...`;
   try {
-    const r = await fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&max_items=500');
-    const j = await r.json();
+    // Fetch NORMAL + UNLIST in parallel to catch all registered items regardless of status
+    const [rNormal, rUnlist] = await Promise.all([
+      fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&item_status=NORMAL&max_items=500').then(r => r.json()),
+      fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&item_status=UNLIST&max_items=500').then(r => r.json()),
+    ]);
     const dur = ((Date.now() - t0) / 1000).toFixed(1);
-    if (j.ok) {
-      progressEl.innerHTML = `<span style="color:#15803d;">✓ ${region}</span> · ${j.count}개 상품 (${dur}s)`;
-      return { region, ok: true, items: j.items || [] };
+    const items = [...(rNormal.ok ? rNormal.items || [] : []), ...(rUnlist.ok ? rUnlist.items || [] : [])];
+    // Deduplicate by item_id + model_id key
+    const seen = new Set();
+    const merged = items.filter(it => {
+      const k = `${it.item_id}-${it.model_id ?? ''}`;
+      if (seen.has(k)) return false;
+      seen.add(k); return true;
+    });
+    if (rNormal.ok || rUnlist.ok) {
+      progressEl.innerHTML = `<span style="color:#15803d;">✓ ${region}</span> · ${merged.length}개 (NORMAL:${rNormal.ok ? rNormal.count : '✕'} UNLIST:${rUnlist.ok ? rUnlist.count : '✕'}) (${dur}s)`;
+      return { region, ok: true, items: merged };
     }
-    progressEl.innerHTML = `<span style="color:#d62754;">✕ ${region}</span> · ${j.error || 'unknown'}`;
-    return { region, ok: false, error: j.error, items: [] };
+    progressEl.innerHTML = `<span style="color:#d62754;">✕ ${region}</span> · ${rNormal.error || 'unknown'}`;
+    return { region, ok: false, error: rNormal.error, items: [] };
   } catch (e) {
     progressEl.innerHTML = `<span style="color:#d62754;">✕ ${region}</span> · ${e.message}`;
     return { region, ok: false, error: e.message, items: [] };
@@ -3173,6 +3246,7 @@ document.getElementById('m-save').addEventListener('click', async () => {
     itemId: document.getElementById('m-itemid').value.trim(),
     sku,
     option: document.getElementById('m-option').value.trim(),
+    sourcingPrice: parseFloat(document.getElementById('m-wholesale').value) || 0,
     cost,
     weight,
     position: state.rows.length,
@@ -4028,6 +4102,176 @@ async function _shopeeRegSubmit() {
     cancel.dataset.bound = '1';
     cancel.addEventListener('click', () => modal.classList.remove('show'));
     submit.addEventListener('click', _shopeeRegSubmit);
+  };
+  init();
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   KEYWORD BULK PRICE UPDATE
+   ════════════════════════════════════════════════════════════════════ */
+let _kpmItems = []; // flat array of { region, item_id, model_id, item_name, item_sku, price, status }
+
+async function _kpmFetchAll(regions) {
+  const statusEl = document.getElementById('kpm-status');
+  statusEl.textContent = '데이터 로딩 중…';
+  const results = await Promise.all(regions.map(async r => {
+    const [rN, rU] = await Promise.all([
+      fetch(`${SHOPEE_BRIDGE}/list_items?region=${r}&item_status=NORMAL&max_items=500`).then(x => x.json()).catch(() => ({ ok: false })),
+      fetch(`${SHOPEE_BRIDGE}/list_items?region=${r}&item_status=UNLIST&max_items=500`).then(x => x.json()).catch(() => ({ ok: false })),
+    ]);
+    const items = [...(rN.ok ? rN.items || [] : []), ...(rU.ok ? rU.items || [] : [])];
+    // deduplicate
+    const seen = new Set();
+    return items.filter(it => {
+      const k = `${it.item_id}-${it.model_id ?? ''}`;
+      if (seen.has(k)) return false;
+      seen.add(k); return true;
+    }).map(it => ({
+      region: r,
+      item_id: it.item_id,
+      model_id: it.model_id ?? null,
+      item_name: it.item_name || '',
+      item_sku: it.item_sku || '',
+      price: it.current_price ?? it.original_price ?? '',
+      currency: it.currency || '',
+      status: it.status || '',
+    }));
+  }));
+  return results.flat();
+}
+
+function _kpmFilter(items, keyword) {
+  if (!keyword.trim()) return items;
+  const kw = keyword.trim().toLowerCase();
+  return items.filter(it =>
+    it.item_name.toLowerCase().includes(kw) || it.item_sku.toLowerCase().includes(kw)
+  );
+}
+
+function _kpmRenderResults(filtered) {
+  const tbody = document.getElementById('kpm-results-body');
+  const countEl = document.getElementById('kpm-total-count');
+  countEl.textContent = filtered.length;
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="padding:16px;text-align:center;color:#888;">검색 결과 없음</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map((it, i) => `
+    <tr data-idx="${i}" style="border-bottom:1px solid #ebebf0;">
+      <td style="padding:5px 8px;text-align:center;"><input type="checkbox" class="kpm-row-chk" data-idx="${i}"></td>
+      <td style="padding:5px 8px;"><span style="font-weight:600;color:${it.region==='SG'?'#f90':'#007aff'}">${it.region}</span></td>
+      <td style="padding:5px 8px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(it.item_name)}">${esc(it.item_name)}</td>
+      <td style="padding:5px 8px;font-family:monospace;">${esc(it.item_sku)}</td>
+      <td style="padding:5px 8px;text-align:right;">${it.price !== '' ? `${Number(it.price).toFixed(2)} ${esc(it.currency)}` : '-'}</td>
+      <td style="padding:5px 8px;text-align:center;"><span style="font-size:10px;padding:2px 5px;border-radius:3px;background:${it.status==='NORMAL'?'#dcfce7':'#fef9c3'};color:${it.status==='NORMAL'?'#166534':'#854d0e'}">${it.status||'-'}</span></td>
+      <td style="padding:5px 8px;font-family:monospace;font-size:10px;color:#888;">${it.item_id}</td>
+    </tr>`).join('');
+  _kpmUpdateCheckedCount();
+}
+
+function _kpmUpdateCheckedCount() {
+  const checked = document.querySelectorAll('.kpm-row-chk:checked').length;
+  const countEl = document.getElementById('kpm-checked-count');
+  if (countEl) countEl.textContent = checked;
+  const applyBtn = document.getElementById('kpm-apply');
+  if (applyBtn) applyBtn.disabled = checked === 0;
+}
+
+async function _kpmApply() {
+  const price = parseFloat(document.getElementById('kpm-new-price').value);
+  if (!price || price <= 0) { alert('새 가격을 입력해주세요.'); return; }
+  const checked = Array.from(document.querySelectorAll('.kpm-row-chk:checked'));
+  if (!checked.length) return;
+  const logEl = document.getElementById('kpm-apply-log');
+  logEl.style.display = 'block';
+  logEl.textContent = '';
+  document.getElementById('kpm-apply').disabled = true;
+  let ok = 0, fail = 0;
+  for (const chk of checked) {
+    const idx = Number(chk.dataset.idx);
+    const it = _kpmItems[idx];
+    if (!it) continue;
+    try {
+      const priceEntry = it.model_id != null
+        ? { model_id: it.model_id, original_price: price }
+        : { original_price: price };
+      const body = { region: it.region, item_id: it.item_id, price_list: [priceEntry] };
+      const r = await fetch(`${SHOPEE_BRIDGE}/update_price`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then(x => x.json());
+      if (r.ok) {
+        logEl.textContent += `✅ [${it.region}] ${it.item_name} → ${price}\n`;
+        ok++;
+      } else {
+        logEl.textContent += `❌ [${it.region}] ${it.item_name}: ${r.error || JSON.stringify(r)}\n`;
+        fail++;
+      }
+    } catch (e) {
+      logEl.textContent += `❌ [${it.region}] ${it.item_name}: ${e.message}\n`;
+      fail++;
+    }
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  logEl.textContent += `\n완료: 성공 ${ok}건, 실패 ${fail}건`;
+  document.getElementById('kpm-apply').disabled = false;
+}
+
+(function bindKeywordPriceModal() {
+  const init = () => {
+    const openBtn = document.getElementById('keyword-price-open');
+    const modal = document.getElementById('keyword-price-modal');
+    const cancelBtn = document.getElementById('kpm-cancel');
+    const searchBtn = document.getElementById('kpm-search');
+    const applyBtn = document.getElementById('kpm-apply');
+    const selectAll = document.getElementById('kpm-select-all');
+    if (!openBtn || !modal) { document.addEventListener('DOMContentLoaded', init); return; }
+    if (openBtn.dataset.bound) return;
+    openBtn.dataset.bound = '1';
+
+    openBtn.addEventListener('click', () => {
+      _kpmItems = [];
+      document.getElementById('kpm-results-wrap').style.display = 'none';
+      document.getElementById('kpm-apply-log').style.display = 'none';
+      document.getElementById('kpm-status').textContent = '';
+      document.getElementById('kpm-results-body').innerHTML = '';
+      document.getElementById('kpm-keyword').value = '';
+      modal.classList.add('show');
+    });
+
+    cancelBtn.addEventListener('click', () => modal.classList.remove('show'));
+
+    searchBtn.addEventListener('click', async () => {
+      const regions = Array.from(document.querySelectorAll('.kpm-region:checked')).map(el => el.value);
+      if (!regions.length) { alert('Region을 하나 이상 선택해주세요.'); return; }
+      searchBtn.disabled = true;
+      document.getElementById('kpm-results-wrap').style.display = 'none';
+      document.getElementById('kpm-apply-log').style.display = 'none';
+      document.getElementById('kpm-apply-log').textContent = '';
+      try {
+        const all = await _kpmFetchAll(regions);
+        const keyword = document.getElementById('kpm-keyword').value;
+        _kpmItems = _kpmFilter(all, keyword);
+        document.getElementById('kpm-status').textContent = `전체 ${all.length}개 중 "${keyword || '(필터없음)'}" 매칭: ${_kpmItems.length}건`;
+        document.getElementById('kpm-results-wrap').style.display = 'block';
+        _kpmRenderResults(_kpmItems);
+      } catch (e) {
+        document.getElementById('kpm-status').textContent = '오류: ' + e.message;
+      } finally {
+        searchBtn.disabled = false;
+      }
+    });
+
+    document.getElementById('kpm-results-body').addEventListener('change', e => {
+      if (e.target.classList.contains('kpm-row-chk')) _kpmUpdateCheckedCount();
+    });
+
+    selectAll.addEventListener('change', e => {
+      document.querySelectorAll('.kpm-row-chk').forEach(chk => { chk.checked = e.target.checked; });
+      _kpmUpdateCheckedCount();
+    });
+
+    applyBtn.addEventListener('click', _kpmApply);
   };
   init();
 })();

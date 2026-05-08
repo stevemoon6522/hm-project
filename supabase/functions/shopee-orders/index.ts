@@ -593,12 +593,12 @@ async function pollShop(shop:any, opts:{ days?: number, exact?: boolean }={}){
     if (mapped === "shipped") payload.shipped_at = new Date().toISOString();
     if (ex) {
       // v41: backfill gift items that were skipped by the v40 filter for already-inserted orders
-      const _giftFromApi = (d.item_list||[]).filter((it:any) => it.main_item === false && it.model_discounted_price === 0);
+      const _giftFromApi = (d.item_list||[]).filter((it:any) => isGiftItem(it));
       if (_giftFromApi.length > 0) {
         const { data: _existZero } = await supa.from("marketplace_order_items").select("id").eq("order_id", ex.id).eq("unit_price", 0).limit(1);
         if (!_existZero || _existZero.length === 0) {
           await supa.from("marketplace_order_items").insert(
-            _giftFromApi.map((it:any) => ({ order_id: ex.id, sku: it.item_sku || "", variant_sku: it.model_sku || "", product_name: it.item_name || "", variant_name: it.model_name || "", qty: it.model_quantity_purchased || 1, unit_price: 0 }))
+            _giftFromApi.map((it:any) => ({ ...mapOrderItemRow(ex.id, it), unit_price: 0 }))
           ).catch(()=>{});
         }
       }
@@ -613,7 +613,7 @@ async function pollShop(shop:any, opts:{ days?: number, exact?: boolean }={}){
       const { data: ord, error: ie } = await supa.from("marketplace_orders").insert(payload).select("id").single();
       if (ie) throw new Error(`insert order: ${ie.message}`);
       // v41: include all items (gifts with main_item===false && price===0 are no longer excluded)
-      const items = (d.item_list||[]).map((it:any) => ({ order_id: ord.id, sku: it.item_sku || "", variant_sku: it.model_sku || "", product_name: it.item_name || "", variant_name: it.model_name || "", qty: it.model_quantity_purchased || 1, unit_price: it.model_discounted_price ?? it.model_original_price ?? null }));
+      const items = (d.item_list||[]).map((it:any) => mapOrderItemRow(ord.id, it));
       if (items.length > 0) { const { error: te } = await supa.from("marketplace_order_items").insert(items); if (te) throw new Error(`insert items: ${te.message}`); }
       inserted++;
     }
@@ -625,6 +625,31 @@ async function pollShop(shop:any, opts:{ days?: number, exact?: boolean }={}){
 function j(b:any, s=200){ return new Response(JSON.stringify(b), { status:s, headers:{ ...CORS, "Content-Type":"application/json" } }); }
 function html(b:string){ return new Response(`<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;padding:24px;background:#0d0f14;color:#eee">${b}</body>`, { status:200, headers:{ ...CORS, "Content-Type":"text/html; charset=utf-8" } }); }
 function esc(s:string){ return s.replace(/[&<>"']/g, (c)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]!)); }
+function toNum(v: any): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+function isGiftItem(it: any): boolean {
+  const m = it?.main_item;
+  const isMainFalse = m === false || m === "false" || m === 0 || m === "0";
+  const discounted = toNum(it?.model_discounted_price);
+  const original = toNum(it?.model_original_price);
+  return isMainFalse && ((discounted !== null && discounted <= 0) || (discounted === null && original !== null && original <= 0));
+}
+function mapOrderItemRow(orderId: string, it: any) {
+  const discounted = toNum(it?.model_discounted_price);
+  const original = toNum(it?.model_original_price);
+  return {
+    order_id: orderId,
+    sku: it?.item_sku || "",
+    variant_sku: it?.model_sku || "",
+    product_name: it?.item_name || "",
+    variant_name: it?.model_name || "",
+    qty: toNum(it?.model_quantity_purchased) || 1,
+    unit_price: discounted ?? original ?? null,
+  };
+}
 
 serve(async (req)=>{
   if(req.method==="OPTIONS") return new Response("ok", { headers:CORS });

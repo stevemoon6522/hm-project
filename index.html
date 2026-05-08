@@ -749,6 +749,8 @@
       <button class="btn" id="refresh-all-staronemall" title="Staronemall URL이 있는 모든 행 재크롤링">🔄 전체 재크롤링</button>
       <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
       <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
+      <button class="btn" id="bulk-clear-mapping" disabled title="선택된 상품의 Shopee region 매핑만 삭제 (상품은 유지)">🧹 매핑 삭제 (<span id="bulk-clear-count">0</span>)</button>
+      <button class="btn danger" id="bulk-complete-remove" disabled title="선택된 상품을 완료 처리하고 상품 마스터에서 삭제">✅ 완료 처리 (<span id="bulk-complete-count">0</span>)</button>
       <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품 검색 후 상품 마스터에 추가">🔍 상품 검색</button>
       <button class="btn" id="export-csv">CSV 내보내기</button>
       <button class="btn" id="import-csv">CSV 가져오기</button>
@@ -1454,6 +1456,12 @@ const Storage = {
     if (error) console.error('deleteShopeeListing:', error);
   },
 
+  // product 기준으로 Shopee 매핑 전체 삭제
+  async deleteAllShopeeListings(productId) {
+    const { error } = await db.from('product_shopee_listings').delete().eq('product_id', productId);
+    if (error) console.error('deleteAllShopeeListings:', error);
+  },
+
   // 단일 product 추가 (id 반환)
   async insertProduct(product) {
     const { data, error } = await db
@@ -1554,10 +1562,18 @@ async function initStorage() {
       const allCbs = tbody.querySelectorAll('.row-select');
       allCbs.forEach(cb => { cb.checked = this.checked; });
       const btn = document.getElementById('shopee-bulk-sync');
+      const clearBtn = document.getElementById('bulk-clear-mapping');
+      const completeBtn = document.getElementById('bulk-complete-remove');
       const countEl = document.getElementById('bulk-sync-count');
+      const clearCountEl = document.getElementById('bulk-clear-count');
+      const completeCountEl = document.getElementById('bulk-complete-count');
       const count = this.checked ? allCbs.length : 0;
       if (btn) btn.disabled = count === 0;
+      if (clearBtn) clearBtn.disabled = count === 0;
+      if (completeBtn) completeBtn.disabled = count === 0;
       if (countEl) countEl.textContent = count;
+      if (clearCountEl) clearCountEl.textContent = count;
+      if (completeCountEl) completeCountEl.textContent = count;
     });
     renderTableBody();
     renderSettings();
@@ -2351,6 +2367,102 @@ function _normalize(s) {
   return String(s || '').trim().toLowerCase().replace(/\s+/g, '').replace(/[\[\](){}]/g, '');
 }
 
+function _getSelectedMasterRows() {
+  const tbody = document.getElementById('tbody');
+  const checkedIds = [...tbody.querySelectorAll('.row-select:checked')].map(cb => String(cb.dataset.id));
+  return state.rows.filter(r => checkedIds.includes(String(r.id)));
+}
+
+async function _bulkClearShopeeMappings() {
+  const selected = _getSelectedMasterRows();
+  if (!selected.length) return;
+  if (!confirm(`${selected.length}개 상품의 Shopee 매핑을 삭제할까요?\n상품 자체는 유지되며, 다시 "상품 검색/매핑 동기화"로 연결할 수 있습니다.`)) return;
+
+  const btn = document.getElementById('bulk-clear-mapping');
+  const original = btn ? btn.innerHTML : null;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 매핑 삭제 중...'; }
+
+  let ok = 0, fail = 0;
+  for (const row of selected) {
+    try {
+      if (row.id) await Storage.deleteAllShopeeListings(row.id);
+      row.shopeeListings = {};
+      ok++;
+    } catch (_) {
+      fail++;
+    }
+  }
+
+  if (btn) { btn.disabled = false; if (original) btn.innerHTML = original; }
+  renderTableBody();
+  const statusEl = document.getElementById('save-status');
+  if (statusEl) {
+    statusEl.textContent = fail ? `매핑 삭제: ${ok}건 성공 / ${fail}건 실패` : `✓ 매핑 삭제 완료 (${ok}건)`;
+    statusEl.style.color = fail ? '#d62754' : '#15803d';
+    setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 5000);
+  }
+}
+
+async function _bulkCompleteRemove() {
+  const selected = _getSelectedMasterRows();
+  if (!selected.length) return;
+  if (!confirm(`${selected.length}개 상품을 완료 처리하고 상품 마스터에서 삭제할까요?\n이 작업은 되돌릴 수 없습니다.`)) return;
+
+  const btn = document.getElementById('bulk-complete-remove');
+  const original = btn ? btn.innerHTML : null;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 완료 처리 중...'; }
+
+  let ok = 0, fail = 0;
+  const removedIds = new Set();
+  for (const row of selected) {
+    try {
+      if (row.id) {
+        await Storage.deleteAllShopeeListings(row.id);
+        await Storage.deleteProduct(row.id);
+        saveQueue.products.delete(row.id);
+        removedIds.add(row.id);
+      } else {
+        // Unsaved local row: remove from UI state only.
+        removedIds.add(row.id);
+      }
+      ok++;
+    } catch (_) {
+      fail++;
+    }
+  }
+
+  if (ok > 0) {
+    state.rows = state.rows.filter(r => !removedIds.has(r.id));
+  }
+  if (btn) { btn.disabled = false; if (original) btn.innerHTML = original; }
+  renderTableBody();
+  renderVerify();
+  const statusEl = document.getElementById('save-status');
+  if (statusEl) {
+    statusEl.textContent = fail ? `완료 처리: ${ok}건 삭제 / ${fail}건 실패` : `✓ 완료 처리 및 삭제 완료 (${ok}건)`;
+    statusEl.style.color = fail ? '#d62754' : '#15803d';
+    setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 5000);
+  }
+}
+function _normalizeSku(s) {
+  // Keep bracket characters for SKU identity (e.g., ABC(SG) vs ABC(TW)).
+  return String(s || '').trim().toLowerCase().replace(/\s+/g, '');
+}
+function _normalizeName(s) {
+  return _normalize(s);
+}
+
+// Hard guardrail for this account's 6 operating regions.
+// If source token shop_id doesn't match expected mapping, that region sync is blocked.
+const EXPECTED_REGION_SHOP_IDS = {
+  SG: '1001961186',
+  TW: '1002269092',
+  TH: '1002269088',
+  MY: '1002269081',
+  PH: '1002269083',
+  BR: '1669858301',
+};
+
 let _syncMatches = null;  // {regionMap, productMatches} — sync-apply 가 사용
 
 async function _shopeeSyncFetchRegion(region, progressEl) {
@@ -2417,6 +2529,18 @@ async function _shopeeSyncStart() {
     return;
   }
 
+  // 1.5) Read token source shop_id per region to detect SG/TW source contamination before matching.
+  const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
+  const tokenSourceByRegion = {};
+  try {
+    const tokRes = await fetch(SHOPEE_BRIDGE + '/tokens', { headers: _bh }).then(r => r.json());
+    if (tokRes.ok && Array.isArray(tokRes.tokens)) {
+      for (const t of tokRes.tokens) {
+        if (t?.region) tokenSourceByRegion[t.region] = String(t.shop_id || '');
+      }
+    }
+  } catch (_) {}
+
   // 2) Fetch only needed regions in parallel
   const results = await Promise.all(SHOPEE_REGIONS.map(r =>
     regionsNeeded.has(r)
@@ -2424,33 +2548,63 @@ async function _shopeeSyncStart() {
       : Promise.resolve({ region: r, ok: true, items: [], _skipped: true })
   ));
 
+  // 2.5) Guardrail: block sync when region token points to unexpected shop_id.
+  for (const res of results) {
+    if (!regionsNeeded.has(res.region)) continue;
+    const expected = EXPECTED_REGION_SHOP_IDS[res.region];
+    const sourceShopId = tokenSourceByRegion[res.region] || '';
+    if (expected && sourceShopId && expected !== sourceShopId) {
+      res.ok = false;
+      res.error = `source shop mismatch: expected ${expected}, got ${sourceShopId}`;
+      res.items = [];
+      const rowEl = document.getElementById('sync-row-' + res.region);
+      if (rowEl) {
+        rowEl.innerHTML = `<span style="color:#d62754;">✕ ${res.region}</span> · 소스 shop_id 불일치 (expected ${expected} / actual ${sourceShopId})`;
+      }
+    } else {
+      const rowEl = document.getElementById('sync-row-' + res.region);
+      if (rowEl && sourceShopId) {
+        rowEl.innerHTML += ` <span style="color:#9a9aa6;">· source shop_id ${sourceShopId}</span>`;
+      }
+    }
+  }
+
   // 3) Build per-region SKU index + name index
-  const regionMap = {};  // { region: { skuIndex: Map<sku, item>, nameIndex: Map<normName, item[]> } }
+  const regionMap = {};  // { region: { skuIndex: Map<sku, item[]>, nameIndex: Map<normName, item[]> } }
   for (const res of results) {
     const skuIndex = new Map();
     const nameIndex = new Map();
     for (const it of (res.items || [])) {
-      const skuKey = _normalize(it.item_sku);
-      if (skuKey) skuIndex.set(skuKey, it);
+      const skuKey = _normalizeSku(it.item_sku);
+      if (skuKey) {
+        if (!skuIndex.has(skuKey)) skuIndex.set(skuKey, []);
+        skuIndex.get(skuKey).push(it);
+      }
       // Fallback: also index by base item SKU for multi-model items
       if (it.base_sku) {
-        const baseSkuKey = _normalize(it.base_sku);
-        if (baseSkuKey && !skuIndex.has(baseSkuKey)) skuIndex.set(baseSkuKey, it);
+        const baseSkuKey = _normalizeSku(it.base_sku);
+        if (baseSkuKey) {
+          if (!skuIndex.has(baseSkuKey)) skuIndex.set(baseSkuKey, []);
+          const list = skuIndex.get(baseSkuKey);
+          const key = `${it.item_id}/${it.model_id ?? ''}`;
+          const exists = list.some(x => `${x.item_id}/${x.model_id ?? ''}` === key);
+          if (!exists) list.push(it);
+        }
       }
-      const nameKey = _normalize(it.item_name);
+      const nameKey = _normalizeName(it.item_name);
       if (nameKey) {
         if (!nameIndex.has(nameKey)) nameIndex.set(nameKey, []);
         nameIndex.get(nameKey).push(it);
       }
     }
-    regionMap[res.region] = { ok: res.ok, items: res.items, skuIndex, nameIndex };
+    regionMap[res.region] = { ok: res.ok, items: res.items, skuIndex, nameIndex, sourceShopId: tokenSourceByRegion[res.region] || null };
   }
 
   // 4) For each dashboard row, attempt match only for unmapped (row, region) pairs
   const productMatches = rowsToSync.map(row => {
     const matches = {};
-    const skuKey = _normalize(row.sku);
-    const nameKey = _normalize(row.option || '');  // option 이 product name 으로 쓰임
+    const skuKey = _normalizeSku(row.sku);
+    const nameKey = _normalizeName(row.option || '');  // option 이 product name 으로 쓰임
     for (const region of SHOPEE_REGIONS) {
       // Already mapped — preserve and skip re-matching
       const existingId = (row.shopeeListings || {})[region]?.shop_item_id;
@@ -2459,8 +2613,13 @@ async function _shopeeSyncStart() {
       if (!rm || !rm.ok) { matches[region] = { method: 'error' }; continue; }
       // 1차: SKU 정확 매칭 (다중 model 상품은 list_items 가 model SKU 를 펼쳐서 제공함 → model_id 도 함께 캡처)
       if (skuKey && rm.skuIndex.has(skuKey)) {
-        const it = rm.skuIndex.get(skuKey);
-        matches[region] = { method: 'sku', item_id: it.item_id, model_id: it.model_id || null, item_name: it.item_name, item_sku: it.item_sku };
+        const list = rm.skuIndex.get(skuKey);
+        if (list.length === 1) {
+          const it = list[0];
+          matches[region] = { method: 'sku', item_id: it.item_id, model_id: it.model_id || null, item_name: it.item_name, item_sku: it.item_sku };
+        } else {
+          matches[region] = { method: 'sku_dup', candidates: list.length };
+        }
         continue;
       }
       // 2차: 이름 매칭 (정규화 후 정확 일치만 — 안전)
@@ -2484,13 +2643,14 @@ async function _shopeeSyncStart() {
   // 5) Render summary
   let totalMatched = 0, totalExisting = 0, totalMissing = 0, totalDup = 0, totalErr = 0;
   const perRegion = {};
-  for (const region of SHOPEE_REGIONS) perRegion[region] = { sku: 0, name: 0, existing: 0, none: 0, dup: 0, err: 0 };
+  for (const region of SHOPEE_REGIONS) perRegion[region] = { sku: 0, name: 0, existing: 0, none: 0, dup: 0, skuDup: 0, err: 0 };
   for (const pm of productMatches) {
     for (const region of SHOPEE_REGIONS) {
       const m = pm.matches[region];
       if (m.method === 'existing') { perRegion[region].existing++; totalExisting++; }
       else if (m.method === 'sku') { perRegion[region].sku++; totalMatched++; }
       else if (m.method === 'name') { perRegion[region].name++; totalMatched++; }
+      else if (m.method === 'sku_dup') { perRegion[region].skuDup++; totalDup++; }
       else if (m.method === 'name_dup') { perRegion[region].dup++; totalDup++; }
       else if (m.method === 'error') { perRegion[region].err++; totalErr++; }
       else { perRegion[region].none++; totalMissing++; }
@@ -2509,7 +2669,7 @@ async function _shopeeSyncStart() {
       const p = perRegion[r];
       const skipped = !regionsNeeded.has(r);
       if (skipped) return `${r}: 전체 기존 매핑 (건너뜀)`;
-      return `${r}: SKU ${p.sku} · 이름 ${p.name} · 기존 ${p.existing} · 미매칭 ${p.none}` + (p.dup ? ` · 중복 ${p.dup}` : '') + (p.err ? ` · 에러 ${p.err}` : '');
+      return `${r}: SKU ${p.sku} · 이름 ${p.name} · 기존 ${p.existing} · 미매칭 ${p.none}` + (p.skuDup ? ` · SKU중복 ${p.skuDup}` : '') + (p.dup ? ` · 이름중복 ${p.dup}` : '') + (p.err ? ` · 에러 ${p.err}` : '');
     }).join('<br>') +
     `</div>`;
 
@@ -2533,7 +2693,8 @@ async function _shopeeSyncStart() {
         cell = m.model_id ? `${m.item_id}<br><span style="color:#5a5a66;font-size:9px;">·${m.model_id}</span>` : m.item_id;
         color = '#0d9488';
         title = `이름 매칭: ${m.item_name}` + (m.model_id ? ` · model_id ${m.model_id}` : '');
-      } else if (m.method === 'name_dup') { cell = '?'; color = '#b45309'; title = `이름 중복 ${m.candidates}건 — 수동 처리 필요`; }
+      } else if (m.method === 'sku_dup') { cell = '?'; color = '#b45309'; title = `SKU 중복 ${m.candidates}건 — 자동 적용 제외`; }
+      else if (m.method === 'name_dup') { cell = '?'; color = '#b45309'; title = `이름 중복 ${m.candidates}건 — 수동 처리 필요`; }
       else if (m.method === 'error') { cell = '!'; color = '#d62754'; title = 'region fetch 실패'; }
       const newKey = m.method === 'sku' || m.method === 'name' ? `${m.item_id}/${m.model_id||''}` : null;
       const curKey = cur ? `${cur}/${curModel||''}` : null;
@@ -2619,6 +2780,20 @@ async function _shopeeSyncApply() {
     if (btn.dataset.bound) return;
     btn.dataset.bound = '1';
     btn.addEventListener('click', _shopeeBulkSync);
+  };
+  init();
+})();
+
+(function bindBulkRowActions() {
+  const init = () => {
+    const clearBtn = document.getElementById('bulk-clear-mapping');
+    const completeBtn = document.getElementById('bulk-complete-remove');
+    if (!clearBtn || !completeBtn) { document.addEventListener('DOMContentLoaded', init); return; }
+    if (clearBtn.dataset.bound) return;
+    clearBtn.dataset.bound = '1';
+    completeBtn.dataset.bound = '1';
+    clearBtn.addEventListener('click', _bulkClearShopeeMappings);
+    completeBtn.addEventListener('click', _bulkCompleteRemove);
   };
   init();
 })();
@@ -2996,9 +3171,17 @@ function renderTableBody() {
   function _updateBulkBtn() {
     const checked = tbody.querySelectorAll('.row-select:checked');
     const btn = document.getElementById('shopee-bulk-sync');
+    const clearBtn = document.getElementById('bulk-clear-mapping');
+    const completeBtn = document.getElementById('bulk-complete-remove');
     const countEl = document.getElementById('bulk-sync-count');
+    const clearCountEl = document.getElementById('bulk-clear-count');
+    const completeCountEl = document.getElementById('bulk-complete-count');
     if (btn) btn.disabled = checked.length === 0;
+    if (clearBtn) clearBtn.disabled = checked.length === 0;
+    if (completeBtn) completeBtn.disabled = checked.length === 0;
     if (countEl) countEl.textContent = checked.length;
+    if (clearCountEl) clearCountEl.textContent = checked.length;
+    if (completeCountEl) completeCountEl.textContent = checked.length;
     const allBox = document.getElementById('select-all-rows');
     if (allBox) {
       const all = tbody.querySelectorAll('.row-select');
@@ -4144,6 +4327,39 @@ async function _gkpFetchAllGlobalItems(statusEl) {
   return allItems;
 }
 
+async function _gkpFetchShopItemsFallback(statusEl) {
+  const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
+  const statuses = ['NORMAL', 'UNLIST'];
+  const raw = [];
+
+  for (const st of statuses) {
+    statusEl.textContent = `Global API 장애 감지 — Shop 상품 목록(${st}) 로딩 중…`;
+    const res = await fetch(`${SHOPEE_BRIDGE}/list_items?region=SG&item_status=${st}&max_items=1000`, { headers: _bh })
+      .then(x => x.json()).catch(e => ({ ok: false, _fetchErr: e.message }));
+    if (!res.ok) continue;
+    raw.push(...(res.items || []));
+  }
+
+  if (!raw.length) {
+    throw new Error('fallback list_items도 결과가 없습니다.');
+  }
+
+  const dedup = new Map();
+  for (const it of raw) {
+    const key = `${it.item_id || ''}:${it.model_id || 0}`;
+    if (!dedup.has(key)) dedup.set(key, it);
+  }
+
+  return Array.from(dedup.values()).map(it => ({
+    type: 'item',
+    global_item_id: `${it.item_id || ''}-${it.model_id || 0}`,
+    item_name: it.item_name || '',
+    item_sku: it.item_sku || it.base_sku || '',
+    price: it.original_price ?? it.current_price ?? '',
+    models: [],
+  }));
+}
+
 async function _gkpEnrichItems(items, statusEl) {
   const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
   // Fetch info + models for has_model items in parallel (batched 10 at a time)
@@ -4271,30 +4487,51 @@ async function _gkpApply() {
   const checked = Array.from(document.querySelectorAll('.gkp-row-chk:checked'));
   if (!checked.length) return;
 
-  const toInsert = checked.map(chk => {
+  const picked = checked.map(chk => {
     const row = _gkpRows[Number(chk.dataset.idx)];
     if (!row) return null;
     return { sku: row.item_sku || null, product_name: row.item_name || null };
   }).filter(r => r && r.sku);
 
-  if (!toInsert.length) { alert('SKU가 있는 상품을 선택해주세요.'); return; }
+  if (!picked.length) { alert('SKU가 있는 상품을 선택해주세요.'); return; }
+
+  // Deduplicate by SKU in-memory first.
+  const uniqueBySku = new Map();
+  for (const row of picked) {
+    if (!uniqueBySku.has(row.sku)) uniqueBySku.set(row.sku, row);
+  }
+  const uniqueRows = Array.from(uniqueBySku.values());
 
   const logEl = document.getElementById('gkp-import-log');
   logEl.style.display = 'block';
   logEl.textContent = '저장 중…';
   document.getElementById('gkp-apply').disabled = true;
 
-  const { data, error } = await db.from('products').upsert(toInsert, { onConflict: 'sku', ignoreDuplicates: true });
-  if (error) {
-    logEl.textContent = `❌ 오류: ${error.message}`;
+  try {
+    // Avoid ON CONFLICT dependency: fetch existing SKUs, then insert only missing rows.
+    const skuList = uniqueRows.map(r => r.sku);
+    const { data: existingRows, error: existingErr } = await db.from('products').select('sku').in('sku', skuList);
+    if (existingErr) throw existingErr;
+
+    const existing = new Set((existingRows || []).map(r => r.sku));
+    const missingRows = uniqueRows.filter(r => !existing.has(r.sku));
+
+    if (missingRows.length > 0) {
+      const { error: insertErr } = await db.from('products').insert(missingRows);
+      if (insertErr) throw insertErr;
+    }
+
+    const inserted = missingRows.length;
+    const skipped = uniqueRows.length - inserted;
+    logEl.textContent = `✅ ${inserted}건 추가 완료 / ${skipped}건 기존 SKU 건너뜀. 상품 마스터 새로고침 중…`;
+    setTimeout(async () => {
+      document.getElementById('keyword-price-modal').classList.remove('show');
+      await initStorage();
+    }, 1000);
+  } catch (e) {
+    logEl.textContent = `❌ 오류: ${e.message || e}`;
     document.getElementById('gkp-apply').disabled = false;
-    return;
   }
-  logEl.textContent = `✅ ${toInsert.length}건 추가 완료 (이미 존재하는 SKU는 건너뜀). 상품 마스터 새로고침 중…`;
-  setTimeout(async () => {
-    document.getElementById('keyword-price-modal').classList.remove('show');
-    await initStorage();
-  }, 1000);
 }
 
 (function bindGlobalPriceModal() {
@@ -4331,16 +4568,30 @@ async function _gkpApply() {
       document.getElementById('gkp-import-log').textContent = '';
       const statusEl = document.getElementById('gkp-status');
       try {
-        const allGlobal = await _gkpFetchAllGlobalItems(statusEl);
-        statusEl.textContent = `전체 ${allGlobal.length}건 로드. 상품 정보 조회 중…`;
         const keyword = document.getElementById('gkp-keyword').value.trim();
-        // Quick name filter before enrichment to avoid fetching everything
-        const preFiltered = keyword
-          ? allGlobal.filter(it => (it.item_name || '').toLowerCase().includes(keyword.toLowerCase()))
-          : allGlobal;
-        const enriched = await _gkpEnrichItems(preFiltered, statusEl);
+
+        let allGlobal = [];
+        let enriched = [];
+        let fallbackMode = false;
+
+        try {
+          allGlobal = await _gkpFetchAllGlobalItems(statusEl);
+          statusEl.textContent = `전체 ${allGlobal.length}건 로드. 상품 정보 조회 중…`;
+          const preFiltered = keyword
+            ? allGlobal.filter(it => (it.item_name || '').toLowerCase().includes(keyword.toLowerCase()))
+            : allGlobal;
+          enriched = await _gkpEnrichItems(preFiltered, statusEl);
+        } catch (e) {
+          const msg = String(e?.message || e || '');
+          if (!/global_items 오류|product\.error_unknown|invalid_access_token|invalid_acceess_token/i.test(msg)) throw e;
+          fallbackMode = true;
+          enriched = await _gkpFetchShopItemsFallback(statusEl);
+        }
+
         const filtered = _gkpFilter(enriched, keyword);
-        statusEl.textContent = `전체 ${allGlobal.length}개 중 "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`;
+        statusEl.textContent = fallbackMode
+          ? `Fallback 검색 사용 중 · "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`
+          : `전체 ${allGlobal.length}개 중 "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`;
         _gkpExpanded.clear();
         _gkpEnrichedFiltered = filtered;
         _gkpRows = _gkpBuildRows(filtered);

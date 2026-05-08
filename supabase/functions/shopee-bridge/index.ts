@@ -1,4 +1,4 @@
-// Shopee Bridge — v26: merchantApiCall uses shop access_token directly with merchant_id in signature; no merchant token exchange.
+// Shopee Bridge — v25: merchantApiCall uses shop access_token with merchant_id in signature (avoids merchant-only refresh).
 // v20: added /proxy_image, POST /upload_image (base64), /add_item for product registration.
 // v19: /list_items expands has_model items via get_model_list, returning per-model rows.
 // Also: /update_price accepts model_id in price_list, /update_stock supports model-level stock.
@@ -136,16 +136,62 @@ async function shopApiCall(region: string, path: string, opts: any = {}) {
 
 async function merchantApiCall(region: string, path: string, opts: any = {}) {
   const app = await getApp();
-  // CBSC: shop access_token is valid for merchant-scoped APIs when merchant_id is included in signature.
-  const t = await getValidToken(region, 'shop');
-  if (!t.merchant_id) throw new Error(`merchant_id missing for region ${region}`);
-  const ts = Math.floor(Date.now() / 1000);
-  const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}${t.access_token}${t.merchant_id}`);
-  const baseQuery: Record<string, string> = { partner_id: String(app.partner_id), timestamp: String(ts), access_token: t.access_token, merchant_id: String(t.merchant_id), sign };
-  if (opts.query) for (const [k, v] of Object.entries(opts.query)) baseQuery[k] = String(v);
-  const url = `https://${host(app.is_sandbox)}${path}?${new URLSearchParams(baseQuery)}`;
-  const r = await fetch(url, { method: opts.method || 'GET', headers: opts.body ? { 'Content-Type': 'application/json' } : {}, body: opts.body ? JSON.stringify(opts.body) : undefined });
-  return { http_status: r.status, ...(await r.json()) };
+  const callWithToken = async (
+    tokenMode: 'shop' | 'merchant',
+    tokenOverride?: { access_token: string; merchant_id?: number | null }
+  ) => {
+    const t = tokenOverride
+      ? { ...tokenOverride }
+      : await getValidToken(region, tokenMode);
+    if (!t.merchant_id) throw new Error(`merchant_id missing for region ${region}`);
+    const ts = Math.floor(Date.now() / 1000);
+    const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}${t.access_token}${t.merchant_id}`);
+    const baseQuery: Record<string, string> = {
+      partner_id: String(app.partner_id),
+      timestamp: String(ts),
+      access_token: t.access_token,
+      merchant_id: String(t.merchant_id),
+      sign,
+    };
+    if (opts.query) for (const [k, v] of Object.entries(opts.query)) baseQuery[k] = String(v);
+    const url = `https://${host(app.is_sandbox)}${path}?${new URLSearchParams(baseQuery)}`;
+    const r = await fetch(url, {
+      method: opts.method || 'GET',
+      headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    return { http_status: r.status, ...(await r.json()) };
+  };
+
+  // Global product APIs are merchant-scoped. Start with a merchant token issued from refresh token.
+  const issued = await issueMerchantToken(region);
+  const first = await callWithToken('merchant', {
+    access_token: issued.access_token,
+    merchant_id: issued.merchant_id,
+  });
+  if (!first.error) return first;
+
+  const errText = `${first.error || ''} ${first.message || ''}`.toLowerCase();
+  if (errText.includes('invalid_access_token') || errText.includes('invalid_acceess_token')) {
+    try {
+      const refreshedShop = await forceRefreshShopToken(region);
+      const second = await callWithToken('shop', {
+        access_token: refreshedShop.access_token,
+        merchant_id: refreshedShop.merchant_id,
+      });
+      if (!second.error) return second;
+
+      const refreshed = await refreshMerchantToken(region);
+      const third = await callWithToken('merchant', {
+        access_token: refreshed.access_token,
+        merchant_id: refreshed.merchant_id,
+      });
+      return third;
+    } catch {
+      return first;
+    }
+  }
+  return first;
 }
 
 // /list_items — paginated get_item_list + batch get_item_base_info + per-item get_model_list (when has_model=true).
@@ -267,7 +313,7 @@ Deno.serve(async (req) => {
   try {
     if (action === 'health') {
       const app = await getApp();
-      return jsonResp({ ok: true, service: 'shopee-bridge', version: 26, env: { partner_id: app.partner_id, is_sandbox: app.is_sandbox, has_env_partner_id: !!ENV_PARTNER_ID, has_env_partner_key: !!ENV_PARTNER_KEY } });
+      return jsonResp({ ok: true, service: 'shopee-bridge', version: 25, env: { partner_id: app.partner_id, is_sandbox: app.is_sandbox, has_env_partner_id: !!ENV_PARTNER_ID, has_env_partner_key: !!ENV_PARTNER_KEY } });
     }
     if (action === 'tokens') {
       const { data } = await supabase.from('shopee_tokens').select('region, shop_id, merchant_id, expires_at, is_sandbox');

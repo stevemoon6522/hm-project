@@ -1,9 +1,7 @@
-// Joom Bridge — v9
-// Changes from v8:
-//   - Issue 1: Dynamic category fetch from Joom API (fallback to hardcoded); payload uses only categoryByJoom
-//   - Issue 2: Per-variant SKU and weight support; top-level row.sku validation removed
-//   - Issue 3: Portrait detail images auto-split into square tiles via imagescript + Cloudinary upload
-//             (requires CLOUDINARY_CLOUD_NAME / CLOUDINARY_API_KEY / CLOUDINARY_API_SECRET env vars)
+// Joom Bridge — v11
+// Changes from v10:
+//   - Fix: safeSku fallback no longer appends "-DEFAULT" for single-variant DEFAULT products
+//   - Add /update-price handler
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
@@ -290,10 +288,12 @@ async function buildPayload(opts: any): Promise<any> {
 
   const variants = configs.map((cfg: any, idx: number) => {
     const vName = (cfg.name || "DEFAULT").trim();
-    // Per-variant SKU: use cfg.sku if provided, else derive from row.sku
+    // Per-variant SKU: use cfg.sku if provided; for DEFAULT single-variant use row.sku as-is
     const vSku = (cfg.sku && cfg.sku.trim())
       ? cfg.sku.trim()
-      : (row.sku ? safeSku(row.sku, vName) : `VAR-${String(idx + 1).padStart(2, "0")}`);
+      : (row.sku
+          ? (vName.toUpperCase() === "DEFAULT" ? row.sku : safeSku(row.sku, vName))
+          : `VAR-${String(idx + 1).padStart(2, "0")}`);
     // Per-variant weight: use cfg.weight (grams) if provided, else product-level weight
     const vWeightKg = cfg.weight ? gramsToKg(cfg.weight) : defaultWeightKg;
 
@@ -361,7 +361,7 @@ async function handleRequest(req: Request): Promise<Response> {
 
   try {
     if (action === "health" && req.method === "GET") {
-      return jsonResp({ ok: true, service: "joom-bridge", version: 9 });
+      return jsonResp({ ok: true, service: "joom-bridge", version: 11 });
     }
 
     if (action === "categories" && req.method === "GET") {
@@ -424,6 +424,31 @@ async function handleRequest(req: Request): Promise<Response> {
         })),
         computed_listing_usd,
       });
+    }
+
+    if (action === "update-price" && req.method === "POST") {
+      const body = await req.json();
+      const { productId, sku, price } = body;
+      if (!productId || !price || price <= 0) return jsonResp({ ok: false, error: "productId, price 필요" }, 400);
+
+      // Fetch current product to get full variant list
+      const isHexId = /^[a-f0-9]{24}$/.test(String(productId));
+      const qparam = isHexId ? `id=${encodeURIComponent(productId)}` : `sku=${encodeURIComponent(productId)}`;
+      const product = await joomFetch(`/products?${qparam}`);
+
+      const variants: any[] = product.variants || [];
+      if (!variants.length) return jsonResp({ ok: false, error: "variant 없음" }, 404);
+
+      const targets = sku ? variants.filter((v: any) => v.sku === sku) : variants;
+      if (!targets.length) return jsonResp({ ok: false, error: `sku "${sku}" 없음` }, 404);
+
+      const updatedVariants = targets.map((v: any) => ({ ...v, price: String(price), currency: "USD" }));
+      const result = await joomFetch("/products/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: product.id || productId, variants: updatedVariants }),
+      });
+      return jsonResp({ ok: true, updated: updatedVariants.length, state: result?.state });
     }
 
     if (action === "delete" && req.method === "POST") {

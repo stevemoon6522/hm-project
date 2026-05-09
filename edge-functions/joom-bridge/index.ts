@@ -2,6 +2,7 @@
 // Changes from v10:
 //   - Fix: safeSku fallback no longer appends "-DEFAULT" for single-variant DEFAULT products
 //   - Add /update-price handler
+//   - Fix: include product SKU and categoryId in /products/create payload
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
@@ -92,18 +93,18 @@ let _cachedCategories: Array<{ key: string; id: string; label: string }> | null 
 async function getCategories(): Promise<Array<{ key: string; id: string; label: string }>> {
   if (_cachedCategories) return _cachedCategories;
   try {
-    const data = await joomFetch("/categories");
-    const cats = Array.isArray(data) ? data : (data?.categories || data?.items || []);
+    const data = await joomFetch("/productCategories");
+    const cats = Array.isArray(data) ? data : (data?.categories || data?.productCategories || data?.items || []);
     if (cats.length > 0) {
       _cachedCategories = cats.map((c: any) => ({
-        key: String(c.id || c.key),
-        id: String(c.id || c.key),
-        label: c.name || c.title || c.label || String(c.id),
+        key: String(c.id || c.categoryId || c.key),
+        id: String(c.id || c.categoryId || c.key),
+        label: c.name || c.categoryName || c.title || c.label || String(c.id || c.categoryId),
       }));
       return _cachedCategories!;
     }
   } catch (e) {
-    console.warn("[joom-bridge] Joom /categories failed, using fallback:", e);
+    console.warn("[joom-bridge] Joom /productCategories failed, using fallback:", e);
   }
   // Fallback to hardcoded
   _cachedCategories = Object.entries(FALLBACK_CATEGORIES).map(([key, id]) => ({
@@ -282,18 +283,20 @@ async function buildPayload(opts: any): Promise<any> {
   const { row, scrapedAssets, variantsConfig, categoryId, enabled, namePrefix, artist, album, contents, brand } = opts;
   if (!scrapedAssets?.mainImage) throw new Error("scrapedAssets.mainImage 가 비어있음");
 
+  const productSku = String(row.sku || "").trim();
+  if (!productSku) throw new Error("row.sku required");
+
   const listing = calcListingUSD(row.cost);
-  const configs = (variantsConfig && variantsConfig.length) ? variantsConfig : [{ name: "DEFAULT", inventory: 0 }];
+  const configs = (variantsConfig && variantsConfig.length) ? variantsConfig : [{ name: "DEFAULT", sku: productSku, inventory: 0 }];
   const defaultWeightKg = gramsToKg(row.weight || 0);
+  const seenSkus = new Set<string>();
 
   const variants = configs.map((cfg: any, idx: number) => {
     const vName = (cfg.name || "DEFAULT").trim();
-    // Per-variant SKU: use cfg.sku if provided; for DEFAULT single-variant use row.sku as-is
-    const vSku = (cfg.sku && cfg.sku.trim())
-      ? cfg.sku.trim()
-      : (row.sku
-          ? (vName.toUpperCase() === "DEFAULT" ? row.sku : safeSku(row.sku, vName))
-          : `VAR-${String(idx + 1).padStart(2, "0")}`);
+    const vSku = String(cfg.sku || (vName.toUpperCase() === "DEFAULT" ? productSku : "")).trim();
+    if (!vSku) throw new Error(`variant SKU required: ${vName || idx + 1}`);
+    if (seenSkus.has(vSku)) throw new Error(`duplicate variant SKU: ${vSku}`);
+    seenSkus.add(vSku);
     // Per-variant weight: use cfg.weight (grams) if provided, else product-level weight
     const vWeightKg = cfg.weight ? gramsToKg(cfg.weight) : defaultWeightKg;
 
@@ -331,12 +334,13 @@ async function buildPayload(opts: any): Promise<any> {
   }
 
   const payload: any = {
+    sku: productSku,
     name: productName,
     mainImage: scrapedAssets.mainImage,
     extraImages: processedExtras,
     description,
     enabled: !!enabled,
-    categoryByJoom: { id: categoryId },  // Use only categoryByJoom (not category)
+    categoryId,
     variants,
   };
   if (brand && brand.trim()) payload.brand = brand.trim();
@@ -361,7 +365,7 @@ async function handleRequest(req: Request): Promise<Response> {
 
   try {
     if (action === "health" && req.method === "GET") {
-      return jsonResp({ ok: true, service: "joom-bridge", version: 11 });
+      return jsonResp({ ok: true, service: "joom-bridge", version: 12 });
     }
 
     if (action === "categories" && req.method === "GET") {
@@ -382,7 +386,8 @@ async function handleRequest(req: Request): Promise<Response> {
       const brand = body.brand || "";
 
       // Resolve categoryId: support both legacy key ("music_albums_cd") and direct Joom ID
-      const categoryId = FALLBACK_CATEGORIES[body.categoryId] || body.categoryId;
+      const categoryId = String(FALLBACK_CATEGORIES[body.categoryId] || body.categoryId || "").trim();
+      if (!String(row.sku || "").trim()) return jsonResp({ ok: false, error: "row.sku required" }, 400);
 
       if (!row.cost) return jsonResp({ ok: false, error: "row.cost 필요" }, 400);
       if (!scraped.mainImage) return jsonResp({ ok: false, error: "scrapedAssets.mainImage 필요" }, 400);
@@ -407,13 +412,16 @@ async function handleRequest(req: Request): Promise<Response> {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      const joomCategoryId = String(data.categoryId || data.category?.id || data.categoryByJoom?.id || "");
       return jsonResp({
         ok: true,
         joom_product_id: data.id,
         joom_sku: data.sku,
         state: data.state,
         main_image_state: data.mainImage?.imageState,
-        category_assigned: !!(data.categoryByJoom?.id),
+        requested_category_id: categoryId,
+        joom_category_id: joomCategoryId || null,
+        category_assigned: joomCategoryId === categoryId,
         brand_assigned: !!data.brand,
         variants: (data.variants || []).map((v: any) => ({
           sku: v.sku, price: v.price, inventory: v.inventory,

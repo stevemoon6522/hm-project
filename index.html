@@ -204,6 +204,37 @@
     border-radius: 2px; outline: none; cursor: pointer; max-width: 160px;
   }
   #tag-filter:focus { border-color: var(--accent); }
+  .select-col {
+    width: 48px;
+    text-align: center;
+    padding: 6px 8px;
+  }
+  .select-cell {
+    text-align: center;
+    padding: 6px 8px !important;
+    cursor: pointer;
+  }
+  #select-all-rows,
+  .row-select {
+    width: 20px;
+    height: 20px;
+    cursor: pointer;
+    accent-color: var(--accent);
+  }
+  .row-select-hit {
+    min-width: 32px;
+    min-height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+  }
+  tr.row.is-selected {
+    background: rgba(214,39,84,0.045);
+  }
+  tr.row.is-selected .select-cell {
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
   .tag-badge {
     display: inline-block; margin: 2px 2px 0 0; padding: 1px 5px;
     border-radius: 2px; font-size: 9px; font-weight: 600; letter-spacing: 0.05em;
@@ -739,22 +770,14 @@
   <!-- Toolbar -->
   <div class="toolbar">
     <div class="toolbar-left">
-      <div class="search-box">
-        <input type="text" id="search" placeholder="SKU / 옵션명 검색...">
-      </div>
+      <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품 검색 후 상품 마스터에 추가">🔍 상품 검색</button>
       <select id="tag-filter"><option value="">모든 태그</option></select>
     </div>
     <div class="toolbar-right">
-      <button class="btn primary" id="add-row">+ 상품 추가</button>
-      <button class="btn" id="refresh-all-staronemall" title="Staronemall URL이 있는 모든 행 재크롤링">🔄 전체 재크롤링</button>
       <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
       <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
       <button class="btn" id="bulk-clear-mapping" disabled title="선택된 상품의 Shopee region 매핑만 삭제 (상품은 유지)">🧹 매핑 삭제 (<span id="bulk-clear-count">0</span>)</button>
       <button class="btn danger" id="bulk-complete-remove" disabled title="선택된 상품을 완료 처리하고 상품 마스터에서 삭제">✅ 완료 처리 (<span id="bulk-complete-count">0</span>)</button>
-      <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품 검색 후 상품 마스터에 추가">🔍 상품 검색</button>
-      <button class="btn" id="export-csv">CSV 내보내기</button>
-      <button class="btn" id="import-csv">CSV 가져오기</button>
-      <input type="file" id="csv-file" accept=".csv" style="display:none;">
     </div>
   </div>
 
@@ -820,11 +843,12 @@
       <span class="count" id="joom-reg-count">0 ITEMS</span>
     </div>
     <div class="table-wrap">
-      <table class="master" style="min-width:900px;">
+      <table class="master" style="min-width:1000px;">
         <thead>
           <tr>
-            <th style="width:160px;">Staronemall</th>
-            <th style="width:220px;">SKU</th>
+            <th style="width:140px;">Staronemall</th>
+            <th style="width:280px;">상품명</th>
+            <th style="width:160px;">SKU</th>
             <th style="width:100px;text-align:right;">매입가 (KRW)</th>
             <th style="width:80px;text-align:right;">무게 (g)</th>
             <th class="country-col" style="--country-color:var(--c-jm);width:80px;">JM</th>
@@ -928,8 +952,14 @@
     </div>
 
     <div class="field">
-      <label>카테고리</label>
-      <select id="jm-category" style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:14px;"></select>
+      <label>카테고리 (검색 후 선택)</label>
+      <div id="jm-category-wrap" style="position:relative;">
+        <input type="text" id="jm-category-search" placeholder="카테고리명 검색…" autocomplete="off"
+               style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:14px;box-sizing:border-box;">
+        <input type="hidden" id="jm-category" value="">
+        <div id="jm-category-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;max-height:240px;overflow-y:auto;background:#fff;border:1px solid #d8d8e0;border-top:none;border-radius:0 0 3px 3px;z-index:10;box-shadow:0 4px 12px rgba(0,0,0,0.08);"></div>
+        <div id="jm-category-selected" style="margin-top:6px;font-size:11px;color:#5a5a66;"></div>
+      </div>
     </div>
 
     <div class="field">
@@ -1050,7 +1080,36 @@
 
     <div class="field">
       <label>상품명 *</label>
-      <input type="text" id="srm-name" placeholder="[READY STOCK] ARTIST - Album Name">
+      <div style="display:flex;gap:6px;align-items:stretch;">
+        <select id="srm-name-prefix" style="width:130px;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-size:13px;">
+          <option value="[READY STOCK]" selected>[READY STOCK]</option>
+          <option value="[PRE ORDER]">[PRE ORDER]</option>
+        </select>
+        <input type="text" id="srm-name-body" placeholder="ARTIST - Album Name" style="flex:1;">
+      </div>
+    </div>
+
+    <div class="field">
+      <label>아티스트 / 앨범</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+        <input type="text" id="srm-artist" placeholder="예: TWS, ENHYPEN">
+        <input type="text" id="srm-album" placeholder="예: 1st Mini Album">
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Contents <span style="color:#5a5a66;font-size:10px;">(앨범 구성품. 비워두면 기본 K-POP 앨범 구성으로 채움)</span></label>
+      <textarea id="srm-contents" rows="4" placeholder="- PACKAGE&#10;- MUSIC NFC CD&#10;- BALL CHAIN&#10;- SMINI CASE&#10;- PHOTOCARD" style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:13px;resize:vertical;"></textarea>
+    </div>
+
+    <div class="field">
+      <label>Description 템플릿 <span style="color:#5a5a66;font-size:10px;">(치환 키: {{CUSTOM_TEXT}})</span></label>
+      <textarea id="srm-desc-template" rows="4" placeholder="기본 Description 템플릿" style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:13px;resize:vertical;"></textarea>
+    </div>
+
+    <div class="field">
+      <label>사용자 입력 텍스트 <span style="color:#5a5a66;font-size:10px;">(JOOM 등록처럼 특정 영역만 교체)</span></label>
+      <textarea id="srm-desc-custom" rows="3" placeholder="이 내용이 {{CUSTOM_TEXT}} 위치에 들어갑니다." style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:13px;resize:vertical;"></textarea>
     </div>
 
     <div class="field">
@@ -1096,8 +1155,8 @@
     </div>
 
     <div class="field">
-      <label>설명 <span style="color:#5a5a66;font-size:10px;">(비워두면 기본 K-POP 문구 자동 생성)</span></label>
-      <textarea id="srm-desc" rows="3" placeholder="K-POP Official Merchandise..." style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:13px;resize:vertical;"></textarea>
+      <label>추가 설명 템플릿 <span style="color:#5a5a66;font-size:10px;">({TITLE}, {MODE}, {SKU}, {ARTIST}, {ALBUM}, {CONTENTS} 치환 지원)</span></label>
+      <textarea id="srm-desc" rows="3" placeholder="예) {MODE} 상품이며 SKU는 {SKU} 입니다." style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:13px;resize:vertical;"></textarea>
     </div>
 
     <div id="srm-status" style="display:none;font-size:11px;margin:10px 0;padding:10px;background:#fafafc;border:1px solid #d8d8e0;border-radius:3px;line-height:1.8;white-space:pre-line;font-family:monospace;"></div>
@@ -1561,19 +1620,7 @@ async function initStorage() {
       const tbody = document.getElementById('tbody');
       const allCbs = tbody.querySelectorAll('.row-select');
       allCbs.forEach(cb => { cb.checked = this.checked; });
-      const btn = document.getElementById('shopee-bulk-sync');
-      const clearBtn = document.getElementById('bulk-clear-mapping');
-      const completeBtn = document.getElementById('bulk-complete-remove');
-      const countEl = document.getElementById('bulk-sync-count');
-      const clearCountEl = document.getElementById('bulk-clear-count');
-      const completeCountEl = document.getElementById('bulk-complete-count');
-      const count = this.checked ? allCbs.length : 0;
-      if (btn) btn.disabled = count === 0;
-      if (clearBtn) clearBtn.disabled = count === 0;
-      if (completeBtn) completeBtn.disabled = count === 0;
-      if (countEl) countEl.textContent = count;
-      if (clearCountEl) clearCountEl.textContent = count;
-      if (completeCountEl) completeCountEl.textContent = count;
+      _updateSelectionUi();
     });
     renderTableBody();
     renderSettings();
@@ -1753,7 +1800,8 @@ function fmtKRW(n) {
    ════════════════════════════════════════════════════════════════════ */
 const JOOM_BRIDGE = SUPABASE_URL + '/functions/v1/joom-bridge';  // Supabase Edge Function (어디서나 접속 가능)
 // 로컬 운영으로 되돌리려면: const JOOM_BRIDGE = 'http://localhost:8766';
-let _joomCategories = null;  // 캐시
+let _joomCategories = null;  // 캐시 (raw fetch)
+let _joomCategoriesCache = [];  // search picker 작업용 사본
 let _joomCurrentRow = null;  // 모달이 작업 중인 row 참조
 
 function renderJoomPriceCell(row) {
@@ -1805,6 +1853,37 @@ async function _joomAuthHeaders() {
   return headers;
 }
 
+async function _readJsonResponse(resp) {
+  const text = await resp.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: text };
+  }
+}
+
+function _edgeErrorMessage(payload, resp) {
+  const parts = [];
+  if (resp && !resp.ok) parts.push('HTTP ' + resp.status);
+
+  const candidates = [payload?.result, payload?.raw, payload];
+  for (const src of candidates) {
+    if (!src || typeof src !== 'object') continue;
+    for (const key of ['error', 'message', 'code', 'request_id', 'auth_stage', 'refresh_error']) {
+      const val = src[key];
+      if (val != null && val !== '' && !parts.includes(String(val))) parts.push(String(val));
+    }
+  }
+
+  if (parts.length) return parts.join(' · ');
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function _joomFetchCategories() {
   if (_joomCategories) return _joomCategories;
   try {
@@ -1840,10 +1919,13 @@ function openJoomModal(row) {
   document.getElementById('jm-status').textContent = '';
   document.getElementById('jm-status').style.display = 'none';
 
-  // 카테고리 select 채우기
+  // 카테고리 검색형 picker 초기화
+  document.getElementById('jm-category-search').value = '';
+  document.getElementById('jm-category').value = '';
+  document.getElementById('jm-category-selected').textContent = '';
+  document.getElementById('jm-category-dropdown').style.display = 'none';
   _joomFetchCategories().then(cats => {
-    const sel = document.getElementById('jm-category');
-    sel.innerHTML = cats.map(c => `<option value="${c.id || c.key}" data-key="${c.key || ''}">${c.label}</option>`).join('');
+    _joomCategoriesCache = cats || [];
   });
 
   // 옵션 영역 초기화 (DEFAULT 1개) — row.sku 를 variant SKU 로 미리 채움
@@ -1973,6 +2055,13 @@ async function _joomSubmit({ dryRun }) {
     return;
   }
 
+  const categoryId = document.getElementById('jm-category').value;
+  if (!categoryId) {
+    status.style.color = '#d62754';
+    status.textContent = '카테고리 선택 필요 — 검색 후 항목을 클릭해주세요.';
+    return;
+  }
+
   const body = {
     row: {
       staronemallUrl: row.staronemallUrl,
@@ -1982,7 +2071,7 @@ async function _joomSubmit({ dryRun }) {
     },
     scrapedAssets,
     variantsConfig: variants,
-    categoryId: document.getElementById('jm-category').value,
+    categoryId,
     enabled: document.getElementById('jm-enabled').checked,
     namePrefix: document.getElementById('jm-prefix').value,
     artist,
@@ -2072,6 +2161,47 @@ async function _joomDeleteRow(row) {
     add.addEventListener('click', () => _joomAddVariantRow('', 0));
     // 오버레이 클릭으로 모달이 닫히지 않도록 — '취소' 버튼으로만 닫힘
     // (실수로 입력 데이터 잃는 것 방지)
+
+    // Category search picker
+    const searchInput = document.getElementById('jm-category-search');
+    const dropdown = document.getElementById('jm-category-dropdown');
+    const hiddenInput = document.getElementById('jm-category');
+    const selectedLabel = document.getElementById('jm-category-selected');
+    if (searchInput && dropdown && !searchInput.dataset.bound) {
+      searchInput.dataset.bound = '1';
+      const renderResults = (q) => {
+        const cats = _joomCategoriesCache || [];
+        const ql = q.trim().toLowerCase();
+        const matches = ql
+          ? cats.filter(c => (c.label || '').toLowerCase().includes(ql)).slice(0, 50)
+          : cats.slice(0, 50);
+        if (matches.length === 0) {
+          dropdown.innerHTML = '<div style="padding:10px;color:#9a9aa6;font-size:12px;">검색 결과 없음</div>';
+        } else {
+          dropdown.innerHTML = matches.map(c => {
+            const id = c.id || c.key || '';
+            const label = c.label || '';
+            return `<div class="jm-cat-opt" data-id="${id}" data-label="${label.replace(/"/g, '&quot;')}" style="padding:8px 12px;cursor:pointer;font-size:13px;border-bottom:1px solid #f0f0f4;">${label}</div>`;
+          }).join('');
+        }
+        dropdown.style.display = 'block';
+      };
+      searchInput.addEventListener('focus', () => renderResults(searchInput.value));
+      searchInput.addEventListener('input', () => renderResults(searchInput.value));
+      dropdown.addEventListener('mousedown', (e) => {
+        const opt = e.target.closest('.jm-cat-opt');
+        if (!opt) return;
+        e.preventDefault();
+        hiddenInput.value = opt.dataset.id;
+        searchInput.value = opt.dataset.label;
+        selectedLabel.textContent = '✓ 선택됨: ' + opt.dataset.label;
+        dropdown.style.display = 'none';
+      });
+      searchInput.addEventListener('blur', () => {
+        // 드롭다운 클릭 처리 후 닫히도록 약간 지연
+        setTimeout(() => { dropdown.style.display = 'none'; }, 150);
+      });
+    }
   };
   init();
 })();
@@ -2241,6 +2371,7 @@ async function _shopeeUpdatePrices() {
 
   status.style.color = '#5a5a66';
   status.textContent = '⏳ ' + targets.length + ' 개 region 병렬 push 중...';
+  const authHeaders = await _joomAuthHeaders();
 
   // Mark all targets in-flight
   for (const t of targets) {
@@ -2254,13 +2385,13 @@ async function _shopeeUpdatePrices() {
       // model_id present → variant-level price update; absent → item-level (single-SKU listing)
       const priceEntry = t.model_id ? { model_id: t.model_id, original_price: t.price } : { original_price: t.price };
       const r = await fetch(SHOPEE_BRIDGE + '/update_price', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: authHeaders,
         body: JSON.stringify({
           region: t.region, item_id: t.item_id,
           price_list: [priceEntry],
         }),
       });
-      const j = await r.json();
+      const j = await _readJsonResponse(r);
       if (j.ok && !j.result?.error) {
         t.statusEl.textContent = '✓';
         t.statusEl.style.color = '#15803d';
@@ -2271,7 +2402,7 @@ async function _shopeeUpdatePrices() {
         });
         return { region: t.region, ok: true, price: t.price, model_id: t.model_id };
       }
-      const err = j.result?.error || j.result?.message || j.error || 'unknown';
+      const err = _edgeErrorMessage(j, r);
       t.statusEl.textContent = '✕';
       t.statusEl.style.color = '#d62754';
       t.statusEl.title = err;
@@ -2289,7 +2420,7 @@ async function _shopeeUpdatePrices() {
   status.style.color = failCount === 0 ? '#15803d' : (okCount > 0 ? '#b45309' : '#d62754');
   status.innerHTML = '✓ ' + okCount + ' 성공' + (failCount > 0 ? ' · ✕ ' + failCount + ' 실패 (각 region 우측 아이콘 마우스오버 → 에러)' : '')
     + '<br><pre style="font-size:10px;max-height:120px;overflow:auto;background:#fafafc;padding:6px;border-radius:3px;margin-top:6px;">'
-    + JSON.stringify(results, null, 2) + '</pre>';
+    + esc(JSON.stringify(results, null, 2)) + '</pre>';
 }
 
 async function _shopeeBulkSync() {
@@ -2325,15 +2456,16 @@ async function _shopeeBulkSync() {
     return;
   }
 
+  const authHeaders = await _joomAuthHeaders();
   const results = await Promise.allSettled(targets.map(async t => {
     const priceEntry = t.model_id
       ? { model_id: t.model_id, original_price: t.price }
       : { original_price: t.price };
     const r = await fetch(SHOPEE_BRIDGE + '/update_price', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: authHeaders,
       body: JSON.stringify({ region: t.region, item_id: t.item_id, price_list: [priceEntry] }),
     });
-    const j = await r.json();
+    const j = await _readJsonResponse(r);
     if (j.ok && !j.result?.error) {
       await Storage.upsertShopeeListing(t.row.id, t.region, {
         shop_item_id: t.item_id, shop_model_id: t.model_id,
@@ -2341,18 +2473,23 @@ async function _shopeeBulkSync() {
       });
       return { ok: true };
     }
-    throw new Error(j.result?.error || j.error || 'unknown');
+    throw new Error(t.region + ': ' + _edgeErrorMessage(j, r));
   }));
 
   const ok = results.filter(r => r.status === 'fulfilled').length;
   const fail = results.length - ok;
+  const failMessages = results
+    .filter(r => r.status === 'rejected')
+    .map(r => r.reason?.message || String(r.reason || 'unknown'));
   const statusEl = document.getElementById('save-status');
   if (statusEl) {
+    const firstFail = failMessages[0] ? ` · ${failMessages[0]}` : '';
     statusEl.textContent = fail > 0
-      ? `Shopee: ${ok}건 성공 / ${fail}건 실패`
+      ? `Shopee: ${ok}건 성공 / ${fail}건 실패${firstFail}`
       : `✓ Shopee ${ok}건 가격 업데이트 완료`;
     statusEl.style.color = fail > 0 ? '#d62754' : '#15803d';
-    setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 5000);
+    statusEl.title = failMessages.join('\n');
+    setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; statusEl.title = ''; }, 5000);
   }
 
   btn.disabled = false;
@@ -2382,10 +2519,46 @@ function _normalize(s) {
   return String(s || '').trim().toLowerCase().replace(/\s+/g, '').replace(/[\[\](){}]/g, '');
 }
 
-function _getSelectedMasterRows() {
+function _getSelectedMasterIds() {
   const tbody = document.getElementById('tbody');
-  const checkedIds = [...tbody.querySelectorAll('.row-select:checked')].map(cb => String(cb.dataset.id));
-  return state.rows.filter(r => checkedIds.includes(String(r.id)));
+  if (!tbody) return [];
+  return [...tbody.querySelectorAll('.row-select:checked')].map(cb => String(cb.dataset.id));
+}
+
+function _getSelectedMasterRows() {
+  const selectedIds = new Set(_getSelectedMasterIds());
+  return state.rows.filter(r => selectedIds.has(String(r.id)));
+}
+
+function _updateSelectionUi() {
+  const tbody = document.getElementById('tbody');
+  if (!tbody) return;
+  const all = [...tbody.querySelectorAll('.row-select')];
+  const checked = all.filter(cb => cb.checked);
+  const btn = document.getElementById('shopee-bulk-sync');
+  const mapBtn = document.getElementById('shopee-sync-mapping');
+  const clearBtn = document.getElementById('bulk-clear-mapping');
+  const completeBtn = document.getElementById('bulk-complete-remove');
+  const countEl = document.getElementById('bulk-sync-count');
+  const clearCountEl = document.getElementById('bulk-clear-count');
+  const completeCountEl = document.getElementById('bulk-complete-count');
+  const count = checked.length;
+  if (btn) btn.disabled = count === 0;
+  if (mapBtn) mapBtn.disabled = count === 0;
+  if (clearBtn) clearBtn.disabled = count === 0;
+  if (completeBtn) completeBtn.disabled = count === 0;
+  if (countEl) countEl.textContent = count;
+  if (clearCountEl) clearCountEl.textContent = count;
+  if (completeCountEl) completeCountEl.textContent = count;
+  all.forEach(cb => {
+    const tr = cb.closest('tr');
+    if (tr) tr.classList.toggle('is-selected', cb.checked);
+  });
+  const allBox = document.getElementById('select-all-rows');
+  if (allBox) {
+    allBox.indeterminate = count > 0 && count < all.length;
+    allBox.checked = all.length > 0 && count === all.length;
+  }
 }
 
 async function _bulkClearShopeeMappings() {
@@ -2522,8 +2695,14 @@ async function _shopeeSyncStart() {
   applyBtn.style.display = 'none';
   startBtn.disabled = true;
 
-  // 1) Compute which regions have at least one unmapped product — skip the rest
-  const rowsToSync = state.rows.filter(r => r.purpose !== 'registration');
+  // 1) Compute which selected rows/regions still need mapping.
+  const rowsToSync = _getSelectedMasterRows().filter(r => r.purpose !== 'registration');
+  if (rowsToSync.length === 0) {
+    progress.innerHTML = '<span style="color:#d62754;">매핑 동기화할 상품을 먼저 체크하세요.</span>';
+    startBtn.disabled = false;
+    return;
+  }
+  const selectedProductIds = new Set(rowsToSync.map(r => String(r.id)));
   const regionsNeeded = new Set();
   for (const row of rowsToSync) {
     for (const region of SHOPEE_REGIONS) {
@@ -2653,7 +2832,7 @@ async function _shopeeSyncStart() {
     return { row, matches };
   });
 
-  _syncMatches = { regionMap, productMatches };
+  _syncMatches = { regionMap, productMatches, selectedProductIds };
 
   // 5) Render summary
   let totalMatched = 0, totalExisting = 0, totalMissing = 0, totalDup = 0, totalErr = 0;
@@ -2734,7 +2913,9 @@ async function _shopeeSyncApply() {
   applyBtn.textContent = '⏳ 적용 중...';
 
   const upserts = [];
+  const selectedProductIds = _syncMatches.selectedProductIds || new Set();
   for (const pm of _syncMatches.productMatches) {
+    if (selectedProductIds.size && !selectedProductIds.has(String(pm.row.id))) continue;
     for (const region of SHOPEE_REGIONS) {
       const m = pm.matches[region];
       if (m.method === 'sku' || m.method === 'name') {
@@ -2774,8 +2955,13 @@ async function _shopeeSyncApply() {
     if (trigger.dataset.bound) return;
     trigger.dataset.bound = '1';
     trigger.addEventListener('click', () => {
+      const selected = _getSelectedMasterRows().filter(r => r.purpose !== 'registration');
+      if (selected.length === 0) {
+        alert('Shopee 매핑 동기화할 상품을 먼저 체크하세요.');
+        return;
+      }
       _syncMatches = null;
-      document.getElementById('sync-progress').innerHTML = '<span style="color:#5a5a66;">대기 중 — "동기화 시작" 클릭</span>';
+      document.getElementById('sync-progress').innerHTML = `<span style="color:#5a5a66;">선택 ${selected.length}개 — "동기화 시작" 클릭</span>`;
       document.getElementById('sync-summary').style.display = 'none';
       document.getElementById('sync-preview').style.display = 'none';
       apply.style.display = 'none';
@@ -2926,8 +3112,6 @@ function startEditUrl(td) {
   if (btn && !btn.dataset.bound) {
     btn.dataset.bound = '1';
     btn.addEventListener('click', refreshAllStaronemallRows);
-  } else if (!btn) {
-    document.addEventListener('DOMContentLoaded', bindRefreshAll);
   }
 })();
 
@@ -2937,7 +3121,7 @@ function startEditUrl(td) {
 function renderTableHeader() {
   const headEl = document.getElementById('thead-row');
   let html = `
-    <th style="width:32px;text-align:center;padding:0;"><input type="checkbox" id="select-all-rows" title="전체 선택/해제"></th>
+    <th class="select-col"><label class="row-select-hit" title="전체 선택/해제"><input type="checkbox" id="select-all-rows"></label></th>
     <th style="width:140px;">Staronemall</th>
     <th style="width:120px;">Shopee Item ID</th>
     <th style="width:180px;">상품명</th>
@@ -3010,7 +3194,7 @@ function renderTableBody() {
 
     return `
       <tr class="row" data-id="${row.id}">
-        <td style="text-align:center;padding:0;"><input type="checkbox" class="row-select" data-id="${row.id}"></td>
+        <td class="select-cell"><label class="row-select-hit"><input type="checkbox" class="row-select" data-id="${row.id}"></label></td>
         <td class="master-url-cell" data-id="${row.id}" title="더블클릭하여 URL 편집" style="width:140px;">${renderStaronemallCell(row)}</td>
         <td class="itemid editable" data-field="itemId" title="${row.itemId || ''}">${row.itemId || '<span style="color:var(--text-faint);">—</span>'}</td>
         <td class="product-name editable" data-field="productName" title="${esc(row.productName || '')}" style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${row.productName ? esc(row.productName) : '<span style="color:var(--text-faint);">—</span>'}</td>
@@ -3182,30 +3366,8 @@ function renderTableBody() {
     });
   });
 
-  // Checkbox selection handlers
-  function _updateBulkBtn() {
-    const checked = tbody.querySelectorAll('.row-select:checked');
-    const btn = document.getElementById('shopee-bulk-sync');
-    const clearBtn = document.getElementById('bulk-clear-mapping');
-    const completeBtn = document.getElementById('bulk-complete-remove');
-    const countEl = document.getElementById('bulk-sync-count');
-    const clearCountEl = document.getElementById('bulk-clear-count');
-    const completeCountEl = document.getElementById('bulk-complete-count');
-    if (btn) btn.disabled = checked.length === 0;
-    if (clearBtn) clearBtn.disabled = checked.length === 0;
-    if (completeBtn) completeBtn.disabled = checked.length === 0;
-    if (countEl) countEl.textContent = checked.length;
-    if (clearCountEl) clearCountEl.textContent = checked.length;
-    if (completeCountEl) completeCountEl.textContent = checked.length;
-    const allBox = document.getElementById('select-all-rows');
-    if (allBox) {
-      const all = tbody.querySelectorAll('.row-select');
-      allBox.indeterminate = checked.length > 0 && checked.length < all.length;
-      allBox.checked = all.length > 0 && checked.length === all.length;
-    }
-  }
-  tbody.querySelectorAll('.row-select').forEach(cb => cb.addEventListener('change', _updateBulkBtn));
-  _updateBulkBtn();
+  tbody.querySelectorAll('.row-select').forEach(cb => cb.addEventListener('change', _updateSelectionUi));
+  _updateSelectionUi();
 
   document.getElementById('row-count').textContent = state.rows.filter(r => r.purpose !== 'registration').length + ' ITEMS';
 
@@ -3378,7 +3540,7 @@ function resetModal() {
   status.textContent = '';
 }
 
-document.getElementById('add-row').addEventListener('click', () => {
+document.getElementById('add-row')?.addEventListener('click', () => {
   resetModal();
   modal.classList.add('show');
   setTimeout(() => document.getElementById('m-url').focus(), 50);
@@ -3526,7 +3688,7 @@ document.getElementById('add-row-register').addEventListener('click', async () =
 });
 
 /* CSV export */
-document.getElementById('export-csv').addEventListener('click', () => {
+document.getElementById('export-csv')?.addEventListener('click', () => {
   const headers = ['Staronemall URL', 'Shopee Item ID', 'SKU', '옵션명', '도매가', '정산가', '무게(g)'];
   COUNTRY_CODES.forEach(code => {
     headers.push(`${code} Listing`, `${code} Sale`);
@@ -3558,10 +3720,10 @@ document.getElementById('export-csv').addEventListener('click', () => {
 });
 
 /* CSV import */
-document.getElementById('import-csv').addEventListener('click', () => {
+document.getElementById('import-csv')?.addEventListener('click', () => {
   document.getElementById('csv-file').click();
 });
-document.getElementById('csv-file').addEventListener('change', e => {
+document.getElementById('csv-file')?.addEventListener('change', e => {
   const file = e.target.files[0];
   if (!file) return;
   const reader = new FileReader();
@@ -3646,7 +3808,7 @@ function parseCsvLine(line) {
 }
 
 /* Search */
-document.getElementById('search').addEventListener('input', e => {
+document.getElementById('search')?.addEventListener('input', e => {
   state.search = e.target.value;
   renderTableBody();
 });
@@ -3971,7 +4133,7 @@ function renderRegisterTab() {
   const rows = (typeof state !== 'undefined' ? state.rows : []).filter(r => r.purpose === 'registration');
   countEl.textContent = rows.length + ' ITEMS';
   if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="8" class="empty-state" style="padding:60px;text-align:center;color:#9a9aa6;">상품 없음 — 아래 "+ 행 추가" 버튼으로 추가하세요</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="empty-state" style="padding:60px;text-align:center;color:#9a9aa6;">상품 없음 — 아래 "+ 행 추가" 버튼으로 추가하세요</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map(row => {
@@ -3983,6 +4145,7 @@ function renderRegisterTab() {
     const jm = calcRow(row, 'JM');
     return `<tr class="row" data-id="${esc(row.id)}">
       <td class="reg-url-cell" data-id="${esc(row.id)}" title="더블클릭하여 URL 편집">${staronemallInner}</td>
+      <td class="editable reg-editable" data-field="productName" title="${esc(row.productName || '')}" style="font-size:11px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${row.productName ? esc(row.productName) : '<span style="color:var(--text-faint)">—</span>'}</td>
       <td class="editable reg-editable" data-field="sku">${esc(row.sku) || '<span style="color:var(--text-faint)">—</span>'}</td>
       <td class="numeric editable reg-editable" data-field="cost" style="text-align:right;">${fmtKRW(row.cost)}</td>
       <td class="numeric editable reg-editable" data-field="weight" style="text-align:right;">${row.weight ? row.weight.toLocaleString() : '—'}</td>
@@ -4143,6 +4306,17 @@ const SHOPEE_REG_REGIONS = [
 
 let _shopeeRegRow = null;
 let _shopeeRegCompositeDataUrl = null;
+let _shopeeRegScrapedAssets = null;
+
+const SHOPEE_DESC_FALLBACK_CONTENTS = '- PACKAGE\n- CD / ALBUM\n- PHOTOCARD\n- POSTER (varies by version)';
+let _srmNameTouched = false;
+const SHOPEE_DESC_PLACEHOLDER = '{{CUSTOM_TEXT}}';
+const SHOPEE_DESC_TEMPLATE =
+  `K-POP Official Merchandise.
+
+${SHOPEE_DESC_PLACEHOLDER}
+
+Please check product details and images before ordering.`;
 
 function _loadImage(src, crossOrigin) {
   return new Promise((resolve, reject) => {
@@ -4174,9 +4348,68 @@ async function applyShopLayer(productImageUrl) {
   return canvas.toDataURL('image/jpeg', 0.92);
 }
 
+function _normalizeShopeeImageUrl(rawUrl, basePageUrl) {
+  const input = String(rawUrl || '').trim();
+  if (!input) return '';
+  if (input.startsWith('//')) return 'https:' + input;
+  if (input.startsWith('/')) {
+    try { return new URL(input, basePageUrl || window.location.href).toString(); } catch (_) { return ''; }
+  }
+  if (/^https?:\/\//i.test(input)) return input;
+  try {
+    return new URL(input, basePageUrl || window.location.href).toString();
+  } catch (_) {
+    return input;
+  }
+}
+
+function _renderShopeeTemplate(template, vars) {
+  const src = String(template || '');
+  return src.replace(/\{([A-Z_]+)\}/g, (_, key) => {
+    const v = vars[key];
+    return v == null ? '' : String(v);
+  });
+}
+
+function _shopeeBuildDescription({ artist, album, contentsRaw, userDesc, name }) {
+  // Compose Shopee description by combining fixed sections + user inputs
+  // (mirrors the Joom registration approach for consistency).
+  const lines = [];
+
+  if (artist || album) {
+    lines.push((artist ? artist : '') + (artist && album ? ' — ' : '') + (album ? album : ''));
+    lines.push('');
+  }
+
+  // Contents section
+  const contents = (contentsRaw && contentsRaw.length > 0) ? contentsRaw : SHOPEE_DESC_FALLBACK_CONTENTS;
+  lines.push('[Contents]');
+  lines.push(contents);
+  lines.push('');
+
+  // User custom blurb
+  if (userDesc) {
+    lines.push(userDesc);
+    lines.push('');
+  }
+
+  // Standard footer (fixed)
+  lines.push('[Why choose us]');
+  lines.push('• 100% Official K-POP Merchandise from Korea');
+  lines.push('• Ready Stock — ships within 1-3 business days');
+  lines.push('• Strict packaging to prevent damage during international shipping');
+  lines.push('• 100% Free replacement for defective items (unboxing video required)');
+  lines.push('');
+  lines.push('[Note]');
+  lines.push('All sales are reflected in the Hanteo chart. POB items shipped randomly when applicable.');
+
+  return lines.join('\n').trim();
+}
+
 async function openShopeeRegModal(row) {
   _shopeeRegRow = row;
   _shopeeRegCompositeDataUrl = null;
+  _shopeeRegScrapedAssets = null;
 
   const modal = document.getElementById('shopee-reg-modal');
   const previewMsg = document.getElementById('srm-preview-msg');
@@ -4186,9 +4419,16 @@ async function openShopeeRegModal(row) {
   previewMsg.textContent = '이미지 스크래핑 중...';
   previewMsg.style.color = '#5a5a66';
   previewCanvas.style.display = 'none';
-  document.getElementById('srm-name').value = '[READY STOCK] ' + (row.sku || '');
+  document.getElementById('srm-name-prefix').value = '[READY STOCK]';
+  document.getElementById('srm-name-body').value = row.productName || row.sku || '';
   document.getElementById('srm-stock').value = '0';
   document.getElementById('srm-desc').value = '';
+  document.getElementById('srm-artist').value = '';
+  document.getElementById('srm-album').value = '';
+  document.getElementById('srm-contents').value = '';
+  document.getElementById('srm-desc-template').value = SHOPEE_DESC_TEMPLATE;
+  document.getElementById('srm-desc-custom').value = '';
+  _srmNameTouched = false;
   statusEl.style.display = 'none';
   SHOPEE_REG_REGIONS.forEach(({ code }) => {
     document.getElementById('srm-chk-' + code).checked = true;
@@ -4205,11 +4445,30 @@ async function openShopeeRegModal(row) {
 
   try {
     const assets = await _joomScrapeAssets(row.staronemallUrl);
-    if (!assets.mainImage) throw new Error('mainImage 없음');
+    _shopeeRegScrapedAssets = assets || null;
+    const mainImage = _normalizeShopeeImageUrl(assets.mainImage, row.staronemallUrl);
+    if (!mainImage) throw new Error('mainImage URL 없음/정규화 실패');
     previewMsg.textContent = '레이어 합성 중...';
-    const proxyUrl = SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(assets.mainImage);
-    const dataUrl = await applyShopLayer(proxyUrl);
+    const candidates = [mainImage];
+    if (/^https:\/\//i.test(mainImage)) {
+      candidates.push(mainImage.replace(/^https:\/\//i, 'http://'));
+    }
+    let dataUrl = null;
+    let lastErr = null;
+    for (const src of candidates) {
+      try {
+        const proxyUrl = SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(src);
+        dataUrl = await applyShopLayer(proxyUrl);
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    if (!dataUrl) throw (lastErr || new Error('이미지 합성 실패'));
     _shopeeRegCompositeDataUrl = dataUrl;
+    if (!document.getElementById('srm-name-body').value.trim() && assets.name) {
+      document.getElementById('srm-name-body').value = String(assets.name).trim();
+    }
     // Show composited preview on canvas
     const ctx = previewCanvas.getContext('2d');
     const img = await _loadImage(dataUrl, null);
@@ -4227,13 +4486,34 @@ async function _shopeeRegSubmit() {
   const row = _shopeeRegRow;
   if (!row) return;
 
-  const name = document.getElementById('srm-name').value.trim();
+  const namePrefix = document.getElementById('srm-name-prefix').value.trim();
+  const nameBody = document.getElementById('srm-name-body').value.trim();
+  const name = (namePrefix + ' ' + nameBody).trim();
   const category_id = document.getElementById('srm-category').value;
   const stock = parseInt(document.getElementById('srm-stock').value) || 0;
-  const description = document.getElementById('srm-desc').value.trim();
+  const userDescTemplate = (document.getElementById('srm-desc-template').value || '').trim();
+  const customText = document.getElementById('srm-desc-custom').value.trim();
+  const extraDesc = document.getElementById('srm-desc').value.trim();
+  const artist = document.getElementById('srm-artist').value.trim();
+  const album = document.getElementById('srm-album').value.trim();
+  const contentsRaw = document.getElementById('srm-contents').value.trim();
+  const mode = (namePrefix || '').replace(/[\[\]]/g, '').trim();
+  const templateVars = {
+    TITLE: name,
+    MODE: mode,
+    SKU: row.sku || '',
+    ARTIST: artist || '',
+    ALBUM: album || '',
+    CONTENTS: contentsRaw || SHOPEE_DESC_FALLBACK_CONTENTS,
+    PRODUCT_NAME: _shopeeRegScrapedAssets?.name || '',
+    STARONEMALL_URL: row.staronemallUrl || '',
+  };
+  const mergedTemplate = userDescTemplate.replaceAll(SHOPEE_DESC_PLACEHOLDER, customText);
+  const userDesc = (_renderShopeeTemplate(mergedTemplate, templateVars).trim() + (extraDesc ? `\n\n${extraDesc}` : '')).trim();
+  const description = _shopeeBuildDescription({ artist, album, contentsRaw, userDesc, name });
   const statusEl = document.getElementById('srm-status');
 
-  if (!name) { alert('상품명을 입력하세요.'); return; }
+  if (!nameBody) { alert('상품명 본문을 입력하세요.'); return; }
 
   const targets = SHOPEE_REG_REGIONS.filter(({ code }) => {
     const chk = document.getElementById('srm-chk-' + code);
@@ -4303,6 +4583,19 @@ async function _shopeeRegSubmit() {
     cancel.dataset.bound = '1';
     cancel.addEventListener('click', () => modal.classList.remove('show'));
     submit.addEventListener('click', _shopeeRegSubmit);
+    const descTemplateEl = document.getElementById('srm-desc-template');
+    const descCustomEl = document.getElementById('srm-desc-custom');
+    const descExtraEl = document.getElementById('srm-desc');
+    const refreshDescPreview = () => {
+      if (!descTemplateEl || !descCustomEl || !descExtraEl) return;
+      const merged = (descTemplateEl.value || SHOPEE_DESC_TEMPLATE)
+        .replaceAll(SHOPEE_DESC_PLACEHOLDER, (descCustomEl.value || '').trim())
+        .trim();
+      descExtraEl.placeholder = merged;
+    };
+    descTemplateEl?.addEventListener('input', refreshDescPreview);
+    descCustomEl?.addEventListener('input', refreshDescPreview);
+    refreshDescPreview();
   };
   init();
 })();

@@ -1,9 +1,10 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Shopee 판매가 대시보드</title>
+<link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,600;9..144,800&family=IBM+Plex+Mono:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500;700&display=swap" rel="stylesheet">
@@ -769,11 +770,8 @@
 
   <!-- Toolbar -->
   <div class="toolbar">
-    <div class="toolbar-left">
+    <div class="toolbar-left" style="display:flex;gap:6px;flex-wrap:nowrap;align-items:center;overflow-x:auto">
       <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품 검색 후 상품 마스터에 추가">🔍 상품 검색</button>
-      <select id="tag-filter"><option value="">모든 태그</option></select>
-    </div>
-    <div class="toolbar-right">
       <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
       <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
       <button class="btn" id="bulk-clear-mapping" disabled title="선택된 상품의 Shopee region 매핑만 삭제 (상품은 유지)">🧹 매핑 삭제 (<span id="bulk-clear-count">0</span>)</button>
@@ -1089,13 +1087,8 @@
       </div>
     </div>
 
-    <div class="field">
-      <label>아티스트 / 앨범</label>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
-        <input type="text" id="srm-artist" placeholder="예: TWS, ENHYPEN">
-        <input type="text" id="srm-album" placeholder="예: 1st Mini Album">
-      </div>
-    </div>
+    <input type="hidden" id="srm-artist" value="">
+    <input type="hidden" id="srm-album" value="">
 
     <div class="field">
       <label>Contents <span style="color:#5a5a66;font-size:10px;">(앨범 구성품. 비워두면 기본 K-POP 앨범 구성으로 채움)</span></label>
@@ -1103,61 +1096,102 @@
     </div>
 
     <div class="field">
-      <label>Description 템플릿 <span style="color:#5a5a66;font-size:10px;">(치환 키: {{CUSTOM_TEXT}})</span></label>
-      <textarea id="srm-desc-template" rows="4" placeholder="기본 Description 템플릿" style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:13px;resize:vertical;"></textarea>
+      <label>Description (자동 생성) <span style="color:#5a5a66;font-size:10px;">(상품명·구성품은 위 입력값으로 자동 채움. 일반적으론 그대로 두세요)</span></label>
+      <textarea id="srm-desc-template" rows="6" placeholder="기본 Description 템플릿" style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:13px;resize:vertical;"></textarea>
     </div>
 
-    <div class="field">
-      <label>사용자 입력 텍스트 <span style="color:#5a5a66;font-size:10px;">(JOOM 등록처럼 특정 영역만 교체)</span></label>
-      <textarea id="srm-desc-custom" rows="3" placeholder="이 내용이 {{CUSTOM_TEXT}} 위치에 들어갑니다." style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:13px;resize:vertical;"></textarea>
-    </div>
+    <textarea id="srm-desc-custom" style="display:none"></textarea>
 
     <div class="field">
-      <label>카테고리</label>
-      <select id="srm-category" style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-size:13px;">
-        <option value="300740">CD, DVD &amp; Bluray (앨범)</option>
-        <option value="301390">Idol Collectibles (응원봉/포카/굿즈)</option>
-        <option value="300743">Photo Albums (포토북)</option>
-        <option value="301722">Stuffed Toys (인형/플러시)</option>
-        <option value="301385">Action Figurines (피규어)</option>
-        <option value="301396">Keychains (키링)</option>
+      <label>카테고리 <span style="color:#5a5a66;font-size:10px;">(KRSC global_categories에서 동적 로드)</span></label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input type="text" id="srm-category-search" placeholder="검색 (예: album, photocard, idol)..." style="flex:1;padding:6px 8px;border:1px solid #d8d8e0;border-radius:3px;font-size:12px;background:#fafafc;color:#0a0a0c;">
+        <button type="button" id="srm-category-refresh" class="btn" style="padding:6px 10px;font-size:11px;">🔄 새로고침</button>
+      </div>
+      <select id="srm-category" size="6" style="width:100%;margin-top:6px;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:6px;border-radius:3px;font-size:12px;font-family:var(--mono);">
+        <option value="101390">⏳ 로딩 중... (fallback: 101390 Idol Collectibles)</option>
       </select>
     </div>
-
     <div class="field">
-      <label>재고 (stock)</label>
-      <input type="number" id="srm-stock" value="0" min="0" style="width:120px;">
+      <label>브랜드 <span style="color:#5a5a66;font-size:10px;">(카테고리 선택 후 자동 로드)</span></label>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input type="text" id="srm-brand-search" placeholder="브랜드명 검색 (예: HYBE, JYP, SM)..." style="flex:1;padding:6px 8px;border:1px solid #d8d8e0;border-radius:3px;font-size:12px;background:#fafafc;color:#0a0a0c;">
+        <select id="srm-brand" style="width:240px;padding:6px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:12px;">
+          <option value="0|No Brand">No Brand</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label>Category Attributes (optional JSON)</label>
+      <textarea id="srm-attrs-json" rows="3" placeholder='[{"attribute_id":100037,"attribute_value_list":[{"original_value_name":"South Korea"}]}]' style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:12px;resize:vertical;"></textarea>
+    </div>
+
+    <div class="field" style="display:flex;gap:18px;flex-wrap:wrap;">
+      <div>
+        <label>재고 (옵션 없을 때만 사용)</label>
+        <input type="number" id="srm-stock" value="0" min="0" style="width:120px;">
+      </div>
+      <div>
+        <label>Weight (kg) <span style="color:#5a5a66;font-size:10px;">(옵션 없을 때만 사용)</span></label>
+        <input type="number" id="srm-weight-kg" value="0.10" min="0.01" step="0.01" style="width:90px;">
+      </div>
+      <input type="hidden" id="srm-days-to-ship" value="2">
     </div>
 
     <div class="field">
-      <label>Region 별 가격 <span style="color:#5a5a66;font-size:10px;">(체크 + 가격 입력된 region만 등록)</span></label>
-      <div style="display:grid;grid-template-columns:auto 36px 1fr 36px;gap:5px 8px;align-items:center;margin-top:6px;">
+      <label>Variations <span style="color:#5a5a66;font-size:10px;">(최대 2축, 총 조합 50개)</span></label>
+      <div style="display:grid;grid-template-columns:130px 1fr;gap:6px 8px;align-items:center;">
+        <input type="text" id="srm-var1-name" placeholder="Variation 1 이름 (예: Color)" style="padding:6px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:12px;">
+        <input type="text" id="srm-var1-values" placeholder="옵션값 (콤마 구분, 예: Red, Blue, Black)" style="padding:6px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:12px;">
+        <input type="text" id="srm-var2-name" placeholder="Variation 2 이름 (선택)" style="padding:6px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:12px;">
+        <input type="text" id="srm-var2-values" placeholder="옵션값 (콤마 구분, 예: S, M, L)" style="padding:6px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:12px;">
+      </div>
+      <div id="srm-var-summary" style="margin-top:6px;font-size:11px;color:#5a5a66;">조합 0개 / 50개</div>
+      <div id="srm-var-table-wrap" style="display:none;margin-top:8px;border:1px solid #d8d8e0;border-radius:3px;overflow:auto;max-height:280px;background:#fff;">
+        <table style="width:100%;border-collapse:collapse;font-size:11px;">
+          <thead id="srm-var-table-head" style="position:sticky;top:0;background:#f3f3f8;z-index:1;"></thead>
+          <tbody id="srm-var-table-body"></tbody>
+        </table>
+      </div>
+      <div id="srm-var-help" style="display:none;margin-top:4px;font-size:10px;color:#5a5a66;">Global SKU Price 기본값=매입가, Stock 기본값=0, Weight는 옵션별로 수정 가능합니다. 국가별 계산가는 가격수정 로직으로 자동 표시됩니다.</div>
+    </div>
+
+    <div class="field">
+      <label>Region 별 가격 / Days to Ship <span style="color:#5a5a66;font-size:10px;">(체크된 region만 등록 · 가격 비우면 옵션별 계산가 사용 · DTS는 1–30일)</span></label>
+      <div style="display:grid;grid-template-columns:auto 36px 1fr 36px 60px 30px;gap:5px 8px;align-items:center;margin-top:6px;">
         <input type="checkbox" id="srm-chk-SG"><label for="srm-chk-SG" style="margin:0;font-size:12px;font-weight:600;color:var(--c-sg);">SG</label>
-        <input type="number" id="srm-price-SG" placeholder="0.00" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
+        <input type="number" id="srm-price-SG" placeholder="자동 계산" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
         <span style="font-size:10px;color:#5a5a66;">SGD</span>
+        <input type="number" id="srm-dts-SG" value="2" min="1" max="30" style="padding:5px 6px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:12px;text-align:right;">
+        <span style="font-size:10px;color:#5a5a66;">일</span>
 
         <input type="checkbox" id="srm-chk-MY"><label for="srm-chk-MY" style="margin:0;font-size:12px;font-weight:600;color:var(--c-my);">MY</label>
-        <input type="number" id="srm-price-MY" placeholder="0.00" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
+        <input type="number" id="srm-price-MY" placeholder="자동 계산" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
         <span style="font-size:10px;color:#5a5a66;">MYR</span>
+        <input type="number" id="srm-dts-MY" value="2" min="1" max="30" style="padding:5px 6px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:12px;text-align:right;">
+        <span style="font-size:10px;color:#5a5a66;">일</span>
 
         <input type="checkbox" id="srm-chk-TW"><label for="srm-chk-TW" style="margin:0;font-size:12px;font-weight:600;color:var(--c-tw);">TW</label>
-        <input type="number" id="srm-price-TW" placeholder="0.00" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
+        <input type="number" id="srm-price-TW" placeholder="자동 계산" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
         <span style="font-size:10px;color:#5a5a66;">TWD</span>
+        <input type="number" id="srm-dts-TW" value="2" min="1" max="30" style="padding:5px 6px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:12px;text-align:right;">
+        <span style="font-size:10px;color:#5a5a66;">일</span>
 
         <input type="checkbox" id="srm-chk-TH"><label for="srm-chk-TH" style="margin:0;font-size:12px;font-weight:600;color:var(--c-th);">TH</label>
-        <input type="number" id="srm-price-TH" placeholder="0.00" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
+        <input type="number" id="srm-price-TH" placeholder="자동 계산" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
         <span style="font-size:10px;color:#5a5a66;">THB</span>
+        <input type="number" id="srm-dts-TH" value="2" min="1" max="30" style="padding:5px 6px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:12px;text-align:right;">
+        <span style="font-size:10px;color:#5a5a66;">일</span>
 
         <input type="checkbox" id="srm-chk-PH"><label for="srm-chk-PH" style="margin:0;font-size:12px;font-weight:600;color:var(--c-ph);">PH</label>
-        <input type="number" id="srm-price-PH" placeholder="0.00" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
+        <input type="number" id="srm-price-PH" placeholder="자동 계산" step="0.01" style="grid-column:3;padding:5px 8px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:13px;">
         <span style="font-size:10px;color:#5a5a66;">PHP</span>
+        <input type="number" id="srm-dts-PH" value="2" min="1" max="30" style="padding:5px 6px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:12px;text-align:right;">
+        <span style="font-size:10px;color:#5a5a66;">일</span>
       </div>
     </div>
 
-    <div class="field">
-      <label>추가 설명 템플릿 <span style="color:#5a5a66;font-size:10px;">({TITLE}, {MODE}, {SKU}, {ARTIST}, {ALBUM}, {CONTENTS} 치환 지원)</span></label>
-      <textarea id="srm-desc" rows="3" placeholder="예) {MODE} 상품이며 SKU는 {SKU} 입니다." style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:13px;resize:vertical;"></textarea>
-    </div>
+    <textarea id="srm-desc" style="display:none"></textarea>
 
     <div id="srm-status" style="display:none;font-size:11px;margin:10px 0;padding:10px;background:#fafafc;border:1px solid #d8d8e0;border-radius:3px;line-height:1.8;white-space:pre-line;font-family:monospace;"></div>
 
@@ -2001,7 +2035,7 @@ async function _joomSubmit({ dryRun }) {
   const row = _joomCurrentRow;
   if (!row) return;
   if (!row.staronemallUrl) { alert('이 행에 Staronemall URL 이 없습니다. 먼저 URL을 추가하세요.'); return; }
-  if (!row.sku || !row.sku.trim()) { alert('SKU가 비어있습니다.\n상품 등록 탭에서 SKU 컬럼을 먼저 입력해주세요.\n\nJoom은 빈 SKU를 허용하지 않습니다 (emptySKU 에러).'); return; }
+  // Parent row SKU 검증 제거 — Joom은 variant SKU만 사용. _joomValidateVariants가 옵션 SKU를 점검함.
   if (!row.cost || row.cost <= 0) { alert('매입가가 비어있습니다.'); return; }
   const variants = _joomCollectVariants();
   const variantError = _joomValidateVariants(variants);
@@ -2210,6 +2244,8 @@ async function _joomDeleteRow(row) {
    SHOPEE — multi-region (KRSC) — bridge URL + cell + modal
    ════════════════════════════════════════════════════════════════════ */
 const SHOPEE_BRIDGE = SUPABASE_URL + '/functions/v1/shopee-bridge';
+const SHOPEE_MERCHANT = SUPABASE_URL + '/functions/v1/shopee-merchant';
+const SHOPEE_OAUTH_HELPER = SUPABASE_URL + '/functions/v1/shopee-oauth-helper';
 const SHOPEE_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
 let _shopeeTokens = null;  // 캐시
 let _shopeeCurrentRow = null;
@@ -2382,7 +2418,7 @@ async function _shopeeUpdatePrices() {
   // Fire all region updates in parallel — one slow region won't block others
   const results = await Promise.all(targets.map(async (t) => {
     try {
-      // model_id present → variant-level price update; absent → item-level (single-SKU listing)
+      // model_id present -> variant-level price update; absent -> item-level (single-SKU listing)
       const priceEntry = t.model_id ? { model_id: t.model_id, original_price: t.price } : { original_price: t.price };
       const r = await fetch(SHOPEE_BRIDGE + '/update_price', {
         method: 'POST', headers: authHeaders,
@@ -3814,7 +3850,7 @@ document.getElementById('search')?.addEventListener('input', e => {
 });
 
 /* Tag filter */
-document.getElementById('tag-filter').addEventListener('change', e => {
+document.getElementById('tag-filter')?.addEventListener('change', e => {
   state.tagFilter = e.target.value;
   renderTableBody();
 });
@@ -3840,12 +3876,12 @@ function renderSettings() {
   });
 
   const c = state.countries[state.activeTab];
-  contentEl.style.setProperty('--country-color', c.color);
+  contentEl.style.setProperty('--country-color', c.color || '#5a5a66');
 
   contentEl.innerHTML = `
     <div class="fee-grid">
       ${FEE_FIELDS.map(f => {
-        const val = c[f.key];
+        const val = c[f.key] ?? 0;
         return `
           <div class="fee-input">
             <label>${f.label}</label>
@@ -4312,11 +4348,205 @@ const SHOPEE_DESC_FALLBACK_CONTENTS = '- PACKAGE\n- CD / ALBUM\n- PHOTOCARD\n- P
 let _srmNameTouched = false;
 const SHOPEE_DESC_PLACEHOLDER = '{{CUSTOM_TEXT}}';
 const SHOPEE_DESC_TEMPLATE =
-  `K-POP Official Merchandise.
+`🟣 {TITLE}
 
-${SHOPEE_DESC_PLACEHOLDER}
+💿 100% Official & Authentic K-POP Album
 
-Please check product details and images before ordering.`;
+- Brand new, sealed, and sourced directly from the official distributor
+
+📊 Chart Certified
+
+- This album counts toward Hanteo and Circle (Gaon) charts
+
+- Your purchase directly supports the artist's chart performance
+
+📦 Fast & Secure Shipping
+
+- Ships from Korea with tracking
+
+- Safely packed with bubble wrap and a sturdy box
+
+- Items labeled [READY STOCK], [ON HAND], or [FAST DELIVERY] are dispatched within 1 business day
+
+📌 Contents
+
+• {CONTENTS}
+
+⚠️ Important Notice
+
+- The outer box is for protection and may have minor dents, scratches, or creases.
+
+- The outer vinyl wrap may have slight tears or marks due to shipping.
+
+- These are not considered defects and are not grounds for return or refund.
+
+- Please purchase only if you agree to the above conditions.
+
+💳 COD Policy
+
+Cash on Delivery (COD) is available only for buyers with: 10 or more completed ratings or Perfect 5.0 rating score`;
+
+function _parseVariationValues(raw) {
+  return Array.from(new Set(String(raw || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean)));
+}
+
+const SHOPEE_VAR_REGIONS = ['SG','MY','TW','TH','PH'];
+const _shopeeVariationCells = new Map(); // key => {sku, globalPriceKrw, stock, weightKg}
+
+function _shpAttrEsc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function _shopeeVarKey(o1, o2) { return o2 ? `${o1}||${o2}` : String(o1); }
+function _shopeeVarRowDefaultSku(baseSku, o1, o2) {
+  return [baseSku || '', o1, o2].filter(Boolean).join('-').replace(/\s+/g, '-');
+}
+
+function _captureShopeeVariationCells() {
+  const body = document.getElementById('srm-var-table-body');
+  if (!body) return;
+  body.querySelectorAll('tr[data-key]').forEach(tr => {
+    const key = tr.dataset.key;
+    const cell = _shopeeVariationCells.get(key) || {};
+    const sku = tr.querySelector('input.var-sku')?.value;
+    const globalPriceKrw = tr.querySelector('input.var-global-price')?.value;
+    const stock = tr.querySelector('input.var-stock')?.value;
+    const weightKg = tr.querySelector('input.var-weight-kg')?.value;
+    if (sku !== undefined) cell.sku = sku;
+    if (globalPriceKrw !== undefined) cell.globalPriceKrw = globalPriceKrw;
+    if (stock !== undefined) cell.stock = stock;
+    if (weightKg !== undefined) cell.weightKg = weightKg;
+    _shopeeVariationCells.set(key, cell);
+  });
+}
+
+function _shpVarCalcRegionListing(globalPriceKrw, weightKg, code) {
+  const cost = Number(globalPriceKrw) || 0;
+  const weightG = (Number(weightKg) || 0) * 1000;
+  if (!(cost > 0) || !(weightG > 0)) return 0;
+  const tempRow = { cost, weight: weightG };
+  const calc = (typeof calcRow === 'function') ? calcRow(tempRow, code) : null;
+  return Number(calc?.listing || 0);
+}
+
+function _renderShopeeVariationTable() {
+  const wrap = document.getElementById('srm-var-table-wrap');
+  const head = document.getElementById('srm-var-table-head');
+  const body = document.getElementById('srm-var-table-body');
+  const help = document.getElementById('srm-var-help');
+  if (!wrap || !head || !body) return;
+  const n1 = (document.getElementById('srm-var1-name')?.value || '').trim();
+  const n2 = (document.getElementById('srm-var2-name')?.value || '').trim();
+  const v1 = _parseVariationValues(document.getElementById('srm-var1-values')?.value || '');
+  const v2 = _parseVariationValues(document.getElementById('srm-var2-values')?.value || '');
+  const has1 = !!n1 && v1.length > 0;
+  const has2 = !!n2 && v2.length > 0;
+  if (!has1) {
+    _captureShopeeVariationCells();
+    wrap.style.display = 'none';
+    if (help) help.style.display = 'none';
+    head.innerHTML = '';
+    body.innerHTML = '';
+    return;
+  }
+  _captureShopeeVariationCells();
+
+  const headerCols = [
+    '<th style="padding:5px 8px;text-align:left;border-bottom:1px solid #d8d8e0;font-weight:600;">옵션값</th>',
+    '<th style="padding:5px 8px;text-align:left;border-bottom:1px solid #d8d8e0;font-weight:600;">SKU</th>',
+    '<th style="padding:5px 8px;text-align:right;border-bottom:1px solid #d8d8e0;font-weight:600;">Global SKU Price (KRW)</th>',
+    '<th style="padding:5px 8px;text-align:right;border-bottom:1px solid #d8d8e0;font-weight:600;">재고</th>',
+    '<th style="padding:5px 8px;text-align:right;border-bottom:1px solid #d8d8e0;font-weight:600;">Weight (kg)</th>',
+    ...SHOPEE_VAR_REGIONS.map(code => `<th style="padding:5px 8px;text-align:right;border-bottom:1px solid #d8d8e0;font-weight:600;color:var(--c-${code.toLowerCase()});">${code} 계산가</th>`),
+  ];
+  head.innerHTML = '<tr>' + headerCols.join('') + '</tr>';
+
+  const baseSku = (window._shopeeRegRow && window._shopeeRegRow.sku) || (typeof _shopeeRegRow !== 'undefined' ? (_shopeeRegRow?.sku || '') : '');
+  const pairs = has2 ? v1.flatMap(a => v2.map(b => [a, b])) : v1.map(a => [a, null]);
+
+  body.innerHTML = pairs.map(([a, b]) => {
+    const key = _shopeeVarKey(a, b);
+    const cell = _shopeeVariationCells.get(key) || {};
+    const sku = (cell.sku != null ? cell.sku : _shopeeVarRowDefaultSku(baseSku, a, b));
+    const globalDefault = Number((_shopeeRegRow?.cost ?? 0) || 0);
+    const globalPriceKrw = (cell.globalPriceKrw != null && String(cell.globalPriceKrw).trim() !== '') ? cell.globalPriceKrw : (globalDefault > 0 ? String(globalDefault) : '');
+    const stock = cell.stock != null ? cell.stock : '0';
+    const weightDefaultKg = (((Number(_shopeeRegRow?.weight || 0) || 0) / 1000) || 0.05).toFixed(2);
+    const weightKg = (cell.weightKg != null && String(cell.weightKg).trim() !== '') ? cell.weightKg : weightDefaultKg;
+    const label = b ? `${a} · ${b}` : a;
+    const priceTds = SHOPEE_VAR_REGIONS.map(code => {
+      const listing = _shpVarCalcRegionListing(globalPriceKrw, weightKg, code);
+      const txt = listing > 0 ? listing.toFixed(2) : '—';
+      return `<td style="padding:3px 5px;border-bottom:1px solid #f0f0f5;text-align:right;font-family:var(--mono);color:#15803d;">${_shpAttrEsc(txt)}</td>`;
+    }).join('');
+    return `<tr data-key="${_shpAttrEsc(key)}" data-i1="${_shpAttrEsc(a)}" data-i2="${_shpAttrEsc(b == null ? '' : b)}">
+      <td style="padding:3px 5px;border-bottom:1px solid #f0f0f5;">${_shpAttrEsc(label)}</td>
+      <td style="padding:3px 5px;border-bottom:1px solid #f0f0f5;"><input type="text" class="var-sku" value="${_shpAttrEsc(sku)}" style="width:160px;padding:3px 5px;border:1px solid #d8d8e0;border-radius:3px;font-size:11px;background:#fafafc;color:#0a0a0c;"></td>
+      <td style="padding:3px 5px;border-bottom:1px solid #f0f0f5;text-align:right;"><input type="number" class="var-global-price" step="1" min="0" value="${_shpAttrEsc(globalPriceKrw)}" placeholder="매입가" style="width:110px;padding:3px 5px;border:1px solid #d8d8e0;border-radius:3px;font-size:11px;text-align:right;background:#fafafc;color:#0a0a0c;"></td>
+      <td style="padding:3px 5px;border-bottom:1px solid #f0f0f5;text-align:right;"><input type="number" class="var-stock" min="0" value="${_shpAttrEsc(stock)}" placeholder="—" style="width:60px;padding:3px 5px;border:1px solid #d8d8e0;border-radius:3px;font-size:11px;text-align:right;background:#fafafc;color:#0a0a0c;"></td>
+      <td style="padding:3px 5px;border-bottom:1px solid #f0f0f5;text-align:right;"><input type="number" class="var-weight-kg" step="0.01" min="0" value="${_shpAttrEsc(weightKg)}" placeholder="0.05" style="width:70px;padding:3px 5px;border:1px solid #d8d8e0;border-radius:3px;font-size:11px;text-align:right;background:#fafafc;color:#0a0a0c;"></td>
+      ${priceTds}
+    </tr>`;
+  }).join('');
+  wrap.style.display = 'block';
+  if (help) help.style.display = 'block';
+  body.querySelectorAll('input.var-global-price,input.var-weight-kg').forEach(el => {
+    el.addEventListener('input', () => _renderShopeeVariationTable());
+  });
+}
+
+function _buildShopeeVariationPayload(baseSku, fallbackPrice, fallbackStock, regionCode) {
+  const name1 = (document.getElementById('srm-var1-name')?.value || '').trim();
+  const vals1 = _parseVariationValues(document.getElementById('srm-var1-values')?.value || '');
+  const name2 = (document.getElementById('srm-var2-name')?.value || '').trim();
+  const vals2 = _parseVariationValues(document.getElementById('srm-var2-values')?.value || '');
+
+  if (!name1 || vals1.length === 0) return null;
+  if (vals1.length < 2) throw new Error('Variation 1은 옵션 2개 이상이 필요합니다.');
+  if (vals2.length > 0 && (!name2 || vals2.length < 2)) throw new Error('Variation 2를 쓰려면 이름 + 옵션 2개 이상이 필요합니다.');
+
+  const combos = vals2.length > 0 ? (vals1.length * vals2.length) : vals1.length;
+  if (combos > 50) throw new Error(`Variation 조합 수가 ${combos}개입니다. 최대 50개까지만 가능합니다.`);
+
+  const tier_variation = [{ name: name1, option_list: vals1.map(v => ({ option: v })) }];
+  if (vals2.length > 0) tier_variation.push({ name: name2, option_list: vals2.map(v => ({ option: v })) });
+
+  _captureShopeeVariationCells();
+
+  const pairs = vals2.length > 0 ? vals1.flatMap((a, i) => vals2.map((b, j) => ({ a, b, i, j })))
+                                 : vals1.map((a, i) => ({ a, b: null, i, j: -1 }));
+
+  const model = pairs.map(({ a, b, i, j }) => {
+    const key = _shopeeVarKey(a, b);
+    const cell = _shopeeVariationCells.get(key) || {};
+    const sku = (cell.sku != null && String(cell.sku).trim()) ? String(cell.sku).trim()
+                                                              : _shopeeVarRowDefaultSku(baseSku, a, b);
+    const stockRaw = cell.stock;
+    const stock = (stockRaw == null || stockRaw === '') ? 0 : Number(stockRaw);
+    const globalPriceRaw = cell.globalPriceKrw;
+    const globalPrice = (globalPriceRaw == null || globalPriceRaw === '') ? Number(_shopeeRegRow?.cost || 0) : Number(globalPriceRaw);
+    const weightKgRaw = cell.weightKg;
+    const weightKg = (weightKgRaw == null || weightKgRaw === '') ? (((Number(_shopeeRegRow?.weight || 0) || 0) / 1000) || 0.05) : Number(weightKgRaw);
+    const price = _shpVarCalcRegionListing(globalPrice, weightKg, regionCode);
+    if (!(price > 0)) {
+      const label = b ? `${a} · ${b}` : a;
+      throw new Error(`[${regionCode || '?'}] ${label} 계산가가 0입니다 (Global SKU Price/Weight 확인)`);
+    }
+    const tier_index = j >= 0 ? [i, j] : [i];
+    return {
+      tier_index,
+      model_sku: sku,
+      original_price: price,
+      global_original_price: globalPrice,
+      stock: Number.isFinite(stock) ? stock : 0,
+      weight: Number(weightKg),
+    };
+  });
+
+  return { tier_variation, model, combos };
+}
 
 function _loadImage(src, crossOrigin) {
   return new Promise((resolve, reject) => {
@@ -4328,10 +4558,26 @@ function _loadImage(src, crossOrigin) {
   });
 }
 
+async function _loadImageFromAuthedUrl(authedUrl) {
+  const headers = await _joomAuthHeaders();
+  const r = await fetch(authedUrl, { headers });
+  if (!r.ok) {
+    const body = await r.text().catch(() => '');
+    throw new Error(`이미지 프록시 ${r.status}${body ? ': ' + body.slice(0, 140) : ''}`);
+  }
+  const blob = await r.blob();
+  const objectUrl = URL.createObjectURL(blob);
+  try {
+    return await _loadImage(objectUrl, null);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
 async function applyShopLayer(productImageUrl) {
   const [layerImg, productImg] = await Promise.all([
     _loadImage(STARPHOTOCARD_LAYER, null),
-    _loadImage(productImageUrl, 'anonymous'),
+    _loadImageFromAuthedUrl(productImageUrl),
   ]);
   const size = Math.min(Math.max(productImg.naturalWidth, productImg.naturalHeight, 600), 800);
   const canvas = document.createElement('canvas');
@@ -4406,6 +4652,58 @@ function _shopeeBuildDescription({ artist, album, contentsRaw, userDesc, name })
   return lines.join('\n').trim();
 }
 
+let _shopeeCategoryCache = null;
+let _shopeeBrandCache = {}; // keyed by category_id
+
+async function _shopeeLoadCategories(forceRefresh = false) {
+  if (_shopeeCategoryCache && !forceRefresh) return _shopeeCategoryCache;
+  const headers = await _joomAuthHeaders();
+  const r = await fetch(SHOPEE_MERCHANT + '/global_categories', { headers });
+  const j = await r.json();
+  const list = j?.result?.response?.category_list || j?.result?.response?.list || [];
+  // Each entry typically has: category_id, parent_category_id, original_category_name, display_category_name, has_children
+  const leaves = list.filter(c => !c.has_children);
+  _shopeeCategoryCache = leaves.length > 0 ? leaves : list;
+  return _shopeeCategoryCache;
+}
+
+function _shopeeRenderCategoryOptions(query = '') {
+  const sel = document.getElementById('srm-category');
+  if (!sel) return;
+  const q = String(query || '').toLowerCase().trim();
+  const list = _shopeeCategoryCache || [];
+  const filtered = q ? list.filter(c => `${c.original_category_name || ''} ${c.display_category_name || ''}`.toLowerCase().includes(q)) : list;
+  const top = filtered.slice(0, 100);
+  sel.innerHTML = top.map(c => {
+    const name = c.display_category_name || c.original_category_name || `cat_${c.category_id}`;
+    return `<option value="${c.category_id}">${c.category_id} · ${_shpAttrEsc(name)}</option>`;
+  }).join('') || '<option value="">검색 결과 없음</option>';
+}
+
+async function _shopeeLoadBrandsForCategory(category_id, forceRefresh = false) {
+  if (!category_id) return [];
+  if (_shopeeBrandCache[category_id] && !forceRefresh) return _shopeeBrandCache[category_id];
+  const headers = await _joomAuthHeaders();
+  const r = await fetch(SHOPEE_MERCHANT + '/global_brands?category_id=' + encodeURIComponent(category_id), { headers });
+  const j = await r.json();
+  const list = j?.result?.response?.brand_list || [];
+  _shopeeBrandCache[category_id] = list;
+  return list;
+}
+
+function _shopeeRenderBrandOptions(query = '') {
+  const sel = document.getElementById('srm-brand');
+  if (!sel) return;
+  const cat = document.getElementById('srm-category')?.value;
+  const list = _shopeeBrandCache[cat] || [];
+  const q = String(query || '').toLowerCase().trim();
+  const filtered = q ? list.filter(b => `${b.original_brand_name || ''} ${b.display_brand_name || ''}`.toLowerCase().includes(q)) : list;
+  const top = filtered.slice(0, 200);
+  const items = ['<option value="0|No Brand">No Brand</option>']
+    .concat(top.map(b => `<option value="${b.brand_id}|${_shpAttrEsc(b.original_brand_name || '')}">${_shpAttrEsc(b.original_brand_name || '')}</option>`));
+  sel.innerHTML = items.join('');
+}
+
 async function openShopeeRegModal(row) {
   _shopeeRegRow = row;
   _shopeeRegCompositeDataUrl = null;
@@ -4426,6 +4724,13 @@ async function openShopeeRegModal(row) {
   document.getElementById('srm-artist').value = '';
   document.getElementById('srm-album').value = '';
   document.getElementById('srm-contents').value = '';
+  document.getElementById('srm-var1-name').value = '';
+  document.getElementById('srm-var1-values').value = '';
+  document.getElementById('srm-var2-name').value = '';
+  document.getElementById('srm-var2-values').value = '';
+  document.getElementById('srm-var-summary').textContent = '조합 0개 / 50개';
+  _shopeeVariationCells.clear();
+  _renderShopeeVariationTable();
   document.getElementById('srm-desc-template').value = SHOPEE_DESC_TEMPLATE;
   document.getElementById('srm-desc-custom').value = '';
   _srmNameTouched = false;
@@ -4436,6 +4741,14 @@ async function openShopeeRegModal(row) {
   });
 
   modal.classList.add('show');
+
+  // Kick off KRSC global_categories load (non-blocking)
+  (async () => {
+    try {
+      await _shopeeLoadCategories();
+      _shopeeRenderCategoryOptions(document.getElementById('srm-category-search')?.value || '');
+    } catch (_) { /* keep fallback option */ }
+  })();
 
   if (!row.staronemallUrl) {
     previewMsg.textContent = 'Staronemall URL 없음 — 이미지 없이 진행 가능';
@@ -4477,7 +4790,14 @@ async function openShopeeRegModal(row) {
     previewMsg.textContent = '합성 완료 ✓';
     previewMsg.style.color = '#15803d';
   } catch (e) {
-    previewMsg.textContent = '이미지 실패: ' + e.message;
+    const msg = String(e?.message || e || '');
+    // _joomScrapeAssets는 Joom용으로 만들어졌고 도매가(sell) 추출까지 시도함. Shopee 모달에서는
+    // 가격이 필요 없는데도 같은 함수를 쓰고 있어서, 실제로는 스크래핑/로그인 문제인데 '이미지 실패'로 표시되는 케이스가 있음.
+    let label = '이미지 실패';
+    if (/도매가|sell/i.test(msg)) label = '스크래핑 실패 (확장 프로그램 로그인 또는 페이지 구조)';
+    else if (/스크래핑|extension|확장/i.test(msg)) label = '스크래핑 실패';
+    else if (/mainImage|이미지/i.test(msg)) label = '이미지 합성 실패';
+    previewMsg.textContent = `${label}: ${msg}`;
     previewMsg.style.color = '#d62754';
   }
 }
@@ -4490,7 +4810,14 @@ async function _shopeeRegSubmit() {
   const nameBody = document.getElementById('srm-name-body').value.trim();
   const name = (namePrefix + ' ' + nameBody).trim();
   const category_id = document.getElementById('srm-category').value;
+  const brandRaw = (document.getElementById('srm-brand')?.value || '0|No Brand').split('|');
+  const brand = { brand_id: Number(brandRaw[0] || 0), original_brand_name: brandRaw[1] || 'No Brand' };
   const stock = parseInt(document.getElementById('srm-stock').value) || 0;
+  const fallbackWeightKg = Math.max(0.01, Number(document.getElementById('srm-weight-kg')?.value || 0.10));
+  const _readRegionDts = (code) => {
+    const v = parseInt(document.getElementById('srm-dts-' + code)?.value || '2');
+    return Math.max(1, Math.min(30, Number.isFinite(v) ? v : 2));
+  };
   const userDescTemplate = (document.getElementById('srm-desc-template').value || '').trim();
   const customText = document.getElementById('srm-desc-custom').value.trim();
   const extraDesc = document.getElementById('srm-desc').value.trim();
@@ -4508,21 +4835,41 @@ async function _shopeeRegSubmit() {
     PRODUCT_NAME: _shopeeRegScrapedAssets?.name || '',
     STARONEMALL_URL: row.staronemallUrl || '',
   };
-  const mergedTemplate = userDescTemplate.replaceAll(SHOPEE_DESC_PLACEHOLDER, customText);
-  const userDesc = (_renderShopeeTemplate(mergedTemplate, templateVars).trim() + (extraDesc ? `\n\n${extraDesc}` : '')).trim();
-  const description = _shopeeBuildDescription({ artist, album, contentsRaw, userDesc, name });
+  const baseTemplate = userDescTemplate || SHOPEE_DESC_TEMPLATE;
+  const mergedTemplate = baseTemplate.replaceAll(SHOPEE_DESC_PLACEHOLDER, customText);
+  const description = (_renderShopeeTemplate(mergedTemplate, templateVars).trim() + (extraDesc ? `\n\n${extraDesc}` : '')).trim();
   const statusEl = document.getElementById('srm-status');
 
   if (!nameBody) { alert('상품명 본문을 입력하세요.'); return; }
 
-  const targets = SHOPEE_REG_REGIONS.filter(({ code }) => {
-    const chk = document.getElementById('srm-chk-' + code);
-    const price = parseFloat(document.getElementById('srm-price-' + code).value);
-    return chk.checked && price > 0;
-  });
+  // Detect whether variations are configured (used to relax global price requirement).
+  const var1Name = (document.getElementById('srm-var1-name')?.value || '').trim();
+  const var1Vals = _parseVariationValues(document.getElementById('srm-var1-values')?.value || '');
+  const variationsActive = !!var1Name && var1Vals.length > 0;
+  if (variationsActive) _captureShopeeVariationCells();
 
+  const regionHasAnyRowPrice = (code) => {
+    if (!variationsActive) return false;
+    for (const cell of _shopeeVariationCells.values()) {
+      const gp = (cell?.globalPriceKrw != null && String(cell.globalPriceKrw).trim() !== '')
+        ? Number(cell.globalPriceKrw)
+        : Number(_shopeeRegRow?.cost || 0);
+      const wk = (cell?.weightKg != null && String(cell.weightKg).trim() !== '')
+        ? Number(cell.weightKg)
+        : (((Number(_shopeeRegRow?.weight || 0) || 0) / 1000) || 0.05);
+      if (_shpVarCalcRegionListing(gp, wk, code) > 0) return true;
+    }
+    return false;
+  };
+
+  // KRSC: shop selection by checkbox only. price (KRW) comes from row.cost — Shopee auto-converts per region.
+  const targets = SHOPEE_REG_REGIONS.filter(({ code }) => document.getElementById('srm-chk-' + code)?.checked);
   if (targets.length === 0) {
-    alert('체크된 region이 없거나 가격이 입력되지 않았습니다.');
+    alert('체크된 region이 없습니다.');
+    return;
+  }
+  if (!Number(row.cost)) {
+    alert('매입가 (KRW) 가 row에 없습니다. 가격수정 탭에서 입력 후 다시 시도하세요.');
     return;
   }
 
@@ -4534,43 +4881,121 @@ async function _shopeeRegSubmit() {
   document.getElementById('srm-submit').disabled = true;
 
   const authHeaders = await _joomAuthHeaders();
-  const results = [];
-
-  for (const { code } of targets) {
-    const price = parseFloat(document.getElementById('srm-price-' + code).value);
+  try {
     let image_url = '';
-    try {
-      if (_shopeeRegCompositeDataUrl) {
-        statusEl.textContent = `[${code}] 이미지 업로드 중...`;
-        const uploadResp = await fetch(SHOPEE_BRIDGE + '/upload_image', {
-          method: 'POST', headers: authHeaders,
-          body: JSON.stringify({ region: code, image_base64: _shopeeRegCompositeDataUrl }),
-        });
-        const uploadJson = await uploadResp.json();
-        if (!uploadJson.ok) throw new Error('이미지 업로드 실패: ' + (uploadJson.error || JSON.stringify(uploadJson)));
-        image_url = uploadJson.image_url || '';
-      }
+    let image_id = '';
+    const targetPayloads = [];
 
-      statusEl.textContent = `[${code}] 상품 등록 중...`;
-      const addResp = await fetch(SHOPEE_BRIDGE + '/add_item', {
-        method: 'POST', headers: authHeaders,
-        body: JSON.stringify({
-          region: code, name, sku: row.sku, price,
-          stock, weight_g: row.weight || 100,
-          category_id, image_url, description,
-        }),
+    for (const { code } of targets) {
+      const price = parseFloat(document.getElementById('srm-price-' + code).value) || 0;
+      const regionVariation = variationsActive ? _buildShopeeVariationPayload(row.sku, price, stock, code) : null;
+      const itemPrice = price > 0 ? price : (regionVariation?.model?.[0]?.original_price || 0);
+      const itemWeightG = variationsActive
+        ? Math.max(...(regionVariation?.model || []).map(m => Number(m.weight) || 0)) * 1000 || (fallbackWeightKg * 1000)
+        : fallbackWeightKg * 1000;
+      targetPayloads.push({
+        region: code,
+        price: itemPrice,
+        stock,
+        weight_g: itemWeightG,
+        days_to_ship: _readRegionDts(code),
+        variation: regionVariation,
       });
-      const addJson = await addResp.json();
-      if (!addJson.ok) throw new Error((addJson.error || 'unknown') + (addJson.message ? ': ' + addJson.message : ''));
-      results.push(`[${code}] ✓ item_id=${addJson.item_id}`);
-    } catch (e) {
-      results.push(`[${code}] ✗ ${e.message}`);
     }
-  }
 
-  statusEl.textContent = results.join('\n');
-  statusEl.style.color = results.every(r => r.includes('✓')) ? '#15803d' : '#d62754';
-  document.getElementById('srm-submit').disabled = false;
+    if (_shopeeRegCompositeDataUrl) {
+      const uploadRegion = targetPayloads[0]?.region || 'SG';
+      statusEl.textContent = `[${uploadRegion}] 이미지 업로드 중...`;
+      const uploadResp = await fetch(SHOPEE_BRIDGE + '/upload_image', {
+        method: 'POST', headers: authHeaders,
+        body: JSON.stringify({ region: uploadRegion, image_base64: _shopeeRegCompositeDataUrl }),
+      });
+      const uploadJson = await uploadResp.json();
+      if (!uploadJson.ok) throw new Error('이미지 업로드 실패: ' + (uploadJson.error || JSON.stringify(uploadJson)));
+      image_url = uploadJson.image_url || '';
+      image_id = uploadJson.image_id || '';
+    }
+
+    // KRSC global product: original_price MUST be in KRW (merchant currency), not region-local currency.
+    // Use row.cost (매입가, KRW). Shopee auto-converts per region using merchant's price conversion config.
+    const krwPrice = Number(row.cost || 0);
+    if (!(krwPrice > 0)) throw new Error('매입가(KRW) 없음 — row.cost 입력 필요');
+
+    statusEl.textContent = `GlobalProduct(KRW ${krwPrice.toLocaleString()}) 생성 + ${targetPayloads.length}개 region publish 중...`;
+    const primaryTarget = targetPayloads[0] || {};
+    const skuForApi = (row.sku && String(row.sku).trim()) || ('SP-' + String(row.id || '').slice(0, 8) || 'SP-' + Date.now());
+    let extraAttrs = [];
+    const attrsRaw = (document.getElementById('srm-attrs-json')?.value || '').trim();
+    if (attrsRaw) {
+      try {
+        const parsed = JSON.parse(attrsRaw);
+        if (!Array.isArray(parsed)) throw new Error('JSON must be an array');
+        extraAttrs = parsed;
+      } catch (e) {
+        throw new Error(`Category Attributes JSON error: ${e.message || e}`);
+      }
+    }
+    const regResp = await fetch(SHOPEE_BRIDGE + '/register_cbsc', {
+      method: 'POST', headers: authHeaders,
+      body: JSON.stringify({
+        region: 'SG',
+        name,
+        sku: skuForApi,
+        price: krwPrice,
+        stock,
+        weight_g: primaryTarget.weight_g || (fallbackWeightKg * 1000),
+        days_to_ship: primaryTarget.days_to_ship || 4,
+        category_id,
+        image_id,
+        description,
+        brand,
+        attribute_list: [{ attribute_id: 100037, attribute_value_list: [{ original_value_name: 'South Korea' }] }].concat(extraAttrs),
+        variation: primaryTarget.variation || null,
+        targets: targetPayloads,
+      }),
+    });
+    const regJson = await regResp.json();
+    if (!regJson.ok) {
+      const stage = regJson.stage ? `[${regJson.stage}] ` : '';
+      if (Array.isArray(regJson.missing_attributes) && regJson.missing_attributes.length > 0) {
+        const details = regJson.missing_attributes.map((a) => {
+          const opts = (a.options || []).slice(0, 8).map((o) => `${o.value_name || ''}${o.value_id ? `(#${o.value_id})` : ''}`).join(', ');
+          return `- ${a.attribute_name || 'unknown'} (#${a.attribute_id}) options: ${opts || 'n/a'}`;
+        }).join('\n');
+        throw new Error(stage + (regJson.error || 'mandatory attributes missing') + '\n' + details);
+      }
+      throw new Error(stage + (regJson.error || 'unknown') + (regJson.message ? ': ' + regJson.message : ''));
+    }
+
+    const lines = [];
+    lines.push(`✓ global_item_id=${regJson.global_item_id}`);
+    const resultsMap = Array.isArray(regJson.results) ? regJson.results : [];
+    let anyFailed = false;
+    for (const info of resultsMap) {
+      const region = info.region || '?';
+      const ok = !!info.item_id;
+      if (!ok) anyFailed = true;
+      lines.push(`[${region}] ${ok ? '✓' : '✗'} shop_id=${info.shop_id} item_id=${info.item_id || '—'} status=${info.item_status || '?'}`);
+      if (info.item_id) {
+        try {
+          await Storage.upsertShopeeListing(row.id, region, { shop_item_id: info.item_id });
+          row.shopeeListings = row.shopeeListings || {};
+          row.shopeeListings[region] = { ...(row.shopeeListings[region] || {}), shop_item_id: info.item_id };
+        } catch (_) {}
+      }
+    }
+    const publishResults = []; // legacy compat
+    resultsMap.forEach((info) => publishResults.push({ region: info.region, ok: !!info.item_id, item_id: info.item_id }));
+    if (publishResults.length === 0) lines.push('publish 결과 없음 — bridge 응답 확인 필요');
+    statusEl.textContent = lines.join('\n');
+    statusEl.style.color = publishResults.length > 0 && publishResults.every(r => r.ok) ? '#15803d' : '#d62754';
+    if (typeof renderTableBody === 'function') renderTableBody();
+  } catch (e) {
+    statusEl.textContent = `등록 실패: ${e.message || e}`;
+    statusEl.style.color = '#d62754';
+  } finally {
+    document.getElementById('srm-submit').disabled = false;
+  }
 }
 
 (function bindShopeeRegModal() {
@@ -4586,6 +5011,11 @@ async function _shopeeRegSubmit() {
     const descTemplateEl = document.getElementById('srm-desc-template');
     const descCustomEl = document.getElementById('srm-desc-custom');
     const descExtraEl = document.getElementById('srm-desc');
+    const v1Name = document.getElementById('srm-var1-name');
+    const v1Vals = document.getElementById('srm-var1-values');
+    const v2Name = document.getElementById('srm-var2-name');
+    const v2Vals = document.getElementById('srm-var2-values');
+    const vSummary = document.getElementById('srm-var-summary');
     const refreshDescPreview = () => {
       if (!descTemplateEl || !descCustomEl || !descExtraEl) return;
       const merged = (descTemplateEl.value || SHOPEE_DESC_TEMPLATE)
@@ -4596,6 +5026,45 @@ async function _shopeeRegSubmit() {
     descTemplateEl?.addEventListener('input', refreshDescPreview);
     descCustomEl?.addEventListener('input', refreshDescPreview);
     refreshDescPreview();
+
+    const refreshVariationSummary = () => {
+      if (!vSummary) return;
+      const n1 = (v1Name?.value || '').trim();
+      const n2 = (v2Name?.value || '').trim();
+      const c1 = _parseVariationValues(v1Vals?.value || '').length;
+      const c2 = _parseVariationValues(v2Vals?.value || '').length;
+      const combos = (!n1 || c1 === 0) ? 0 : (c2 > 0 && n2 ? c1 * c2 : c1);
+      vSummary.textContent = `조합 ${combos}개 / 50개`;
+      vSummary.style.color = combos > 50 ? '#d62754' : '#5a5a66';
+    };
+    const onVarChange = () => { refreshVariationSummary(); _renderShopeeVariationTable(); };
+    v1Name?.addEventListener('input', onVarChange);
+    v1Vals?.addEventListener('input', onVarChange);
+    v2Name?.addEventListener('input', onVarChange);
+    v2Vals?.addEventListener('input', onVarChange);
+    refreshVariationSummary();
+    _renderShopeeVariationTable();
+
+    // Category dynamic loading
+    const catSearch = document.getElementById('srm-category-search');
+    const catSelect = document.getElementById('srm-category');
+    const catRefresh = document.getElementById('srm-category-refresh');
+    const brandSearch = document.getElementById('srm-brand-search');
+    catSearch?.addEventListener('input', e => _shopeeRenderCategoryOptions(e.target.value));
+    catRefresh?.addEventListener('click', async () => {
+      catSelect.innerHTML = '<option>로딩 중...</option>';
+      try { await _shopeeLoadCategories(true); _shopeeRenderCategoryOptions(catSearch?.value || ''); }
+      catch (e) { catSelect.innerHTML = '<option value="101390">로드 실패 (fallback 101390)</option>'; }
+    });
+    catSelect?.addEventListener('change', async () => {
+      const cat = catSelect.value;
+      if (!cat) return;
+      try {
+        await _shopeeLoadBrandsForCategory(cat);
+        _shopeeRenderBrandOptions(brandSearch?.value || '');
+      } catch (_) { /* keep No Brand fallback */ }
+    });
+    brandSearch?.addEventListener('input', e => _shopeeRenderBrandOptions(e.target.value));
   };
   init();
 })();
@@ -4610,6 +5079,9 @@ let _gkpRows = [];
 let _gkpEnrichedFiltered = []; // enriched+filtered items, kept for expand/collapse rebuilds
 // expanded state per global_item_id
 const _gkpExpanded = new Set();
+// Cache enriched items for the lifetime of the modal session so re-searching
+// different keywords doesn't re-fetch the entire global catalog.
+let _gkpEnrichedCache = { items: [], fetchedAt: 0, fallbackMode: false };
 
 async function _gkpFetchAllGlobalItems(statusEl) {
   const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
@@ -4708,13 +5180,23 @@ async function _gkpEnrichItems(items, statusEl) {
   return enriched;
 }
 
+function _gkpNormalize(s) {
+  // Lowercase + strip whitespace and common separators so "BOY NEXT DOOR",
+  // "boy-next-door", "boynextdoor" all match the same canonical form.
+  return String(s || '').toLowerCase().replace(/[\s\-_/.,()!?]+/g, '');
+}
+
 function _gkpFilter(enrichedItems, keyword) {
   if (!keyword.trim()) return enrichedItems;
-  const kw = keyword.trim().toLowerCase();
+  const kw = _gkpNormalize(keyword);
+  if (!kw) return enrichedItems;
   return enrichedItems.filter(it =>
-    it.item_name.toLowerCase().includes(kw) ||
-    it.item_sku.toLowerCase().includes(kw) ||
-    (it.models && it.models.some(m => (m.global_model_sku || '').toLowerCase().includes(kw)))
+    _gkpNormalize(it.item_name).includes(kw) ||
+    _gkpNormalize(it.item_sku).includes(kw) ||
+    (it.models && it.models.some(m =>
+      _gkpNormalize(m.global_model_sku || '').includes(kw) ||
+      _gkpNormalize(m.model_name || '').includes(kw)
+    ))
   );
 }
 
@@ -4858,6 +5340,7 @@ async function _gkpApply() {
       _gkpRows = [];
       _gkpEnrichedFiltered = [];
       _gkpExpanded.clear();
+      _gkpEnrichedCache = { items: [], fetchedAt: 0, fallbackMode: false };
       document.getElementById('gkp-results-wrap').style.display = 'none';
       document.getElementById('gkp-import-log').style.display = 'none';
       document.getElementById('gkp-import-log').textContent = '';
@@ -4878,28 +5361,35 @@ async function _gkpApply() {
       try {
         const keyword = document.getElementById('gkp-keyword').value.trim();
 
-        let allGlobal = [];
         let enriched = [];
         let fallbackMode = false;
+        const cacheValid = _gkpEnrichedCache.items.length > 0;
 
-        try {
-          allGlobal = await _gkpFetchAllGlobalItems(statusEl);
-          statusEl.textContent = `전체 ${allGlobal.length}건 로드. 상품 정보 조회 중…`;
-          const preFiltered = keyword
-            ? allGlobal.filter(it => (it.item_name || '').toLowerCase().includes(keyword.toLowerCase()))
-            : allGlobal;
-          enriched = await _gkpEnrichItems(preFiltered, statusEl);
-        } catch (e) {
-          const msg = String(e?.message || e || '');
-          if (!/global_items 오류|product\.error_unknown|invalid_access_token|invalid_acceess_token/i.test(msg)) throw e;
-          fallbackMode = true;
-          enriched = await _gkpFetchShopItemsFallback(statusEl);
+        if (cacheValid) {
+          enriched = _gkpEnrichedCache.items;
+          fallbackMode = _gkpEnrichedCache.fallbackMode;
+          statusEl.textContent = `캐시된 ${enriched.length}건 사용 · "${keyword || '(필터없음)'}" 필터 적용 중…`;
+        } else {
+          try {
+            const allGlobal = await _gkpFetchAllGlobalItems(statusEl);
+            statusEl.textContent = `전체 ${allGlobal.length}건 로드. 상품 정보 조회 중…`;
+            // No pre-filter by item_name — listing endpoint may not include reliable names,
+            // so we must enrich all items first and filter on the full data.
+            enriched = await _gkpEnrichItems(allGlobal, statusEl);
+          } catch (e) {
+            const msg = String(e?.message || e || '');
+            if (!/global_items 오류|product\.error_unknown|invalid_access_token|invalid_acceess_token/i.test(msg)) throw e;
+            fallbackMode = true;
+            enriched = await _gkpFetchShopItemsFallback(statusEl);
+          }
+          _gkpEnrichedCache = { items: enriched, fetchedAt: Date.now(), fallbackMode };
         }
 
         const filtered = _gkpFilter(enriched, keyword);
+        const cacheTag = cacheValid ? ' (캐시)' : '';
         statusEl.textContent = fallbackMode
-          ? `Fallback 검색 사용 중 · "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`
-          : `전체 ${allGlobal.length}개 중 "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`;
+          ? `Fallback 검색 사용 중${cacheTag} · "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`
+          : `전체 ${enriched.length}개 중${cacheTag} "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`;
         _gkpExpanded.clear();
         _gkpEnrichedFiltered = filtered;
         _gkpRows = _gkpBuildRows(filtered);

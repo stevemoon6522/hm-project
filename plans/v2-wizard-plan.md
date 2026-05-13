@@ -1,0 +1,356 @@
+# Plan: shopee-dashboard v2/ — READY STOCK 전환 마법사 (Phase B)
+
+- 작성일: 2026-05-12
+- 작성자: Opus (Claude Code)
+- 선행 문서: `plans/ready-stock-wizard-plan.md` (회의록 요약), `2026-05-11-shopee-dashboard-planning.md`
+- Codex 리뷰: 본 문서 §11 (대기)
+
+---
+
+## 1. 목표 / 비목표
+
+### 목표
+- 현 `index.html`은 운영 손대지 않고, **`v2/index.html` 로 별도 SPA** 신설
+- Phase B(READY STOCK 전환 마법사) 만 구현 — 가장 ROI 큰 단일 워크플로
+- 모든 mutation은 `shopee_mutation_log`에 기록(첫 배포부터 강제, 같은 commit)
+- Live probe 통과 전엔 `update_global_item.item_name` / `update_global_model.weight` **노출 금지**
+
+### 비목표 (본 PR 범위 외)
+- 칸반 보드(Phase D-1), 매입가 inline 편집(Phase C), xlsx import, Google Sheets onEdit
+- v1(index.html) 기능 마이그레이션 — 사용자가 보고 어떤 부분 합치고 빼낼지 별도 피드백
+- 다국어/디자인 시스템 통일 (v1과 시각 차이 허용)
+
+---
+
+## 2. v2 분리 전략
+
+### 배치
+- 새 파일: `C:\dev\shopee-dashboard\v2\index.html` (단일 HTML+CSS+JS, v1과 동일 스택)
+- 접근 URL: `https://shopee-dashboard-kohl.vercel.app/v2/`
+- 같은 Vercel project (자동 라우팅), 같은 git repo, 같은 Supabase project, 같은 `shopee-bridge` edge function
+
+### v1과 공유 자원
+- Supabase 테이블 `products`, `product_shopee_listings`, `country_settings` — **읽기/쓰기 모두 공유**
+- `shopee-bridge` edge function — v2가 새 액션 추가, v1은 변경 없음 (기존 액션 유지)
+- 인증/시크릿 — v1과 동일 (재로그인 부담 없음)
+
+### v1과 분리되는 부분
+- HTML/CSS/JS 코드는 별도 파일. v1 코드 복사 후 필요한 helper만 가져옴(SB client, Shopee API caller, fetch wrapper)
+- v2 전용 mutation은 `shopee_mutation_log` 의 `actor='v2-wizard'` 로 구분
+
+### Vercel 라우팅 검증
+- `vercel deploy --prod --yes` 후 `/v2/` 가 디렉토리로 인식되는지 확인 (404 시 `vercel.json`에 `rewrites` 1줄 추가)
+- 검증 시점: 빈 `v2/index.html` 만으로 첫 배포해서 라우팅만 먼저 통과 → 그 후 본 구현
+
+---
+
+## 3. 사전 점검 (선결 작업)
+
+### 3-1. DB 마이그레이션 적용 상태 확인 (블로커)
+회의록은 Phase A를 "적용 완료" 표기했으나, `index.html` grep 결과 `lifecycle_state`/`days_to_ship`/`title_state`/`last_pushed_name` 컬럼을 코드가 거의 안 씀. 적용 여부 SQL로 확인:
+
+```sql
+select column_name, data_type
+from information_schema.columns
+where table_name in ('products', 'product_shopee_listings')
+  and column_name in (
+    'lifecycle_state','weight_measured_at','cost_updated_at',
+    'days_to_ship','title_state','last_pushed_name','last_pushed_at'
+  );
+```
+
+- 적용됨: 그대로 사용
+- 미적용: `apply_migration` 으로 추가 (idempotent하게 `add column if not exists`)
+
+### 3-2. `shopee_mutation_log` 테이블 신설 (블로커)
+Codex 권고 §6-1-3에 따라 본 PR에 포함. 스키마:
+
+```sql
+create table if not exists shopee_mutation_log (
+  id              bigserial primary key,
+  created_at      timestamptz not null default now(),
+  actor           text not null,                 -- 'v2-wizard' | 'v1-bulk' 등
+  action          text not null,                 -- 'update_global_item' | 'update_global_model' | ...
+  region          text,
+  target_global_item_id   bigint,
+  target_global_model_id  bigint,
+  target_shop_item_id     bigint,
+  payload_hash    text not null,                 -- region+target+action+payload SHA256 hex
+  before_payload  jsonb,
+  after_payload   jsonb,
+  request_payload jsonb,
+  response        jsonb,
+  status          text not null,                 -- 'ok' | 'error' | 'dry_run' | 'skipped'
+  error_msg       text,
+  request_id      text,
+  duration_ms     integer
+);
+
+create index if not exists idx_shopee_mutation_log_created_at
+  on shopee_mutation_log (created_at desc);
+create index if not exists idx_shopee_mutation_log_target_global_item
+  on shopee_mutation_log (target_global_item_id);
+create unique index if not exists uidx_shopee_mutation_log_idempotent
+  on shopee_mutation_log (payload_hash)
+  where status in ('ok','dry_run');  -- 멱등 키: 같은 payload 두 번 ok로 들어가지 않음
+```
+
+멱등 키 unique 제약: 같은 region+target+action+payload_hash 가 한 번 'ok'로 들어가면 재시도 시 PG가 INSERT 거부 → 프론트가 'skipped'로 받음.
+
+### 3-3. Live probe (사용자 burnable product 선정 후 진행)
+- 대상: 사용자가 지정한 단일 test product, 단일 region (SG 권장)
+- 검증 1: `update_global_item` payload에 `item_name: "[PROBE TEST]"` 같이 넣었을 때
+  - Shopee response error == null인지
+  - 잠시 후 `get_global_item_info` 로 실제 변경됐는지 확인
+- 검증 2: `update_global_model` payload에 `weight: 80` 같이 넣었을 때 위와 동일 확인 (그리고 무게가 region SKU에 전파되는지 vs CBSC가 region 별로 따로 setting인지 확인)
+- 결과:
+  - 통과: 그 필드를 마법사 자동 액션에 포함
+  - 실패: 해당 필드는 마법사에서 OFF로 고정, UI에 "Shopee API 미지원" 안내
+- probe 자체는 v2 dashboard 안에 "🔬 Probe" 메뉴 하나로 구현 (1회용 도구, audit 남김)
+
+---
+
+## 4. 백엔드 (shopee-bridge edge function)
+
+### 4-1. 기존 액션 확장 (probe 통과 후만 본 구현 노출)
+| 액션 | 변경 |
+|------|------|
+| `update_global_item` | `body.item_name` (optional), `body.description` (optional) 추가. probe 미통과 시 무시 + 경고 응답 |
+| `update_global_model` | `body.global_model[].weight` (optional, 단위는 probe로 확인 g/kg) 추가. 동일 |
+
+probe 통과 여부는 `shopee_app.config` 테이블(또는 `country_settings`)의 boolean flag로 표시: `probe_item_name_ok`, `probe_model_weight_ok`. 통과 표시 없으면 edge function이 해당 필드 strip + 응답에 `warn` 추가.
+
+### 4-2. 신규 액션 `update_shop_days_to_ship`
+- 엔드포인트: Shopee shop-level `/api/v2/product/update_item`
+- 입력: `{ region, shop_item_id, days_to_ship }`
+- 출력: `{ ok, region, shop_item_id, sent_days_to_ship, result }`
+- 입력 검증: `1 <= days_to_ship <= 30` 강제
+
+### 4-3. mutation_log 자동 기록
+- edge function 안에서 모든 mutation 액션의 입/출력을 INSERT
+- 멱등 키 충돌 시(uidx_shopee_mutation_log_idempotent) → 새 호출은 'skipped' 상태로 별 row 안 만들고 응답에 `skipped: true, previous_log_id` 반환
+- dry-run: `body.dry_run === true` 일 때 실제 호출 안 하고 row만 'dry_run' 상태로 저장
+
+### 4-4. shopee-bridge 한 commit에 묶기 (Codex 권고)
+- 액션 코드 + mutation_log INSERT 코드 + 멱등 키 + dry-run 모드 — 한 commit 으로 묶어 audit 없는 호출이 라이브로 나가는 창 차단
+
+---
+
+## 5. 프론트 (v2/index.html)
+
+### 5-1. 최소 골격
+- Supabase JS SDK (CDN), `shopee-bridge` fetch wrapper, 인증 (v1과 동일 환경변수 / anon key)
+- 페이지 구조 (단일 SPA, 라우팅 없음):
+  - 상단 nav: `📦 READY STOCK 마법사 | 🔬 Probe | 📜 변경 이력`
+  - 본문은 nav 선택에 따라 swap
+
+### 5-2. 마법사 화면 (메인)
+```
+┌────────────────────────────────────────────────────────────┐
+│ [상품 검색...] [region 필터: 전체 ▼] [lifecycle: PRE_ORDER ▼] │
+├──────────────┬─────────────────────────────────────────────┤
+│ 좌측 30%      │ 우측 70%                                     │
+│ ▢ BOYNEXTDOOR │ 선택된 상품 N개 (옵션 M개)                    │
+│   - opt A     │                                              │
+│   - opt B     │ [옵션별 무게 입력]                            │
+│ ▢ NCT 127    │   opt A: [____] g  (이전 측정: 65g)            │
+│   - opt C     │   opt B: [____] g                            │
+│              │                                              │
+│              │ [☑ 자동 액션 (Probe 통과 항목만 enabled)]      │
+│              │   ☑ 상품명 [PRE ORDER] → [READY STOCK]        │
+│              │   ☑ 모든 region Days to Ship → 1              │
+│              │   ☐ 무게 → Global SKU → Shop SKU (Probe 대기)  │
+│              │   ☑ region별 신규 판매가 재계산                │
+│              │                                              │
+│              │ [🔍 미리보기]                                 │
+└──────────────┴─────────────────────────────────────────────┘
+```
+
+### 5-3. 미리보기 매트릭스
+- 행: region × 옵션
+- 컬럼: 현재가 | 신규가 | Δ | 무게(g) | DTS | 상품명 변화 | API call 수
+- 하단 요약: "총 N개 region × M개 옵션 = R 호출. dry_run 권장 ☑"
+
+### 5-4. 실행
+- "🚀 dry-run 실행" → mutation_log 에 dry_run row 들 INSERT (no Shopee call)
+- 결과 후 행별 ✓/❌ 표시, 사용자가 dry-run 결과 만족 시 "🔥 실호출" 버튼 활성화
+- "🔥 실호출" → 같은 payload 들이 멱등 키 그대로 실호출. dry_run row 는 같은 payload_hash 라도 unique 제약에 안 걸림(WHERE status in ('ok','dry_run') 이므로 충돌 가능 — 별도 처리 필요 §11 Codex 검토 포인트)
+- 호출 순서: region별 직렬, region 내부 model 5 병렬 (Codex 권고)
+- 429/5xx 대응: exponential backoff (1s → 2s → 4s, max 3 retry), retry-after 헤더 우선
+
+### 5-5. 변경 이력 화면
+- `shopee_mutation_log` 최근 200건 테이블
+- 필터: actor, status, region, action, date range
+- 행 클릭 → request_payload/response JSON pretty view
+
+### 5-6. Probe 화면
+- 사용자가 burnable global_item_id 1개 입력
+- "item_name probe" 버튼 → 가짜 이름 변경 후 재조회 → 결과 표 + Pass/Fail 토글
+- "weight probe" 버튼 → 가짜 무게 변경 후 재조회 → 결과
+- Pass 클릭 시 `shopee_app.config` 의 flag 업데이트 + 마법사 자동 액션 enable
+
+---
+
+## 6. 데이터 흐름 (마법사 1회 클릭)
+
+```
+사용자 [실호출 클릭]
+  ↓
+프론트: 마법사 payload 빌드
+  - 옵션별 무게 (g)
+  - region별 판매가 (cost + 마진식)
+  - lifecycle_state: ready_stock
+  - title 치환
+  ↓
+프론트: dry-run 1회 (필수, 자동) → mutation_log dry_run
+  ↓ 사용자 확인
+프론트: 실호출 fan-out
+  for each region in [SG,TW,TH,MY,PH,BR]:    # 직렬
+    parallel chunk(5) for each model:
+      shopee-bridge:update_global_model { weight, sku }  # 통과 필드만
+      shopee-bridge:update_global_item   { item_name }    # 통과 시
+      shopee-bridge:update_global_price  { new_price }
+      shopee-bridge:update_shop_days_to_ship { 1 }
+    (각 호출은 mutation_log row 자동 생성)
+  ↓
+프론트: DB update
+  products.lifecycle_state = 'ready_stock'
+  products.weight_measured_at = now()
+  product_shopee_listings.days_to_ship = 1
+  product_shopee_listings.title_state = 'READY_STOCK'
+  product_shopee_listings.last_pushed_name = new_name
+  product_shopee_listings.last_pushed_at = now()
+  ↓
+프론트: 결과 요약
+  성공 X / 실패 Y / 멱등 skip Z / drift 경고 W
+```
+
+### 부분 실패 (Codex 권고 §6-1-2 반영)
+- mutation 단위 = `region + target_id + action + payload_hash`
+- 실패한 row 만 "🔁 실패만 재시도" 버튼으로 재호출
+- 성공 row 는 같은 payload_hash 로 두 번째 시도 시 멱등 키 충돌 → 'skipped' 응답 (중복 mutation 방지)
+
+### Drift 감지
+- 마법사 진입 시 region별 현재 `item_name`, `model_weight`, `days_to_ship` 1회 조회
+- DB `last_pushed_name` 와 다르면 "외부 편집 흔적" 배지
+- 사용자 확인 후 진행 (강제 차단 아님)
+
+---
+
+## 7. 구현 순서 (작은 commit 분할)
+
+| # | 작업 | 검증 |
+|---|------|------|
+| 1 | DB 마이그레이션: §3-1 컬럼 점검 + 누락 시 추가, §3-2 `shopee_mutation_log` 생성 (1 SQL migration 파일) | Supabase SQL editor에서 `select` 컬럼 확인, mutation_log 빈 row INSERT/DELETE 테스트 |
+| 2 | shopee-bridge: `update_shop_days_to_ship` 액션 추가 + 모든 mutation 액션에 mutation_log INSERT 통합 + dry-run 모드 + 멱등 키 처리 (한 commit) | 단위 호출 후 mutation_log row 생성 확인 |
+| 3 | v2/index.html skeleton (빈 페이지 + nav + auth + Supabase client) → 첫 vercel deploy 로 `/v2/` 라우팅 검증 | `/v2/` 접근 시 정상 로드, console 에러 없음 |
+| 4 | v2 Probe 화면 + probe 결과 `shopee_app.config` flag 저장 | burnable product 1개로 두 probe 실행, flag 업데이트 확인 |
+| 5 | v2 마법사 화면 1단계: 상품 검색 + 선택 + lifecycle 필터 | PRE_ORDER 상태 상품 N개 선택 가능 |
+| 6 | v2 마법사 2단계: 무게 입력 + 자동 액션 체크박스 (probe flag 기반 enable/disable) | UI 동작 확인, prefill 동작 |
+| 7 | v2 마법사 3단계: 미리보기 매트릭스 + dry-run | dry-run 실행 시 mutation_log dry_run row 들 INSERT |
+| 8 | v2 마법사 4단계: 실호출 fan-out + 부분 실패 재시도 + DB 상태 update | 사용자 지정 test product 1개로 end-to-end 검증, mutation_log 'ok' row 들 확인 |
+| 9 | v2 변경 이력 화면 (mutation_log 200건 + 필터) | 필터 조합 확인 |
+| 10 | (옵션) drift 감지 배지 | 외부에서 셀러센터 통해 수동 변경 후 마법사 진입 시 배지 노출 |
+
+---
+
+## 8. 검증 기준 (Codex 권고 §6-4 반영)
+
+기존 회의록의 "5옵션×6region 1분 이내" 같은 성능 기준은 보조. 본 PR의 정량 검증은:
+
+- 정상 케이스 1건 end-to-end: 요청 수 N, 성공 N, 실패 0, dry_run/실호출 일치
+- 부분 실패 시뮬레이션 (TH region을 일부러 잘못된 shop_item_id 로 호출): 실패 row 만 ❌, 다른 region 정상, 재시도 시 실패 row 만 재호출
+- 멱등 검증: 성공 직후 같은 payload 재호출 → 'skipped' 응답, mutation_log row 추가되지 않음
+- 토큰 만료 시뮬레이션: invalid_access_token 응답 시 refresh + 자동 재시도 → 최종 성공
+- 최종 drift 0건: 마법사 종료 후 `get_global_item_info` 로 모든 region 재조회해 마법사 결과와 일치
+
+---
+
+## 9. 리스크 & 미해결 이슈
+
+1. **CBSC `update_global_model`의 weight 단위 미확정**: g/kg 어느 쪽인지 probe로 확인 필요. Shopee 문서 모순될 수 있음.
+2. **region별 무게가 global model의 weight를 그대로 상속하는지 vs shop_item.weight를 따로 setting인지**: probe에서 함께 검증. 만약 shop별 setting이라면 액션 1개 더 필요 (`update_shop_item_weight`).
+3. **`shopee_app.config` 테이블 존재 여부**: 없으면 `country_settings`에 boolean 컬럼 추가 또는 신규 1행 `shopee_v2_flags` 테이블.
+4. **dry_run + 실호출 멱등 키 충돌**: 같은 payload_hash 로 dry_run 다음 ok 가 들어가야 함. §3-2 unique index 의 WHERE 절을 `status='ok'` 만으로 좁히거나, dry_run/ok 둘 다 허용해도 dry_run row는 별 prefix로 다른 hash 갖게 해야 함 → 구현 시 결정 (가장 단순한 해: 멱등 키는 status='ok' 만, dry_run row 는 멱등 무시).
+5. **CBSC global product API payload 스펙 미해결 경고 (`index.html` line 1031)**: 현재 v1의 add_item 분기에서 명시된 경고. probe 게이트가 이 부분도 cover하는지 확인 후 v2 plan에 명시 필요.
+6. **Vercel auto-deploy 미연결**: 본 plan의 모든 deploy는 `vercel deploy --prod --yes` 수동 (CLAUDE.md 명시).
+7. **v1과 동시 사용 시 충돌**: v1에서도 같은 product를 편집할 수 있어 last_pushed_name 누락 가능. v2는 항상 진입 시 fresh 조회 + drift 배지로 완화.
+
+---
+
+## 10. 후속 작업 (본 PR 범위 외)
+
+- Phase D-1 칸반 보드 (lifecycle_state 컬럼 활용 시각화)
+- Phase C 매입가 inline 편집
+- xlsx import 경로
+- v1 → v2 통합/병합 (사용자 피드백 후 결정)
+- 회귀 테스트 3종 (partial failure / invalid_access_token / retry same payload) — fixture 기반 자동 테스트
+
+---
+
+## 11. Revision (Codex)
+
+2026-05-12 `/codex:rescue` 적대적 리뷰 결과 (액션 가능 형태).
+
+### [P0] (본 PR 머지 전 반드시 해결)
+
+1. **Dry-run/real-call idempotency collision (§3-2, §5-4, §9-4)** — 멱등 unique index의 WHERE 절을 `status='ok'` 단독으로 변경하고, dry_run row는 별도 경로(비-unique 또는 별도 테이블)로 저장.
+   - Rationale: 현재 `status IN ('ok','dry_run')` 조건은 dry-run 직후 동일 payload_hash의 실 호출을 DB 레벨에서 차단하는 correctness 버그.
+
+2. **Mid-run token expiry between probe and execution (§3-3, §8)** — probe 통과 후 mutation 팬아웃 직전에 region별 토큰 freshness 재확인 + 자동 refresh/retry 정책 명시.
+   - Rationale: probe 성공이 이후 호출의 토큰 유효성을 보장하지 않음 → 만료 시 부분 실패가 예측 불가 형태로 발생.
+
+3. **No operator-safe rollback for partial bulk failure (§6, §8)** — PR 머지 전 보상 동작 정책 선언 필수: "스냅샷 + 액션별 revert" 또는 "자동 롤백 없음 + 재개 도구" 중 하나 명시 선택.
+   - Rationale: region/model 비-원자적 팬아웃에서 30번째 아이템 실패 시 원격 상태 혼합 + 복구 기준 없음.
+
+4. **Silent field stripping can mask hard downstream failures (§4-1)** — 자동 실행 모드에서는 "warn + strip" 대신 "preflight hard-block, 운영자가 명시적 degraded 모드 승인한 경우에만 진행" 정책으로 교체.
+   - Rationale: 필수 비즈니스 필드 없이 진행 → 이후 API에서 hard error → warn-only 무의미.
+
+### [P1] (첫 commit 직후)
+
+5. **Unverified concurrency/rate-limit assumption for model-5-parallel (§5-4)** — "미검증 가정" 명시 + 출시 기본값 `parallel=2` + jittered back-off + 첫 429 burst 시 adaptive throttle 보수 설정.
+   - Rationale: 실제 partner rate limit 미인용 상태에서 병렬도 5는 shop/partner 한도 초과 가능.
+
+6. **Probe scope too narrow for shop-level variance (§3-3)** — probe를 active region 당 1개 shop 이상으로 확장 또는 region별 capability matrix 선언. probe 토큰 만료 시 fail-closed.
+   - Rationale: CBSC global product도 weight/logistics/dimensions 같은 shop-level 필드가 region별 다를 수 있음 → 단일 region probe는 false positive 위험.
+
+7. **Probe token-expired branch unspecified (§3-3, §5-6)** — "probe 대상 토큰 무효" 분기: refresh 시도 → 대체 region 폴백 → non-pass 유지 순서로 명시.
+   - Rationale: 결정적 분기 없으면 operator가 불안정한 probe 결과로 unsafe 동작 의도치 않게 활성화.
+
+8. **v1/v2 concurrent write consistency under-specified (§2, §6, §9-7)** — `products.lifecycle_state` 및 `product_shopee_listings` 주요 컬럼에 `updated_at`/version 기반 optimistic locking 추가.
+   - Rationale: 탭 동시 사용 시 stale read로 overwrite 발생, drift 경고는 감지일 뿐 방지 아님.
+
+9. **Wizard interruption/resume state machine missing (§5-4, §6)** — `run_id`, `phase`, `started_at`, `aborted_at` 포함 run-level 엔티티 도입 + 모든 mutation_log row를 run_id에 연결.
+   - Rationale: refresh/탭 닫기 시 orphan row + 재개/안전 중단 UX 경로 부재.
+
+### [P2] (후속 개선)
+
+10. **i18n/locale policy not defined for v2 UI copy (§5-1~§5-6)** — UI 텍스트 언어 소스(ko 기본, key-based, API 오류 로케일 폴백) 선언 후 문구 작성.
+    - Rationale: 없으면 warn/probe/degraded-mode 메시지 일관성 상실.
+
+11. **Vercel `/v2/` routing fallback acceptance criteria absent (§2)** — `/v2`와 `/v2/` 모두 명시적 테스트 케이스 + 실패 시 동작(hard 404 vs redirect) 정의 deploy 체크리스트에 추가.
+    - Rationale: 현재 "rewrite 필요 가능성" 메모만 있고 misconfig 시 user-visible 결과 미정의.
+
+12. **Mutation audit schema lacks run/actor granularity (§3-2, §4-3, §5-5)** — `run_id`, `operator_id`, normalized `region/shop_id`, `request_id` 인덱스 추가.
+    - Rationale: 현 로그로는 cross-tab/operator 인시던트 재구성 및 재실행 경계 파악 어려움.
+
+13. **Field-unit assumptions expire without TTL (§3-3, §9-1)** — probe 결과(request/response sample + timestamp + region/shop) persist + capability flag에 TTL 설정.
+    - Rationale: 일회성 probe는 API 동작/계정 설정 변경 시 stale → 주기적 재검증 필요.
+
+### Codex Summary
+
+최상위 시스템 리스크는 **부분 실패 하에서의 실행 의미론(idempotency, rollback, resume)이 일관된 트랜잭션 모델을 갖추지 못한 것**. 두 번째는 **rate limit, probe 대표성, 토큰 수명 등 미검증 가정**에 대한 신뢰로 정상 운영을 간헐 장애로 전환시킬 수 있음. 세 번째는 **v1/v2 동시 쓰기 일관성**으로, 강한 concurrency guard 없이는 운영 메타데이터가 조용히 덮어쓰임. 머지 전 commit 경계, 실패 복구, capability 게이팅 규칙을 명확히 정의해야 운영자가 스트레스 상황에서도 결과 예측 가능.
+
+### Opus 응답 (반영 계획)
+
+- P0 1~4: 다음 plan revision pass에서 본문 §3-2/§4-1/§5-4/§6에 직접 반영 (별도 task로 분리).
+- P1 5~9: 본 PR 첫 commit 직후, 마법사 skeleton 구현 전에 plan에 흡수.
+- P2 10~13: backlog에 추가, 마법사 동작 검증 후 적용.
+- 특히 **P0-1 (idempotent index)** 와 **P0-3 (rollback 정책)** 는 사용자에게 선택 요청 후 결정.
+
+### P0 implementation note (2026-05-12)
+
+- P0-1 idempotency: `uidx_shopee_mutation_log_idempotent` is scoped to `where status = 'ok'`. Dry-run rows keep the same payload hash for operator comparison, but they no longer block a later real call.
+- P0-2 token freshness: v2 real mutations force token refresh immediately before execution. Merchant/global mutations refresh or issue the merchant token; shop-level `update_shop_days_to_ship` refreshes the region shop token.
+- P0-3 partial failure policy: selected **no automatic rollback + resume tooling**. Each mutation logs `rollback_policy='no_auto_rollback_resume_only'`; operators inspect failed rows via `v2_failed_mutations` and retry them via `v2_resume_failed`.
+- P0-4 probe gating: `item_name`/`description` and model `weight` are preflight hard-blocked until probe flags pass. Degraded execution requires explicit `allow_degraded=true`, `degraded_approval='APPROVE_V2_DEGRADED_MUTATION'`, and the exact `approved_blocked_fields` list.

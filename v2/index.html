@@ -3,104 +3,2311 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>shopee-dashboard v2 — KRSC operator workflows</title>
+  <title>shopee-dashboard v2 — KRSC</title>
+  <link rel="icon" href="data:,">
   <style>
-    :root { --accent:#7c4dff; --bg:#fafafa; --border:#e0e0e0; --text:#222; --muted:#888; --green:#0a8043; --red:#c93333; }
-    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--text); background:var(--bg); }
-    header { background:#fff; border-bottom:1px solid var(--border); padding:.6rem 1.2rem; display:flex; align-items:center; gap:1rem; flex-wrap:wrap; }
-    header h1 { margin:0; font-size:1.1rem; font-weight:600 }
-    header h1 .v2 { color:var(--accent); margin-left:.2rem }
-    nav { display:flex; gap:.3rem; flex-wrap:wrap; flex:1 }
-    nav button { padding:.4rem .8rem; border:1px solid var(--border); background:#fff; border-radius:5px; cursor:pointer; font-size:.85rem }
-    nav button.active { background:var(--accent); color:#fff; border-color:var(--accent) }
-    nav button:hover:not(.active) { background:#f5f0ff }
-    #conn-status { font-size:.78rem; color:var(--muted) }
-    #conn-status.ok { color:var(--green) }
-    #conn-status.err { color:var(--red) }
-    main { padding:1.2rem; max-width:1400px; margin:0 auto }
-    .placeholder { padding:2rem; background:#fff; border:1px dashed var(--border); border-radius:8px; text-align:center; color:var(--muted) }
-    .placeholder h2 { margin:0 0 .5rem; color:var(--text) }
-    .placeholder p { margin:.3rem 0; font-size:.9rem }
+    :root {
+      --accent: #2563eb;
+      --accent-strong: #1d4ed8;
+      --bg: #f7f8fa;
+      --border: #d8dde7;
+      --panel: #ffffff;
+      --text: #172033;
+      --muted: #667085;
+      --green: #087443;
+      --red: #b42318;
+      --yellow: #a15c07;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+    }
+
+    header {
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    h1 { font-size: 18px; margin: 0; letter-spacing: 0; }
+    .subhead { color: var(--muted); font-size: 12px; }
+    .status { font-size: 12px; color: var(--muted); }
+    .status.ok { color: var(--green); }
+    .status.err { color: var(--red); }
+
+    main { max-width: 1360px; margin: 0 auto; padding: 18px; }
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .toolbar input {
+      min-width: 260px;
+      flex: 1;
+      max-width: 420px;
+    }
+    input, textarea, select {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 8px 10px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+      min-width: 0;
+    }
+    textarea { resize: vertical; line-height: 1.45; }
+    input:focus, textarea:focus, select:focus {
+      outline: 2px solid rgba(37, 99, 235, .18);
+      border-color: var(--accent);
+    }
+
+    button {
+      border: 1px solid var(--border);
+      background: #fff;
+      color: var(--text);
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font: inherit;
+      white-space: nowrap;
+    }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+    button.primary:hover { background: var(--accent-strong); }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+    th, td {
+      padding: 9px 10px;
+      border-bottom: 1px solid #edf0f5;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: #f1f4f9;
+      color: #344054;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    td.mono, th.mono { font-family: var(--mono); }
+    .muted { color: var(--muted); }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 2px 7px;
+      font-size: 11px;
+      color: var(--muted);
+      background: #fff;
+      margin: 1px 3px 1px 0;
+    }
+    .empty {
+      padding: 36px 18px;
+      text-align: center;
+      color: var(--muted);
+      background: #fff;
+    }
+    .auth-panel {
+      max-width: 420px;
+      margin: 70px auto;
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 18px;
+      display: grid;
+      gap: 12px;
+    }
+    .auth-panel h2 { margin: 0; font-size: 16px; }
+    .auth-panel .actions { display: flex; justify-content: flex-end; }
+    #app-shell[hidden], #auth-panel[hidden] { display: none !important; }
+
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, .48);
+      align-items: flex-start;
+      justify-content: center;
+      padding: 28px 16px;
+      z-index: 50;
+      overflow: auto;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal {
+      width: min(980px, 100%);
+      background: #fff;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      box-shadow: 0 24px 70px rgba(15, 23, 42, .22);
+      overflow: hidden;
+    }
+    .modal-header, .modal-footer {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+    .modal-footer { border-top: 1px solid var(--border); border-bottom: 0; justify-content: flex-end; }
+    .modal-header h2 { font-size: 16px; margin: 0; }
+    .modal-body { padding: 16px; display: grid; gap: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+    .field { display: grid; gap: 5px; }
+    .field label {
+      font-size: 12px;
+      color: #344054;
+      font-weight: 700;
+    }
+    .span-2 { grid-column: span 2; }
+    .span-3 { grid-column: span 3; }
+    .span-4 { grid-column: span 4; }
+    .span-6 { grid-column: span 6; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+    .required::after { content: " *"; color: var(--red); }
+    .error-text {
+      color: var(--red);
+      font-size: 12px;
+      line-height: 1.35;
+      min-height: 16px;
+    }
+    .input-error { border-color: var(--red) !important; background: #fff7f7; }
+    .notice {
+      border: 1px solid #f4c790;
+      background: #fff8ed;
+      color: #7a3e00;
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .notice.error { border-color: #f2aaa5; background: #fff4f3; color: var(--red); }
+    .notice.ok { border-color: #9bd8b8; background: #f1fff7; color: var(--green); }
+    .region-grid {
+      display: grid;
+      grid-template-columns: 64px 1fr 92px 1.2fr;
+      gap: 8px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px;
+      background: #fbfcfe;
+    }
+    .region-grid + .region-grid { margin-top: 8px; }
+    .variant-table input { width: 100%; padding: 6px 7px; font-size: 12px; }
+    .row-error {
+      color: var(--red);
+      font-size: 12px;
+      line-height: 1.35;
+      white-space: normal;
+    }
+    .row-ok { color: var(--green); }
+    .result-list {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .result-list table { table-layout: auto; }
+    .split-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 14px;
+    }
+    .table-scroll { overflow-x: auto; }
+    .inline-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .ready-summary {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(120px, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .summary-tile {
+      border: 1px solid var(--border);
+      background: #fff;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .summary-tile .label { font-size: 11px; color: var(--muted); }
+    .summary-tile .value { font-size: 18px; font-weight: 700; margin-top: 2px; }
+    .ready-editor input { width: 100%; padding: 6px 7px; font-size: 12px; }
+    .ready-name {
+      color: var(--green);
+      font-size: 12px;
+      margin-top: 4px;
+      word-break: break-word;
+    }
+    .call-list {
+      display: grid;
+      gap: 8px;
+    }
+    .call-card {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fbfcfe;
+      padding: 10px;
+    }
+    .call-card pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 8px 0 0;
+      font: 11px/1.45 var(--mono);
+    }
+
+    @media (max-width: 760px) {
+      header { align-items: flex-start; flex-direction: column; }
+      main { padding: 12px; }
+      .grid { grid-template-columns: 1fr; }
+      .span-2, .span-3, .span-4, .span-6, .span-8, .span-12 { grid-column: span 1; }
+      .region-grid { grid-template-columns: 56px 1fr; }
+      .region-grid .row-error { grid-column: 1 / -1; }
+      .ready-summary { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
+      th:nth-child(4), td:nth-child(4) { display: none; }
+    }
+
+    /* ── Nav tabs (plan §5-1) ── */
+    .nav-tabs {
+      display: flex; gap: 0; border-bottom: 1px solid var(--border);
+      margin-bottom: 18px; overflow-x: auto;
+    }
+    .nav-tab {
+      padding: 9px 16px; background: none; border: none; border-bottom: 2px solid transparent;
+      cursor: pointer; font: inherit; font-size: 13px; color: var(--muted);
+      white-space: nowrap; margin-bottom: -1px; transition: color .14s, border-color .14s;
+    }
+    .nav-tab:hover { color: var(--text); }
+    .nav-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .badge-krsc {
+      display: inline-block; padding: 1px 6px; border-radius: 4px;
+      background: #eef2ff; color: var(--accent); font-size: 10px;
+      letter-spacing: .1em; text-transform: uppercase; margin-left: 6px; vertical-align: middle;
+    }
+
+    /* ── View routing ── */
+    .view { display: none; }
+    .view.active { display: block; }
+    .placeholder-view {
+      padding: 48px 24px; text-align: center; color: var(--muted);
+      border: 1px dashed var(--border); border-radius: 8px;
+    }
+    .placeholder-view h3 { font-size: 16px; margin-bottom: 8px; color: var(--text); }
+
+    /* ── Wizard steps (plan §5-1-A) ── */
+    .wizard-steps {
+      display: flex; margin-bottom: 24px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+    }
+    .step-pill {
+      flex: 1; padding: 10px 12px; background: #f7f8fa; border-right: 1px solid var(--border);
+      font-size: 12px; color: var(--muted); text-align: center; cursor: default;
+    }
+    .step-pill:last-child { border-right: none; }
+    .step-pill.active { background: #eef2ff; color: var(--accent); font-weight: 600; }
+    .step-pill.done { background: #f0fdf4; color: var(--green); }
+    .step-pill .sn { font-weight: 700; margin-right: 5px; }
+
+    /* ── Wizard step bodies ── */
+    .step-body { display: none; }
+    .step-body.active { display: block; }
+
+    /* ── Wizard form elements ── */
+    .wfield { margin-bottom: 16px; }
+    .wfield label { display: block; font-size: 12px; color: #344054; font-weight: 700; margin-bottom: 5px; }
+    .wfield .req { color: var(--red); }
+    .wfield .hint { font-weight: 400; color: var(--muted); font-size: 11px; margin-left: 4px; }
+    .wrow { display: flex; gap: 12px; margin-bottom: 16px; }
+    .wrow .wfield { flex: 1; margin-bottom: 0; }
+    .wfield input, .wfield textarea, .wfield select { width: 100%; }
+    .section-sep { font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color: var(--muted);
+      margin: 20px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+    .section-sep:first-child { margin-top: 0; }
+
+    /* toggle row */
+    .trow {
+      display: flex; align-items: center; gap: 10px; padding: 9px 12px;
+      background: #f7f8fa; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 12px;
+    }
+    .trow input[type=checkbox] { width: auto; }
+    .trow label { font-weight: 400; font-size: 13px; color: var(--text); margin-bottom: 0; }
+
+    /* variant rows */
+    .vrow {
+      display: flex; gap: 8px; align-items: center; padding: 8px 10px;
+      background: #f7f8fa; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 6px;
+    }
+    .vrow input { flex: 1; padding: 6px 8px; font-size: 12px; }
+    .vrow .vlabel { font-size: 11px; color: var(--muted); white-space: nowrap; min-width: 50px; }
+    .vrow button { padding: 4px 8px; font-size: 11px; }
+
+    /* region publish cards */
+    .reg-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+    .reg-card {
+      display: flex; align-items: center; gap: 9px; padding: 10px 14px;
+      border: 1px solid var(--border); border-radius: 6px; background: #f7f8fa;
+    }
+    .reg-card.banned { opacity: .45; pointer-events: none; }
+    .reg-card input[type=checkbox] { width: auto; }
+    .reg-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .reg-name { font-weight: 600; font-size: 13px; }
+    .reg-note { font-size: 10px; color: var(--muted); margin-left: auto; }
+    .reg-note.banned-note { color: var(--red); }
+
+    /* wizard btn row */
+    .wbtn-row { display: flex; gap: 10px; margin-top: 24px; justify-content: flex-end; }
+    .btn-dry {
+      background: none; border-color: var(--accent); color: var(--accent);
+    }
+    .btn-dry:hover { background: #eef2ff; }
+    .btn-live { background: var(--red); border-color: var(--red); color: #fff; }
+    .btn-live:hover { background: #8f1a10; }
+
+    /* ── Confirm modal (payload preview) ── */
+    #wiz-modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(15,23,42,.48);
+      align-items: flex-start; justify-content: center; padding: 28px 16px; z-index: 60; overflow: auto;
+    }
+    #wiz-modal-overlay.show { display: flex; }
+    .wiz-modal {
+      width: min(720px, 100%); background: #fff; border-radius: 8px;
+      border: 1px solid var(--border); box-shadow: 0 24px 70px rgba(15,23,42,.22); overflow: hidden;
+    }
+    .wiz-modal-header { padding: 14px 16px; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center; }
+    .wiz-modal-header h2 { font-size: 16px; margin: 0; }
+    .wiz-modal-body { padding: 16px; max-height: 65vh; overflow-y: auto; }
+    .wiz-modal-footer { padding: 12px 16px; border-top: 1px solid var(--border);
+      display: flex; gap: 10px; justify-content: flex-end; }
+    .call-block { margin-bottom: 14px; }
+    .call-block h4 { font-size: 12px; font-weight: 700; margin-bottom: 6px; color: #344054; }
+    .call-note { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+    .payload-pre {
+      background: #f7f8fa; border: 1px solid var(--border); border-radius: 6px;
+      padding: 10px; font-family: var(--mono); font-size: 11px;
+      white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto;
+    }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed; bottom: 20px; right: 20px; z-index: 200;
+      padding: 11px 18px; border-radius: 7px; background: #172033; color: #fff;
+      font-size: 13px; opacity: 0; transform: translateY(10px);
+      transition: opacity .18s, transform .18s; pointer-events: none;
+    }
+    #toast.show { opacity: 1; transform: translateY(0); }
+    #toast.toast-ok { background: var(--green); }
+    #toast.toast-err { background: var(--red); }
+
+    /* ── Validation ── */
+    .wfield input.invalid, .wfield textarea.invalid, .wfield select.invalid {
+      border-color: var(--red) !important; background: #fff4f3;
+    }
+    .wfield .werr { font-size: 11px; color: var(--red); margin-top: 3px; display: none; }
+    .wfield .werr.show { display: block; }
+    .name-preview { font-size: 11px; color: var(--muted); margin-top: 4px; }
   </style>
 </head>
 <body>
 <header>
-  <h1>shopee-dashboard <span class="v2">v2</span></h1>
-  <nav id="nav">
-    <button data-view="register" class="active">📦 상품 등록</button>
-    <button data-view="pre-order">📋 PRE ORDER</button>
-    <button data-view="ready-stock">🔄 READY STOCK 전환</button>
-    <button data-view="catalog">💰 상품 조회 / 가격</button>
-    <button data-view="probe">🔬 Probe</button>
-    <button data-view="history">📜 변경 이력</button>
-  </nav>
-  <span id="conn-status">connecting…</span>
+  <div>
+    <h1>shopee-dashboard v2<span class="badge-krsc">KRSC</span></h1>
+    <div class="subhead">Global Product API only — shop-level API blocked</div>
+  </div>
+  <div id="conn-status" class="status">connecting...</div>
 </header>
 
 <main>
-  <div id="view-root" class="placeholder">
-    <h2>Loading…</h2>
-    <p>Supabase 연결 + Probe capability flags 확인 중</p>
+  <!-- Auth panel (Supabase login — existing skeleton) -->
+  <div id="auth-panel" class="auth-panel" hidden>
+    <h2>Sign in</h2>
+    <div class="subhead">Supabase session is required to load products and save mappings.</div>
+    <div class="field">
+      <label for="login-email">Email</label>
+      <input id="login-email" type="email" autocomplete="username">
+    </div>
+    <div class="field">
+      <label for="login-password">Password</label>
+      <input id="login-password" type="password" autocomplete="current-password">
+    </div>
+    <div id="login-error" class="error-text"></div>
+    <div class="actions">
+      <button id="login-submit" type="button" class="primary">Sign in</button>
+    </div>
   </div>
+
+  <div id="app-shell" hidden>
+
+    <!-- ── Nav tabs (plan §5-1) ── -->
+    <div class="nav-tabs">
+      <button class="nav-tab" onclick="showView('view-register')">📦 상품 등록</button>
+      <button class="nav-tab" onclick="showView('view-products')">📋 상품 목록</button>
+      <button class="nav-tab" onclick="showView('view-pre-order')">🔖 PRE ORDER</button>
+      <button class="nav-tab" onclick="showView('view-ready-stock')">🔄 READY STOCK 전환</button>
+      <button class="nav-tab" onclick="showView('view-price-sync')">💰 가격 동기화</button>
+      <button class="nav-tab" onclick="showView('view-probe')">🔬 Probe</button>
+      <button class="nav-tab" onclick="showView('view-history')">📜 변경 이력</button>
+      <button id="logout" type="button" class="nav-tab" style="margin-left:auto;">Sign out</button>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: 상품 등록 — 4-step wizard (plan §5-1-A)
+         Phase A0 + A1: add_global_item → add_global_model → create_publish_task
+         All fields mirror docs_ai JSON body_params exactly.
+         ═══════════════════════════════════════════════ -->
+    <div id="view-register" class="view active">
+
+      <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:18px;">
+        <h2 style="font-size:18px;margin:0;">신규 상품 등록</h2>
+        <span style="font-size:12px;color:var(--muted);">PRE ORDER 분류 &bull; Global Product API</span>
+      </div>
+
+      <!-- Step progress pills -->
+      <div class="wizard-steps">
+        <div class="step-pill active" id="wpill-1"><span class="sn">1</span>카테고리 &amp; 기본정보</div>
+        <div class="step-pill" id="wpill-2"><span class="sn">2</span>이미지 &amp; 미디어</div>
+        <div class="step-pill" id="wpill-3"><span class="sn">3</span>옵션/변형</div>
+        <div class="step-pill" id="wpill-4"><span class="sn">4</span>Region Publish</div>
+      </div>
+
+      <!-- ─── Step 1: Category + Basic info ─────────────────────────
+           Fields mirror add_global_item.json body_params.
+           required_params: category_id, global_item_name, description,
+             image.image_id_list, original_price, weight,
+             dimension.package_{length,width,height},
+             pre_order.days_to_ship, seller_stock[].stock
+           ──────────────────────────────────────────────────────── -->
+      <div class="step-body active" id="wstep-1">
+
+        <div class="section-sep">카테고리</div>
+
+        <div class="wfield">
+          <label for="w-category-id">category_id <span class="req">*</span>
+            <span class="hint">int64 — add_global_item required</span>
+          </label>
+          <!--
+            TODO plan §5-1-A: category tree picker.
+            bridge raw_call: GET /raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fget_category
+          -->
+          <input type="number" id="w-category-id" placeholder="예: 14695" min="1">
+          <div class="werr" id="werr-category-id">category_id는 필수입니다.</div>
+        </div>
+
+        <div class="section-sep">기본 정보</div>
+
+        <div class="wfield">
+          <label for="w-item-name">global_item_name <span class="req">*</span>
+            <span class="hint">string — add_global_item required</span>
+          </label>
+          <div class="trow" style="margin-bottom:8px;">
+            <input type="checkbox" id="w-pre-order-prefix" checked>
+            <label for="w-pre-order-prefix">[PRE ORDER] prefix 자동 추가 — 기본 ON (plan §0-1)</label>
+          </div>
+          <input type="text" id="w-item-name" placeholder="예: BTS - Butter (Album) Photocard Set" maxlength="100">
+          <div class="name-preview" id="w-name-preview"></div>
+          <div class="werr" id="werr-item-name">global_item_name은 필수입니다.</div>
+        </div>
+
+        <div class="wfield">
+          <label for="w-description">description <span class="req">*</span>
+            <span class="hint">string — add_global_item required</span>
+          </label>
+          <textarea id="w-description" rows="4" placeholder="상품 설명을 입력하세요."></textarea>
+          <div class="werr" id="werr-description">description은 필수입니다.</div>
+        </div>
+
+        <div class="wfield">
+          <label for="w-item-sku">global_item_sku
+            <span class="hint">string — optional</span>
+          </label>
+          <input type="text" id="w-item-sku" placeholder="예: BTSBUTTER-PC-SET">
+        </div>
+
+        <div class="section-sep">가격 / 재고 / 무게</div>
+
+        <div class="wrow">
+          <div class="wfield">
+            <label for="w-original-price">original_price <span class="req">*</span>
+              <span class="hint">float — add_global_item required</span>
+            </label>
+            <input type="number" id="w-original-price" placeholder="예: 9.99" step="0.01" min="0.01">
+            <div class="werr" id="werr-original-price">original_price는 필수 (0 초과).</div>
+          </div>
+          <div class="wfield">
+            <!--
+              seller_stock[].stock is REQUIRED per add_global_item required_params.
+              normal_stock is SUNSETTED 2024-10-23 per update_log — use seller_stock only.
+              SCHEMA NOTE: plan §5-1-A mentions "normal_stock" but JSON required_params
+              shows seller_stock[].stock as required. normal_stock is optional + sunsetted.
+              → using seller_stock[] only.
+            -->
+            <label for="w-stock">seller_stock stock <span class="req">*</span>
+              <span class="hint">int32 — seller_stock[].stock (normal_stock sunset 2024-10-23)</span>
+            </label>
+            <input type="number" id="w-stock" placeholder="예: 100" min="0" step="1">
+            <div class="werr" id="werr-stock">stock은 필수입니다.</div>
+          </div>
+          <div class="wfield">
+            <label for="w-weight">weight <span class="req">*</span>
+              <span class="hint">float, KG — add_global_item required (KRSC unit: KG)</span>
+            </label>
+            <input type="number" id="w-weight" placeholder="예: 0.1" step="0.001" min="0.001">
+            <div class="werr" id="werr-weight">weight(KG)은 필수입니다.</div>
+          </div>
+        </div>
+
+        <div class="section-sep">pre_order — add_global_item required object (pre_order.days_to_ship required)</div>
+
+        <div class="wrow">
+          <div class="wfield">
+            <!--
+              add_global_item: pre_order object is required; pre_order.days_to_ship is required int64.
+              PRE ORDER default DTS = 50 (plan §0-1).
+              KRSC: global-level DTS only — no per-region DTS (plan §0-4).
+            -->
+            <label for="w-days-to-ship">pre_order.days_to_ship <span class="req">*</span>
+              <span class="hint">int64 — PRE ORDER 기본값 50 (plan §0-1)</span>
+            </label>
+            <input type="number" id="w-days-to-ship" value="50" min="1" max="90" step="1">
+            <div class="werr" id="werr-days-to-ship">days_to_ship은 필수입니다.</div>
+          </div>
+          <div class="wfield">
+            <label for="w-condition">condition
+              <span class="hint">string — NEW / USED (optional)</span>
+            </label>
+            <select id="w-condition">
+              <option value="NEW">NEW</option>
+              <option value="USED">USED</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="section-sep">dimension — add_global_item required object (package_{length,width,height} required)</div>
+
+        <div class="wrow">
+          <div class="wfield">
+            <label for="w-pkg-length">package_length <span class="req">*</span><span class="hint">int64, cm</span></label>
+            <input type="number" id="w-pkg-length" placeholder="예: 20" min="1" step="1">
+            <div class="werr" id="werr-pkg-length">필수</div>
+          </div>
+          <div class="wfield">
+            <label for="w-pkg-width">package_width <span class="req">*</span><span class="hint">int64, cm</span></label>
+            <input type="number" id="w-pkg-width" placeholder="예: 15" min="1" step="1">
+            <div class="werr" id="werr-pkg-width">필수</div>
+          </div>
+          <div class="wfield">
+            <label for="w-pkg-height">package_height <span class="req">*</span><span class="hint">int64, cm</span></label>
+            <input type="number" id="w-pkg-height" placeholder="예: 3" min="1" step="1">
+            <div class="werr" id="werr-pkg-height">필수</div>
+          </div>
+        </div>
+
+        <div class="section-sep">brand — optional (add_global_item optional object)</div>
+        <!--
+          brand object: brand.original_brand_name (string, optional), brand.brand_id (int64, optional).
+          Note: 2022-06-17 update_log removed top-level original_brand_name; now nested in brand{}.
+          TODO plan §5-1-A: brand_id lookup via get_brand_list.
+          bridge raw_call: GET /raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fget_brand_list
+        -->
+        <div class="wrow">
+          <div class="wfield">
+            <label for="w-brand-name">brand.original_brand_name
+              <span class="hint">string — optional</span>
+            </label>
+            <input type="text" id="w-brand-name" placeholder="예: HYBE">
+          </div>
+          <div class="wfield">
+            <label for="w-brand-id">brand.brand_id
+              <span class="hint">int64 — optional; 0 = no ID
+                <!-- TODO: brand picker via get_brand_list (plan §5-1-A) --></span>
+            </label>
+            <input type="number" id="w-brand-id" placeholder="0" min="0" step="1" value="0">
+          </div>
+        </div>
+
+        <div class="wbtn-row">
+          <button onclick="wizNext(1)">다음 →</button>
+        </div>
+      </div><!-- /wstep-1 -->
+
+      <!-- ─── Step 2: Images & Media ────────────────────────────────
+           image.image_id_list: REQUIRED (add_global_item required_params: image.image_id_list)
+           The image field is nested: body.image.image_id_list (string[])
+           video_upload_id: optional string[], max 1 per API spec.
+           ──────────────────────────────────────────────────────── -->
+      <div class="step-body" id="wstep-2">
+
+        <div class="section-sep">image.image_id_list — add_global_item required (nested in image object)</div>
+
+        <div class="wfield">
+          <label for="w-image-ids">image_id_list <span class="req">*</span>
+            <span class="hint">string[] — 쉼표로 구분된 Shopee image ID</span>
+          </label>
+          <!--
+            TODO plan §5-1-A: integrate media_space.upload_image.
+            bridge raw_call: POST /raw_call?region=SG&path=%2Fapi%2Fv2%2Fmedia_space%2Fupload_image
+            현재: 운영자가 image ID 직접 입력 (이미지는 별도 업로드 후).
+          -->
+          <textarea id="w-image-ids" rows="3"
+            placeholder="c54265d475b85e00ffb2404585e32b6f, 6fb33d484f232510b5f9b169f2758322"></textarea>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;">
+            ⚠ TODO: media_space.upload_image 통합 전까지 image ID 직접 입력 (plan §5-1-A)
+          </div>
+          <div class="werr" id="werr-image-ids">이미지 ID를 1개 이상 입력하세요.</div>
+        </div>
+
+        <div class="section-sep">video_upload_id — optional (add_global_item: string[], max 1)</div>
+
+        <div class="wfield">
+          <label for="w-video-id">video_upload_id
+            <span class="hint">string — optional; max 1개 허용 (API spec)</span>
+          </label>
+          <!--
+            TODO plan §5-1-A: integrate media_space video upload.
+            bridge raw_call: POST /raw_call?region=SG&path=%2Fapi%2Fv2%2Fmedia_space%2Fupload_video
+          -->
+          <input type="text" id="w-video-id" placeholder="00a2258551b5a2f0a7c283f877330f93 (선택)">
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;">
+            TODO: media_space video upload 통합 (plan §5-1-A)
+          </div>
+        </div>
+
+        <div class="wbtn-row">
+          <button onclick="wizPrev(2)">← 이전</button>
+          <button onclick="wizNext(2)">다음 →</button>
+        </div>
+      </div><!-- /wstep-2 -->
+
+      <!-- ─── Step 3: Variants (optional) ────────────────────────────
+           add_global_model body_params (authoritative — add_global_model.json):
+             global_item_id: int64, required (from add_global_item response)
+             global_model[]: object[], required
+               global_model[].tier_index: int32[], required
+               global_model[].seller_stock[].stock: int32, required
+               global_model[].original_price: float, required
+               global_model[].global_model_sku: string, optional
+             weight: float, optional — model-level KG override (top-level, applies to all models in call)
+             package_{length,width,height}: int32, required at top-level if dimension set
+             days_to_ship: int32, required at TOP-LEVEL (not inside pre_order in this endpoint)
+
+           SCHEMA NOTE: add_global_model weight is top-level (not per-model).
+           Per-model weight NOT supported in add_global_model — single top-level value.
+           Plan §9-1 risk: weight unit g/kg unconfirmed — using KG per docs.
+           ──────────────────────────────────────────────────────── -->
+      <div class="step-body" id="wstep-3">
+
+        <div class="trow">
+          <input type="checkbox" id="w-has-variants" onchange="toggleVariantSection(this.checked)">
+          <label for="w-has-variants">옵션/변형 있음? (add_global_model 호출 추가)</label>
+        </div>
+
+        <div id="w-variant-section" style="display:none;">
+
+          <div class="section-sep">tier_variation 그룹 이름</div>
+          <!--
+            TODO: tier_variation structure should be set during add_global_item or init_tier_variation.
+            add_global_item body_params does NOT include tier_variation — that API omits it.
+            The tier_variation name is used later in create_publish_task item.standardise_tier_variation.
+            Stored here for UI labeling; actual tier_variation init is a TODO.
+          -->
+          <div class="wfield">
+            <label for="w-variation-name">Variation 그룹 이름
+              <span class="hint">예: 버전 — TODO: init_tier_variation API 연동 필요</span>
+            </label>
+            <input type="text" id="w-variation-name" placeholder="예: 버전">
+          </div>
+
+          <div class="section-sep">옵션 목록 (각 옵션 = global_model 1개)</div>
+          <div style="font-size:11px;color:var(--muted);margin-bottom:10px;">
+            tier_index = 순서 자동 부여 [0], [1], [2] …
+          </div>
+
+          <div id="w-vrows-container"></div>
+
+          <button onclick="addVariantRow()" style="margin-bottom:8px;">+ 옵션 추가</button>
+
+          <div style="font-size:11px;color:var(--muted);margin-top:8px;padding:8px;background:#f7f8fa;border-radius:4px;border:1px solid var(--border);">
+            <strong>add_global_model 필드 매핑</strong><br>
+            옵션명 → tier_variation option name (표시용)<br>
+            model SKU → global_model[].global_model_sku (optional)<br>
+            가격 → global_model[].original_price (required)<br>
+            재고 → global_model[].seller_stock[].stock (required)<br>
+            무게(KG) → weight top-level (optional, model-level override — same value for all models in one call)
+          </div>
+        </div><!-- /variant-section -->
+
+        <div class="wbtn-row">
+          <button onclick="wizPrev(3)">← 이전</button>
+          <button onclick="wizNext(3)">다음 →</button>
+        </div>
+      </div><!-- /wstep-3 -->
+
+      <!-- ─── Step 4: Region Publish ──────────────────────────────────
+           create_publish_task body_params (authoritative — create_publish_task.json):
+             global_item_id: int64, required
+             shop_id: int32, required
+             shop_region: string, required
+             item.pre_order.is_pre_order: boolean, required if item.pre_order provided
+             item.pre_order.days_to_ship: int32, conditional (mandatory if is_pre_order=true)
+           get_publishable_shop: GET; returns response.publishable_shop[].{shop_id, shop_region}
+           ──────────────────────────────────────────────────────── -->
+      <div class="step-body" id="wstep-4">
+
+        <div class="section-sep">운영 Region 선택</div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">
+          <!--
+            TODO plan §4-0: get_publishable_shop 결과로 각 region의 shop_id 실시간 조회.
+            bridge raw_call: GET /raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fget_publishable_shop&global_item_id={id}
+            현재: static placeholder — 등록 후 global_item_id 확보 필요.
+          -->
+          ⚠ TODO: 등록 완료 후 global_item_id로 get_publishable_shop 조회 → shop_id 확보 (plan §4-0)
+        </div>
+
+        <div class="reg-grid">
+          <div class="reg-card" id="regcard-SG">
+            <input type="checkbox" id="w-reg-SG" value="SG" checked>
+            <div class="reg-dot" style="background:#2f7d2f;"></div>
+            <div><div class="reg-name">SG</div><div style="font-size:10px;color:var(--muted);">Singapore</div></div>
+            <div class="reg-note">shop_id: TODO</div>
+          </div>
+          <div class="reg-card" id="regcard-TW">
+            <input type="checkbox" id="w-reg-TW" value="TW" checked>
+            <div class="reg-dot" style="background:#2563eb;"></div>
+            <div><div class="reg-name">TW</div><div style="font-size:10px;color:var(--muted);">Taiwan</div></div>
+            <div class="reg-note">shop_id: TODO</div>
+          </div>
+          <div class="reg-card" id="regcard-TH">
+            <input type="checkbox" id="w-reg-TH" value="TH" checked>
+            <div class="reg-dot" style="background:#b8860b;"></div>
+            <div><div class="reg-name">TH</div><div style="font-size:10px;color:var(--muted);">Thailand</div></div>
+            <div class="reg-note">shop_id: TODO</div>
+          </div>
+          <div class="reg-card" id="regcard-MY">
+            <input type="checkbox" id="w-reg-MY" value="MY" checked>
+            <div class="reg-dot" style="background:#c4651a;"></div>
+            <div><div class="reg-name">MY</div><div style="font-size:10px;color:var(--muted);">Malaysia</div></div>
+            <div class="reg-note">shop_id: TODO</div>
+          </div>
+          <div class="reg-card" id="regcard-PH">
+            <input type="checkbox" id="w-reg-PH" value="PH" checked>
+            <div class="reg-dot" style="background:#8b3fb8;"></div>
+            <div><div class="reg-name">PH</div><div style="font-size:10px;color:var(--muted);">Philippines</div></div>
+            <div class="reg-note">shop_id: TODO</div>
+          </div>
+          <!-- BR: permanently banned (CLAUDE.md: BR shop 1002269093 banned) -->
+          <div class="reg-card banned" id="regcard-BR">
+            <input type="checkbox" id="w-reg-BR" value="BR" disabled>
+            <div class="reg-dot" style="background:#c93a1f;"></div>
+            <div><div class="reg-name">BR</div><div style="font-size:10px;color:var(--muted);">Brazil</div></div>
+            <div class="reg-note banned-note">banned (shop 1002269093)</div>
+          </div>
+        </div>
+
+        <div style="padding:10px 14px;background:#f7f8fa;border:1px solid var(--border);border-radius:6px;font-size:11px;color:var(--muted);">
+          <strong>create_publish_task payload (per region):</strong><br>
+          <code>{ global_item_id, shop_id, shop_region, item: { pre_order: { is_pre_order: true, days_to_ship } } }</code><br><br>
+          shop_id: TODO — get_publishable_shop 결과 필요 (plan §4-0)
+        </div>
+
+        <div class="wbtn-row">
+          <button onclick="wizPrev(4)">← 이전</button>
+          <button class="btn-dry" onclick="handleWizDryRun()">🚀 Dry-run 미리보기</button>
+          <button class="btn-live" onclick="handleWizLiveSubmit()">🔥 실제 등록</button>
+        </div>
+      </div><!-- /wstep-4 -->
+
+    </div><!-- /view-register -->
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: 상품 목록 (existing product table)
+         ═══════════════════════════════════════════════ -->
+    <div id="view-products" class="view">
+      <div class="toolbar">
+        <input id="search" type="search" placeholder="SKU or product name">
+        <button id="refresh">Refresh</button>
+      </div>
+      <div class="panel">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:160px;">SKU</th>
+              <th>Product</th>
+              <th style="width:110px;">Cost KRW</th>
+              <th style="width:110px;">Weight g</th>
+              <th style="width:210px;">Existing mapping</th>
+              <th style="width:120px;"></th>
+            </tr>
+          </thead>
+          <tbody id="product-body">
+            <tr><td colspan="6" class="empty">Loading products...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /view-products -->
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: PRE ORDER 목록 (plan §5-1-A, Phase A1)
+         ═══════════════════════════════════════════════ -->
+    <div id="view-pre-order" class="view">
+      <div class="toolbar">
+        <input id="pre-order-search" type="search" placeholder="PRE ORDER search: SKU / product / option">
+        <select id="pre-order-region">
+          <option value="">All regions</option>
+          <option value="SG">SG</option>
+          <option value="TW">TW</option>
+          <option value="TH">TH</option>
+          <option value="MY">MY</option>
+          <option value="PH">PH</option>
+          <option value="BR">BR</option>
+        </select>
+        <button id="pre-order-refresh" type="button">Refresh</button>
+        <button id="pre-order-open-ready" type="button" class="primary" disabled>Selected to READY STOCK</button>
+      </div>
+      <div class="panel table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:42px;"><input id="pre-order-select-all" type="checkbox" title="Select all visible"></th>
+              <th style="width:160px;">SKU</th>
+              <th>PRE ORDER product</th>
+              <th style="width:120px;">Weight g</th>
+              <th style="width:220px;">Global / model</th>
+              <th style="width:220px;">Regions</th>
+            </tr>
+          </thead>
+          <tbody id="pre-order-body">
+            <tr><td colspan="6" class="empty">Loading PRE ORDER products...</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="placeholder-view">
+        <h3>🔖 PRE ORDER 목록</h3>
+        <p style="font-size:12px;margin-top:8px;">lifecycle_state = 'pre_order' 상품 리스트<br>
+        TODO plan §5-1-A §7 step 5: products 테이블 lifecycle_state='pre_order' rows 조회</p>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: READY STOCK 전환 마법사 (plan §5-2, Phase B)
+         ═══════════════════════════════════════════════ -->
+    <div id="view-ready-stock" class="view">
+      <div class="placeholder-view">
+        <h3>🔄 READY STOCK 전환 마법사</h3>
+        <p style="font-size:12px;margin-top:8px;">plan §5-2 — Phase B<br>
+        TODO: 무게 입력 + update_global_item (name/DTS) + update_global_model (weight/SKU) + 가격 재계산</p>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: 가격 동기화 (plan §5-7, Phase C)
+         ═══════════════════════════════════════════════ -->
+    <div id="view-price-sync" class="view">
+      <div class="placeholder-view">
+        <h3>💰 상품 조회 &amp; 가격 동기화</h3>
+        <p style="font-size:12px;margin-top:8px;">plan §5-7 — Phase C<br>
+        TODO: cost_price inline 편집 + update_global_price (update_price) batch push per region</p>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: Probe (plan §5-6, §3-3)
+         ═══════════════════════════════════════════════ -->
+    <div id="view-probe" class="view">
+      <div class="placeholder-view">
+        <h3>🔬 Live Probe</h3>
+        <p style="font-size:12px;margin-top:8px;">plan §5-6 §3-3 — burnable product로 item_name/weight 변경 테스트<br>
+        TODO: probe flag 업데이트 → shopee_app.config (plan §3-3)</p>
+      </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: 변경 이력 (plan §5-5)
+         ═══════════════════════════════════════════════ -->
+    <div id="view-history" class="view">
+      <div class="placeholder-view">
+        <h3>📜 변경 이력</h3>
+        <p style="font-size:12px;margin-top:8px;">plan §5-5 — shopee_mutation_log 최근 200건<br>
+        TODO plan §3-2: DB 마이그레이션 shopee_mutation_log 테이블 생성 후 구현</p>
+      </div>
+    </div>
+
+  </div><!-- /app-shell -->
 </main>
 
+<!-- ═══════════════════════════════════════════════
+     Wizard payload preview / confirm modal
+     ═══════════════════════════════════════════════ -->
+<div id="wiz-modal-overlay">
+  <div class="wiz-modal" role="dialog">
+    <div class="wiz-modal-header">
+      <h2 id="wiz-modal-title">Dry-run 미리보기</h2>
+      <button onclick="closeWizModal()">닫기</button>
+    </div>
+    <div class="wiz-modal-body" id="wiz-modal-body"></div>
+    <div class="wiz-modal-footer">
+      <button onclick="closeWizModal()">취소</button>
+      <button id="wiz-modal-confirm-btn" class="btn-live" onclick="executeMockSubmit()" style="display:none;">🔥 실제 등록 (모의)</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<div class="modal-overlay" id="register-modal" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-header">
+      <div>
+        <h2 id="modal-title">Shopee product registration</h2>
+        <div id="modal-row-label" class="subhead"></div>
+      </div>
+      <button id="modal-close" type="button">Close</button>
+    </div>
+    <div class="modal-body">
+      <div id="form-summary" class="notice" style="display:none;"></div>
+
+      <section class="grid">
+        <div class="field span-8">
+          <label for="field-name" class="required">Product name</label>
+          <input id="field-name" type="text" maxlength="255" placeholder="[PRE ORDER] ARTIST - Album">
+          <div class="error-text" data-error-for="field-name"></div>
+        </div>
+        <div class="field span-4">
+          <label for="field-sku" class="required">Global item SKU</label>
+          <input id="field-sku" type="text" maxlength="100">
+          <div class="error-text" data-error-for="field-sku"></div>
+        </div>
+        <div class="field span-3">
+          <label for="field-category" class="required">Category ID</label>
+          <input id="field-category" type="number" min="1" placeholder="101390">
+          <div class="error-text" data-error-for="field-category"></div>
+        </div>
+        <div class="field span-3">
+          <label for="field-price" class="required">Global price KRW</label>
+          <input id="field-price" type="number" min="1" step="1">
+          <div class="error-text" data-error-for="field-price"></div>
+        </div>
+        <div class="field span-3">
+          <label for="field-stock" class="required">Stock</label>
+          <input id="field-stock" type="number" min="0" step="1" value="0">
+          <div class="error-text" data-error-for="field-stock"></div>
+        </div>
+        <div class="field span-3">
+          <label for="field-weight" class="required">Weight kg</label>
+          <input id="field-weight" type="number" min="0.01" step="0.01">
+          <div class="error-text" data-error-for="field-weight"></div>
+        </div>
+        <div class="field span-6">
+          <label for="field-image-id">Shopee image_id</label>
+          <input id="field-image-id" type="text" placeholder="Preferred when already uploaded">
+          <div class="error-text" data-error-for="field-image-id"></div>
+        </div>
+        <div class="field span-6">
+          <label for="field-image-url">Image URL</label>
+          <input id="field-image-url" type="url" placeholder="Used when image_id is blank">
+          <div class="error-text" data-error-for="field-image-url"></div>
+        </div>
+        <div class="field span-12">
+          <label for="field-description" class="required">Description</label>
+          <textarea id="field-description" rows="5"></textarea>
+          <div class="error-text" data-error-for="field-description"></div>
+        </div>
+        <div class="field span-6">
+          <label for="field-brand-name">Brand</label>
+          <input id="field-brand-name" type="text" value="No Brand">
+        </div>
+        <div class="field span-6">
+          <label for="field-brand-id">Brand ID</label>
+          <input id="field-brand-id" type="number" min="0" value="0">
+        </div>
+        <div class="field span-12">
+          <label for="field-attrs">Extra attribute_list JSON</label>
+          <textarea id="field-attrs" rows="3" placeholder='[{"attribute_id":100037,"attribute_value_list":[{"original_value_name":"South Korea"}]}]'></textarea>
+          <div class="error-text" data-error-for="field-attrs"></div>
+        </div>
+      </section>
+
+      <section>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;">
+          <strong>Region publish targets</strong>
+          <span class="muted" style="font-size:12px;">Selected rows require local price and DTS.</span>
+        </div>
+        <div id="region-fields"></div>
+      </section>
+
+      <section>
+        <label style="display:flex;align-items:center;gap:8px;font-weight:700;">
+          <input id="variant-enabled" type="checkbox" style="width:auto;">
+          Register variants
+        </label>
+        <div id="variant-editor" style="display:none;margin-top:10px;">
+          <div class="grid">
+            <div class="field span-4">
+              <label for="variant-name" class="required">Variation name</label>
+              <input id="variant-name" type="text" placeholder="Version">
+              <div class="error-text" data-error-for="variant-name"></div>
+            </div>
+            <div class="field span-8">
+              <label for="variant-values" class="required">Options, comma separated</label>
+              <input id="variant-values" type="text" placeholder="A ver, B ver, C ver">
+              <div class="error-text" data-error-for="variant-values"></div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin:8px 0;">
+            <button id="variant-build" type="button">Build variant rows</button>
+          </div>
+          <div class="panel" style="max-height:280px;overflow:auto;">
+            <table class="variant-table">
+              <thead>
+                <tr>
+                  <th style="width:150px;">Option</th>
+                  <th>SKU</th>
+                  <th style="width:130px;">Price KRW</th>
+                  <th style="width:90px;">Stock</th>
+                  <th style="width:100px;">Weight kg</th>
+                  <th style="width:220px;">Error</th>
+                </tr>
+              </thead>
+              <tbody id="variant-body">
+                <tr><td colspan="6" class="empty">No variants.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="result-section" style="display:none;">
+        <strong>Registration result</strong>
+        <div class="result-list" style="margin-top:8px;">
+          <table>
+            <thead>
+              <tr>
+                <th>Region</th>
+                <th>Shop</th>
+                <th>Item</th>
+                <th>Mapping</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="result-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+    <div class="modal-footer">
+      <button id="modal-cancel" type="button">Cancel</button>
+      <button id="modal-submit" type="button" class="primary">Register via shopee-bridge</button>
+    </div>
+  </div>
+</div>
+
 <script type="module">
-  // ── Boot ───────────────────────────────────────────────────────────
-  // KRSC operator workflows. Phase A0 (상품 등록 → PRE ORDER), Phase B
-  // (PRE → READY 전환), Phase C (상품 조회 + 매입가 동기화).
-  // Plan: ../plans/v2-wizard-plan.md
-  //
-  // Every mutation goes through shopee-bridge edge function and is logged
-  // to shopee_mutation_log. Probe-gated fields (item_name, model weight)
-  // are disabled in UI until shopee_app.config probe flags pass.
+  import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.43.5';
 
   const SUPABASE_URL = 'https://bpdafetvjyvvwbksvowu.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwZGFmZXR2anl2dndia3N2b3d1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxODM4MjYsImV4cCI6MjA5Mjc1OTgyNn0.p9hYSOhVyLUUO8UyRJ7Av56pLgkPUAi1XCMtc6r-AZA';
   const SHOPEE_BRIDGE = `${SUPABASE_URL}/functions/v1/shopee-bridge`;
-  const AUTH_HEADERS = { 'Authorization': `Bearer ${SUPABASE_ANON}`, 'apikey': SUPABASE_ANON };
+  const AUTH_HEADERS = {
+    Authorization: `Bearer ${SUPABASE_ANON}`,
+    apikey: SUPABASE_ANON,
+    'Content-Type': 'application/json',
+  };
 
-  const root = document.getElementById('view-root');
-  const statusEl = document.getElementById('conn-status');
+  const REGIONS = [
+    { code: 'SG', currency: 'SGD', enabled: true },
+    { code: 'TW', currency: 'TWD', enabled: true },
+    { code: 'TH', currency: 'THB', enabled: true },
+    { code: 'MY', currency: 'MYR', enabled: true },
+    { code: 'PH', currency: 'PHP', enabled: true },
+    { code: 'BR', currency: 'BRL', enabled: false, note: 'Excluded unless explicitly re-enabled' },
+  ];
+
+  const db = createClient(SUPABASE_URL, SUPABASE_ANON);
+  const els = {
+    status: document.getElementById('conn-status'),
+    authPanel: document.getElementById('auth-panel'),
+    appShell: document.getElementById('app-shell'),
+    loginEmail: document.getElementById('login-email'),
+    loginPassword: document.getElementById('login-password'),
+    loginSubmit: document.getElementById('login-submit'),
+    loginError: document.getElementById('login-error'),
+    logout: document.getElementById('logout'),
+    productBody: document.getElementById('product-body'),
+    search: document.getElementById('search'),
+    refresh: document.getElementById('refresh'),
+    modal: document.getElementById('register-modal'),
+    modalRowLabel: document.getElementById('modal-row-label'),
+    close: document.getElementById('modal-close'),
+    cancel: document.getElementById('modal-cancel'),
+    submit: document.getElementById('modal-submit'),
+    summary: document.getElementById('form-summary'),
+    regionFields: document.getElementById('region-fields'),
+    variantEnabled: document.getElementById('variant-enabled'),
+    variantEditor: document.getElementById('variant-editor'),
+    variantBuild: document.getElementById('variant-build'),
+    variantBody: document.getElementById('variant-body'),
+    resultSection: document.getElementById('result-section'),
+    resultBody: document.getElementById('result-body'),
+  };
+
+  const state = {
+    products: [],
+    listings: [],
+    currentProduct: null,
+    variantRows: [],
+  };
+
+  function showAuth(message = '') {
+    els.authPanel.hidden = false;
+    els.appShell.hidden = true;
+    els.loginError.textContent = message;
+  }
+
+  function showApp() {
+    els.authPanel.hidden = true;
+    els.appShell.hidden = false;
+  }
+
+  function text(value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+    }[c]));
+  }
+
+  function numberOrNull(value) {
+    if (value === '' || value == null) return null;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function setStatus(message, kind = '') {
+    els.status.textContent = message;
+    els.status.className = `status ${kind}`.trim();
+  }
+
+  function field(id) {
+    return document.getElementById(id);
+  }
+
+  function setFieldError(id, message) {
+    const input = field(id);
+    const error = document.querySelector(`[data-error-for="${id}"]`);
+    if (input) input.classList.toggle('input-error', !!message);
+    if (error) error.textContent = message || '';
+  }
+
+  function showSummary(message, kind = '') {
+    els.summary.style.display = message ? 'block' : 'none';
+    els.summary.className = `notice ${kind}`.trim();
+    els.summary.textContent = message || '';
+  }
+
+  function productLabel(product) {
+    return [product.sku, product.product_name, product.option_name].filter(Boolean).join(' / ');
+  }
+
+  function listingBadges(productId) {
+    const rows = state.listings.filter((l) => String(l.product_id) === String(productId));
+    if (!rows.length) return '<span class="muted">None</span>';
+    return rows
+      .sort((a, b) => String(a.region).localeCompare(String(b.region)))
+      .map((l) => `<span class="pill">${text(l.region)} ${text(l.shop_item_id || '-')} ${l.shop_model_id ? `/ ${text(l.shop_model_id)}` : ''}</span>`)
+      .join('');
+  }
 
   async function pingBridge() {
     try {
       const r = await fetch(`${SHOPEE_BRIDGE}/tokens?region=SG`, { headers: AUTH_HEADERS });
-      statusEl.textContent = r.ok ? 'connected' : `bridge ${r.status}`;
-      statusEl.className = r.ok ? 'ok' : 'err';
+      setStatus(r.ok ? 'bridge connected' : `bridge HTTP ${r.status}`, r.ok ? 'ok' : 'err');
     } catch (e) {
-      statusEl.textContent = `bridge: ${e.message}`;
-      statusEl.className = 'err';
+      setStatus(`bridge error: ${e.message || e}`, 'err');
     }
   }
 
-  // ── Routing ────────────────────────────────────────────────────────
-  const VIEWS = {
-    register: { title: '📦 상품 등록 (Phase A0+A1)',  desc: 'KRSC global product API로 신규 상품 등록 + PRE_ORDER 분류' },
-    'pre-order': { title: '📋 PRE ORDER',             desc: 'lifecycle_state = pre_order 인 상품 list' },
-    'ready-stock': { title: '🔄 READY STOCK 전환 (Phase B)', desc: 'PRE → READY 전환 마법사 (입고 시점)' },
-    catalog:  { title: '💰 상품 조회 + 매입가 동기화 (Phase C)', desc: 'cost inline 편집 → region별 신규가 미리보기 → dry-run + 일괄 push' },
-    probe:    { title: '🔬 Probe',                    desc: 'update_global_item.item_name / update_global_model.weight 필드 수신 검증' },
-    history:  { title: '📜 변경 이력',                 desc: 'shopee_mutation_log 200건' },
-  };
+  async function loadData() {
+    const { data: sessionData } = await db.auth.getSession();
+    if (!sessionData?.session) {
+      showAuth('');
+      return;
+    }
+    showApp();
+    els.productBody.innerHTML = '<tr><td colspan="6" class="empty">Loading products...</td></tr>';
+    const [productsRes, listingsRes] = await Promise.all([
+      db.from('products')
+        .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, position, created_at')
+        .order('position', { ascending: true })
+        .order('created_at', { ascending: true }),
+      db.from('product_shopee_listings').select('*'),
+    ]);
+    if (productsRes.error) throw productsRes.error;
+    if (listingsRes.error) throw listingsRes.error;
+    state.products = productsRes.data || [];
+    state.listings = listingsRes.data || [];
+    renderProducts();
+  }
 
-  function show(viewKey) {
-    document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.view === viewKey));
-    const v = VIEWS[viewKey] || VIEWS.register;
-    root.innerHTML = `
-      <div class="placeholder">
-        <h2>${v.title}</h2>
-        <p>${v.desc}</p>
-        <p style="margin-top:1rem"><em>skeleton 단계 — 구현은 Sonnet 위임 작업 후 활성화됩니다.</em></p>
+  async function signIn() {
+    els.loginSubmit.disabled = true;
+    els.loginError.textContent = '';
+    try {
+      const email = els.loginEmail.value.trim();
+      const password = els.loginPassword.value;
+      const { error } = await db.auth.signInWithPassword({ email, password });
+      if (error) throw error;
+      showApp();
+      await loadData();
+    } catch (e) {
+      els.loginError.textContent = e.message || String(e);
+    } finally {
+      els.loginSubmit.disabled = false;
+    }
+  }
+
+  async function signOut() {
+    await db.auth.signOut();
+    state.products = [];
+    state.listings = [];
+    showAuth('');
+  }
+
+  function renderProducts() {
+    const q = els.search.value.trim().toLowerCase();
+    const rows = state.products.filter((p) => {
+      if (!q) return true;
+      return `${p.sku || ''} ${p.product_name || ''} ${p.option_name || ''}`.toLowerCase().includes(q);
+    });
+    if (!rows.length) {
+      els.productBody.innerHTML = '<tr><td colspan="6" class="empty">No products found.</td></tr>';
+      return;
+    }
+    els.productBody.innerHTML = rows.map((p) => `
+      <tr>
+        <td class="mono">${text(p.sku || '')}</td>
+        <td>
+          <div>${text(p.product_name || '')}</div>
+          <div class="muted">${text(p.option_name || '')}</div>
+        </td>
+        <td class="mono">${Number(p.cost_krw || 0).toLocaleString()}</td>
+        <td class="mono">${Number(p.weight_g || 0).toLocaleString()}</td>
+        <td>${listingBadges(p.id)}</td>
+        <td><button type="button" data-open="${text(p.id)}" class="primary">Register</button></td>
+      </tr>
+    `).join('');
+    els.productBody.querySelectorAll('[data-open]').forEach((btn) => {
+      btn.addEventListener('click', () => openModal(btn.dataset.open));
+    });
+  }
+
+  function renderRegionFields() {
+    els.regionFields.innerHTML = REGIONS.map((r) => `
+      <div class="region-grid" data-region-row="${r.code}">
+        <label style="display:flex;align-items:center;gap:7px;font-weight:700;">
+          <input type="checkbox" id="region-${r.code}" ${r.enabled ? 'checked' : ''}>
+          ${r.code}
+        </label>
+        <input id="price-${r.code}" type="number" min="0.01" step="0.01" placeholder="Local price (${r.currency})">
+        <input id="dts-${r.code}" type="number" min="1" max="30" step="1" value="2" placeholder="DTS">
+        <div class="row-error" id="region-error-${r.code}">${r.note ? text(r.note) : ''}</div>
       </div>
-    `;
+    `).join('');
   }
 
-  for (const btn of document.querySelectorAll('#nav button')) {
-    btn.addEventListener('click', () => show(btn.dataset.view));
+  function defaultDescription(product) {
+    return [
+      `${product.product_name || product.sku || ''}`,
+      '',
+      '100% Official K-POP merchandise.',
+      'Ships from Korea with tracking.',
+      'Outer package condition may vary due to international shipping.',
+    ].join('\n');
   }
+
+  function openModal(productId) {
+    const product = state.products.find((p) => String(p.id) === String(productId));
+    if (!product) return;
+    state.currentProduct = product;
+    state.variantRows = [];
+    els.modalRowLabel.textContent = productLabel(product);
+    field('field-name').value = product.product_name ? `[PRE ORDER] ${product.product_name}` : '[PRE ORDER] ';
+    field('field-sku').value = product.sku || '';
+    field('field-category').value = '101390';
+    field('field-price').value = Number(product.cost_krw || 0) > 0 ? String(Math.round(Number(product.cost_krw))) : '';
+    field('field-stock').value = '0';
+    field('field-weight').value = Number(product.weight_g || 0) > 0 ? (Number(product.weight_g) / 1000).toFixed(2) : '0.10';
+    field('field-image-id').value = '';
+    field('field-image-url').value = '';
+    field('field-description').value = defaultDescription(product);
+    field('field-brand-name').value = 'No Brand';
+    field('field-brand-id').value = '0';
+    field('field-attrs').value = '[{"attribute_id":100037,"attribute_value_list":[{"original_value_name":"South Korea"}]}]';
+    els.variantEnabled.checked = false;
+    els.variantEditor.style.display = 'none';
+    field('variant-name').value = 'Version';
+    field('variant-values').value = '';
+    renderRegionFields();
+    renderVariantRows();
+    clearErrors();
+    showSummary('', '');
+    els.resultSection.style.display = 'none';
+    els.resultBody.innerHTML = '';
+    els.modal.classList.add('show');
+    els.modal.setAttribute('aria-hidden', 'false');
+  }
+
+  function closeModal() {
+    els.modal.classList.remove('show');
+    els.modal.setAttribute('aria-hidden', 'true');
+  }
+
+  function clearErrors() {
+    document.querySelectorAll('.input-error').forEach((el) => el.classList.remove('input-error'));
+    document.querySelectorAll('.error-text').forEach((el) => { el.textContent = ''; });
+    REGIONS.forEach((r) => {
+      const err = document.getElementById(`region-error-${r.code}`);
+      if (err) err.textContent = r.note || '';
+    });
+  }
+
+  function parseAttrs() {
+    const raw = field('field-attrs').value.trim();
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) throw new Error('attribute_list must be a JSON array');
+    return parsed;
+  }
+
+  function selectedTargets() {
+    return REGIONS
+      .filter((r) => field(`region-${r.code}`)?.checked)
+      .map((r) => ({
+        region: r.code,
+        currency: r.currency,
+        price: numberOrNull(field(`price-${r.code}`).value),
+        days_to_ship: numberOrNull(field(`dts-${r.code}`).value),
+      }));
+  }
+
+  function buildVariantRowsFromInputs() {
+    const rawOptions = field('variant-values').value;
+    const options = Array.from(new Set(rawOptions.split(',').map((s) => s.trim()).filter(Boolean)));
+    const baseSku = field('field-sku').value.trim();
+    state.variantRows = options.map((option, index) => ({
+      option,
+      sku: [baseSku, option].filter(Boolean).join('-').replace(/\s+/g, '-'),
+      globalPrice: field('field-price').value,
+      stock: field('field-stock').value || '0',
+      weightKg: field('field-weight').value || '0.10',
+      tierIndex: [index],
+    }));
+    renderVariantRows();
+  }
+
+  function captureVariantRows() {
+    if (!els.variantEnabled.checked) return [];
+    const rows = [];
+    els.variantBody.querySelectorAll('tr[data-index]').forEach((tr) => {
+      rows.push({
+        option: tr.dataset.option,
+        sku: tr.querySelector('[data-v-field="sku"]').value.trim(),
+        globalPrice: tr.querySelector('[data-v-field="globalPrice"]').value,
+        stock: tr.querySelector('[data-v-field="stock"]').value,
+        weightKg: tr.querySelector('[data-v-field="weightKg"]').value,
+        tierIndex: [Number(tr.dataset.index)],
+      });
+    });
+    state.variantRows = rows;
+    return rows;
+  }
+
+  function renderVariantRows() {
+    if (!state.variantRows.length) {
+      els.variantBody.innerHTML = '<tr><td colspan="6" class="empty">No variants.</td></tr>';
+      return;
+    }
+    els.variantBody.innerHTML = state.variantRows.map((row, index) => `
+      <tr data-index="${index}" data-option="${text(row.option)}">
+        <td>${text(row.option)}</td>
+        <td><input data-v-field="sku" value="${text(row.sku)}"></td>
+        <td><input data-v-field="globalPrice" type="number" min="1" step="1" value="${text(row.globalPrice)}"></td>
+        <td><input data-v-field="stock" type="number" min="0" step="1" value="${text(row.stock)}"></td>
+        <td><input data-v-field="weightKg" type="number" min="0.01" step="0.01" value="${text(row.weightKg)}"></td>
+        <td class="row-error" data-variant-error="${index}"></td>
+      </tr>
+    `).join('');
+  }
+
+  function validateForm() {
+    clearErrors();
+    const errors = [];
+    const requiredText = [
+      ['field-name', 'Product name is required.'],
+      ['field-sku', 'SKU is required.'],
+      ['field-description', 'Description is required.'],
+    ];
+    for (const [id, message] of requiredText) {
+      if (!field(id).value.trim()) {
+        setFieldError(id, message);
+        errors.push(message);
+      }
+    }
+
+    const categoryId = numberOrNull(field('field-category').value);
+    const globalPrice = numberOrNull(field('field-price').value);
+    const stock = numberOrNull(field('field-stock').value);
+    const weightKg = numberOrNull(field('field-weight').value);
+    if (!categoryId || categoryId <= 0) {
+      setFieldError('field-category', 'Category ID must be a positive number.');
+      errors.push('Category ID is invalid.');
+    }
+    if (!globalPrice || globalPrice <= 0) {
+      setFieldError('field-price', 'Global KRW price must be greater than 0.');
+      errors.push('Global price is invalid.');
+    }
+    if (stock == null || stock < 0) {
+      setFieldError('field-stock', 'Stock must be 0 or more.');
+      errors.push('Stock is invalid.');
+    }
+    if (!weightKg || weightKg <= 0) {
+      setFieldError('field-weight', 'Weight must be greater than 0.');
+      errors.push('Weight is invalid.');
+    }
+    if (!field('field-image-id').value.trim() && !field('field-image-url').value.trim()) {
+      setFieldError('field-image-id', 'Provide image_id or image URL.');
+      setFieldError('field-image-url', 'Provide image_id or image URL.');
+      errors.push('Image is required.');
+    }
+    try {
+      parseAttrs();
+    } catch (e) {
+      setFieldError('field-attrs', e.message || 'Invalid JSON.');
+      errors.push('Attribute JSON is invalid.');
+    }
+
+    const targets = selectedTargets();
+    if (!targets.length) errors.push('Select at least one region.');
+    for (const target of targets) {
+      const messages = [];
+      if (!target.price || target.price <= 0) messages.push(`${target.region} local price is required.`);
+      if (!target.days_to_ship || target.days_to_ship < 1 || target.days_to_ship > 30) messages.push(`${target.region} DTS must be 1-30.`);
+      const err = document.getElementById(`region-error-${target.region}`);
+      if (err) err.textContent = messages.join(' ');
+      errors.push(...messages);
+    }
+
+    const variants = captureVariantRows();
+    if (els.variantEnabled.checked) {
+      if (!field('variant-name').value.trim()) {
+        setFieldError('variant-name', 'Variation name is required.');
+        errors.push('Variation name is required.');
+      }
+      if (variants.length < 2) {
+        setFieldError('variant-values', 'At least 2 options are required.');
+        errors.push('At least 2 variant options are required.');
+      }
+      if (variants.length > 50) {
+        setFieldError('variant-values', 'Shopee supports up to 50 combinations.');
+        errors.push('Too many variant options.');
+      }
+      const seen = new Set();
+      variants.forEach((row, index) => {
+        const rowErrors = [];
+        const price = numberOrNull(row.globalPrice);
+        const rowStock = numberOrNull(row.stock);
+        const rowWeight = numberOrNull(row.weightKg);
+        if (!row.sku) rowErrors.push('SKU required');
+        if (seen.has(row.sku)) rowErrors.push('duplicate SKU');
+        if (!price || price <= 0) rowErrors.push('price > 0 required');
+        if (rowStock == null || rowStock < 0) rowErrors.push('stock >= 0 required');
+        if (!rowWeight || rowWeight <= 0) rowErrors.push('weight > 0 required');
+        seen.add(row.sku);
+        const err = document.querySelector(`[data-variant-error="${index}"]`);
+        if (err) err.textContent = rowErrors.join(', ');
+        errors.push(...rowErrors.map((m) => `${row.option}: ${m}`));
+      });
+    }
+
+    if (errors.length) {
+      showSummary(`Fix ${errors.length} validation issue(s) before submitting.`, 'error');
+      return null;
+    }
+    showSummary('', '');
+    return { targets, variants };
+  }
+
+  function buildPayload(validated) {
+    const product = state.currentProduct;
+    const base = {
+      region: 'SG',
+      name: field('field-name').value.trim(),
+      sku: field('field-sku').value.trim(),
+      category_id: Number(field('field-category').value),
+      price: Number(field('field-price').value),
+      stock: Number(field('field-stock').value || 0),
+      weight_g: Math.round(Number(field('field-weight').value) * 1000),
+      days_to_ship: Number(validated.targets[0]?.days_to_ship || 2),
+      description: field('field-description').value.trim(),
+      brand: {
+        brand_id: Number(field('field-brand-id').value || 0),
+        original_brand_name: field('field-brand-name').value.trim() || 'No Brand',
+      },
+      attribute_list: parseAttrs(),
+      targets: validated.targets.map((target) => ({
+        region: target.region,
+        price: Number(target.price),
+        stock: Number(field('field-stock').value || 0),
+        weight_g: Math.round(Number(field('field-weight').value) * 1000),
+        days_to_ship: Number(target.days_to_ship),
+      })),
+      source_product_id: product.id,
+    };
+    const imageId = field('field-image-id').value.trim();
+    const imageUrl = field('field-image-url').value.trim();
+    if (imageId) base.image_id = imageId;
+    if (imageUrl) base.image_url = imageUrl;
+
+    if (els.variantEnabled.checked) {
+      base.variation = {
+        tier_variation: [{
+          name: field('variant-name').value.trim(),
+          option_list: validated.variants.map((row) => ({ option: row.option })),
+        }],
+        model: validated.variants.map((row) => ({
+          tier_index: row.tierIndex,
+          model_sku: row.sku,
+          global_model_sku: row.sku,
+          global_original_price: Number(row.globalPrice),
+          original_price: Number(validated.targets[0]?.price || 0),
+          stock: Number(row.stock || 0),
+          weight: Number(row.weightKg),
+        })),
+      };
+    }
+    return base;
+  }
+
+  function resultMessage(info) {
+    if (info.item_id) return info.item_status || info.publish_status || 'published';
+    return info.error || info.message || info.stage || 'No item_id returned.';
+  }
+
+  async function fetchShopModels(region, itemId) {
+    const statuses = ['UNLIST', 'NORMAL'];
+    for (const status of statuses) {
+      const url = `${SHOPEE_BRIDGE}/list_items?region=${encodeURIComponent(region)}&item_status=${status}&max_items=1000`;
+      const json = await fetch(url, { headers: AUTH_HEADERS }).then((r) => r.json()).catch(() => null);
+      const rows = Array.isArray(json?.items) ? json.items.filter((item) => String(item.item_id) === String(itemId)) : [];
+      const models = rows.filter((item) => item.model_id).map((item) => ({
+        item_id: item.item_id,
+        model_id: item.model_id,
+        sku: item.model_sku || item.item_sku || '',
+        tier_index: item.tier_index || [],
+      }));
+      if (models.length) return models;
+    }
+    return [];
+  }
+
+  async function fetchGlobalModels(globalItemId) {
+    if (!globalItemId) return [];
+    const url = `${SHOPEE_BRIDGE}/global_model_list?region=SG&global_item_id=${encodeURIComponent(globalItemId)}`;
+    const json = await fetch(url, { headers: AUTH_HEADERS }).then((r) => r.json()).catch(() => null);
+    const list = json?.result?.response?.global_model || json?.result?.response?.model || [];
+    return Array.isArray(list) ? list.map((model) => ({
+      global_model_id: model.global_model_id,
+      sku: model.global_model_sku || model.model_sku || '',
+      tier_index: model.tier_index || [],
+    })) : [];
+  }
+
+  async function upsertListingWithFallback(productId, region, fields) {
+    const attempts = [
+      fields,
+      Object.fromEntries(Object.entries(fields).filter(([key]) => key !== 'shop_id')),
+      Object.fromEntries(Object.entries(fields).filter(([key]) => !['shop_id', 'global_model_id'].includes(key))),
+    ];
+    let lastError = null;
+    for (const attempt of attempts) {
+      const payload = { product_id: productId, region, ...attempt };
+      const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: 'product_id,region' });
+      if (!error) return { ok: true, saved: attempt };
+      lastError = error;
+      const msg = `${error.message || ''} ${error.details || ''}`;
+      if (!/column|schema cache|Could not find/i.test(msg)) break;
+    }
+    return { ok: false, error: lastError };
+  }
+
+  function skuToProductMap() {
+    const map = new Map();
+    state.products.forEach((p) => {
+      if (p.sku) map.set(String(p.sku).trim(), p);
+    });
+    return map;
+  }
+
+  async function persistMappings(regJson, payload) {
+    const globalItemId = regJson.global_item_id || null;
+    const variantModels = payload.variation?.model || [];
+    const hasVariants = variantModels.length > 0;
+    const productsBySku = skuToProductMap();
+    const globalModels = hasVariants ? await fetchGlobalModels(globalItemId) : [];
+    const globalBySku = new Map(globalModels.map((m) => [String(m.sku || '').trim(), m]));
+    const rows = [];
+
+    for (const info of (regJson.results || [])) {
+      const region = info.region || payload.region || 'SG';
+      if (!info.item_id) {
+        rows.push({ region, shop: info.shop_id || '', item: '', mapping: 'skipped', message: resultMessage(info), ok: false });
+        continue;
+      }
+
+      if (!hasVariants) {
+        const fields = {
+          shop_item_id: info.item_id,
+          shop_model_id: null,
+          shop_id: info.shop_id || null,
+          global_item_id: globalItemId,
+          global_model_id: null,
+          status: info.item_status || info.publish_status || null,
+          published_at: new Date().toISOString(),
+        };
+        const saved = await upsertListingWithFallback(state.currentProduct.id, region, fields);
+        rows.push({
+          region,
+          shop: info.shop_id || '',
+          item: info.item_id,
+          mapping: saved.ok ? 'saved' : 'failed',
+          message: saved.ok ? resultMessage(info) : saved.error?.message || 'DB upsert failed',
+          ok: saved.ok,
+        });
+        continue;
+      }
+
+      const shopModels = await fetchShopModels(region, info.item_id);
+      const shopBySku = new Map(shopModels.map((m) => [String(m.sku || '').trim(), m]));
+      let savedCount = 0;
+      const failures = [];
+      for (const model of variantModels) {
+        const sku = String(model.global_model_sku || model.model_sku || '').trim();
+        const product = productsBySku.get(sku);
+        if (!product) continue;
+        const shopModel = shopBySku.get(sku) || {};
+        const globalModel = globalBySku.get(sku) || {};
+        const saved = await upsertListingWithFallback(product.id, region, {
+          shop_item_id: info.item_id,
+          shop_model_id: shopModel.model_id || null,
+          shop_id: info.shop_id || null,
+          global_item_id: globalItemId,
+          global_model_id: globalModel.global_model_id || null,
+          status: info.item_status || info.publish_status || null,
+          published_at: new Date().toISOString(),
+        });
+        if (saved.ok) savedCount += 1;
+        else failures.push(`${sku}: ${saved.error?.message || 'DB upsert failed'}`);
+      }
+      if (savedCount === 0 && !failures.length) {
+        const saved = await upsertListingWithFallback(state.currentProduct.id, region, {
+          shop_item_id: info.item_id,
+          shop_model_id: null,
+          shop_id: info.shop_id || null,
+          global_item_id: globalItemId,
+          global_model_id: null,
+          status: info.item_status || info.publish_status || null,
+          published_at: new Date().toISOString(),
+        });
+        savedCount = saved.ok ? 1 : 0;
+        if (!saved.ok) failures.push(saved.error?.message || 'DB upsert failed');
+      }
+      rows.push({
+        region,
+        shop: info.shop_id || '',
+        item: info.item_id,
+        mapping: failures.length ? `${savedCount} saved, ${failures.length} failed` : `${savedCount} saved`,
+        message: failures.length ? failures.join('; ') : resultMessage(info),
+        ok: failures.length === 0 && savedCount > 0,
+      });
+    }
+    return rows;
+  }
+
+  function renderResults(rows) {
+    els.resultSection.style.display = 'block';
+    els.resultBody.innerHTML = rows.map((row) => `
+      <tr>
+        <td class="mono">${text(row.region)}</td>
+        <td class="mono">${text(row.shop)}</td>
+        <td class="mono">${text(row.item)}</td>
+        <td class="${row.ok ? 'row-ok' : 'row-error'}">${text(row.mapping)}</td>
+        <td class="${row.ok ? '' : 'row-error'}">${text(row.message)}</td>
+      </tr>
+    `).join('');
+  }
+
+  async function submitRegistration() {
+    if (!state.currentProduct) return;
+    const validated = validateForm();
+    if (!validated) return;
+    const payload = buildPayload(validated);
+    els.submit.disabled = true;
+    showSummary('Submitting to shopee-bridge/register_cbsc...', '');
+    els.resultSection.style.display = 'none';
+    try {
+      const response = await fetch(`${SHOPEE_BRIDGE}/register_cbsc`, {
+        method: 'POST',
+        headers: AUTH_HEADERS,
+        body: JSON.stringify(payload),
+      });
+      const json = await response.json();
+      if (!json.ok) {
+        const details = Array.isArray(json.missing_attributes)
+          ? json.missing_attributes.map((a) => `${a.attribute_name || a.attribute_id}`).join(', ')
+          : '';
+        throw new Error([json.stage, json.error, json.message, details].filter(Boolean).join(' - '));
+      }
+      const mappingRows = await persistMappings(json, payload);
+      renderResults(mappingRows);
+      showSummary(`Global item ${json.global_item_id} created. ${mappingRows.filter((r) => r.ok).length}/${mappingRows.length} region mapping rows saved.`, mappingRows.every((r) => r.ok) ? 'ok' : 'error');
+      await loadData();
+    } catch (e) {
+      showSummary(e.message || String(e), 'error');
+    } finally {
+      els.submit.disabled = false;
+    }
+  }
+
+  els.search.addEventListener('input', renderProducts);
+  els.refresh.addEventListener('click', async () => {
+    try { await loadData(); }
+    catch (e) { els.productBody.innerHTML = `<tr><td colspan="6" class="empty">${text(e.message || e)}</td></tr>`; }
+  });
+  els.loginSubmit.addEventListener('click', signIn);
+  els.loginPassword.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') signIn();
+  });
+  els.logout.addEventListener('click', signOut);
+  els.close.addEventListener('click', closeModal);
+  els.cancel.addEventListener('click', closeModal);
+  els.modal.addEventListener('click', (e) => { if (e.target === els.modal) closeModal(); });
+  els.submit.addEventListener('click', submitRegistration);
+  els.variantEnabled.addEventListener('change', () => {
+    els.variantEditor.style.display = els.variantEnabled.checked ? 'block' : 'none';
+    if (els.variantEnabled.checked && !state.variantRows.length && field('variant-values').value.trim()) {
+      buildVariantRowsFromInputs();
+    }
+  });
+  els.variantBuild.addEventListener('click', buildVariantRowsFromInputs);
 
   pingBridge();
-  show('register');
+  db.auth.getSession().then(({ data }) => {
+    if (data?.session) {
+      return loadData();
+    }
+    showAuth('');
+    return null;
+  }).catch((e) => {
+    showAuth(e.message || String(e));
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  // NAV ROUTING (plan §5-1)
+  // ════════════════════════════════════════════════════════════════
+  window.showView = function(viewId) {
+    document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
+    document.querySelectorAll('.nav-tab').forEach((t) => t.classList.remove('active'));
+    const view = document.getElementById(viewId);
+    if (view) view.classList.add('active');
+    document.querySelectorAll('.nav-tab').forEach((t) => {
+      if (t.getAttribute('onclick') && t.getAttribute('onclick').includes(`'${viewId}'`)) {
+        t.classList.add('active');
+      }
+    });
+  };
+
+  // activate register tab by default
+  document.querySelectorAll('.nav-tab').forEach((t) => {
+    if (t.getAttribute('onclick') && t.getAttribute('onclick').includes("'view-register'")) {
+      t.classList.add('active');
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════════
+  // WIZARD STEP MANAGEMENT (plan §5-1-A)
+  // ════════════════════════════════════════════════════════════════
+  const TOTAL_STEPS = 4;
+  let currentWizStep = 1;
+
+  function goToWizStep(n) {
+    for (let i = 1; i <= TOTAL_STEPS; i++) {
+      const body = document.getElementById(`wstep-${i}`);
+      const pill = document.getElementById(`wpill-${i}`);
+      if (body) body.classList.remove('active');
+      if (pill) { pill.classList.remove('active', 'done'); if (i < n) pill.classList.add('done'); }
+    }
+    const target = document.getElementById(`wstep-${n}`);
+    const pill = document.getElementById(`wpill-${n}`);
+    if (target) target.classList.add('active');
+    if (pill) pill.classList.add('active');
+    currentWizStep = n;
+  }
+
+  window.wizNext = function(from) {
+    if (!validateWizStep(from)) return;
+    if (from < TOTAL_STEPS) goToWizStep(from + 1);
+  };
+  window.wizPrev = function(from) {
+    if (from > 1) goToWizStep(from - 1);
+  };
+
+  // ════════════════════════════════════════════════════════════════
+  // VALIDATION
+  // ════════════════════════════════════════════════════════════════
+  function clearWizErrors() {
+    document.querySelectorAll('#view-register .werr').forEach((e) => e.classList.remove('show'));
+    document.querySelectorAll('#view-register .invalid').forEach((e) => e.classList.remove('invalid'));
+  }
+
+  function wizErr(inputId, errId) {
+    const el = document.getElementById(inputId);
+    const err = document.getElementById(errId);
+    if (el) el.classList.add('invalid');
+    if (err) err.classList.add('show');
+  }
+
+  function validateWizStep(step) {
+    clearWizErrors();
+    let ok = true;
+
+    if (step === 1) {
+      const catId = parseInt(g('w-category-id').value);
+      if (!catId || catId < 1) { wizErr('w-category-id', 'werr-category-id'); ok = false; }
+      if (!g('w-item-name').value.trim()) { wizErr('w-item-name', 'werr-item-name'); ok = false; }
+      if (!g('w-description').value.trim()) { wizErr('w-description', 'werr-description'); ok = false; }
+      const price = parseFloat(g('w-original-price').value);
+      if (!price || price <= 0) { wizErr('w-original-price', 'werr-original-price'); ok = false; }
+      const stock = parseInt(g('w-stock').value);
+      if (isNaN(stock) || stock < 0) { wizErr('w-stock', 'werr-stock'); ok = false; }
+      const wt = parseFloat(g('w-weight').value);
+      if (!wt || wt <= 0) { wizErr('w-weight', 'werr-weight'); ok = false; }
+      const dts = parseInt(g('w-days-to-ship').value);
+      if (!dts || dts < 1) { wizErr('w-days-to-ship', 'werr-days-to-ship'); ok = false; }
+      const pL = parseInt(g('w-pkg-length').value);
+      if (!pL || pL < 1) { wizErr('w-pkg-length', 'werr-pkg-length'); ok = false; }
+      const pW = parseInt(g('w-pkg-width').value);
+      if (!pW || pW < 1) { wizErr('w-pkg-width', 'werr-pkg-width'); ok = false; }
+      const pH = parseInt(g('w-pkg-height').value);
+      if (!pH || pH < 1) { wizErr('w-pkg-height', 'werr-pkg-height'); ok = false; }
+    }
+
+    if (step === 2) {
+      const imgRaw = g('w-image-ids').value.trim();
+      const imgIds = imgRaw.split(',').map((s) => s.trim()).filter(Boolean);
+      if (!imgIds.length) { wizErr('w-image-ids', 'werr-image-ids'); ok = false; }
+    }
+
+    // step 3: optional variants, no blocking validation
+    // step 4: region checked in buildPayloads
+
+    return ok;
+  }
+
+  function g(id) { return document.getElementById(id) || {}; }
+
+  // ════════════════════════════════════════════════════════════════
+  // [PRE ORDER] NAME PREVIEW
+  // ════════════════════════════════════════════════════════════════
+  function updateNamePreview() {
+    const toggle = g('w-pre-order-prefix').checked;
+    const name = (g('w-item-name').value || '').trim();
+    const preview = g('w-name-preview');
+    if (!preview) return;
+    preview.textContent = name ? `최종 이름: "${toggle ? '[PRE ORDER] ' : ''}${name}"` : '';
+  }
+  g('w-item-name').addEventListener && g('w-item-name').addEventListener('input', updateNamePreview);
+  g('w-pre-order-prefix').addEventListener && g('w-pre-order-prefix').addEventListener('change', updateNamePreview);
+
+  // ════════════════════════════════════════════════════════════════
+  // VARIANT ROWS (plan §5-1-A step 3)
+  // ════════════════════════════════════════════════════════════════
+  let _variantCount = 0;
+
+  window.toggleVariantSection = function(enabled) {
+    const s = document.getElementById('w-variant-section');
+    if (s) s.style.display = enabled ? 'block' : 'none';
+    if (enabled && _variantCount === 0) addVariantRow();
+  };
+
+  window.addVariantRow = function() {
+    _variantCount++;
+    const idx = _variantCount;
+    const container = document.getElementById('w-vrows-container');
+    if (!container) return;
+    const row = document.createElement('div');
+    row.className = 'vrow';
+    row.id = `wvrow-${idx}`;
+    // add_global_model fields per variant (authoritative):
+    // - optionName: display label (tier_variation option name in publish step)
+    // - global_model_sku: optional
+    // - original_price: required per global_model[].original_price
+    // - stock: required per global_model[].seller_stock[].stock
+    // - weight: optional top-level KG (applies uniformly — see SCHEMA NOTE above)
+    row.innerHTML = `
+      <span class="vlabel">옵션 ${idx}</span>
+      <input type="text" placeholder="옵션명* (예: A ver.)" id="wv-name-${idx}" style="flex:2;" title="tier_variation option name — required for display">
+      <input type="text" placeholder="SKU (선택)" id="wv-sku-${idx}" style="flex:1.5;" title="global_model[].global_model_sku — optional">
+      <input type="number" placeholder="가격*" id="wv-price-${idx}" step="0.01" min="0.01" style="flex:1;" title="global_model[].original_price — required">
+      <input type="number" placeholder="재고*" id="wv-stock-${idx}" step="1" min="0" style="flex:1;" title="global_model[].seller_stock[].stock — required">
+      <input type="number" placeholder="무게(KG)" id="wv-weight-${idx}" step="0.001" min="0" style="flex:1;" title="weight — top-level KG override (optional, applies to all models in call)">
+      <button onclick="removeVariantRow(${idx})">✕</button>
+    `;
+    container.appendChild(row);
+  };
+
+  window.removeVariantRow = function(idx) {
+    const row = document.getElementById(`wvrow-${idx}`);
+    if (row) row.remove();
+  };
+
+  function collectVariants() {
+    const rows = document.querySelectorAll('#w-vrows-container .vrow');
+    return Array.from(rows).map((row, i) => {
+      const id = row.id.replace('wvrow-', '');
+      return {
+        optionName: (document.getElementById(`wv-name-${id}`)?.value || '').trim(),
+        globalModelSku: (document.getElementById(`wv-sku-${id}`)?.value || '').trim() || undefined,
+        originalPrice: parseFloat(document.getElementById(`wv-price-${id}`)?.value) || null,
+        stock: parseInt(document.getElementById(`wv-stock-${id}`)?.value) || null,
+        weight: parseFloat(document.getElementById(`wv-weight-${id}`)?.value) || undefined,
+        tierIndex: [i],
+      };
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // BUILD PAYLOADS (authoritative against docs_ai JSON schemas)
+  // ════════════════════════════════════════════════════════════════
+  // Mock global_item_id for dry-run (plan §5 constraint: mock mutations)
+  const MOCK_GID = 9999999999;
+
+  function buildAddGlobalItemPayload() {
+    const prefixOn = g('w-pre-order-prefix').checked;
+    const rawName = (g('w-item-name').value || '').trim();
+    const itemName = prefixOn ? `[PRE ORDER] ${rawName}` : rawName;
+
+    const imgRaw = (g('w-image-ids').value || '').trim();
+    const imageIdList = imgRaw.split(',').map((s) => s.trim()).filter(Boolean);
+    const videoRaw = (g('w-video-id').value || '').trim();
+    const brandId = parseInt(g('w-brand-id').value) || 0;
+    const brandName = (g('w-brand-name').value || '').trim();
+    const stock = parseInt(g('w-stock').value) || 0;
+
+    // add_global_item body_params — authoritative
+    // Source: v2.global_product.add_global_item.json request.body_params
+    // required_params: category_id, global_item_name, description, image.image_id_list,
+    //   original_price, weight, dimension.{package_length,width,height},
+    //   pre_order, pre_order.days_to_ship, seller_stock[].stock
+    // SCHEMA NOTE: normal_stock sunsetted 2024-10-23 — using seller_stock only.
+    const payload = {
+      category_id: parseInt(g('w-category-id').value),          // int64, required
+      global_item_name: itemName,                               // string, required
+      description: (g('w-description').value || '').trim(),      // string, required
+      image: { image_id_list: imageIdList },                    // image.image_id_list required
+      original_price: parseFloat(g('w-original-price').value),  // float, required
+      seller_stock: [{ stock }],                                // seller_stock[].stock required
+      weight: parseFloat(g('w-weight').value),                  // float, KG, required
+      dimension: {
+        package_length: parseInt(g('w-pkg-length').value),      // int64, required
+        package_width:  parseInt(g('w-pkg-width').value),       // int64, required
+        package_height: parseInt(g('w-pkg-height').value),      // int64, required
+      },
+      pre_order: {
+        days_to_ship: parseInt(g('w-days-to-ship').value),      // int64, required
+      },
+      condition: g('w-condition').value,                        // string, optional
+    };
+
+    // global_item_sku (optional)
+    const sku = (g('w-item-sku').value || '').trim();
+    if (sku) payload.global_item_sku = sku;
+
+    // brand object (optional) — include only if name or id set
+    // SCHEMA NOTE: brand.brand_id is in the examples.payload but NOT listed in body_params array.
+    // It appears in brand object description as "int64 False 1078 Id of brand."
+    // Including per the examples schema.
+    if (brandName || brandId > 0) {
+      payload.brand = {};
+      if (brandName) payload.brand.original_brand_name = brandName;
+      if (brandId > 0) payload.brand.brand_id = brandId;
+    }
+
+    // video_upload_id (optional, max 1 per API spec: "Only accept one video_upload_id at most.")
+    if (videoRaw) payload.video_upload_id = [videoRaw];
+
+    return payload;
+  }
+
+  function buildAddGlobalModelPayload(globalItemId) {
+    if (!g('w-has-variants').checked) return null;
+    const variants = collectVariants();
+    if (!variants.length) return null;
+
+    const dts = parseInt(g('w-days-to-ship').value);
+
+    // add_global_model body_params — authoritative
+    // Source: v2.global_product.add_global_model.json request.body_params
+    // required_params: global_item_id, global_model[], global_model[].tier_index,
+    //   global_model[].seller_stock[].stock, global_model[].original_price,
+    //   package_height, package_length, package_width, days_to_ship (ALL top-level required)
+    // SCHEMA MISMATCH NOTE: plan §5-1-A describes "model_sku, price, stock, weight" as variant fields.
+    // docs JSON required_params also include package_{length,width,height} and days_to_ship at top-level
+    // (not inside pre_order or dimension nested objects — they are flat required fields).
+    // weight: optional top-level; dimension fields: required if dimension set.
+    // Using package dims from item-level step 1 fields for model-level defaults.
+    const payload = {
+      global_item_id: globalItemId,                            // int64, required
+      global_model: variants.map((v) => {
+        const m = {
+          tier_index: v.tierIndex,                            // int32[], required
+          seller_stock: [{ stock: v.stock }],                 // seller_stock[].stock required
+          original_price: v.originalPrice,                    // float, required
+        };
+        if (v.globalModelSku) m.global_model_sku = v.globalModelSku;
+        return m;
+      }),
+      days_to_ship: dts,                                      // int32, required at top-level
+      // dimension fields: required at top-level per required_params
+      package_length: parseInt(g('w-pkg-length').value),      // inherit from step 1
+      package_width:  parseInt(g('w-pkg-width').value),
+      package_height: parseInt(g('w-pkg-height').value),
+    };
+
+    // weight: top-level optional — use first variant's weight if set
+    // SCHEMA NOTE: weight is ONE value for the entire call batch (not per model).
+    // Per-model weight differentiation would require separate update_global_model calls.
+    const weightsWithValue = variants.filter((v) => v.weight);
+    if (weightsWithValue.length > 0) {
+      payload.weight = weightsWithValue[0].weight;
+      // TODO: if per-variant weight needed → call update_global_model after creation
+    }
+
+    return payload;
+  }
+
+  function buildCreatePublishTaskPayloads(globalItemId) {
+    // create_publish_task body_params — authoritative
+    // Source: v2.global_product.create_publish_task.json request.body_params
+    // required: global_item_id, shop_id, shop_region
+    // item.pre_order.is_pre_order: required if item.pre_order is provided
+    const dts = parseInt(g('w-days-to-ship').value);
+    const selectedRegions = ['SG', 'TW', 'TH', 'MY', 'PH'].filter((r) => {
+      const cb = document.getElementById(`w-reg-${r}`);
+      return cb && cb.checked;
+    });
+
+    return selectedRegions.map((region) => ({
+      global_item_id: globalItemId,
+      // TODO plan §4-0: shop_id from get_publishable_shop response.
+      // bridge raw_call: GET /raw_call?region={r}&path=%2Fapi%2Fv2%2Fglobal_product%2Fget_publishable_shop&global_item_id={id}
+      shop_id: null,   // TODO: populate from get_publishable_shop
+      shop_region: region,
+      item: {
+        pre_order: {
+          is_pre_order: true,      // boolean, required when item.pre_order present
+          days_to_ship: dts,       // int32, mandatory when is_pre_order=true
+        },
+      },
+    }));
+  }
+
+  function buildAllWizPayloads(dryRun = true) {
+    const selectedRegions = ['SG', 'TW', 'TH', 'MY', 'PH'].filter((r) => {
+      const cb = document.getElementById(`w-reg-${r}`);
+      return cb && cb.checked;
+    });
+    if (!selectedRegions.length) { showToast('최소 1개 Region을 선택하세요.', 'err'); return null; }
+
+    const addItemPayload = buildAddGlobalItemPayload();
+    const addModelPayload = buildAddGlobalModelPayload(dryRun ? MOCK_GID : MOCK_GID);
+    const publishPayloads = buildCreatePublishTaskPayloads(dryRun ? MOCK_GID : MOCK_GID);
+
+    return { addItemPayload, addModelPayload, publishPayloads, dryRun };
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // DRY-RUN + SUBMIT HANDLERS
+  // ════════════════════════════════════════════════════════════════
+  window.handleWizDryRun = function() {
+    if (!validateWizStep(4)) return;
+    const p = buildAllWizPayloads(true);
+    if (!p) return;
+    showWizModal(p, false);
+  };
+
+  window.handleWizLiveSubmit = function() {
+    if (!validateWizStep(4)) return;
+    const p = buildAllWizPayloads(false);
+    if (!p) return;
+    showWizModal(p, true);
+  };
+
+  // ════════════════════════════════════════════════════════════════
+  // WIZARD MODAL (payload preview)
+  // ════════════════════════════════════════════════════════════════
+  let _lastWizPayloads = null;
+
+  function showWizModal(payloads, isLive) {
+    _lastWizPayloads = payloads;
+    g('wiz-modal-title').textContent = isLive ? '🔥 실제 등록 — 실행 예정 API 호출' : '🚀 Dry-run 미리보기 — 실제 호출 없음';
+
+    const calls = [];
+
+    // Call 1: add_global_item
+    // TODO LIVE CALL — bridge raw_call: POST /raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fadd_global_item
+    calls.push({
+      label: '① add_global_item',
+      note: 'TODO LIVE CALL — bridge raw_call: POST /raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fadd_global_item',
+      payload: payloads.addItemPayload,
+    });
+
+    // Call 2: add_global_model (if variants)
+    if (payloads.addModelPayload) {
+      // TODO LIVE CALL — bridge raw_call: POST /raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fadd_global_model
+      calls.push({
+        label: '② add_global_model',
+        note: 'TODO LIVE CALL — bridge raw_call: POST /raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fadd_global_model (global_item_id from ① response)',
+        payload: payloads.addModelPayload,
+      });
+    }
+
+    // Calls 3+: create_publish_task per region
+    payloads.publishPayloads.forEach((p, i) => {
+      // TODO LIVE CALL — bridge raw_call: POST /raw_call?region={r}&path=%2Fapi%2Fv2%2Fglobal_product%2Fcreate_publish_task
+      // TODO: get_publish_task_result polling after each create_publish_task (plan §4-0)
+      calls.push({
+        label: `③.${i + 1} create_publish_task [${p.shop_region}]`,
+        note: `TODO LIVE CALL — bridge raw_call: POST /raw_call?region=${p.shop_region}&path=%2Fapi%2Fv2%2Fglobal_product%2Fcreate_publish_task (shop_id from get_publishable_shop)`,
+        payload: p,
+      });
+    });
+
+    let html = isLive
+      ? '<div style="padding:8px 12px;background:#fff4f3;border:1px solid #f2aaa5;border-radius:6px;margin-bottom:14px;font-size:11px;color:var(--red);">⚠ Mock 모드 — 실제 Shopee API 미호출. console에 payload 출력됨.</div>'
+      : '<div style="padding:8px 12px;background:#eef2ff;border:1px solid #c7d7fd;border-radius:6px;margin-bottom:14px;font-size:11px;color:var(--accent);">🚀 Dry-run — 실제 호출 없음. global_item_id = ' + MOCK_GID + ' (mock)</div>';
+
+    calls.forEach((c) => {
+      html += `<div class="call-block">
+        <h4>${esc(c.label)}</h4>
+        <div class="call-note">${esc(c.note)}</div>
+        <div class="payload-pre">${esc(JSON.stringify(c.payload, null, 2))}</div>
+      </div>`;
+    });
+
+    g('wiz-modal-body').innerHTML = html;
+    g('wiz-modal-confirm-btn').style.display = isLive ? 'inline-block' : 'none';
+    g('wiz-modal-overlay').classList.add('show');
+  }
+
+  window.closeWizModal = function() { g('wiz-modal-overlay').classList.remove('show'); };
+
+  g('wiz-modal-overlay').addEventListener && g('wiz-modal-overlay').addEventListener('click', function(e) {
+    if (e.target === this) closeWizModal();
+  });
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MOCK SUBMIT (plan §5 — no real Shopee calls yet)
+  // ════════════════════════════════════════════════════════════════
+  window.executeMockSubmit = function() {
+    if (!_lastWizPayloads) return;
+    closeWizModal();
+
+    // TODO LIVE CALL: execution order when real calls are wired:
+    //   1. POST /raw_call?region=SG&path=.../add_global_item → capture global_item_id
+    //   2. If variants: POST /raw_call?region=SG&path=.../add_global_model with real global_item_id
+    //   3. For each region: GET /raw_call?region={r}&path=.../get_publishable_shop → get shop_id
+    //   4. For each region: POST /raw_call?region={r}&path=.../create_publish_task
+    //   5. For each region: poll GET /raw_call?region={r}&path=.../get_publish_task_result (5s, 60s timeout)
+    // TODO plan §5-1-A step 5: Storage.upsertProduct into Supabase products table:
+    //   { lifecycle_state:'pre_order', cost_price, weight, image_url, shopee_item_id }
+    //   Also insert product_shopee_listings rows per region with days_to_ship=50, title_state='PRE_ORDER'
+
+    console.log('// TODO LIVE CALL — add_global_item:', JSON.stringify(_lastWizPayloads.addItemPayload, null, 2));
+    if (_lastWizPayloads.addModelPayload) {
+      console.log('// TODO LIVE CALL — add_global_model:', JSON.stringify(_lastWizPayloads.addModelPayload, null, 2));
+    }
+    _lastWizPayloads.publishPayloads.forEach((p) => {
+      console.log(`// TODO LIVE CALL — create_publish_task [${p.shop_region}]:`, JSON.stringify(p, null, 2));
+    });
+
+    showToast('✓ 등록 완료 (모의) — console에 payload 출력됨', 'ok');
+
+    // Reset wizard
+    setTimeout(() => {
+      goToWizStep(1);
+      ['w-category-id','w-item-name','w-description','w-item-sku','w-original-price',
+       'w-stock','w-weight','w-pkg-length','w-pkg-width','w-pkg-height',
+       'w-brand-name','w-image-ids','w-video-id'].forEach((id) => {
+        const el = g(id);
+        if (el && 'value' in el) el.value = '';
+      });
+      if (g('w-brand-id')) g('w-brand-id').value = '0';
+      if (g('w-condition')) g('w-condition').value = 'NEW';
+      if (g('w-days-to-ship')) g('w-days-to-ship').value = '50';
+      if (g('w-pre-order-prefix')) g('w-pre-order-prefix').checked = true;
+      if (g('w-has-variants')) g('w-has-variants').checked = false;
+      const vs = document.getElementById('w-variant-section');
+      if (vs) vs.style.display = 'none';
+      const vc = document.getElementById('w-vrows-container');
+      if (vc) vc.innerHTML = '';
+      _variantCount = 0;
+      updateNamePreview();
+    }, 1500);
+  };
+
+  // ════════════════════════════════════════════════════════════════
+  // TOAST
+  // ════════════════════════════════════════════════════════════════
+  function showToast(msg, type = '') {
+    const t = document.getElementById('toast');
+    if (!t) return;
+    t.textContent = msg;
+    t.className = `show${type ? ' toast-' + type : ''}`;
+    clearTimeout(window._toastTimer);
+    window._toastTimer = setTimeout(() => { t.className = ''; }, 3000);
+  }
+
 </script>
 </body>
 </html>

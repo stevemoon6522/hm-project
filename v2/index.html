@@ -442,6 +442,136 @@
     .wfield .werr { font-size: 11px; color: var(--red); margin-top: 3px; display: none; }
     .wfield .werr.show { display: block; }
     .name-preview { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    /* ── READY STOCK wizard (Phase B, §5-2) ── */
+    .rsw-header { margin-bottom: 14px; }
+    .rsw-title { font-size: 18px; margin: 0 0 4px; }
+    .rsw-subtitle { font-size: 12px; color: var(--muted); }
+
+    /* step indicator bar */
+    .rsw-steps {
+      display: flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+      margin-bottom: 20px;
+    }
+    .rsw-step {
+      flex: 1; padding: 10px 14px; background: #f7f8fa; border-right: 1px solid var(--border);
+      font-size: 12px; color: var(--muted); text-align: center; cursor: default;
+    }
+    .rsw-step:last-child { border-right: none; }
+    .rsw-step.active { background: #eef2ff; color: var(--accent); font-weight: 600; }
+    .rsw-step.done { background: #f0fdf4; color: var(--green); }
+    .rsw-step-n { font-weight: 700; margin-right: 5px; }
+
+    /* step body panels */
+    .rsw-body { display: none; }
+    .rsw-body.active { display: block; }
+
+    /* step 1 split layout */
+    .rsw-split { display: grid; grid-template-columns: 30% 70%; gap: 14px; margin-bottom: 14px; }
+    @media (max-width: 760px) { .rsw-split { grid-template-columns: 1fr; } }
+
+    .rsw-left { display: flex; flex-direction: column; gap: 8px; }
+    .rsw-left input[type=search] { width: 100%; }
+    .rsw-product-list {
+      border: 1px solid var(--border); border-radius: 6px; background: #fff;
+      max-height: 460px; overflow-y: auto;
+    }
+    .rsw-product-item {
+      display: flex; align-items: flex-start; gap: 9px; padding: 9px 10px;
+      border-bottom: 1px solid #f0f2f5; cursor: pointer; user-select: none;
+    }
+    .rsw-product-item:last-child { border-bottom: none; }
+    .rsw-product-item:hover { background: #f7f8fa; }
+    .rsw-product-item input[type=checkbox] { width: auto; margin-top: 2px; flex-shrink: 0; }
+    .rsw-product-name { font-size: 13px; font-weight: 500; }
+    .rsw-product-meta { font-size: 11px; color: var(--muted); }
+
+    .rsw-right { display: flex; flex-direction: column; gap: 10px; }
+    .rsw-sel-summary {
+      border: 1px solid var(--border); border-radius: 6px; background: #f7f8fa;
+      padding: 14px; min-height: 80px;
+    }
+    .rsw-sel-empty { color: var(--muted); font-size: 13px; }
+    .rsw-sel-stat {
+      font-size: 14px; font-weight: 700; margin-bottom: 4px;
+    }
+    .rsw-sel-breakdown { font-size: 12px; color: var(--muted); }
+
+    /* step 2 weight inputs */
+    .rsw-weight-list { display: grid; gap: 8px; margin-bottom: 16px; }
+    .rsw-weight-item {
+      display: grid; grid-template-columns: 1fr auto; gap: 12px; align-items: center;
+      padding: 10px 12px; border: 1px solid var(--border); border-radius: 6px; background: #f7f8fa;
+    }
+    .rsw-weight-label { font-size: 13px; font-weight: 500; }
+    .rsw-weight-sub { font-size: 11px; color: var(--muted); }
+    .rsw-weight-input-wrap { display: flex; align-items: center; gap: 6px; }
+    .rsw-weight-input-wrap input { width: 90px; text-align: right; }
+    .rsw-weight-input-wrap .rsw-unit { font-size: 12px; color: var(--muted); }
+    .rsw-sku-input { width: 140px; font-size: 12px; }
+
+    /* step 3 checklist */
+    .rsw-checklist { display: grid; gap: 8px; margin-bottom: 16px; }
+    .rsw-check-row {
+      display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px;
+      border: 1px solid var(--border); border-radius: 6px; background: #f7f8fa; cursor: pointer;
+    }
+    .rsw-check-row input[type=checkbox] { width: auto; margin-top: 2px; flex-shrink: 0; }
+    .rsw-check-hint { font-size: 11px; color: var(--muted); display: block; margin-top: 2px; font-family: var(--mono); }
+    .rsw-price-row { opacity: .7; }
+    .rsw-price-banner {
+      margin-bottom: 12px; border-color: #f4c790; background: #fff8ed; color: #7a3e00;
+    }
+    .rsw-rollback-note { border-color: #f2aaa5; background: #fff4f3; color: var(--red); margin-bottom: 12px; }
+    .rsw-price-unlock {
+      font-size: 11px; padding: 2px 8px; margin-left: 8px;
+      border-color: var(--accent); color: var(--accent); background: none;
+    }
+    .rsw-price-row.unlocked { opacity: 1; }
+    .rsw-price-row.unlocked input[type=checkbox] { cursor: pointer; }
+
+    /* step 4 matrix */
+    .rsw-matrix-wrap { overflow-x: auto; margin-bottom: 12px; }
+    .rsw-matrix-wrap table { table-layout: auto; min-width: 700px; }
+    .rsw-matrix-footer {
+      font-size: 12px; color: var(--muted); padding: 6px 2px;
+    }
+    td.rsw-delta-pos { color: var(--red); }
+    td.rsw-delta-neg { color: var(--green); }
+    td.rsw-delta-zero { color: var(--muted); }
+
+    /* shared wizard btn row */
+    .rsw-btn-row { display: flex; gap: 10px; margin-top: 18px; justify-content: flex-end; align-items: center; }
+
+    /* READY STOCK specific modal width override */
+    #rsw-modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(15,23,42,.48);
+      align-items: flex-start; justify-content: center; padding: 28px 16px; z-index: 70; overflow: auto;
+    }
+    #rsw-modal-overlay.show { display: flex; }
+    .rsw-modal {
+      width: min(860px, 100%); background: #fff; border-radius: 8px;
+      border: 1px solid var(--border); box-shadow: 0 24px 70px rgba(15,23,42,.22); overflow: hidden;
+    }
+    .rsw-modal-header {
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .rsw-modal-header h2 { font-size: 16px; margin: 0; }
+    .rsw-modal-body { padding: 16px; max-height: 70vh; overflow-y: auto; display: grid; gap: 14px; }
+    .rsw-modal-footer {
+      padding: 12px 16px; border-top: 1px solid var(--border);
+      display: flex; gap: 10px; justify-content: flex-end; align-items: center;
+    }
+    .rsw-preflight {
+      border: 1px solid #9bd8b8; background: #f1fff7; color: var(--green);
+      padding: 10px 12px; border-radius: 6px; font-size: 12px;
+    }
+    .rsw-preflight strong { display: block; margin-bottom: 4px; }
+    .rsw-stubbed-banner {
+      border: 1px solid #f4c790; background: #fff8ed; color: #7a3e00;
+      padding: 10px 12px; border-radius: 6px; font-size: 12px;
+    }
   </style>
 </head>
 <body>
@@ -930,60 +1060,142 @@
     </div>
 
     <!-- ═══════════════════════════════════════════════
-         VIEW: READY STOCK 전환 마법사 (plan §5-2, Phase B)
+         VIEW: READY STOCK 전환 마법사 (plan §5-2 Phase B)
+         4-step wizard: select → weight → actions → preview
          ═══════════════════════════════════════════════ -->
     <div id="view-ready-stock" class="view">
-      <div class="ready-summary">
-        <div class="summary-tile"><div class="label">Selected rows</div><div class="value" id="ready-count">0</div></div>
-        <div class="summary-tile"><div class="label">Global item calls</div><div class="value" id="ready-item-call-count">0</div></div>
-        <div class="summary-tile"><div class="label">Model / SKU calls</div><div class="value" id="ready-model-call-count">0</div></div>
-        <div class="summary-tile"><div class="label">Days to ship</div><div class="value">1</div></div>
+
+      <!-- wizard header -->
+      <div class="rsw-header">
+        <div>
+          <h2 class="rsw-title">🔄 READY STOCK 전환 마법사</h2>
+          <div class="rsw-subtitle">PRE ORDER → READY STOCK &nbsp;·&nbsp; 입고된 상품을 운영 가격대로 전환합니다</div>
+        </div>
       </div>
-      <div class="toolbar">
-        <button id="ready-load-pre-orders" type="button">Load PRE ORDER list</button>
-        <button id="ready-preview" type="button" class="primary" disabled>Preview & confirm</button>
-        <button id="ready-dry-run" type="button" disabled>Dry-run only</button>
-        <span id="ready-status" class="status"></span>
+
+      <!-- step pills -->
+      <div class="rsw-steps">
+        <div class="rsw-step active" id="rsw-pill-1"><span class="rsw-step-n">1</span> 상품 선택</div>
+        <div class="rsw-step" id="rsw-pill-2"><span class="rsw-step-n">2</span> 무게 입력</div>
+        <div class="rsw-step" id="rsw-pill-3"><span class="rsw-step-n">3</span> 자동 액션</div>
+        <div class="rsw-step" id="rsw-pill-4"><span class="rsw-step-n">4</span> 미리보기</div>
       </div>
-      <div class="notice" style="margin-bottom:12px;">
-        This flow only transitions PRE ORDER to READY STOCK. It renames the prefix, sends DTS=1, updates edited SKU/weight fields, and writes row-level results. Repricing is intentionally out of scope.
+
+      <!-- ─── STEP 1: Product selection ─── -->
+      <div class="rsw-body active" id="rsw-step-1">
+        <div class="rsw-split">
+          <!-- left 30%: product list -->
+          <div class="rsw-left">
+            <input id="rsw-search" type="search" placeholder="상품 검색...">
+            <div id="rsw-product-list" class="rsw-product-list">
+              <div class="empty" style="padding:20px 10px;">PRE ORDER 상품 로딩 중...</div>
+            </div>
+          </div>
+          <!-- right 70%: selection summary -->
+          <div class="rsw-right">
+            <div id="rsw-selection-summary" class="rsw-sel-summary">
+              <div class="rsw-sel-empty">← 왼쪽에서 상품을 선택하세요</div>
+            </div>
+          </div>
+        </div>
+        <div class="rsw-btn-row">
+          <button id="rsw-next-1" class="primary" disabled>다음 → 무게 입력</button>
+        </div>
       </div>
-      <div class="panel table-scroll ready-editor">
-        <table>
-          <thead>
-            <tr>
-              <th style="width:150px;">Current SKU</th>
-              <th>Product</th>
-              <th style="width:180px;">Edited SKU</th>
-              <th style="width:120px;">Weight g</th>
-              <th style="width:220px;">Target IDs</th>
-              <th style="width:170px;">Validation</th>
-            </tr>
-          </thead>
-          <tbody id="ready-body">
-            <tr><td colspan="6" class="empty">Select products in PRE ORDER list.</td></tr>
-          </tbody>
-        </table>
+
+      <!-- ─── STEP 2: Per-option weight input ─── -->
+      <div class="rsw-body" id="rsw-step-2">
+        <div class="notice" style="margin-bottom:12px;">옵션별 실측 무게(g)를 입력하세요. 10g 단위 권장. <strong>모든 옵션의 무게가 입력되어야</strong> 다음 단계가 활성화됩니다.</div>
+        <!-- NOTE: update_global_model docs (body_params) show `weight` as top-level float on
+             the request body (depth=0), NOT per-model inside global_model[]. This means one
+             call sets the same weight for all models of that global_item_id. If per-variant
+             different weights are needed, multiple separate update_global_model calls would be
+             required — one per variant weight group. The wizard collects per-option weights
+             here and will fan-out separate calls when weights differ. -->
+        <div id="rsw-weight-inputs" class="rsw-weight-list"></div>
+        <div class="rsw-btn-row">
+          <button id="rsw-back-2" type="button">← 상품 선택</button>
+          <button id="rsw-next-2" class="primary" disabled>다음 → 자동 액션</button>
+        </div>
       </div>
-      <div id="ready-results" class="result-list" style="display:none;margin-top:14px;">
-        <table>
-          <thead>
-            <tr>
-              <th style="width:150px;">Row</th>
-              <th style="width:170px;">Action</th>
-              <th style="width:90px;">Status</th>
-              <th>Message</th>
-            </tr>
-          </thead>
-          <tbody id="ready-result-body"></tbody>
-        </table>
+
+      <!-- ─── STEP 3: Auto-action checklist ─── -->
+      <div class="rsw-body" id="rsw-step-3">
+        <!-- P0-2 price API broken banner -->
+        <div class="notice rsw-price-banner" id="rsw-price-banner">
+          ⚠ Shopee 가격 동기화 API가 system busy 응답 중 (티켓 처리 대기) — 가격 push는 비활성. 다른 액션은 정상 동작.
+        </div>
+        <div class="rsw-checklist">
+          <label class="rsw-check-row">
+            <input type="checkbox" id="rsw-act-name" checked>
+            <span>상품명 <code>[PRE ORDER]</code> → <code>[READY STOCK]</code> 치환 <span class="rsw-check-hint">(update_global_item.global_item_name)</span></span>
+          </label>
+          <label class="rsw-check-row">
+            <input type="checkbox" id="rsw-act-dts" checked>
+            <span>Days to Ship → 1 <span class="rsw-check-hint">(update_global_item.pre_order.is_pre_order=false, days_to_ship=1)</span></span>
+          </label>
+          <label class="rsw-check-row">
+            <input type="checkbox" id="rsw-act-weight" checked>
+            <span>무게 → Global SKU → Shop SKU 동기화 <span class="rsw-check-hint">(update_global_item.weight + update_global_model[].weight — KRSC sync flag가 shop SKU에 전파됨)</span></span>
+          </label>
+          <label class="rsw-check-row">
+            <input type="checkbox" id="rsw-act-sku" checked>
+            <span>global_model_sku 신규 운영 SKU 적용 <span class="rsw-check-hint">(update_global_model[].global_model_sku — Step 2에서 입력한 값 사용)</span></span>
+          </label>
+          <!-- Price toggle: DISABLED by default per operational constraint -->
+          <label class="rsw-check-row rsw-price-row">
+            <input type="checkbox" id="rsw-act-price" disabled>
+            <span class="rsw-price-label">region별 신규 판매가 push <span class="rsw-check-hint">(비활성 — 가격 API system busy)</span>
+              <button type="button" class="rsw-price-unlock" id="rsw-price-unlock-btn" onclick="rswUnlockPrice()">수동 활성화</button>
+            </span>
+          </label>
+        </div>
+        <!-- P0-3 rollback note — operator must see this -->
+        <div class="notice rsw-rollback-note">
+          ⚠ <strong>부분 실패 시 자동 reverse 없음</strong> — 실패 row만 retry 가능. before_payload 기반 수동 reverse는 변경 이력 화면(📜)에서 가능합니다.
+        </div>
+        <div class="rsw-btn-row">
+          <button id="rsw-back-3" type="button">← 무게 입력</button>
+          <button id="rsw-next-3" class="primary">다음 → 미리보기</button>
+        </div>
       </div>
-      <div class="placeholder-view">
-        <h3>🔄 READY STOCK 전환 마법사</h3>
-        <p style="font-size:12px;margin-top:8px;">plan §5-2 — Phase B<br>
-        TODO: 무게 입력 + update_global_item (name/DTS) + update_global_model (weight/SKU) + 가격 재계산</p>
+
+      <!-- ─── STEP 4: Preview matrix + action buttons ─── -->
+      <div class="rsw-body" id="rsw-step-4">
+        <div id="rsw-matrix-wrap" class="rsw-matrix-wrap">
+          <!-- populated by renderRswMatrix() -->
+        </div>
+        <div id="rsw-matrix-footer" class="rsw-matrix-footer"></div>
+
+        <!-- P0-3 rollback reminder above buttons -->
+        <div class="notice rsw-rollback-note" style="margin-top:12px;">
+          ⚠ <strong>부분 실패 시 자동 reverse 없음</strong> — 실패 row만 retry 가능. before_payload 기반 수동 reverse는 변경 이력 화면(📜)에서.
+        </div>
+
+        <div class="rsw-btn-row">
+          <button id="rsw-back-4" type="button">← 자동 액션</button>
+          <button id="rsw-dry-btn" type="button" class="btn-dry">🚀 Dry-run preview</button>
+          <button id="rsw-live-btn" type="button" class="btn-live" disabled title="먼저 dry-run을 실행하세요">🔥 실호출</button>
+        </div>
+        <div id="rsw-status" class="status" style="margin-top:8px;"></div>
+
+        <!-- execution result table -->
+        <div id="rsw-results" style="display:none;margin-top:14px;" class="result-list">
+          <table>
+            <thead>
+              <tr>
+                <th style="width:140px;">Product / Option</th>
+                <th style="width:160px;">Action</th>
+                <th style="width:80px;">Status</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody id="rsw-result-body"></tbody>
+          </table>
+        </div>
       </div>
-    </div>
+
+    </div><!-- /view-ready-stock -->
 
     <!-- ═══════════════════════════════════════════════
          VIEW: 가격 동기화 (plan §5-7, Phase C)
@@ -1034,6 +1246,27 @@
     <div class="wiz-modal-footer">
       <button onclick="closeWizModal()">취소</button>
       <button id="wiz-modal-confirm-btn" class="btn-live" onclick="handleWizModalConfirm()" style="display:none;">🔥 실제 등록 (모의)</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════
+     READY STOCK wizard confirmation modal (Phase B)
+     Separate from wiz-modal-overlay (register flow)
+     ═══════════════════════════════════════════════ -->
+<div id="rsw-modal-overlay">
+  <div class="rsw-modal" role="dialog" aria-modal="true">
+    <div class="rsw-modal-header">
+      <h2 id="rsw-modal-title">🚀 Dry-run 미리보기</h2>
+      <button type="button" onclick="rswCloseModal()">닫기</button>
+    </div>
+    <div class="rsw-modal-body" id="rsw-modal-body">
+      <!-- populated by rswBuildConfirmHtml() -->
+    </div>
+    <div class="rsw-modal-footer">
+      <span id="rsw-modal-stub-note" class="muted" style="font-size:11px;"></span>
+      <button type="button" onclick="rswCloseModal()">취소</button>
+      <button type="button" id="rsw-modal-confirm-btn" class="primary" onclick="rswModalConfirm()">🚀 Dry-run 실행</button>
     </div>
   </div>
 </div>
@@ -1243,16 +1476,45 @@
     poBody: document.getElementById('po-body'),
     poThead: document.getElementById('po-thead'),
     poRegionFilters: document.getElementById('po-region-filters'),
-    readyLoadPreOrders: document.getElementById('ready-load-pre-orders'),
-    readyPreview: document.getElementById('ready-preview'),
-    readyDryRun: document.getElementById('ready-dry-run'),
-    readyStatus: document.getElementById('ready-status'),
-    readyCount: document.getElementById('ready-count'),
-    readyItemCallCount: document.getElementById('ready-item-call-count'),
-    readyModelCallCount: document.getElementById('ready-model-call-count'),
-    readyBody: document.getElementById('ready-body'),
-    readyResults: document.getElementById('ready-results'),
-    readyResultBody: document.getElementById('ready-result-body'),
+    // legacy ready-stock elements (kept for backward compat with any residual refs)
+    readyLoadPreOrders: null,
+    readyPreview: null,
+    readyDryRun: null,
+    readyStatus: null,
+    readyCount: null,
+    readyItemCallCount: null,
+    readyModelCallCount: null,
+    readyBody: null,
+    readyResults: null,
+    readyResultBody: null,
+    // RSW wizard (Phase B)
+    rswSearch: document.getElementById('rsw-search'),
+    rswProductList: document.getElementById('rsw-product-list'),
+    rswSelSummary: document.getElementById('rsw-selection-summary'),
+    rswNext1: document.getElementById('rsw-next-1'),
+    rswWeightInputs: document.getElementById('rsw-weight-inputs'),
+    rswBack2: document.getElementById('rsw-back-2'),
+    rswNext2: document.getElementById('rsw-next-2'),
+    rswBack3: document.getElementById('rsw-back-3'),
+    rswNext3: document.getElementById('rsw-next-3'),
+    rswBack4: document.getElementById('rsw-back-4'),
+    rswDryBtn: document.getElementById('rsw-dry-btn'),
+    rswLiveBtn: document.getElementById('rsw-live-btn'),
+    rswStatus: document.getElementById('rsw-status'),
+    rswResults: document.getElementById('rsw-results'),
+    rswResultBody: document.getElementById('rsw-result-body'),
+    rswMatrixWrap: document.getElementById('rsw-matrix-wrap'),
+    rswMatrixFooter: document.getElementById('rsw-matrix-footer'),
+    rswModalOverlay: document.getElementById('rsw-modal-overlay'),
+    rswModalTitle: document.getElementById('rsw-modal-title'),
+    rswModalBody: document.getElementById('rsw-modal-body'),
+    rswModalConfirmBtn: document.getElementById('rsw-modal-confirm-btn'),
+    rswModalStubNote: document.getElementById('rsw-modal-stub-note'),
+    rswActName: document.getElementById('rsw-act-name'),
+    rswActDts: document.getElementById('rsw-act-dts'),
+    rswActWeight: document.getElementById('rsw-act-weight'),
+    rswActSku: document.getElementById('rsw-act-sku'),
+    rswActPrice: document.getElementById('rsw-act-price'),
   };
 
   const state = {
@@ -1264,7 +1526,21 @@
     readyProductIds: new Set(),
     readyRunId: null,
     wizConfirmAction: null,
+    // RSW Phase B wizard state
+    rswStep: 1,               // current step 1-4
+    rswSelectedIds: new Set(),// product IDs selected in step 1
+    rswWeights: {},           // { productId: weightG (number) }
+    rswSkus: {},              // { productId: newSku (string) }
+    rswDryRunDone: false,     // unlocks live button after dry-run
+    rswModalAction: null,     // function to call on modal confirm
+    rswRunId: null,           // run_id for this transition session
   };
+
+  /** Preselect state: set by openReadyStockWizard() before renderReadyStockView() runs */
+  let pendingPreselect = null;  // productId string | null
+
+  /** Parallel fan-out limit per P1-5 (Codex §11). Do NOT exceed without rate-limit validation. */
+  const REGION_PARALLEL = 2;
 
   function showAuth(message = '') {
     els.authPanel.hidden = false;
@@ -2310,12 +2586,8 @@
   els.cancel.addEventListener('click', closeModal);
   els.modal.addEventListener('click', (e) => { if (e.target === els.modal) closeModal(); });
   els.submit.addEventListener('click', submitRegistration);
-  els.readyLoadPreOrders.addEventListener('click', () => {
-    window.showView('view-pre-order');
-    renderPreOrderList();
-  });
-  els.readyPreview.addEventListener('click', () => showReadyPreviewModal(false));
-  els.readyDryRun.addEventListener('click', () => showReadyPreviewModal(true));
+  // Note: readyLoadPreOrders / readyPreview / readyDryRun are legacy refs (now null).
+  // RSW Phase B listeners are wired in initRswListeners() instead.
   els.variantEnabled.addEventListener('change', () => {
     els.variantEditor.style.display = els.variantEnabled.checked ? 'block' : 'none';
     if (els.variantEnabled.checked && !state.variantRows.length && field('variant-values').value.trim()) {
@@ -2327,6 +2599,7 @@
   pingBridge();
   initPoRegionFilters();
   initPoListeners();
+  initRswListeners();
   db.auth.getSession().then(({ data }) => {
     if (data?.session) {
       return loadData();
@@ -3068,17 +3341,14 @@
   function renderPreOrderList() { renderPreOrderView(false); }
 
   /**
-   * Called by the action button in each PRE ORDER row.
-   * TODO Phase B: replace alert+console.log with showView + READY STOCK wizard init.
+   * Called by the "READY STOCK 전환" action button in each PRE ORDER row.
+   * Phase B: navigate to the wizard view and preselect the given product.
    */
-  window.openReadyStockWizard = function(productId) {
-    const product = (_poCache && _poCache.products || []).find(function(p) {
-      return String(p.id) === String(productId);
-    });
-    // TODO Phase B: showView('view-ready-stock') and wire wizard
-    alert('TODO: open READY STOCK wizard for this product');
-    console.log('[PRE ORDER -> READY STOCK] product row:', JSON.stringify(product, null, 2));
-  };
+  function openReadyStockWizard(productId) {
+    pendingPreselect = String(productId);
+    window.showView('view-ready-stock');
+  }
+  window.openReadyStockWizard = openReadyStockWizard;
 
   function initPoListeners() {
     if (els.poSearch) els.poSearch.addEventListener('input', applyPoFilter);
@@ -3087,14 +3357,769 @@
   }
 
   // Patch showView so clicking the PRE ORDER nav tab triggers a fresh fetch
+  // and clicking the READY STOCK tab initialises the wizard.
   (function patchShowView() {
     const _origSV = window.showView;
     window.showView = function(viewId) {
       _origSV(viewId);
       if (viewId === 'view-pre-order') renderPreOrderView(false);
+      if (viewId === 'view-ready-stock') renderReadyStockView();
     };
   }());
 
+  /* ═══════════════════════════════════════════════════════════════
+     READY STOCK 전환 마법사 — Phase B (plan §5-2 / §5-3 / §5-4)
+     ═══════════════════════════════════════════════════════════════ */
+
+  /**
+   * Entry point — called when the READY STOCK tab becomes active.
+   * Reads pendingPreselect, resets wizard to step 1, loads PRE ORDER data.
+   */
+  function renderReadyStockView() {
+    // Reset to step 1
+    state.rswStep = 1;
+    state.rswDryRunDone = false;
+    state.rswRunId = null;
+    rswGoStep(1);
+
+    // Load PRE ORDER products into the left-panel list
+    rswLoadProductList().then(function() {
+      // If openReadyStockWizard pre-selected a product, check it now
+      if (pendingPreselect) {
+        rswToggleProduct(pendingPreselect, true);
+        pendingPreselect = null;
+      }
+      rswUpdateSelectionSummary();
+    });
+  }
+
+  /** Navigate wizard to a specific step (1-4), update pills. */
+  function rswGoStep(n) {
+    state.rswStep = n;
+    for (let i = 1; i <= 4; i++) {
+      const pill = document.getElementById('rsw-pill-' + i);
+      const body = document.getElementById('rsw-step-' + i);
+      if (pill) {
+        pill.classList.toggle('active', i === n);
+        pill.classList.toggle('done', i < n);
+      }
+      if (body) {
+        body.classList.toggle('active', i === n);
+      }
+    }
+    if (n === 2) rswRenderWeightStep();
+    if (n === 3) rswCheckWeightsComplete(); // re-validate step 2 if coming back
+    if (n === 4) rswRenderMatrix();
+  }
+
+  /* ── Step 1: product list ── */
+
+  /** Populate rsw-product-list with all pre_order products from state.products */
+  async function rswLoadProductList() {
+    // If state.products is empty, trigger a load first
+    if (!state.products.length) {
+      try {
+        await loadData();
+      } catch (e) {
+        // loadData may not be async-aware; continue with whatever is in state
+      }
+    }
+    rswRenderProductList('');
+  }
+
+  /** Render the left-panel product list, optionally filtered by query q */
+  function rswRenderProductList(q) {
+    if (!els.rswProductList) return;
+    const lq = (q || '').toLowerCase().trim();
+    const preOrderProducts = state.products.filter(function(p) {
+      return isPreOrderProduct(p);
+    }).filter(function(p) {
+      if (!lq) return true;
+      return (String(p.product_name || '') + ' ' + String(p.sku || '') + ' ' + String(p.option_name || ''))
+        .toLowerCase().indexOf(lq) !== -1;
+    });
+
+    if (!preOrderProducts.length) {
+      els.rswProductList.innerHTML = '<div class="empty" style="padding:20px 10px;">PRE ORDER 상품 없음</div>';
+      return;
+    }
+
+    // Group by shopee_item_id (global_item_id) so operator can see "parent + options"
+    const grouped = new Map();
+    preOrderProducts.forEach(function(p) {
+      const gid = String(p.shopee_item_id || p.id);
+      if (!grouped.has(gid)) grouped.set(gid, []);
+      grouped.get(gid).push(p);
+    });
+
+    let html = '';
+    grouped.forEach(function(products, gid) {
+      const listings = productListings(products[0].id);
+      const regionCount = new Set(listings.map(function(l) { return l.region; })).size;
+      products.forEach(function(p) {
+        const checked = state.rswSelectedIds.has(String(p.id));
+        const labelId = 'rsw-p-' + text(p.id);
+        html += '<label class="rsw-product-item" for="' + labelId + '">'
+          + '<input type="checkbox" id="' + labelId + '"'
+          + ' data-rsw-pid="' + text(p.id) + '"'
+          + (checked ? ' checked' : '')
+          + ' onchange="rswToggleProduct(\'' + text(p.id) + '\', this.checked)">'
+          + '<div>'
+          + '<div class="rsw-product-name">' + text(p.product_name || p.sku || '') + '</div>'
+          + '<div class="rsw-product-meta">'
+          + (p.option_name ? text(p.option_name) + ' &nbsp;·&nbsp; ' : '')
+          + 'SKU: ' + text(p.sku || '-')
+          + ' &nbsp;·&nbsp; ' + regionCount + ' region'
+          + '</div>'
+          + '</div>'
+          + '</label>';
+      });
+    });
+    els.rswProductList.innerHTML = html;
+  }
+
+  /** Toggle a product selection. */
+  window.rswToggleProduct = function(productId, checked) {
+    const pid = String(productId);
+    if (checked) {
+      state.rswSelectedIds.add(pid);
+    } else {
+      state.rswSelectedIds.delete(pid);
+      // Also clear any saved weight/sku for this product
+      delete state.rswWeights[pid];
+      delete state.rswSkus[pid];
+    }
+    // Sync checkbox if called programmatically
+    const cb = document.querySelector('[data-rsw-pid="' + pid + '"]');
+    if (cb && cb.checked !== checked) cb.checked = checked;
+    rswUpdateSelectionSummary();
+  };
+
+  /** Update the right-panel selection summary and enable/disable Next button. */
+  function rswUpdateSelectionSummary() {
+    if (!els.rswSelSummary) return;
+    const selected = rswSelectedProducts();
+    const nProds = selected.length;
+    // Count distinct global_item_ids for "API calls" estimate
+    const globalIds = new Set(selected.map(function(p) {
+      return String(primaryListing(p).global_item_id || p.shopee_item_id || p.id);
+    }));
+    const nItems = globalIds.size;
+    const nModels = selected.filter(function(p) {
+      return Number(primaryListing(p).global_model_id) > 0;
+    }).length;
+    const OPERATING_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+    const nRows = nItems + nModels; // total API calls per region × regions
+
+    if (!nProds) {
+      els.rswSelSummary.innerHTML = '<div class="rsw-sel-empty">← 왼쪽에서 상품을 선택하세요</div>';
+      if (els.rswNext1) els.rswNext1.disabled = true;
+      return;
+    }
+
+    els.rswSelSummary.innerHTML = '<div class="rsw-sel-stat">선택: '
+      + nProds + '개 product &nbsp;·&nbsp; '
+      + nModels + '개 option &nbsp;·&nbsp; '
+      + OPERATING_REGIONS.length + '개 region'
+      + '</div>'
+      + '<div class="rsw-sel-breakdown">'
+      + '= 약 ' + (nItems * OPERATING_REGIONS.length) + ' update_global_item 호출'
+      + (nModels ? ' + ' + (nModels * OPERATING_REGIONS.length) + ' update_global_model 호출' : '')
+      + '</div>'
+      + '<div class="rsw-sel-breakdown" style="margin-top:8px;">'
+      + selected.map(function(p) {
+          return '<span class="pill">' + text(p.sku || p.product_name || String(p.id)) + '</span>';
+        }).join('')
+      + '</div>';
+
+    if (els.rswNext1) els.rswNext1.disabled = nProds === 0;
+  }
+
+  /* ── Step 2: weight inputs ── */
+
+  /** Render weight + SKU input rows for every selected product */
+  function rswRenderWeightStep() {
+    if (!els.rswWeightInputs) return;
+    const selected = rswSelectedProducts();
+    if (!selected.length) {
+      els.rswWeightInputs.innerHTML = '<div class="empty">선택된 상품이 없습니다.</div>';
+      return;
+    }
+
+    let html = '';
+    selected.forEach(function(p) {
+      const pid = String(p.id);
+      const savedW = state.rswWeights[pid];
+      const dbWeight = Number(p.weight_g || 0);
+      const prefillW = savedW != null ? savedW : (dbWeight > 0 ? Math.round(dbWeight) : '');
+      const prefillWPlaceholder = dbWeight > 0 ? (Math.round(dbWeight) + 'g (DB값)') : '65g 예측';
+      const savedSku = state.rswSkus[pid];
+      const prefillSku = savedSku != null ? savedSku : (p.sku || '');
+      const listing = primaryListing(p);
+      const hasModel = Number(listing.global_model_id) > 0;
+
+      html += '<div class="rsw-weight-item">'
+        + '<div>'
+        + '<div class="rsw-weight-label">' + text(p.product_name || '') + (p.option_name ? ' / ' + text(p.option_name) : '') + '</div>'
+        + '<div class="rsw-weight-sub">현 SKU: ' + text(p.sku || '-')
+        + ' &nbsp;|&nbsp; Global item: ' + text(listing.global_item_id || '-')
+        + (hasModel ? ' &nbsp;|&nbsp; Model: ' + text(listing.global_model_id || '-') : ' (no model)')
+        + '</div>'
+        + '</div>'
+        + '<div style="display:flex;gap:10px;align-items:center;">'
+        // SKU input
+        + '<div>'
+        + '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px;">신규 운영 SKU</label>'
+        + '<input type="text" class="rsw-sku-input" maxlength="100"'
+        + ' data-rsw-sku="' + text(pid) + '"'
+        + ' value="' + text(prefillSku) + '"'
+        + ' placeholder="운영 SKU"'
+        + ' oninput="rswOnSkuInput(\'' + text(pid) + '\', this.value)">'
+        + '</div>'
+        // Weight input
+        + '<div class="rsw-weight-input-wrap">'
+        + '<div>'
+        + '<label style="font-size:11px;color:var(--muted);display:block;margin-bottom:3px;">무게 (g)</label>'
+        + '<input type="number" min="1" step="10"'
+        + ' data-rsw-weight="' + text(pid) + '"'
+        + ' value="' + text(prefillW) + '"'
+        + ' placeholder="' + text(prefillWPlaceholder) + '"'
+        + ' oninput="rswOnWeightInput(\'' + text(pid) + '\', this.value)">'
+        + '</div>'
+        + '<span class="rsw-unit">g</span>'
+        + '</div>'
+        + '</div>'
+        + '</div>';
+    });
+
+    els.rswWeightInputs.innerHTML = html;
+    rswCheckWeightsComplete();
+  }
+
+  window.rswOnWeightInput = function(pid, val) {
+    const n = parseFloat(val);
+    if (Number.isFinite(n) && n > 0) {
+      state.rswWeights[String(pid)] = n;
+    } else {
+      delete state.rswWeights[String(pid)];
+    }
+    rswCheckWeightsComplete();
+  };
+
+  window.rswOnSkuInput = function(pid, val) {
+    state.rswSkus[String(pid)] = val.trim();
+    rswCheckWeightsComplete();
+  };
+
+  /** Enable Next button only when every selected product has a valid weight. */
+  function rswCheckWeightsComplete() {
+    const selected = rswSelectedProducts();
+    const allDone = selected.every(function(p) {
+      const pid = String(p.id);
+      const w = state.rswWeights[pid];
+      return Number.isFinite(w) && w > 0;
+    });
+    if (els.rswNext2) els.rswNext2.disabled = !allDone;
+  }
+
+  /* ── Step 3: action flags (no JS logic needed, checkboxes only) ── */
+
+  /** Allow operator to manually unlock the price toggle (it stays unchecked by default). */
+  window.rswUnlockPrice = function() {
+    const row = document.querySelector('.rsw-price-row');
+    const inp = els.rswActPrice;
+    const btn = document.getElementById('rsw-price-unlock-btn');
+    if (row) row.classList.add('unlocked');
+    if (inp) inp.disabled = false;
+    if (btn) btn.style.display = 'none';
+  };
+
+  /* ── Step 4: preview matrix ── */
+
+  /** Render the preview matrix table (step 4). */
+  function rswRenderMatrix() {
+    if (!els.rswMatrixWrap || !els.rswMatrixFooter) return;
+    const selected = rswSelectedProducts();
+    const actions = rswReadActions();
+
+    if (!selected.length) {
+      els.rswMatrixWrap.innerHTML = '<div class="empty">선택된 상품이 없습니다.</div>';
+      els.rswMatrixFooter.textContent = '';
+      return;
+    }
+
+    const OPERATING_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+    let rows = '';
+    let totalItemCalls = 0;
+    let totalModelCalls = 0;
+
+    selected.forEach(function(p) {
+      const pid = String(p.id);
+      const listing = primaryListing(p);
+      const newName = readyStockName(p.product_name || '');
+      const weightG = state.rswWeights[pid] || 0;
+      const weightKg = (weightG / 1000).toFixed(3);
+      const newSku = state.rswSkus[pid] || p.sku || '';
+      const hasModel = Number(listing.global_model_id) > 0;
+
+      // One update_global_item call per product (fan-out to all regions — but it's a global API call)
+      // One update_global_model call per product if model exists
+      const itemCalls = actions.name || actions.dts || actions.weight ? 1 : 0;
+      const modelCalls = (actions.weight || actions.sku) && hasModel ? 1 : 0;
+      totalItemCalls += itemCalls;
+      totalModelCalls += modelCalls;
+
+      rows += '<tr>'
+        + '<td>' + text(p.product_name || '') + (p.option_name ? '<br><span class="muted">' + text(p.option_name) + '</span>' : '') + '</td>'
+        + '<td class="mono">' + text(p.sku || '-') + '</td>'
+        + '<td class="mono">' + text(newSku) + '</td>'
+        + '<td class="mono">' + (weightG > 0 ? weightG + 'g' : '<span class="muted">미입력</span>') + '</td>'
+        + '<td><span class="muted">' + (actions.name ? text(newName) : '변경 안함') + '</span></td>'
+        + '<td class="mono">' + (actions.dts ? '1' : '현행') + '</td>'
+        + '<td class="mono">' + (itemCalls + modelCalls) + '</td>'
+        + '</tr>';
+    });
+
+    const totalCalls = totalItemCalls + totalModelCalls;
+
+    els.rswMatrixWrap.innerHTML = '<div class="panel"><table>'
+      + '<thead><tr>'
+      + '<th>상품 / 옵션</th>'
+      + '<th style="width:120px;">현 SKU</th>'
+      + '<th style="width:140px;">신규 SKU</th>'
+      + '<th style="width:90px;">무게</th>'
+      + '<th>상품명 변화</th>'
+      + '<th style="width:60px;">DTS</th>'
+      + '<th style="width:80px;">API calls</th>'
+      + '</tr></thead>'
+      + '<tbody>' + rows + '</tbody>'
+      + '</table></div>';
+
+    els.rswMatrixFooter.innerHTML = '<strong>총 ' + selected.length + '개 product</strong>'
+      + ' → update_global_item ' + totalItemCalls + '건'
+      + (totalModelCalls ? ' + update_global_model ' + totalModelCalls + '건' : '')
+      + ' = <strong>' + totalCalls + '건 API calls</strong>'
+      + ' &nbsp;·&nbsp; dry-run 권장';
+  }
+
+  /* ── Payload builders ── */
+
+  /**
+   * Read the current action checkbox states from Step 3.
+   * Returns { name, dts, weight, sku, price }.
+   */
+  function rswReadActions() {
+    return {
+      name:   els.rswActName  ? els.rswActName.checked  : true,
+      dts:    els.rswActDts   ? els.rswActDts.checked   : true,
+      weight: els.rswActWeight ? els.rswActWeight.checked : true,
+      sku:    els.rswActSku   ? els.rswActSku.checked   : true,
+      price:  els.rswActPrice ? els.rswActPrice.checked  : false,
+    };
+  }
+
+  /** Selected products from state.rswSelectedIds */
+  function rswSelectedProducts() {
+    return state.products.filter(function(p) {
+      return state.rswSelectedIds.has(String(p.id));
+    });
+  }
+
+  /**
+   * Build the full set of API call descriptors for the transition.
+   *
+   * update_global_item body (docs verified):
+   *   required: global_item_id, pre_order.days_to_ship, image.image_id_list
+   *   optional: global_item_name, weight (KG), global_item_sku, pre_order.is_pre_order (not in docs body_params
+   *             but used conceptually via days_to_ship=1 + pre_order object)
+   *
+   * IMPORTANT schema note: update_global_item requires image.image_id_list (required per docs_ai
+   * required_params). We do NOT have the image_id_list in our DB. This is a P0-4 preflight
+   * hard-block concern — we cannot send the call without it. For the stub/dry-run phase we
+   * include a TODO marker for the operator. Real call wiring must fetch image_id_list first.
+   * TODO LIVE CALL (file:v2/index.html): fetch image.image_id_list via get_global_item_info
+   * before building update_global_item payload — required field per docs body_params.
+   *
+   * update_global_model body (docs verified, depth-0 weight means ALL models share same weight):
+   *   required: global_item_id, global_model[].global_model_sku, global_model[].global_model_id,
+   *             package_height, package_length, package_width, days_to_ship (top-level flat)
+   *   optional: weight (KG, top-level — applies to ALL models in this call)
+   *
+   * DOC vs PLAN discrepancy: plan says "Per-variant weight IS supported on update_global_model".
+   * docs_ai body_params show `weight` at depth=0 (top-level), NOT inside global_model[] entries.
+   * Interpretation: one call → one weight for all models listed. For different weights per
+   * variant, issue separate calls (one call per unique weight value). The wizard fans out
+   * one call per unique weightG value group, satisfying per-variant weight via multiple calls.
+   * TODO: confirm with probe whether setting weight top-level propagates to all listed models
+   * or only to the global item level. (See plan §9-1, §3-3)
+   */
+  function rswBuildPayloads(isDryRun) {
+    const runId = state.rswRunId || ('rsw-' + Date.now() + '-' + Math.random().toString(16).slice(2));
+    state.rswRunId = runId;
+    const actions = rswReadActions();
+    const selected = rswSelectedProducts();
+    const payloadCalls = [];   // { action, region, url, body, label }
+
+    // Deduplicate by global_item_id — one update_global_item call per global product
+    // (it's a global API — not per-region). Region parameter is used for auth routing only.
+    const seenGlobalItemIds = new Set();
+
+    selected.forEach(function(p) {
+      const pid = String(p.id);
+      const listing = primaryListing(p);
+      const globalItemId = Number(listing.global_item_id || p.shopee_item_id || 0);
+      const globalModelId = Number(listing.global_model_id || 0);
+      const weightG = state.rswWeights[pid] || 0;
+      const weightKg = weightG > 0 ? Math.round(weightG) / 1000 : null;
+      const newName = actions.name ? readyStockName(p.product_name || '') : undefined;
+      const newSku = state.rswSkus[pid] || p.sku || '';
+
+      if (!globalItemId) return; // missing mapping — skip (will show as error)
+
+      // ─ update_global_item (one per unique global_item_id) ─
+      if (!seenGlobalItemIds.has(globalItemId)) {
+        seenGlobalItemIds.add(globalItemId);
+
+        const itemBody = {
+          global_item_id: globalItemId,
+          // pre_order is required object with days_to_ship (required per docs body_params)
+          pre_order: { days_to_ship: actions.dts ? 1 : 50 },
+          // image.image_id_list is REQUIRED by docs but we don't store it in DB.
+          // TODO LIVE CALL: fetch image_id_list from get_global_item_info before real call.
+          // For dry-run stub, omitting it — real call WILL fail without it (P0-4 preflight).
+          'image.image_id_list__TODO': 'REQUIRED — fetch from get_global_item_info before real call',
+        };
+        if (actions.name && newName) itemBody.global_item_name = newName;
+        if (actions.weight && weightKg != null) itemBody.weight = weightKg;
+        if (!globalModelId && actions.sku) itemBody.global_item_sku = newSku; // mom-only sku
+
+        // Hash: deterministic key for idempotency
+        const hashInput = JSON.stringify({
+          action: 'update_global_item',
+          global_item_id: globalItemId,
+          body: itemBody,
+        });
+        const payloadHash = (isDryRun ? 'dry:' : '') + simpleHash(hashInput);
+
+        const bridgeUrl = SHOPEE_BRIDGE + '/update_global_item?region=SG';
+        const bridgeBody = {
+          ...itemBody,
+          actor: 'v2-wizard',
+          run_id: runId,
+          dry_run: isDryRun,
+          payload_hash: payloadHash,
+          rollback_policy: 'no_auto_rollback_resume_only',
+        };
+
+        // TODO LIVE CALL: remove stub, call executeLoggedMutation instead
+        console.log('[RSW] update_global_item payload (stub, not sent):', JSON.stringify(bridgeBody, null, 2));
+
+        payloadCalls.push({
+          action: 'update_global_item',
+          label: 'Global item ' + globalItemId + (actions.name ? ' → ' + newName : ''),
+          url: bridgeUrl,
+          body: bridgeBody,
+          payloadHash,
+          productId: pid,
+          globalItemId,
+        });
+      }
+
+      // ─ update_global_model (per product, if model mapping exists) ─
+      if (globalModelId && (actions.weight || actions.sku)) {
+        // Docs: weight is top-level flat (depth=0), applies to all global_model[] in one call.
+        // days_to_ship is also top-level required. package_* are top-level required.
+        // TODO LIVE CALL: fetch package_height/length/width from get_global_item_info
+        // (required fields per docs body_params) before issuing real call.
+        const modelBody = {
+          global_item_id: globalItemId,
+          global_model: [{
+            global_model_id: globalModelId,
+            global_model_sku: actions.sku ? newSku : (p.sku || ''),
+          }],
+          // Top-level required fields per docs body_params (NOT inside global_model[]):
+          days_to_ship: actions.dts ? 1 : 50,
+          // package_height/length/width required — stored nowhere in DB yet.
+          // TODO LIVE CALL: fetch from get_global_item_info. P0-4: hard-block without these.
+          'package_height__TODO': 'REQUIRED — fetch from get_global_item_info',
+          'package_length__TODO': 'REQUIRED — fetch from get_global_item_info',
+          'package_width__TODO':  'REQUIRED — fetch from get_global_item_info',
+        };
+        if (actions.weight && weightKg != null) {
+          // top-level weight (NOT in global_model[] — per docs body_params depth=0)
+          modelBody.weight = weightKg;
+        }
+
+        const hashInput = JSON.stringify({
+          action: 'update_global_model',
+          global_item_id: globalItemId,
+          global_model_id: globalModelId,
+          body: modelBody,
+        });
+        const payloadHash = (isDryRun ? 'dry:' : '') + simpleHash(hashInput);
+
+        const bridgeUrl = SHOPEE_BRIDGE + '/update_global_model?region=SG';
+        const bridgeBody = {
+          ...modelBody,
+          actor: 'v2-wizard',
+          run_id: runId,
+          dry_run: isDryRun,
+          payload_hash: payloadHash,
+          rollback_policy: 'no_auto_rollback_resume_only',
+        };
+
+        // TODO LIVE CALL: remove stub, call executeLoggedMutation instead
+        console.log('[RSW] update_global_model payload (stub, not sent):', JSON.stringify(bridgeBody, null, 2));
+
+        payloadCalls.push({
+          action: 'update_global_model',
+          label: (p.sku || pid) + ' weight=' + (weightG || '?') + 'g sku=' + newSku,
+          url: bridgeUrl,
+          body: bridgeBody,
+          payloadHash,
+          productId: pid,
+          globalItemId,
+          globalModelId,
+        });
+      }
+    });
+
+    return payloadCalls;
+  }
+
+  /**
+   * Simple djb2-style hash for stable payload_hash values (hex string).
+   * Not cryptographic — good enough for dedup/idempotency key.
+   */
+  function simpleHash(str) {
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) {
+      h = ((h << 5) + h) ^ str.charCodeAt(i);
+      h = h >>> 0; // keep unsigned 32-bit
+    }
+    return h.toString(16).padStart(8, '0');
+  }
+
+  /* ── Confirmation modal ── */
+
+  /**
+   * Build the HTML for the dry-run / live confirmation modal.
+   * Shows: stubbed banner, P0-2 token preflight line, P0-3 rollback note, exact payloads + URLs.
+   */
+  function rswBuildConfirmHtml(calls, isDryRun) {
+    const totalCalls = calls.length;
+    const modeLabel = isDryRun ? 'Dry-run' : '실호출 (모의 stubbed)';
+
+    // P0-2 token freshness check section (mock content for now)
+    const preflightHtml = '<div class="rsw-preflight">'
+      + '<strong>Pre-flight: token expiry check (mock)</strong>'
+      + 'SG / TW / TH / MY / PH / BR tokens — expires in 23 min — '
+      + 'within refresh window, would auto-refresh before fan-out. '
+      + '<span class="muted">(TODO LIVE CALL: real token freshness check before fan-out)</span>'
+      + '</div>';
+
+    // P0-3 rollback note
+    const rollbackHtml = '<div class="notice rsw-rollback-note">'
+      + '⚠ <strong>부분 실패 시 자동 reverse 없음</strong> — 실패 row만 retry 가능. '
+      + 'before_payload 기반 수동 reverse는 변경 이력(📜) 화면에서.'
+      + '</div>';
+
+    // Stubbed banner
+    const stubbedHtml = '<div class="rsw-stubbed-banner">'
+      + '⚙ <strong>현재 모의(stub) 모드</strong> — 실제 shopee-bridge 호출 없음. '
+      + '페이로드와 URL을 확인 후 확정하면 console.log에만 기록됩니다. '
+      + '브리지 실연결은 후속 PR에서 <code>executeLoggedMutation</code> 호출로 교체.'
+      + '</div>';
+
+    // Per-call cards
+    let callsHtml = '';
+    calls.forEach(function(call, idx) {
+      const bodyToShow = Object.assign({}, call.body);
+      callsHtml += '<div class="call-block">'
+        + '<h4>' + (idx + 1) + '. ' + text(call.action) + '</h4>'
+        + '<div class="call-note">URL: <code>' + text(call.url) + '</code></div>'
+        + '<div class="call-note">payload_hash: <code>' + text(call.payloadHash) + '</code>'
+        + (isDryRun ? ' <span class="muted">(dry: prefix — 실호출 hash와 충돌 없음, §3-2 P0-1)</span>' : '')
+        + '</div>'
+        + '<div class="call-note">' + text(call.label) + '</div>'
+        + '<pre class="payload-pre">' + text(JSON.stringify(bodyToShow, null, 2)) + '</pre>'
+        + '</div>';
+    });
+
+    const apiCallsFooter = '<div class="muted" style="font-size:11px;margin-top:6px;">'
+      + '총 ' + totalCalls + '건 · parallel=' + REGION_PARALLEL + ' (P1-5 보수 설정) · '
+      + modeLabel + '</div>';
+
+    return preflightHtml + stubbedHtml + rollbackHtml + callsHtml + apiCallsFooter;
+  }
+
+  /** Show the RSW confirmation modal. isDryRun = true for dry-run. */
+  function rswShowModal(isDryRun) {
+    const calls = rswBuildPayloads(isDryRun);
+    if (!calls.length) {
+      rswSetStatus('선택된 상품 또는 활성화된 액션이 없습니다.', 'err');
+      return;
+    }
+
+    if (els.rswModalTitle) {
+      els.rswModalTitle.textContent = isDryRun ? '🚀 Dry-run 미리보기' : '🔥 실호출 (모의) 확인';
+    }
+    if (els.rswModalBody) {
+      els.rswModalBody.innerHTML = rswBuildConfirmHtml(calls, isDryRun);
+    }
+    if (els.rswModalConfirmBtn) {
+      els.rswModalConfirmBtn.textContent = isDryRun ? '🚀 Dry-run 실행' : '🔥 실호출 (모의)';
+      els.rswModalConfirmBtn.className = isDryRun ? 'primary btn-dry' : 'btn-live';
+    }
+    if (els.rswModalStubNote) {
+      els.rswModalStubNote.textContent = isDryRun
+        ? 'dry-run: Shopee 호출 없음, 페이로드만 콘솔 기록'
+        : '모의: 실제 bridge 호출 없음 — 후속 PR에서 연결 예정';
+    }
+
+    // Store the pending action
+    state.rswModalAction = function() {
+      rswCloseModal();
+      rswExecute(isDryRun, calls);
+    };
+
+    if (els.rswModalOverlay) els.rswModalOverlay.classList.add('show');
+  }
+
+  window.rswCloseModal = function() {
+    if (els.rswModalOverlay) els.rswModalOverlay.classList.remove('show');
+    state.rswModalAction = null;
+  };
+
+  window.rswModalConfirm = function() {
+    if (state.rswModalAction) state.rswModalAction();
+  };
+
+  /* ── Execution ── */
+
+  /**
+   * Execute the transition (stub: console.log payloads, show result rows).
+   * TODO LIVE CALL: replace stub section with actual executeLoggedMutation / callBridgeMutation.
+   */
+  async function rswExecute(isDryRun, calls) {
+    if (!calls || !calls.length) return;
+
+    if (els.rswResults) els.rswResults.style.display = 'block';
+    if (els.rswResultBody) els.rswResultBody.innerHTML = '';
+    rswSetStatus(isDryRun ? 'Dry-run 실행 중...' : '실호출 실행 중...', '');
+    if (els.rswDryBtn) els.rswDryBtn.disabled = true;
+    if (els.rswLiveBtn) els.rswLiveBtn.disabled = true;
+
+    const resultRows = [];
+
+    for (const call of calls) {
+      // TODO LIVE CALL: replace the block below with real bridge call:
+      //   const json = await callBridgeMutation(call.action, call.body);
+      //   const ok = bridgeResultOk(json);
+      // Stub: simulate success
+      await new Promise(function(r) { setTimeout(r, 80); }); // visual delay
+      const ok = true;
+      const status = isDryRun ? 'dry_run' : 'ok (stub)';
+      const msg = isDryRun
+        ? 'dry-run: payload logged, no Shopee call (stub)'
+        : '✓ 등록 완료 (모의) — real bridge call wired in follow-up PR';
+
+      resultRows.push({ label: call.label, action: call.action, ok, status, msg });
+      rswRenderResults(resultRows);
+    }
+
+    // After dry-run completes, unlock the live button
+    if (isDryRun) {
+      state.rswDryRunDone = true;
+      if (els.rswLiveBtn) {
+        els.rswLiveBtn.disabled = false;
+        els.rswLiveBtn.title = '';
+      }
+      rswSetStatus('Dry-run 완료: ' + calls.length + '/' + calls.length + ' rows (stub)', 'ok');
+      showToast('✓ Dry-run 완료 (모의)', 'ok');
+    } else {
+      rswSetStatus('실호출 완료 (모의): ' + calls.length + '/' + calls.length + ' rows', 'ok');
+      showToast('✓ 등록 완료 (모의)', 'ok');
+    }
+
+    if (els.rswDryBtn) els.rswDryBtn.disabled = false;
+    // Live button stays enabled after dry-run, disabled again only if we reset
+  }
+
+  function rswRenderResults(rows) {
+    if (!els.rswResultBody) return;
+    els.rswResultBody.innerHTML = rows.map(function(r) {
+      return '<tr>'
+        + '<td class="mono">' + text(r.label) + '</td>'
+        + '<td class="mono">' + text(r.action) + '</td>'
+        + '<td class="' + (r.ok ? 'row-ok' : 'row-error') + '">' + text(r.status) + '</td>'
+        + '<td>' + text(r.msg) + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function rswSetStatus(msg, kind) {
+    if (els.rswStatus) {
+      els.rswStatus.textContent = msg;
+      els.rswStatus.className = 'status' + (kind ? ' ' + kind : '');
+    }
+  }
+
+  /* ── Wire up all RSW event listeners (called once from initListeners) ── */
+
+  function initRswListeners() {
+    // Step 1
+    if (els.rswSearch) {
+      els.rswSearch.addEventListener('input', function() {
+        rswRenderProductList(this.value);
+      });
+    }
+    if (els.rswNext1) {
+      els.rswNext1.addEventListener('click', function() {
+        rswGoStep(2);
+      });
+    }
+
+    // Step 2
+    if (els.rswBack2) {
+      els.rswBack2.addEventListener('click', function() { rswGoStep(1); });
+    }
+    if (els.rswNext2) {
+      els.rswNext2.addEventListener('click', function() { rswGoStep(3); });
+    }
+
+    // Step 3
+    if (els.rswBack3) {
+      els.rswBack3.addEventListener('click', function() { rswGoStep(2); });
+    }
+    if (els.rswNext3) {
+      els.rswNext3.addEventListener('click', function() { rswGoStep(4); });
+    }
+
+    // Step 4
+    if (els.rswBack4) {
+      els.rswBack4.addEventListener('click', function() { rswGoStep(3); });
+    }
+    if (els.rswDryBtn) {
+      els.rswDryBtn.addEventListener('click', function() { rswShowModal(true); });
+    }
+    if (els.rswLiveBtn) {
+      els.rswLiveBtn.addEventListener('click', function() {
+        if (!state.rswDryRunDone) {
+          rswSetStatus('먼저 Dry-run을 실행해야 합니다.', 'err');
+          return;
+        }
+        rswShowModal(false);
+      });
+    }
+
+    // Modal: close on backdrop click
+    if (els.rswModalOverlay) {
+      els.rswModalOverlay.addEventListener('click', function(e) {
+        if (e.target === els.rswModalOverlay) rswCloseModal();
+      });
+    }
+  }
 
 </script>
 </body>

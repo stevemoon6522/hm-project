@@ -11,19 +11,37 @@
 
 2026-05-13 운영자가 문서 검토 후 명시한 우선순위. V2 는 이 3개 영역을 갖춰야 하며, 어느 하나도 빠져서는 안 된다.
 
+### ⚠️ 0-0. KRSC (Korean Seller Center) 전제 — 매우 중요
+운영자 명시(2026-05-13): "우리는 CBSC 가 아니라 **KRSC** 내용을 확인해야 한다."
+
+KRSC = Korean Seller Center. **CBSC umbrella 의 한국 셀러 업그레이드 버전** (CNSC=중국, KRSC=한국). 기술적으로는 **CBSC 와 동일한 Global Product API 를 사용** 하지만, 한국 셀러 전용 제약 몇 가지가 있다.
+
+출처: `C:\dev\api-refs\marketplaces\shopee\docs_ai_guides\guides\regional\krsc-api-integration-guide.md`
+
+**KRSC 셀러가 따라야 하는 규칙** (regional_rules.json 발췌, 17개 rule):
+1. **`Global Product API + Merchant API` 만 사용 가능** — KRSC 업그레이드된 shop 에서는 다른 product listing API 호출이 차단됨.
+2. **Shop-level `/api/v2/product/*` API 사용 불가** — `update_item`, `update_model` 등으로 shop 별 개별 product/model 편집 불가능.
+3. **shop-level model_sku (MPSKU) 변경 불가** — `product.update_model` 문서 명시: "CNSC and KRSC sellers are not allowed to update the MPSKU model sku". global_model_sku (모상품 SKU) 변경만 가능.
+4. **App V2 필수** — Original APP type 는 KRSC 미지원.
+5. **Sub-account 권한 부족** — Authorization 은 main account 만.
+6. **Token 분리** — merchant token + 각 shop token 별도 저장.
+7. **Publish 누락 시 차단** — `create_publish_task` 에서 일부 region shops 가 unchecked 면 그 shop 으로는 API publish 불가.
+
+→ V2 plan 의 모든 mutation 액션은 **Global Product API + Merchant API 안에서만** 설계.
+
 ### 0-1. 상품 등록 (PRE_ORDER 분류 포함) — Phase A0 + A1
-- Shopee CBSC global product API 로 신규 상품 등록 (mom + variants + region publish)
+- Shopee KRSC global product API 로 신규 상품 등록 (mom + variants + region publish)
 - 등록 직후 `products.lifecycle_state = 'pre_order'` 로 분류
 - 모든 region 의 Days to Ship = 50~60 (선주문 발송 윈도우)
 - 상품명에 `[PRE ORDER]` 접두
 
 ### 0-2. PRE ORDER → READY STOCK 전환 (입고 시) — Phase B
 - 입고된 상품 선택 → 다음을 1회 클릭으로 일괄 실행:
-  - Days to Ship → 1
-  - 옵션별 무게 실측값으로 갱신
-  - SKU (model_sku) 운영 SKU로 변경
-  - 상품명 `[PRE ORDER]` → `[READY STOCK]`
-  - region별 무게 기반 신규 판매가 재계산 + push
+  - **Global level Days to Ship → 1** (`update_global_item.days_to_ship` — KRSC 는 region별 다른 DTS 불가, 통합 1개 값)
+  - 옵션별 무게 실측값으로 **global model weight** 갱신 (`update_global_model[].weight`, KG)
+  - **Global SKU (`global_model_sku`)** 만 운영 SKU 로 변경 — shop_model_sku 는 KRSC 에서 변경 불가, publish 시 자동 sync 가정
+  - 상품명 `[PRE ORDER]` → `[READY STOCK]` (`update_global_item.global_item_name`)
+  - region별 무게 기반 신규 판매가 재계산 + push (`update_price` — region별 batch 호출)
 
 ### 0-3. 상품 조회 & 매입가 동기화 — Phase C
 - 등록된 상품 list (region 매핑 상태 / lifecycle / 현재가 / 무게 / 최근 push 시점)
@@ -31,19 +49,24 @@
 - 1클릭 일괄 push (update_price)
 - 매입가 변동 14일 미반영 상품 배지
 
-### 0-4. Shopee API 매핑 (검증 완료)
-| 워크플로 | Shopee API |
-|---------|-----------|
-| 0-1 상품 등록 (mom) | POST `/api/v2/global_product/add_global_item` |
-| 0-1 상품 등록 (variants) | POST `/api/v2/global_product/add_global_model` |
-| 0-1 region publish | POST `/api/v2/global_product/create_publish_task` + GET `/api/v2/global_product/get_publish_task_result` + GET `/api/v2/global_product/get_published_list` |
-| 0-2 READY STOCK 전환 (name/desc/sku) | POST `/api/v2/global_product/update_global_item` |
-| 0-2 READY STOCK 전환 (variant sku/weight) | POST `/api/v2/global_product/update_global_model` |
-| 0-2 region별 DTS | POST `/api/v2/product/update_item` (shop level) |
-| 0-3 region별 판매가 push | POST `/api/v2/global_product/update_price` |
-| 0-3 등록 상품 조회 | GET `/api/v2/global_product/get_global_item_list` + `/get_global_item_info` |
+### 0-4. Shopee KRSC API 매핑 (검증 완료, 모두 global_product/merchant 만 사용)
+| 워크플로 | Shopee API | KRSC 적용 |
+|---------|-----------|-----------|
+| 0-1 상품 등록 (mom) | POST `/api/v2/global_product/add_global_item` | ✅ |
+| 0-1 상품 등록 (variants) | POST `/api/v2/global_product/add_global_model` | ✅ |
+| 0-1 publishable shops 조회 | GET `/api/v2/global_product/get_publishable_shop` | ✅ |
+| 0-1 region publish 시작 | POST `/api/v2/global_product/create_publish_task` | ✅ |
+| 0-1 publish 결과 polling | GET `/api/v2/global_product/get_publish_task_result` | ✅ |
+| 0-1 publish 완료 목록 | GET `/api/v2/global_product/get_published_list` | ✅ |
+| 0-2 READY STOCK 전환 (name/desc + global_item_sku + global level DTS + global level weight + pre_order off) | POST `/api/v2/global_product/update_global_item` | ✅ |
+| 0-2 variant 전환 (global_model_sku + variant weight) | POST `/api/v2/global_product/update_global_model` | ✅ |
+| ~~0-2 region별 DTS (shop level)~~ | ~~`/api/v2/product/update_item`~~ | ❌ **KRSC 사용 불가** — Global DTS 1개 값으로 통합 |
+| 0-3 region별 판매가 push | POST `/api/v2/global_product/update_price` | ✅ |
+| 0-3 등록 상품 조회 (목록) | GET `/api/v2/global_product/get_global_item_list` | ✅ |
+| 0-3 등록 상품 detail | GET `/api/v2/global_product/get_global_item_info` | ✅ |
+| 0-3 merchant info / shop info | GET `/api/v2/merchant/get_merchant_info` + `/api/v2/shop/get_shop_info` | ✅ |
 
-전체 사용 endpoint 문서: `C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\global_product\v2.global_product.*.json`
+전체 사용 endpoint 문서: `C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\global_product\v2.global_product.*.json` + `merchant\` + `shop\`
 
 ---
 
@@ -154,23 +177,28 @@ create unique index if not exists uidx_shopee_mutation_log_idempotent
 
 ## 4. 백엔드 (shopee-bridge edge function)
 
-### 4-0. 핵심 워크플로 → API 매핑 (전체)
-| Phase | 신규/기존 | shopee-bridge action | Shopee API |
-|-------|----------|---------------------|------------|
-| A0 등록 (mom) | 신규 | `add_global_item` | POST `/api/v2/global_product/add_global_item` |
-| A0 등록 (variants) | 신규 | `add_global_model` | POST `/api/v2/global_product/add_global_model` |
-| A0 publishable shop 조회 | 신규 | `get_publishable_shop` | GET `/api/v2/global_product/get_publishable_shop` |
-| A0 region publish 시작 | 신규 | `create_publish_task` | POST `/api/v2/global_product/create_publish_task` |
-| A0 publish 결과 polling | 신규 | `get_publish_task_result` | GET `/api/v2/global_product/get_publish_task_result` |
-| A0 publish 완료 목록 | 신규 | `get_published_list` | GET `/api/v2/global_product/get_published_list` |
-| B 전환 (name/desc/sku) | 기존 확장 | `update_global_item` | POST `/api/v2/global_product/update_global_item` |
-| B 전환 (variant sku/weight) | 기존 확장 | `update_global_model` | POST `/api/v2/global_product/update_global_model` |
-| B region별 Days to Ship | 신규 | `update_shop_days_to_ship` | POST `/api/v2/product/update_item` |
-| C 가격 push | 기존 유지 | `update_global_price` | POST `/api/v2/global_product/update_price` |
-| C 등록 상품 list | 신규 | `list_global_items` | GET `/api/v2/global_product/get_global_item_list` |
-| C 상품 detail | 신규 | `get_global_item_info` | GET `/api/v2/global_product/get_global_item_info` |
+### 4-0. 핵심 워크플로 → KRSC API 매핑 (전체)
+| Phase | 신규/기존 | shopee-bridge action | Shopee API | KRSC |
+|-------|----------|---------------------|------------|------|
+| A0 등록 (mom) | 신규 | `add_global_item` | POST `/api/v2/global_product/add_global_item` | ✅ |
+| A0 등록 (variants) | 신규 | `add_global_model` | POST `/api/v2/global_product/add_global_model` | ✅ |
+| A0 publishable shops | 신규 | `get_publishable_shop` | GET `/api/v2/global_product/get_publishable_shop` | ✅ |
+| A0 region publish 시작 | 신규 | `create_publish_task` | POST `/api/v2/global_product/create_publish_task` | ✅ |
+| A0 publish polling | 신규 | `get_publish_task_result` | GET `/api/v2/global_product/get_publish_task_result` | ✅ |
+| A0 publish 완료 목록 | 신규 | `get_published_list` | GET `/api/v2/global_product/get_published_list` | ✅ |
+| B 전환 (name/desc + global_item_sku + DTS + weight + pre_order off) | 기존 확장 | `update_global_item` | POST `/api/v2/global_product/update_global_item` | ✅ |
+| B variant (global_model_sku + weight) | 기존 확장 | `update_global_model` | POST `/api/v2/global_product/update_global_model` | ✅ |
+| ~~B region별 shop-level DTS~~ | ~~신규~~ | ~~`update_shop_days_to_ship`~~ | ~~`/api/v2/product/update_item`~~ | ❌ **KRSC 사용 불가** |
+| C 가격 push | 기존 유지 | `update_global_price` | POST `/api/v2/global_product/update_price` | ✅ |
+| C 등록 상품 list | 신규 | `list_global_items` | GET `/api/v2/global_product/get_global_item_list` | ✅ |
+| C 상품 detail | 신규 | `get_global_item_info` | GET `/api/v2/global_product/get_global_item_info` | ✅ |
 
 모든 action 의 request schema 는 `C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\global_product\v2.global_product.<endpoint>.json` 의 `body_params` 그대로 사용. 필드 추가/제거 금지 (Codex P0-4 정책: silent strip → preflight hard-block).
+
+**KRSC 제약 — Shop-level product API (`/api/v2/product/*`) 완전 제외**:
+- DTS 는 global level 통합 1개 (`update_global_item.days_to_ship`, required int32). region별로 다르게 설정 불가.
+- model_sku 는 global_model_sku 만 변경 가능. shop_model_sku (MPSKU) 는 publish 시 자동 sync.
+- weight 는 global_item.weight + global_model[].weight 양쪽 모두 단위 KG.
 
 ### 4-1. 기존 액션 확장 (probe 통과 후만 본 구현 노출)
 | 액션 | 변경 |
@@ -180,11 +208,10 @@ create unique index if not exists uidx_shopee_mutation_log_idempotent
 
 probe 통과 여부는 `shopee_app.config` 테이블(또는 `country_settings`)의 boolean flag로 표시: `probe_item_name_ok`, `probe_model_weight_ok`. 통과 표시 없으면 edge function이 해당 필드 strip + 응답에 `warn` 추가.
 
-### 4-2. 신규 액션 `update_shop_days_to_ship`
-- 엔드포인트: Shopee shop-level `/api/v2/product/update_item`
-- 입력: `{ region, shop_item_id, days_to_ship }`
-- 출력: `{ ok, region, shop_item_id, sent_days_to_ship, result }`
-- 입력 검증: `1 <= days_to_ship <= 30` 강제
+### 4-2. ~~신규 액션 `update_shop_days_to_ship`~~ — **KRSC 사용 불가, 폐기**
+~~shop-level `/api/v2/product/update_item` 기반~~. KRSC 셀러는 shop-level product API 사용 불가하므로 폐기.
+
+**대체**: `update_global_item` 호출 시 `days_to_ship` (int32, required) 필드로 global 통합 DTS 변경. 모든 region shops 에 broadcast 된다. region별 다른 DTS 가 필요한 경우는 KRSC 에서는 불가능.
 
 ### 4-3. mutation_log 자동 기록
 - edge function 안에서 모든 mutation 액션의 입/출력을 INSERT

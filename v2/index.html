@@ -572,6 +572,66 @@
       border: 1px solid #f4c790; background: #fff8ed; color: #7a3e00;
       padding: 10px 12px; border-radius: 6px; font-size: 12px;
     }
+
+    /* ── Phase C: 상품 조회 + 매입가 동기화 (plan §5-7) ── */
+    .cat-banner {
+      border: 1px solid #f4c790; background: #fff8ed; color: #7a3e00;
+      padding: 10px 14px; border-radius: 6px; font-size: 12px;
+      line-height: 1.5; margin-bottom: 14px;
+    }
+    .cat-table-wrap { overflow-x: auto; }
+    .cat-table { table-layout: auto; min-width: 1100px; }
+    .cat-table th, .cat-table td { padding: 7px 9px; border-bottom: 1px solid #edf0f5; vertical-align: middle; }
+    .cat-table th { background: #f1f4f9; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .cat-cb { width: auto; }
+    /* lifecycle badges */
+    .badge-pre  { background: #ede9fe; color: #6d28d9; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 600; }
+    .badge-rdy  { background: #d1fae5; color: #065f46; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 600; }
+    .badge-none { background: #f1f4f9; color: var(--muted); border-radius: 4px; padding: 2px 6px; font-size: 10px; }
+    /* cost input */
+    .cat-cost-input {
+      width: 90px; padding: 4px 6px; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 4px; text-align: right;
+    }
+    .cat-cost-input:focus { border-color: var(--accent); outline: 2px solid rgba(37,99,235,.15); }
+    .cat-cost-input.cost-warn { border-color: #e89b00; background: #fffbeb; }
+    /* row warnings */
+    .cat-row-warn { background: #fffbeb !important; }
+    .cat-row-warn td { border-bottom-color: #f4c790 !important; }
+    .cat-confirm-cb { width: auto; }
+    /* price delta cells */
+    .cat-price-up   { color: var(--red); }
+    .cat-price-down { color: var(--green); }
+    .cat-price-same { color: var(--muted); }
+    .cat-new-price  { font-size: 11px; }
+    .cat-delta-label { font-size: 10px; }
+    /* stale badge */
+    .cat-stale-badge {
+      display: inline-block; padding: 1px 5px; border-radius: 4px;
+      background: #fee2e2; color: var(--red); font-size: 10px; font-weight: 600; white-space: nowrap;
+    }
+    /* loading/empty in table */
+    .cat-empty { padding: 32px 16px; text-align: center; color: var(--muted); }
+    /* catalog modal */
+    #cat-modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(15,23,42,.48);
+      align-items: flex-start; justify-content: center; padding: 28px 16px; z-index: 80; overflow: auto;
+    }
+    #cat-modal-overlay.show { display: flex; }
+    .cat-modal {
+      width: min(900px, 100%); background: #fff; border-radius: 8px;
+      border: 1px solid var(--border); box-shadow: 0 24px 70px rgba(15,23,42,.22); overflow: hidden;
+    }
+    .cat-modal-header {
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .cat-modal-header h2 { font-size: 16px; margin: 0; }
+    .cat-modal-body { padding: 16px; max-height: 68vh; overflow-y: auto; display: grid; gap: 12px; }
+    .cat-modal-footer {
+      padding: 12px 16px; border-top: 1px solid var(--border);
+      display: flex; gap: 10px; justify-content: flex-end; align-items: center;
+    }
   </style>
 </head>
 <body>
@@ -1198,13 +1258,78 @@
     </div><!-- /view-ready-stock -->
 
     <!-- ═══════════════════════════════════════════════
-         VIEW: 가격 동기화 (plan §5-7, Phase C)
+         VIEW: 상품 조회 + 매입가 동기화 (plan §5-7, Phase C)
+         cost inline edit → region preview → dry-run modal.
+         Live push DISABLED: Shopee update_price returns system busy for all 6 shops since 2026-05-13.
          ═══════════════════════════════════════════════ -->
     <div id="view-price-sync" class="view">
-      <div class="placeholder-view">
-        <h3>💰 상품 조회 &amp; 가격 동기화</h3>
-        <p style="font-size:12px;margin-top:8px;">plan §5-7 — Phase C<br>
-        TODO: cost_price inline 편집 + update_global_price (update_price) batch push per region</p>
+
+      <!-- P0-3: price API broken banner — always visible -->
+      <div class="cat-banner" id="cat-api-banner">
+        ⚠ Shopee 가격 동기화 API 가 system busy 응답 중. 가격 push 는 dry-run 까지만 가능. Shopee 응답 후 활성화 예정. (티켓 제출됨)
+      </div>
+
+      <!-- toolbar -->
+      <div class="toolbar" style="margin-bottom:10px;">
+        <input id="cat-search" type="search" placeholder="SKU / 상품명 / 옵션 검색" style="min-width:220px;">
+        <select id="cat-lifecycle-filter">
+          <option value="">전체 lifecycle</option>
+          <option value="pre_order">PRE_ORDER</option>
+          <option value="ready_stock">READY_STOCK</option>
+          <option value="null">미분류</option>
+        </select>
+        <div id="cat-region-filters" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--muted);">Region:</span>
+        </div>
+        <button id="cat-refresh" type="button">새로고침</button>
+        <span id="cat-count" style="font-size:12px;font-weight:600;color:var(--accent);white-space:nowrap;"></span>
+        <button id="cat-dry-btn" type="button" class="btn-dry">📊 dry-run 선택 행</button>
+        <!-- 실호출 버튼: DISABLED — price API system busy (2026-05-13 ticket filed) -->
+        <button id="cat-live-btn" type="button" class="btn-live" disabled
+          title="Shopee price API 응답 대기 중.">🔥 실호출 선택 행</button>
+        <span id="cat-error" class="status err" style="display:none;font-size:12px;"></span>
+      </div>
+
+      <!-- table -->
+      <div class="panel cat-table-wrap">
+        <table id="cat-table" class="cat-table">
+          <thead>
+            <tr>
+              <th style="width:28px;"><input type="checkbox" id="cat-select-all" class="cat-cb" title="전체 선택"></th>
+              <th style="min-width:180px;">SKU / 옵션</th>
+              <th style="min-width:90px;">Lifecycle</th>
+              <th style="min-width:110px;">Cost (₩)</th>
+              <th style="min-width:70px;">무게(g)</th>
+              <!-- 6 region 현재가 columns — injected by renderCatalogView() -->
+              <!-- 6 region 신규가 preview columns — injected alongside -->
+              <th style="min-width:80px;">Δ 최대</th>
+              <th style="min-width:100px;">cost 갱신</th>
+              <th style="min-width:60px;">배지</th>
+            </tr>
+          </thead>
+          <tbody id="cat-body">
+            <tr><td colspan="9" class="cat-empty">로딩 중…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div id="cat-loading" style="display:none;padding:18px;text-align:center;color:var(--muted);">로딩 중…</div>
+
+    </div><!-- /view-price-sync -->
+
+    <!-- catalog dry-run payload modal -->
+    <div id="cat-modal-overlay">
+      <div class="cat-modal" role="dialog" aria-modal="true">
+        <div class="cat-modal-header">
+          <h2 id="cat-modal-title">📊 Dry-run 미리보기</h2>
+          <button type="button" id="cat-modal-close">닫기</button>
+        </div>
+        <div class="cat-modal-body" id="cat-modal-body"></div>
+        <div class="cat-modal-footer">
+          <span class="muted" style="font-size:11px;">dry-run: Shopee 호출 없음 — payload 확인 후 비용 확정 기록</span>
+          <button type="button" id="cat-modal-cancel">취소</button>
+          <button type="button" id="cat-modal-confirm" class="primary">🚀 Dry-run 실행 (DB 비용 반영)</button>
+        </div>
       </div>
     </div>
 
@@ -4120,6 +4245,957 @@
       });
     }
   }
+
+  /* ═══════════════════════════════════════════════════════════════
+     PHASE C: 상품 조회 + 매입가 동기화 (plan §5-7)
+     renderCatalogView() — main entry point, called on tab click.
+     ═══════════════════════════════════════════════════════════════ */
+
+  // ── Constants ──────────────────────────────────────────────────
+
+  // OPERATING regions for Phase C (BR included as data column — not for live push)
+  const CAT_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+
+  // Currency symbols per region (display only)
+  const CAT_CURRENCY = { SG: 'SGD', TW: 'TWD', TH: 'THB', MY: 'MYR', PH: 'PHP', BR: 'BRL' };
+
+  // Placeholder region multipliers (cost_krw → region price).
+  // TODO plan §5-7: read margin formula from country_settings table and replace these constants.
+  // country_settings.margin_formula column is the authoritative source.
+  // These fallbacks are used ONLY when country_settings row is missing or formula is null.
+  const CAT_REGION_MULTIPLIER = {
+    SG: 0.014,  // TODO plan §5-7: read margin formula from country_settings
+    TW: 0.30,   // TODO plan §5-7: read margin formula from country_settings
+    TH: 0.40,   // TODO plan §5-7: read margin formula from country_settings
+    MY: 0.04,   // TODO plan §5-7: read margin formula from country_settings
+    PH: 0.60,   // TODO plan §5-7: read margin formula from country_settings
+    BR: 0.07,   // TODO plan §5-7: read margin formula from country_settings
+  };
+
+  // In-memory cache of pending cost edits: { [productId]: newCostKrw }
+  const pendingCostEdits = {};
+
+  // Selected rows for batch dry-run: Set<productId string>
+  const catSelectedIds = new Set();
+
+  // Catalog data cache (60-second TTL, same as PRE ORDER view)
+  const CAT_CACHE_TTL_MS = 60_000;
+  let _catCache = null;  // { products, listings, countrySettings, ts }
+
+  // Region column visibility (all on by default)
+  let _catRegionVisible = new Set(CAT_REGIONS);
+
+  // country_settings margin formulas fetched once: { [region]: formulaString | null }
+  let _catMarginFormulas = {};
+
+  // ── Price calculation ───────────────────────────────────────────
+
+  /**
+   * Compute new region price from cost_krw.
+   * Tries country_settings.margin_formula first; falls back to CAT_REGION_MULTIPLIER constant.
+   * TODO plan §5-7: wire country_settings.margin_formula evaluation (currently only multiplier used).
+   */
+  function catComputeNewPrice(costKrw, region) {
+    const cost = Number(costKrw);
+    if (!Number.isFinite(cost) || cost <= 0) return null;
+    // TODO plan §5-7: if _catMarginFormulas[region] is set, evaluate the formula.
+    // Currently falling back to constant multiplier for all regions.
+    const mult = CAT_REGION_MULTIPLIER[region] || 0;
+    return Math.round(cost * mult * 100) / 100;
+  }
+
+  /** Effective cost for a product row: pendingCostEdits override or DB value */
+  function catEffectiveCost(product) {
+    const pid = String(product.id);
+    if (pid in pendingCostEdits) return pendingCostEdits[pid];
+    return Number(product.cost_krw || 0);
+  }
+
+  /** Relative date string: "3일 전", "오늘" */
+  function catRelativeDate(iso) {
+    if (!iso) return '—';
+    const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+    if (days === 0) return '오늘';
+    if (days === 1) return '1일 전';
+    return days + '일 전';
+  }
+
+  /** True if cost_updated_at is older than 14 days and lifecycle = ready_stock */
+  function catIsStale(product) {
+    const lc = String(product.lifecycle_state || '').toLowerCase();
+    if (lc !== 'ready_stock') return false;
+    const ts = product.cost_updated_at;
+    if (!ts) return true; // unknown date = treat as stale
+    return (Date.now() - new Date(ts).getTime()) > 14 * 86400000;
+  }
+
+  // ── Data fetch ──────────────────────────────────────────────────
+
+  async function fetchCatalogData(forceRefresh) {
+    const now = Date.now();
+    if (!forceRefresh && _catCache && (now - _catCache.ts) < CAT_CACHE_TTL_MS) {
+      return _catCache;
+    }
+
+    const PAGE = 500;
+
+    // Fetch all products (all lifecycle states for catalog view)
+    let products = [];
+    let offset = 0;
+    while (true) {
+      const url = SUPABASE_URL + '/rest/v1/products'
+        + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,cost_updated_at,created_at'
+        + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
+      const res = await fetch(url, {
+        headers: Object.assign({}, AUTH_HEADERS, {
+          'Range-Unit': 'items',
+          'Range': offset + '-' + (offset + PAGE - 1),
+          'Prefer': 'count=none',
+        }),
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(function() { return res.statusText; });
+        // If cost_updated_at column not found, retry without it
+        if (/cost_updated_at|column|schema cache/i.test(msg)) {
+          // Fallback query without cost_updated_at
+          const res2 = await fetch(
+            SUPABASE_URL + '/rest/v1/products'
+              + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,created_at'
+              + '&order=lifecycle_state.asc,created_at.asc',
+            {
+              headers: Object.assign({}, AUTH_HEADERS, {
+                'Range-Unit': 'items',
+                'Range': '0-' + (PAGE - 1),
+                'Prefer': 'count=none',
+              }),
+            }
+          );
+          if (!res2.ok) throw new Error('products fetch failed');
+          const page2 = await res2.json();
+          products = Array.isArray(page2) ? page2 : [];
+          break;
+        }
+        throw new Error('products fetch ' + res.status + ': ' + msg);
+      }
+      const page = await res.json();
+      if (!Array.isArray(page) || page.length === 0) break;
+      products = products.concat(page);
+      if (page.length < PAGE) break;
+      offset += PAGE;
+    }
+
+    // Fetch listings for all products
+    let listings = [];
+    if (products.length > 0) {
+      const ids = products.map(function(p) { return p.id; }).join(',');
+      let lOffset = 0;
+      while (true) {
+        const lUrl = SUPABASE_URL + '/rest/v1/product_shopee_listings'
+          + '?select=product_id,region,shop_id,shop_item_id,last_synced_price,last_synced_at'
+          + '&product_id=in.(' + ids + ')';
+        const lRes = await fetch(lUrl, {
+          headers: Object.assign({}, AUTH_HEADERS, {
+            'Range-Unit': 'items',
+            'Range': lOffset + '-' + (lOffset + PAGE - 1),
+            'Prefer': 'count=none',
+          }),
+        });
+        if (lRes.ok) {
+          const lPage = await lRes.json();
+          if (!Array.isArray(lPage) || lPage.length === 0) break;
+          listings = listings.concat(lPage);
+          if (lPage.length < PAGE) break;
+          lOffset += PAGE;
+        } else {
+          break; // listings are optional for display
+        }
+      }
+    }
+
+    // Fetch country_settings once for margin formulas
+    // TODO plan §5-7: use margin_formula field when it exists in country_settings
+    let countrySettings = [];
+    try {
+      const csRes = await fetch(
+        SUPABASE_URL + '/rest/v1/country_settings?select=region,margin_formula',
+        { headers: AUTH_HEADERS }
+      );
+      if (csRes.ok) {
+        const csData = await csRes.json();
+        if (Array.isArray(csData)) countrySettings = csData;
+      }
+    } catch (e) { /* country_settings optional */ }
+
+    // Build margin formula map
+    _catMarginFormulas = {};
+    countrySettings.forEach(function(cs) {
+      if (cs.region && cs.margin_formula) {
+        _catMarginFormulas[String(cs.region)] = cs.margin_formula;
+      }
+    });
+
+    _catCache = { products: products, listings: listings, countrySettings: countrySettings, ts: now };
+    return _catCache;
+  }
+
+  // ── Sort logic ──────────────────────────────────────────────────
+
+  /**
+   * Default sort: lifecycle_state pre_order first, then ready_stock, then null.
+   * Within same state: cost_updated_at oldest first (nulls first = stale at top).
+   */
+  function catSortProducts(products) {
+    const orderLc = function(lc) {
+      const v = String(lc || '').toLowerCase();
+      if (v === 'pre_order') return 0;
+      if (v === 'ready_stock') return 1;
+      return 2;
+    };
+    return products.slice().sort(function(a, b) {
+      const lDiff = orderLc(a.lifecycle_state) - orderLc(b.lifecycle_state);
+      if (lDiff !== 0) return lDiff;
+      // oldest cost_updated_at first (nulls first)
+      const aTs = a.cost_updated_at ? new Date(a.cost_updated_at).getTime() : 0;
+      const bTs = b.cost_updated_at ? new Date(b.cost_updated_at).getTime() : 0;
+      return aTs - bTs;
+    });
+  }
+
+  // ── Render helpers ──────────────────────────────────────────────
+
+  function catLifecycleBadge(lc) {
+    const v = String(lc || '').toLowerCase();
+    if (v === 'pre_order') return '<span class="badge-pre">PRE ORDER</span>';
+    if (v === 'ready_stock') return '<span class="badge-rdy">READY STOCK</span>';
+    return '<span class="badge-none">미분류</span>';
+  }
+
+  /** Build the region th column headers (current + new price pairs). */
+  function catBuildRegionHeaders() {
+    let html = '';
+    CAT_REGIONS.forEach(function(r) {
+      const dimStyle = _catRegionVisible.has(r) ? '' : 'opacity:0.35;';
+      html += '<th data-cat-region="' + r + '" style="min-width:105px;' + dimStyle + '">'
+        + r + ' 현재가</th>';
+      html += '<th data-cat-region-new="' + r + '" style="min-width:105px;' + dimStyle + '">'
+        + r + ' 신규가</th>';
+    });
+    return html;
+  }
+
+  /**
+   * Build region price cells for a product row.
+   * listingByRegion: Map<region, listing>
+   * effectiveCost: number
+   * Returns HTML string of <td> pairs (current + new).
+   */
+  function catBuildRegionCells(listingByRegion, effectiveCost) {
+    let html = '';
+    let maxDeltaPct = 0;
+
+    CAT_REGIONS.forEach(function(r) {
+      const dimStyle = _catRegionVisible.has(r) ? '' : 'opacity:0.35;';
+      const listing = listingByRegion.get(r);
+      const currentPrice = listing && listing.last_synced_price != null
+        ? Number(listing.last_synced_price) : null;
+      const newPrice = catComputeNewPrice(effectiveCost, r);
+
+      // Current price cell
+      if (currentPrice != null) {
+        html += '<td data-cat-region="' + r + '" style="font-size:12px;' + dimStyle + '">'
+          + currentPrice.toLocaleString() + ' ' + CAT_CURRENCY[r] + '</td>';
+      } else {
+        html += '<td data-cat-region="' + r + '" style="color:var(--muted);' + dimStyle + '">—</td>';
+      }
+
+      // New price preview cell
+      if (newPrice != null) {
+        let deltaClass = 'cat-price-same';
+        let deltaLabel = '';
+        if (currentPrice != null && currentPrice > 0) {
+          const deltaPct = (newPrice - currentPrice) / currentPrice * 100;
+          if (Math.abs(deltaPct) > maxDeltaPct) maxDeltaPct = Math.abs(deltaPct);
+          if (deltaPct > 0.5) {
+            deltaClass = 'cat-price-up';
+            deltaLabel = '▲' + deltaPct.toFixed(1) + '%';
+          } else if (deltaPct < -0.5) {
+            deltaClass = 'cat-price-down';
+            deltaLabel = '▼' + Math.abs(deltaPct).toFixed(1) + '%';
+          }
+        }
+        html += '<td data-cat-region-new="' + r + '" class="cat-new-price ' + deltaClass + '" style="' + dimStyle + '">'
+          + newPrice.toLocaleString() + ' ' + CAT_CURRENCY[r]
+          + (deltaLabel ? '<br><span class="cat-delta-label">' + esc(deltaLabel) + '</span>' : '')
+          + '</td>';
+      } else {
+        html += '<td data-cat-region-new="' + r + '" style="color:var(--muted);' + dimStyle + '">—</td>';
+      }
+    });
+
+    return { html: html, maxDeltaPct: maxDeltaPct };
+  }
+
+  /**
+   * Re-render ONLY the region price preview cells for a single row
+   * when operator edits cost inline, without full table re-render.
+   */
+  function catUpdateRowPriceCells(productId, newCost) {
+    const pid = String(productId);
+    const tr = document.querySelector('[data-cat-pid="' + pid + '"]');
+    if (!tr) return;
+
+    if (!_catCache) return;
+    const listings = _catCache.listings.filter(function(l) {
+      return String(l.product_id) === pid;
+    });
+    const listingByRegion = new Map();
+    listings.forEach(function(l) { listingByRegion.set(String(l.region), l); });
+
+    const regionResult = catBuildRegionCells(listingByRegion, newCost);
+
+    // Update each region td in this row
+    CAT_REGIONS.forEach(function(r) {
+      const tdCurrent = tr.querySelector('[data-cat-region="' + r + '"]');
+      const tdNew = tr.querySelector('[data-cat-region-new="' + r + '"]');
+      if (!tdCurrent || !tdNew) return;
+
+      const dimStyle = _catRegionVisible.has(r) ? '' : 'opacity:0.35;';
+      const listing = listingByRegion.get(r);
+      const currentPrice = listing && listing.last_synced_price != null
+        ? Number(listing.last_synced_price) : null;
+      const np = catComputeNewPrice(newCost, r);
+
+      if (currentPrice != null) {
+        tdCurrent.textContent = currentPrice.toLocaleString() + ' ' + CAT_CURRENCY[r];
+      } else {
+        tdCurrent.innerHTML = '<span style="color:var(--muted)">—</span>';
+      }
+
+      if (np != null) {
+        let deltaClass = 'cat-price-same';
+        let deltaLabel = '';
+        if (currentPrice != null && currentPrice > 0) {
+          const deltaPct = (np - currentPrice) / currentPrice * 100;
+          if (deltaPct > 0.5) {
+            deltaClass = 'cat-price-up';
+            deltaLabel = '▲' + deltaPct.toFixed(1) + '%';
+          } else if (deltaPct < -0.5) {
+            deltaClass = 'cat-price-down';
+            deltaLabel = '▼' + Math.abs(deltaPct).toFixed(1) + '%';
+          }
+        }
+        tdNew.className = 'cat-new-price ' + deltaClass;
+        tdNew.innerHTML = np.toLocaleString() + ' ' + CAT_CURRENCY[r]
+          + (deltaLabel ? '<br><span class="cat-delta-label">' + esc(deltaLabel) + '</span>' : '');
+      } else {
+        tdNew.className = 'cat-new-price cat-price-same';
+        tdNew.innerHTML = '<span style="color:var(--muted)">—</span>';
+      }
+    });
+
+    // Update max delta cell
+    const maxDelta = computeMaxDelta(newCost, listingByRegion);
+    const tdDelta = tr.querySelector('[data-cat-delta]');
+    if (tdDelta) {
+      tdDelta.innerHTML = maxDelta > 0.5
+        ? '<span class="cat-price-up">' + maxDelta.toFixed(1) + '%</span>'
+        : '<span class="cat-price-same">—</span>';
+    }
+
+    // Warn row if cost changed by > 30% vs original DB cost
+    const product = _catCache.products.find(function(p) { return String(p.id) === pid; });
+    if (product) {
+      const origCost = Number(product.cost_krw || 0);
+      const isLargeChange = origCost > 0 && Math.abs(newCost - origCost) / origCost > 0.30;
+      tr.classList.toggle('cat-row-warn', isLargeChange);
+      // Show confirm checkbox if large change
+      const confirmTd = tr.querySelector('[data-cat-confirm]');
+      if (confirmTd) {
+        if (isLargeChange) {
+          if (!confirmTd.querySelector('.cat-confirm-cb')) {
+            confirmTd.innerHTML = '<input type="checkbox" class="cat-confirm-cb" title="매입가 30% 이상 변동 — 확인 체크 필요" oninput="event.stopPropagation();">'
+              + '<span style="font-size:10px;color:var(--yellow);">확인↑30%</span>';
+          }
+        } else {
+          confirmTd.innerHTML = '';
+        }
+      }
+      // Update cost input style
+      const costInput = tr.querySelector('.cat-cost-input');
+      if (costInput) costInput.classList.toggle('cost-warn', isLargeChange);
+    }
+  }
+
+  function computeMaxDelta(costKrw, listingByRegion) {
+    let max = 0;
+    CAT_REGIONS.forEach(function(r) {
+      const listing = listingByRegion.get(r);
+      const currentPrice = listing && listing.last_synced_price != null ? Number(listing.last_synced_price) : null;
+      const np = catComputeNewPrice(costKrw, r);
+      if (currentPrice != null && currentPrice > 0 && np != null) {
+        const pct = Math.abs((np - currentPrice) / currentPrice * 100);
+        if (pct > max) max = pct;
+      }
+    });
+    return max;
+  }
+
+  // ── Main render ──────────────────────────────────────────────────
+
+  /**
+   * renderCatalogView() — entry point.
+   * Fetches data (60s cache), applies filters, renders full table.
+   */
+  async function renderCatalogView(forceRefresh) {
+    const errEl = document.getElementById('cat-error');
+    const loadingEl = document.getElementById('cat-loading');
+    const tbody = document.getElementById('cat-body');
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    if (loadingEl) loadingEl.style.display = 'block';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="20" class="cat-empty">로딩 중…</td></tr>';
+
+    try {
+      await fetchCatalogData(!!forceRefresh);
+    } catch (e) {
+      if (errEl) { errEl.textContent = '오류: ' + (e.message || e); errEl.style.display = ''; }
+      if (tbody) tbody.innerHTML = '<tr><td colspan="20" class="cat-empty" style="color:var(--red);">'
+        + esc(e.message || String(e)) + '</td></tr>';
+      if (loadingEl) loadingEl.style.display = 'none';
+      return;
+    }
+    if (loadingEl) loadingEl.style.display = 'none';
+
+    // Rebuild region header columns
+    catSyncRegionHeaders();
+
+    applyAndRenderCatalog();
+  }
+
+  /** Inject/update region column headers into the table thead. */
+  function catSyncRegionHeaders() {
+    const table = document.getElementById('cat-table');
+    if (!table) return;
+    const thead = table.querySelector('thead tr');
+    if (!thead) return;
+
+    // Remove existing region headers
+    thead.querySelectorAll('[data-cat-region],[data-cat-region-new]').forEach(function(th) { th.remove(); });
+
+    // Find anchor: the 5th th (무게(g) column), insert after it
+    const ths = Array.from(thead.querySelectorAll('th'));
+    const weightTh = ths[4]; // 0=cb, 1=sku, 2=lifecycle, 3=cost, 4=weight
+    if (!weightTh) return;
+
+    const frag = document.createDocumentFragment();
+    CAT_REGIONS.forEach(function(r) {
+      const dimStyle = _catRegionVisible.has(r) ? '' : 'opacity:0.35;';
+
+      const thCurr = document.createElement('th');
+      thCurr.dataset.catRegion = r;
+      thCurr.style.cssText = 'min-width:105px;' + dimStyle;
+      thCurr.textContent = r + ' 현재가';
+      frag.appendChild(thCurr);
+
+      const thNew = document.createElement('th');
+      thNew.dataset.catRegionNew = r;
+      thNew.style.cssText = 'min-width:105px;' + dimStyle;
+      thNew.textContent = r + ' 신규가';
+      frag.appendChild(thNew);
+    });
+    weightTh.after(frag);
+  }
+
+  /** Apply current search + lifecycle filter, sort, and render tbody. */
+  function applyAndRenderCatalog() {
+    if (!_catCache) return;
+    const q = ((document.getElementById('cat-search') || {}).value || '').trim().toLowerCase();
+    const lcFilter = ((document.getElementById('cat-lifecycle-filter') || {}).value || '');
+    const tbody = document.getElementById('cat-body');
+    const countEl = document.getElementById('cat-count');
+
+    // Build listing index: Map<pid, Map<region, listing>>
+    const listingIdx = new Map();
+    (_catCache.listings || []).forEach(function(l) {
+      const pid = String(l.product_id);
+      if (!listingIdx.has(pid)) listingIdx.set(pid, new Map());
+      listingIdx.get(pid).set(String(l.region), l);
+    });
+
+    // Filter
+    let rows = _catCache.products.filter(function(p) {
+      if (q) {
+        const hay = (p.sku || '') + ' ' + (p.product_name || '') + ' ' + (p.option_name || '');
+        if (hay.toLowerCase().indexOf(q) === -1) return false;
+      }
+      if (lcFilter) {
+        const lc = String(p.lifecycle_state || '').toLowerCase();
+        if (lcFilter === 'null') return !lc;
+        return lc === lcFilter;
+      }
+      return true;
+    });
+
+    // Sort
+    rows = catSortProducts(rows);
+
+    if (countEl) countEl.textContent = rows.length + '건';
+
+    const colCount = 3 + CAT_REGIONS.length * 2 + 5; // rough count for empty row
+
+    if (!rows.length) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="' + colCount + '" class="cat-empty">상품이 없습니다.</td></tr>';
+      return;
+    }
+
+    if (!tbody) return;
+    tbody.innerHTML = rows.map(function(p) {
+      const pid = String(p.id);
+      const byRegion = listingIdx.get(pid) || new Map();
+      const effectiveCost = catEffectiveCost(p);
+      const origCost = Number(p.cost_krw || 0);
+      const isLargeChange = pid in pendingCostEdits && origCost > 0
+        && Math.abs(pendingCostEdits[pid] - origCost) / origCost > 0.30;
+
+      const regionResult = catBuildRegionCells(byRegion, effectiveCost);
+      const maxDelta = regionResult.maxDeltaPct;
+      const isStale = catIsStale(p);
+
+      const rowClass = isLargeChange ? 'cat-row-warn' : '';
+
+      // SKU + option cell
+      const skuCell = '<td><div style="font-size:13px;font-weight:500;">' + esc(p.sku || '—') + '</div>'
+        + (p.option_name ? '<div class="muted" style="font-size:11px;">' + esc(p.option_name) + '</div>' : '')
+        + '</td>';
+
+      // Lifecycle badge cell
+      const lcCell = '<td>' + catLifecycleBadge(p.lifecycle_state) + '</td>';
+
+      // Cost inline edit cell
+      const costVal = effectiveCost > 0 ? effectiveCost : (origCost || '');
+      const costWarn = isLargeChange ? ' cost-warn' : '';
+      const costCell = '<td>'
+        + '<input type="number" inputmode="decimal" class="cat-cost-input' + costWarn + '"'
+        + ' data-cat-cost-pid="' + esc(pid) + '"'
+        + ' value="' + Number(costVal || 0) + '"'
+        + ' min="1" max="999999999" step="1"'
+        + ' title="매입가(₩) — blur 또는 Enter로 region preview 갱신">'
+        + (isLargeChange
+          ? '<div data-cat-confirm style="font-size:10px;color:var(--yellow);">'
+            + '<input type="checkbox" class="cat-confirm-cb" title="매입가 30% 이상 변동 — 확인 체크 필요"> 확인↑30%</div>'
+          : '<div data-cat-confirm></div>')
+        + '</td>';
+
+      // Weight cell
+      const wtCell = '<td class="mono" style="font-size:12px;">'
+        + (p.weight_g != null ? Number(p.weight_g).toLocaleString() : '—') + '</td>';
+
+      // Max delta cell
+      const deltaCell = '<td data-cat-delta>'
+        + (maxDelta > 0.5
+          ? '<span class="cat-price-up">' + maxDelta.toFixed(1) + '%</span>'
+          : '<span class="cat-price-same">—</span>')
+        + '</td>';
+
+      // cost_updated_at cell
+      const updatedAt = p.cost_updated_at || p.created_at || null;
+      const updatedCell = '<td style="font-size:12px;color:var(--muted);">' + catRelativeDate(updatedAt) + '</td>';
+
+      // Stale badge cell
+      const staleCell = '<td>'
+        + (isStale ? '<span class="cat-stale-badge">⚠ 14일+</span>' : '')
+        + '</td>';
+
+      return '<tr class="' + rowClass + '" data-cat-pid="' + esc(pid) + '">'
+        + '<td><input type="checkbox" class="cat-cb cat-row-cb" data-cat-sel="' + esc(pid) + '"></td>'
+        + skuCell + lcCell + costCell + wtCell
+        + regionResult.html
+        + deltaCell + updatedCell + staleCell
+        + '</tr>';
+    }).join('');
+
+    // Wire cost input events
+    tbody.querySelectorAll('.cat-cost-input').forEach(function(input) {
+      function onCostChange() {
+        const pid = input.dataset.catCostPid;
+        if (!pid) return;
+        const rawVal = input.value.trim();
+        const newCost = Number(rawVal);
+        if (!Number.isFinite(newCost) || newCost <= 0 || newCost > 999999999) {
+          input.classList.add('cost-warn');
+          return;
+        }
+        input.classList.remove('cost-warn');
+        pendingCostEdits[pid] = newCost;
+        catUpdateRowPriceCells(pid, newCost);
+      }
+      input.addEventListener('blur', onCostChange);
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); onCostChange(); input.blur(); }
+      });
+    });
+
+    // Wire row checkboxes
+    tbody.querySelectorAll('.cat-row-cb').forEach(function(cb) {
+      cb.addEventListener('change', function() {
+        const pid = cb.dataset.catSel;
+        if (!pid) return;
+        if (cb.checked) catSelectedIds.add(pid);
+        else catSelectedIds.delete(pid);
+        catSyncSelectAll();
+      });
+    });
+  }
+
+  // ── Select all ──────────────────────────────────────────────────
+
+  function catSyncSelectAll() {
+    const all = document.getElementById('cat-select-all');
+    if (!all) return;
+    const cbs = Array.from(document.querySelectorAll('.cat-row-cb'));
+    const checked = cbs.filter(function(c) { return c.checked; }).length;
+    all.checked = checked > 0 && checked === cbs.length;
+    all.indeterminate = checked > 0 && checked < cbs.length;
+  }
+
+  // ── ULID generator (timestamp-based, for run_id) ────────────────
+
+  function catUlid() {
+    // Simple timestamp-based unique ID (not spec-compliant ULID, but sufficient)
+    const ts = Date.now().toString(36).toUpperCase().padStart(10, '0');
+    const rand = Math.random().toString(36).toUpperCase().slice(2, 12).padStart(10, '0');
+    return ts + rand;
+  }
+
+  // ── Dry-run payload builder ─────────────────────────────────────
+
+  /**
+   * Build dry-run payloads per plan §5-7.
+   * For each selected product with a pendingCostEdit:
+   *   - builds one payload per region (using the region's listing.shop_id if available)
+   *   - payload_hash: "dry:<sha256-simpleHash>"
+   *   - rollback_policy: "no_auto_rollback_resume_only"  (P0-3)
+   *
+   * NOTE: v2.global_product.update_price body schema is NOT in docs_ai cache.
+   * TODO LIVE CALL: verify exact body schema when update_price endpoint is documented.
+   * endpoint: POST /api/v2/global_product/update_price (via shopee-bridge action update_global_price)
+   */
+  function catBuildDryRunPayloads() {
+    const runId = catUlid();
+    const payloads = [];
+
+    if (!_catCache) return { runId: runId, payloads: payloads };
+
+    const listingIdx = new Map();
+    (_catCache.listings || []).forEach(function(l) {
+      const pid = String(l.product_id);
+      if (!listingIdx.has(pid)) listingIdx.set(pid, new Map());
+      listingIdx.get(pid).set(String(l.region), l);
+    });
+
+    catSelectedIds.forEach(function(pid) {
+      const product = (_catCache.products || []).find(function(p) { return String(p.id) === pid; });
+      if (!product) return;
+
+      const newCost = pid in pendingCostEdits ? pendingCostEdits[pid] : Number(product.cost_krw || 0);
+      if (!newCost || newCost <= 0) return;
+
+      const globalItemId = product.shopee_item_id ? Number(product.shopee_item_id) : null;
+      const byRegion = listingIdx.get(pid) || new Map();
+
+      // P0 safety check: large change AND no confirm checkbox ticked
+      const origCost = Number(product.cost_krw || 0);
+      const isLargeChange = origCost > 0 && Math.abs(newCost - origCost) / origCost > 0.30;
+      if (isLargeChange) {
+        const tr = document.querySelector('[data-cat-pid="' + pid + '"]');
+        const confirmCb = tr ? tr.querySelector('.cat-confirm-cb') : null;
+        if (!confirmCb || !confirmCb.checked) {
+          // Skip — operator must tick confirm box for >30% changes (Codex P0 plan §5-7)
+          return;
+        }
+      }
+
+      // Build one envelope per region
+      const globalPriceList = [];
+      CAT_REGIONS.forEach(function(r) {
+        const listing = byRegion.get(r);
+        const newPrice = catComputeNewPrice(newCost, r);
+        if (newPrice == null) return;
+        // shop_id from listing (may be null if listing missing)
+        const shopId = listing ? (listing.shop_id || null) : null;
+        globalPriceList.push({
+          shop_id: shopId,  // bigint — from product_shopee_listings.shop_id
+          original_price: newPrice,
+        });
+      });
+
+      if (!globalPriceList.length) return;
+
+      const hashInput = JSON.stringify({
+        action: 'update_global_price',
+        global_item_id: globalItemId,
+        global_price_list: globalPriceList,
+        run_id: runId,
+      });
+      const payloadHash = 'dry:' + simpleHash(hashInput); // P0-1: dry: prefix keeps hash space separate
+
+      // TODO LIVE CALL: v2.global_product.update_price body schema is NOT in docs_ai cache.
+      // endpoint: POST /api/v2/global_product/update_price (shopee-bridge action: update_global_price)
+      // Body shape below is inferred from plan §5-7 and KRSC §0-4 API mapping.
+      // Mark: docs_ai mismatch — update_price.json MISSING from docs_ai cache as of 2026-05-14.
+      const payload = {
+        global_item_id: globalItemId,              // bigint — products.shopee_item_id
+        global_price_list: globalPriceList,        // per-region price list
+        actor: 'v2-catalog',
+        dry_run: true,
+        run_id: runId,
+        payload_hash: payloadHash,                 // P0-1: 'dry:' prefix
+        rollback_policy: 'no_auto_rollback_resume_only',  // P0-3
+        // TODO LIVE CALL: update_price body schema unverified — docs_ai/apis/global_product/
+        //   v2.global_product.update_price.json MISSING. Confirm exact field names before live call.
+      };
+
+      payloads.push({
+        productId: pid,
+        sku: product.sku || pid,
+        globalItemId: globalItemId,
+        newCost: newCost,
+        payload: payload,
+        payloadHash: payloadHash,
+        // Bridge URL (update_global_price action — existing bridge action from plan §4-0 table)
+        bridgeUrl: SHOPEE_BRIDGE + '/update_global_price',
+      });
+    });
+
+    return { runId: runId, payloads: payloads };
+  }
+
+  // ── Dry-run modal ───────────────────────────────────────────────
+
+  function catShowDryRunModal() {
+    const { runId, payloads } = catBuildDryRunPayloads();
+
+    const modalBody = document.getElementById('cat-modal-body');
+    if (!modalBody) return;
+
+    if (!payloads.length) {
+      showToast('dry-run 대상 행이 없습니다. 행을 선택하고 cost를 편집하세요.', 'err');
+      return;
+    }
+
+    const PRICE_API_BROKEN_NOTE = '<div class="cat-banner" style="margin-bottom:8px;">'
+      + '⚠ 가격 push 는 dry-run 만 가능 (system busy 응답 중). 아래 payload는 검증용입니다.'
+      + '</div>';
+
+    const ROLLBACK_NOTE = '<div class="notice rsw-rollback-note" style="margin-bottom:12px;">'
+      + '⚠ <strong>부분 실패 시 자동 reverse 없음 (P0-3)</strong> — 실패 row만 retry 가능.'
+      + '</div>';
+
+    // TODO LIVE CALL note
+    const DOCS_MISMATCH_NOTE = '<div class="notice" style="margin-bottom:12px;">'
+      + '⚠ <strong>docs_ai mismatch</strong>: v2.global_product.update_price.json 이 docs_ai 캐시에 없음. '
+      + 'body 스키마는 plan §5-7 기반 추론값 — 실호출 전 Shopee 문서 확인 필요.'
+      + '</div>';
+
+    let callsHtml = payloads.map(function(p, i) {
+      return '<div class="call-block">'
+        + '<h4>' + (i + 1) + '. ' + esc(p.sku) + ' → update_global_price</h4>'
+        + '<div class="call-note">URL: <code>' + esc(p.bridgeUrl) + '</code></div>'
+        + '<div class="call-note">payload_hash: <code>' + esc(p.payloadHash) + '</code>'
+        + ' <span class="muted">(dry: prefix — ok와 hash 공간 분리, P0-1)</span></div>'
+        + '<div class="call-note">new cost: <strong>' + Number(p.newCost).toLocaleString() + ' ₩</strong>'
+        + (p.globalItemId ? ' · global_item_id: ' + p.globalItemId : ' · <span style="color:var(--red)">global_item_id 없음</span>')
+        + '</div>'
+        + '<pre class="payload-pre">' + esc(JSON.stringify(p.payload, null, 2)) + '</pre>'
+        + '</div>';
+    }).join('');
+
+    modalBody.innerHTML = PRICE_API_BROKEN_NOTE + DOCS_MISMATCH_NOTE + ROLLBACK_NOTE + callsHtml
+      + '<div class="muted" style="font-size:11px;margin-top:8px;">run_id: ' + esc(runId) + ' · ' + payloads.length + '건</div>';
+
+    // Store payloads for confirm handler
+    document.getElementById('cat-modal-overlay').dataset.runId = runId;
+    document.getElementById('cat-modal-overlay').dataset.payloadCount = payloads.length;
+    // Attach payloads to the modal's confirm button via closure
+    document.getElementById('cat-modal-confirm').onclick = function() {
+      catExecuteDryRun(payloads);
+    };
+
+    document.getElementById('cat-modal-overlay').classList.add('show');
+  }
+
+  function catCloseModal() {
+    const overlay = document.getElementById('cat-modal-overlay');
+    if (overlay) overlay.classList.remove('show');
+  }
+
+  // ── Dry-run execution ───────────────────────────────────────────
+
+  /**
+   * Execute dry-run:
+   * 1. Insert dry_run row into shopee_mutation_log via Supabase (if table exists)
+   * 2. Write updated cost_krw + cost_updated_at to products table
+   * 3. console.log the full payload
+   *
+   * Note: bridge is NOT called (system busy + dry_run policy).
+   * shopee_mutation_log INSERT: If table doesn't exist yet (plan §3-2 migration pending),
+   * catches the error and continues — the local cost update still happens.
+   */
+  async function catExecuteDryRun(payloads) {
+    catCloseModal();
+    showToast('Dry-run 실행 중…', '');
+
+    const now = new Date().toISOString();
+    let successCount = 0;
+    let errorMsgs = [];
+
+    for (const p of payloads) {
+      // console.log the full payload (always)
+      console.log('[CAT dry-run] update_global_price payload:', JSON.stringify(p.payload, null, 2));
+
+      // Attempt to insert into shopee_mutation_log
+      try {
+        const logRow = {
+          actor: 'v2-catalog',
+          action: 'update_global_price',
+          target_global_item_id: p.globalItemId || null,
+          payload_hash: p.payloadHash,
+          request_payload: p.payload,
+          status: 'dry_run',
+          rollback_policy: 'no_auto_rollback_resume_only',
+        };
+        const { error: logErr } = await db.from('shopee_mutation_log').insert(logRow);
+        if (logErr && !/does not exist|schema cache/i.test(logErr.message || '')) {
+          console.warn('[CAT dry-run] mutation_log insert error:', logErr.message);
+        }
+      } catch (e) {
+        // mutation_log table may not exist yet — plan §3-2 migration pending
+        console.warn('[CAT dry-run] mutation_log unavailable:', e.message || e);
+      }
+
+      // Write updated cost_krw and cost_updated_at to products table
+      // This is acknowledged by operator: local cost is source of truth (plan §5-7)
+      const costUpdateFields = { cost_krw: p.newCost };
+      // cost_updated_at may not exist yet — use fallback
+      try {
+        const { error: costErr } = await db.from('products')
+          .update(Object.assign({}, costUpdateFields, { cost_updated_at: now }))
+          .eq('id', p.productId);
+        if (costErr && /cost_updated_at|column|schema cache/i.test(costErr.message || '')) {
+          // Retry without cost_updated_at if column missing
+          await db.from('products').update(costUpdateFields).eq('id', p.productId);
+        } else if (costErr) {
+          errorMsgs.push(p.sku + ': ' + costErr.message);
+          continue;
+        }
+      } catch (e) {
+        errorMsgs.push(p.sku + ': ' + (e.message || e));
+        continue;
+      }
+
+      // Update local cache so row doesn't look stale after confirm
+      if (_catCache) {
+        const product = _catCache.products.find(function(prod) { return String(prod.id) === String(p.productId); });
+        if (product) {
+          product.cost_krw = p.newCost;
+          product.cost_updated_at = now;
+        }
+      }
+      // Clear pending edit (now committed to DB)
+      delete pendingCostEdits[p.productId];
+      successCount++;
+    }
+
+    if (errorMsgs.length) {
+      showToast('일부 오류: ' + errorMsgs[0], 'err');
+    } else {
+      showToast('✓ Dry-run 완료 (' + successCount + '건 cost 업데이트)', 'ok');
+    }
+
+    // Re-render to reflect committed costs and clear pending state
+    applyAndRenderCatalog();
+  }
+
+  // ── Region filter checkboxes ────────────────────────────────────
+
+  function initCatRegionFilters() {
+    const container = document.getElementById('cat-region-filters');
+    if (!container) return;
+    CAT_REGIONS.forEach(function(r) {
+      const label = document.createElement('label');
+      label.style.cssText = 'display:flex;align-items:center;gap:3px;font-size:12px;cursor:pointer;';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = 'cat-rgn-' + r;
+      cb.checked = true;
+      cb.style.width = 'auto';
+      cb.addEventListener('change', function() {
+        if (cb.checked) _catRegionVisible.add(r);
+        else _catRegionVisible.delete(r);
+        // Dim/undim columns without full re-render
+        document.querySelectorAll('[data-cat-region="' + r + '"],[data-cat-region-new="' + r + '"]')
+          .forEach(function(el) { el.style.opacity = cb.checked ? '' : '0.35'; });
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(r));
+      container.appendChild(label);
+    });
+  }
+
+  // ── Wire listeners ──────────────────────────────────────────────
+
+  function initCatalogListeners() {
+    const searchEl = document.getElementById('cat-search');
+    if (searchEl) searchEl.addEventListener('input', applyAndRenderCatalog);
+
+    const lcFilter = document.getElementById('cat-lifecycle-filter');
+    if (lcFilter) lcFilter.addEventListener('change', applyAndRenderCatalog);
+
+    const refreshBtn = document.getElementById('cat-refresh');
+    if (refreshBtn) refreshBtn.addEventListener('click', function() { renderCatalogView(true); });
+
+    const dryBtn = document.getElementById('cat-dry-btn');
+    if (dryBtn) dryBtn.addEventListener('click', catShowDryRunModal);
+
+    // 실호출 button: permanently disabled (system busy — see cat-api-banner)
+    // No listener needed — button has disabled attribute in HTML.
+
+    const selectAll = document.getElementById('cat-select-all');
+    if (selectAll) {
+      selectAll.addEventListener('change', function() {
+        document.querySelectorAll('.cat-row-cb').forEach(function(cb) {
+          cb.checked = selectAll.checked;
+          const pid = cb.dataset.catSel;
+          if (pid) {
+            if (selectAll.checked) catSelectedIds.add(pid);
+            else catSelectedIds.delete(pid);
+          }
+        });
+      });
+    }
+
+    const closeBtn = document.getElementById('cat-modal-close');
+    if (closeBtn) closeBtn.addEventListener('click', catCloseModal);
+    const cancelBtn = document.getElementById('cat-modal-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', catCloseModal);
+    const overlay = document.getElementById('cat-modal-overlay');
+    if (overlay) overlay.addEventListener('click', function(e) {
+      if (e.target === overlay) catCloseModal();
+    });
+  }
+
+  // ── Boot ────────────────────────────────────────────────────────
+
+  initCatRegionFilters();
+  initCatalogListeners();
+
+  // Patch showView to trigger renderCatalogView when tab is clicked
+  (function patchShowViewCatalog() {
+    const _origSV2 = window.showView;
+    window.showView = function(viewId) {
+      _origSV2(viewId);
+      if (viewId === 'view-price-sync') renderCatalogView(false);
+    };
+  }());
 
 </script>
 </body>

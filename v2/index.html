@@ -632,6 +632,22 @@
       padding: 12px 16px; border-top: 1px solid var(--border);
       display: flex; gap: 10px; justify-content: flex-end; align-items: center;
     }
+
+    /* ── Probe view (plan §5-6, §3-3) ── */
+    #view-probe .panel { margin-bottom: 14px; }
+
+    /* ── History view status badges (plan §5-5) ── */
+    .hist-badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 600; white-space: nowrap; }
+    .hist-badge-ok      { background: #d1fae5; color: #065f46; }
+    .hist-badge-dry     { background: #e0f2fe; color: #0369a1; }
+    .hist-badge-error   { background: #fee2e2; color: var(--red); }
+    .hist-badge-skipped { background: #f1f4f9; color: var(--muted); }
+    /* expand-toggle rows */
+    #hist-body tr { cursor: pointer; }
+    #hist-body tr:hover td { background: #f7f8fa; }
+    #hist-body tr.hist-expanded td { background: #eef2ff; }
+    /* hash copy button */
+    .hist-hash-copy { font-size: 10px; padding: 1px 5px; margin-left: 4px; border-radius: 3px; }
   </style>
 </head>
 <body>
@@ -1337,23 +1353,217 @@
          VIEW: Probe (plan §5-6, §3-3)
          ═══════════════════════════════════════════════ -->
     <div id="view-probe" class="view">
-      <div class="placeholder-view">
-        <h3>🔬 Live Probe</h3>
-        <p style="font-size:12px;margin-top:8px;">plan §5-6 §3-3 — burnable product로 item_name/weight 변경 테스트<br>
-        TODO: probe flag 업데이트 → shopee_app.config (plan §3-3)</p>
+
+      <!-- Capability flags panel — read from shopee_app.config (plan §3-3) -->
+      <div class="panel" style="margin-bottom:14px;padding:14px 16px;">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+          <strong style="font-size:13px;">📡 Capability Flags</strong>
+          <button type="button" id="probe-flags-refresh" style="font-size:11px;padding:3px 8px;">새로고침</button>
+        </div>
+        <div id="probe-flags-body" style="font-size:12px;color:var(--muted);">로드 중…</div>
       </div>
-    </div>
+
+      <!-- Burnable item picker -->
+      <div class="panel" style="margin-bottom:14px;padding:14px 16px;">
+        <div class="notice" style="margin-bottom:10px;">
+          ⚠ <strong>주의:</strong> probe는 실제 Shopee 상품에 값을 쓰고 다시 읽습니다.
+          <strong>실제로 소모해도 되는 낮은 리스크 상품(burnable item)만 사용하세요.</strong>
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;">
+          <div class="field" style="flex:1;min-width:220px;">
+            <label for="probe-item-id">Burnable global_item_id</label>
+            <input type="text" id="probe-item-id" placeholder="예: 10000012345678" style="width:100%;">
+          </div>
+          <button type="button" id="probe-item-select" class="primary">선택</button>
+        </div>
+        <div id="probe-item-selected" style="font-size:12px;color:var(--muted);margin-top:6px;"></div>
+      </div>
+
+      <!-- Probe 1: item_name -->
+      <div class="panel" style="margin-bottom:14px;padding:14px 16px;">
+        <h3 style="font-size:14px;margin:0 0 8px;">Probe 1 — item_name 필드</h3>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 10px;">
+          순서: (a) 현재 name 읽기 → (b) '[PROBE TEST]'로 push → (c) 재조회 → (d) 비교.<br>
+          <strong>Note (P0-4):</strong> update_global_item.global_item_name 은 상품 전체(모든 region)에 적용됩니다.
+        </p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <button type="button" id="probe1-run" class="btn-dry">🔬 item_name probe 실행</button>
+          <span id="probe1-status" style="font-size:12px;color:var(--muted);">대기 중</span>
+        </div>
+        <div id="probe1-sequence" style="display:none;">
+          <div class="call-block">
+            <h4>(a) 현재 name 조회 — GET raw_call/get_global_item_info</h4>
+            <pre class="payload-pre" id="probe1-a-pre">—</pre>
+          </div>
+          <div class="call-block">
+            <h4>(b) name push — POST update_global_item (STUB)</h4>
+            <!-- TODO LIVE CALL: plan §4-1 — wire to SHOPEE_BRIDGE + '/update_global_item?region=SG' -->
+            <pre class="payload-pre" id="probe1-b-pre">—</pre>
+          </div>
+          <div class="call-block">
+            <h4>(c) 재조회 — GET raw_call/get_global_item_info</h4>
+            <pre class="payload-pre" id="probe1-c-pre">—</pre>
+          </div>
+          <div class="call-block">
+            <h4>(d) 비교 결과</h4>
+            <pre class="payload-pre" id="probe1-d-pre">—</pre>
+          </div>
+        </div>
+        <div id="probe1-result" style="display:none;margin-top:8px;">
+          <span id="probe1-badge" style="font-size:13px;font-weight:600;"></span>
+          <button type="button" id="probe1-save" style="margin-left:10px;display:none;">💾 capability flag 저장</button>
+        </div>
+      </div>
+
+      <!-- Probe 2: model weight -->
+      <div class="panel" style="padding:14px 16px;">
+        <h3 style="font-size:14px;margin:0 0 8px;">Probe 2 — model weight 필드</h3>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 10px;">
+          순서: (a) 현재 weight 읽기 → (b) 0.08 kg으로 push → (c) 재조회 → (d) 비교.<br>
+          <strong>Note (P0-4 / KRSC docs):</strong> update_global_model.weight 는 top-level 단일 float — 이 호출의 모든 listed model에 동일 weight가 적용됩니다. 단일 model probe payload를 사용하세요.
+        </p>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
+          <div class="field" style="flex:1;min-width:200px;">
+            <label for="probe-model-id">Burnable global_model_id</label>
+            <input type="text" id="probe-model-id" placeholder="예: 20000099887766">
+          </div>
+          <div class="field" style="flex:1;min-width:180px;">
+            <label for="probe-model-sku">현재 global_model_sku (required)</label>
+            <input type="text" id="probe-model-sku" placeholder="예: BND-A-01">
+          </div>
+          <button type="button" id="probe2-run" class="btn-dry">🔬 weight probe 실행</button>
+          <span id="probe2-status" style="font-size:12px;color:var(--muted);">대기 중</span>
+        </div>
+        <div id="probe2-sequence" style="display:none;">
+          <div class="call-block">
+            <h4>(a) 현재 weight 조회 — GET raw_call/get_global_item_info</h4>
+            <pre class="payload-pre" id="probe2-a-pre">—</pre>
+          </div>
+          <div class="call-block">
+            <h4>(b) weight push 0.08 kg — POST update_global_model (STUB)</h4>
+            <!-- TODO LIVE CALL: plan §4-1 — wire to SHOPEE_BRIDGE + '/update_global_model?region=SG' -->
+            <!-- KRSC: update_global_model.weight is top-level (not per-model element). Single model probe. -->
+            <pre class="payload-pre" id="probe2-b-pre">—</pre>
+          </div>
+          <div class="call-block">
+            <h4>(c) 재조회 — GET raw_call/get_global_item_info</h4>
+            <pre class="payload-pre" id="probe2-c-pre">—</pre>
+          </div>
+          <div class="call-block">
+            <h4>(d) 비교 결과</h4>
+            <pre class="payload-pre" id="probe2-d-pre">—</pre>
+          </div>
+        </div>
+        <div id="probe2-result" style="display:none;margin-top:8px;">
+          <span id="probe2-badge" style="font-size:13px;font-weight:600;"></span>
+          <button type="button" id="probe2-save" style="margin-left:10px;display:none;">💾 capability flag 저장</button>
+        </div>
+      </div>
+
+    </div><!-- /view-probe -->
 
     <!-- ═══════════════════════════════════════════════
          VIEW: 변경 이력 (plan §5-5)
          ═══════════════════════════════════════════════ -->
     <div id="view-history" class="view">
-      <div class="placeholder-view">
-        <h3>📜 변경 이력</h3>
-        <p style="font-size:12px;margin-top:8px;">plan §5-5 — shopee_mutation_log 최근 200건<br>
-        TODO plan §3-2: DB 마이그레이션 shopee_mutation_log 테이블 생성 후 구현</p>
+
+      <!-- Stat strip -->
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:12px;font-size:12px;">
+        <span><strong id="hist-total">—</strong> 총 rows</span>
+        <span>성공률 <strong id="hist-ok-rate">—</strong></span>
+        <span>오늘 오류 <strong id="hist-err-today" style="color:var(--red);">—</strong></span>
+        <span>1시간 내 mutation <strong id="hist-last1h">—</strong></span>
+        <button type="button" id="hist-refresh" style="margin-left:auto;font-size:11px;padding:3px 8px;">🔄 새로고침</button>
       </div>
-    </div>
+
+      <!-- Filter row -->
+      <div class="toolbar" style="margin-bottom:10px;gap:6px;">
+        <select id="hist-f-actor" style="font-size:12px;padding:5px 8px;">
+          <option value="">actor: 전체</option>
+          <option value="v2-wizard">v2-wizard</option>
+          <option value="v2-catalog">v2-catalog</option>
+          <option value="manual">manual</option>
+        </select>
+        <select id="hist-f-status" style="font-size:12px;padding:5px 8px;">
+          <option value="">status: 전체</option>
+          <option value="ok">ok</option>
+          <option value="dry_run">dry_run</option>
+          <option value="error">error</option>
+          <option value="skipped">skipped</option>
+        </select>
+        <select id="hist-f-region" style="font-size:12px;padding:5px 8px;">
+          <option value="">region: 전체</option>
+          <option value="SG">SG</option>
+          <option value="TW">TW</option>
+          <option value="TH">TH</option>
+          <option value="MY">MY</option>
+          <option value="PH">PH</option>
+          <option value="BR">BR</option>
+        </select>
+        <select id="hist-f-action" style="font-size:12px;padding:5px 8px;">
+          <option value="">action: 전체</option>
+        </select>
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
+          From <input type="date" id="hist-f-from" style="font-size:11px;padding:4px 6px;width:130px;">
+        </label>
+        <label style="font-size:12px;display:flex;align-items:center;gap:4px;">
+          To <input type="date" id="hist-f-to" style="font-size:11px;padding:4px 6px;width:130px;">
+        </label>
+        <button type="button" id="hist-filter-apply" class="primary" style="font-size:12px;padding:5px 10px;">적용</button>
+        <button type="button" id="hist-filter-reset" style="font-size:12px;padding:5px 10px;">초기화</button>
+      </div>
+
+      <div id="hist-banner" style="display:none;margin-bottom:10px;" class="notice"></div>
+      <div id="hist-loading" style="display:none;font-size:12px;color:var(--muted);margin-bottom:8px;">로드 중…</div>
+
+      <!-- Table -->
+      <div class="panel" style="overflow:auto;">
+        <table id="hist-table" style="table-layout:auto;min-width:900px;">
+          <thead>
+            <tr>
+              <th style="width:140px;">created_at</th>
+              <th style="width:90px;">actor</th>
+              <th style="width:140px;">action</th>
+              <th style="width:50px;">region</th>
+              <th style="width:110px;">target</th>
+              <th style="width:70px;">status</th>
+              <th style="width:130px;">payload_hash</th>
+              <th>error_msg</th>
+              <th style="width:70px;">duration_ms</th>
+            </tr>
+          </thead>
+          <tbody id="hist-body">
+            <tr><td colspan="9" class="empty">로드 중…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center;font-size:12px;">
+        <span id="hist-page-info" style="color:var(--muted);"></span>
+        <button type="button" id="hist-prev-page" style="font-size:12px;padding:4px 10px;" disabled>← 이전</button>
+        <button type="button" id="hist-next-page" style="font-size:12px;padding:4px 10px;" disabled>다음 페이지 →</button>
+      </div>
+
+      <!-- Row expand panel (inline JSON viewer) -->
+      <div id="hist-expand-panel" style="display:none;margin-top:12px;" class="panel">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+          <strong style="font-size:13px;">Row 상세</strong>
+          <button type="button" id="hist-expand-close" style="font-size:11px;padding:3px 8px;">닫기</button>
+        </div>
+        <div style="padding:12px 14px;display:grid;gap:10px;">
+          <div>
+            <div class="call-note">request_payload</div>
+            <pre class="payload-pre" id="hist-expand-req">—</pre>
+          </div>
+          <div>
+            <div class="call-note">response</div>
+            <pre class="payload-pre" id="hist-expand-res">—</pre>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /view-history -->
 
   </div><!-- /app-shell -->
 </main>
@@ -5194,8 +5404,692 @@
     window.showView = function(viewId) {
       _origSV2(viewId);
       if (viewId === 'view-price-sync') renderCatalogView(false);
+      if (viewId === 'view-probe')   renderProbeView();
+      if (viewId === 'view-history') renderHistoryView(false);
     };
   }());
+
+  // ════════════════════════════════════════════════════════════════
+  // PROBE VIEW (plan §5-6, §3-3)
+  // ════════════════════════════════════════════════════════════════
+
+  // State for probe view
+  const probeState = {
+    globalItemId: null,
+    probe1Result: null,  // 'pass' | 'fail' | null
+    probe2Result: null,
+  };
+
+  /**
+   * renderProbeView — entry point, called when tab activates.
+   * Loads capability flags from shopee_app.config (graceful if table missing).
+   */
+  async function renderProbeView() {
+    await probeLoadFlags();
+    initProbeListeners();
+  }
+
+  /**
+   * probeLoadFlags — read probe_item_name_ok / probe_model_weight_ok from
+   * shopee_app.config. Graceful 404 handling (plan §9-3).
+   * TODO LIVE CALL: shopee_app.config table may not exist yet — plan §9-3.
+   */
+  async function probeLoadFlags() {
+    const flagsEl = document.getElementById('probe-flags-body');
+    if (!flagsEl) return;
+    flagsEl.textContent = '로드 중…';
+    try {
+      // TODO LIVE CALL: create shopee_app.config table (plan §9-3):
+      //   CREATE TABLE shopee_app.config (key text primary key, value jsonb, updated_at timestamptz);
+      // Query: GET /rest/v1/shopee_app_config?select=key,value,updated_at&key=in.(probe_item_name_ok,probe_model_weight_ok)
+      const url = SUPABASE_URL + '/rest/v1/shopee_app_config'
+        + '?select=key,value,updated_at'
+        + '&key=in.(probe_item_name_ok,probe_model_weight_ok)';
+      const res = await fetch(url, { headers: AUTH_HEADERS });
+
+      if (!res.ok) {
+        // Table missing or access error — show banner
+        const banner = res.status === 404 || res.status === 400
+          ? '⚠ shopee_app.config 테이블이 없습니다. TODO: DB 마이그레이션으로 생성 필요 (plan §9-3).'
+          : `⚠ flags 로드 실패 (HTTP ${res.status})`;
+        flagsEl.innerHTML = '<span style="color:var(--red);">' + esc(banner) + '</span>';
+        return;
+      }
+
+      const rows = await res.json();
+      const byKey = {};
+      (Array.isArray(rows) ? rows : []).forEach(function(r) { byKey[r.key] = r; });
+
+      const fmt = function(key, label) {
+        const r = byKey[key];
+        if (!r) return '<span style="color:var(--muted);">' + label + ': <em>미설정</em></span>';
+        const ok = r.value === true || r.value?.ok === true;
+        const ts = r.updated_at ? new Date(r.updated_at).toLocaleString('ko-KR') : '—';
+        return (ok ? '✅' : '❌') + ' <strong>' + label + '</strong>: '
+          + (ok ? 'Pass' : 'Fail') + ' (기록: ' + esc(ts) + ')';
+      };
+
+      flagsEl.innerHTML = [
+        fmt('probe_item_name_ok',    'probe_item_name_ok'),
+        fmt('probe_model_weight_ok', 'probe_model_weight_ok'),
+      ].join(' &nbsp;&nbsp; ');
+    } catch (e) {
+      flagsEl.innerHTML = '<span style="color:var(--red);">flags 조회 오류: ' + esc(String(e.message || e)) + '</span>';
+    }
+  }
+
+  /**
+   * probeSelectItem — validate the entered global_item_id and store in state.
+   */
+  function probeSelectItem() {
+    const input = document.getElementById('probe-item-id');
+    const infoEl = document.getElementById('probe-item-selected');
+    const raw = (input?.value || '').trim();
+    if (!raw || !/^\d+$/.test(raw)) {
+      if (infoEl) infoEl.innerHTML = '<span style="color:var(--red);">숫자 global_item_id를 입력하세요.</span>';
+      return;
+    }
+    probeState.globalItemId = raw;
+    if (infoEl) infoEl.textContent = '✓ 선택됨: ' + raw;
+    console.log('[PROBE] burnable global_item_id set:', raw);
+  }
+
+  /**
+   * probeRunSequence — generic stub runner for probe 1 & 2.
+   * All four steps (a/b/c/d) are mocked with console.log.
+   * TODO LIVE CALL: replace stubs with real fetch calls (plan §5-6).
+   *
+   * @param {Object} opts
+   *   probeNum    1 | 2
+   *   stepADesc   string
+   *   stepBBody   object (the write payload)
+   *   stepBUrl    string (bridge URL, for display)
+   *   mockOldVal  any   (stub "before" value)
+   *   mockNewVal  any   (stub "after" value returned by re-read)
+   *   matchFn     function(old, readback) → boolean
+   */
+  async function probeRunSequence(opts) {
+    const n = opts.probeNum;
+    const statusEl = document.getElementById('probe' + n + '-status');
+    const seqEl    = document.getElementById('probe' + n + '-sequence');
+    const resultEl = document.getElementById('probe' + n + '-result');
+    const badgeEl  = document.getElementById('probe' + n + '-badge');
+    const saveBtn  = document.getElementById('probe' + n + '-save');
+    const aEl = document.getElementById('probe' + n + '-a-pre');
+    const bEl = document.getElementById('probe' + n + '-b-pre');
+    const cEl = document.getElementById('probe' + n + '-c-pre');
+    const dEl = document.getElementById('probe' + n + '-d-pre');
+
+    if (!probeState.globalItemId) {
+      showToast('먼저 burnable global_item_id를 입력하고 선택하세요.', 'err');
+      return;
+    }
+
+    if (statusEl) statusEl.textContent = '⏳ 실행 중…';
+    if (seqEl)    seqEl.style.display  = 'block';
+    if (resultEl) resultEl.style.display = 'none';
+    if (aEl) aEl.textContent = '⏳ 로드 중…';
+    if (bEl) bEl.textContent = '⏳ 로드 중…';
+    if (cEl) cEl.textContent = '⏳ 로드 중…';
+    if (dEl) dEl.textContent = '⏳ 로드 중…';
+
+    // --- (a) Read current value ---
+    // TODO LIVE CALL: replace mock with real bridge call:
+    //   GET SHOPEE_BRIDGE + '/raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fget_global_item_info&q=global_item_id%3D' + probeState.globalItemId
+    const stepAReq = {
+      method: 'GET',
+      url: SHOPEE_BRIDGE + '/raw_call',
+      params: { region: 'SG', path: '/api/v2/global_product/get_global_item_info', q: 'global_item_id=' + probeState.globalItemId },
+      note: 'STUB — not fired (plan §5-6)',
+    };
+    const stepAMock = { ok: true, result: { response: { item: { global_item_name: opts.mockOldVal } } }, _stub: true };
+    console.log('[PROBE ' + n + '-a] request:', stepAReq, '→ mock:', stepAMock);
+    if (aEl) aEl.textContent = JSON.stringify({ request: stepAReq, response: stepAMock }, null, 2);
+
+    await new Promise(function(r) { setTimeout(r, 300); }); // simulate async
+
+    // --- (b) Push test value ---
+    // TODO LIVE CALL: fire real bridge mutation (plan §5-6, §4-1).
+    const stepBReq = {
+      method: 'POST',
+      url: opts.stepBUrl + ' (STUB)',
+      body: opts.stepBBody,
+      note: 'STUB — not fired (plan §5-6). TODO LIVE CALL.',
+    };
+    const stepBMock = { ok: true, result: { error: null }, _stub: true };
+    console.log('[PROBE ' + n + '-b] request:', stepBReq, '→ mock:', stepBMock);
+    if (bEl) bEl.textContent = JSON.stringify({ request: stepBReq, response: stepBMock }, null, 2);
+
+    await new Promise(function(r) { setTimeout(r, 300); });
+
+    // --- (c) Re-read ---
+    // TODO LIVE CALL: same as step (a), re-read after write (plan §5-6).
+    const stepCMock = { ok: true, result: { response: { item: { global_item_name: opts.mockNewVal } } }, _stub: true };
+    console.log('[PROBE ' + n + '-c] re-read mock:', stepCMock);
+    if (cEl) cEl.textContent = JSON.stringify({ request: stepAReq, response: stepCMock }, null, 2);
+
+    await new Promise(function(r) { setTimeout(r, 200); });
+
+    // --- (d) Compare ---
+    const pass = opts.matchFn(opts.mockOldVal, opts.mockNewVal);
+    const dResult = {
+      before: opts.mockOldVal,
+      after_readback: opts.mockNewVal,
+      expected_written: opts.mockNewVal,
+      pass: pass,
+      note: 'STUB comparison — values are mocked (plan §5-6)',
+    };
+    console.log('[PROBE ' + n + '-d] compare:', dResult);
+    if (dEl) dEl.textContent = JSON.stringify(dResult, null, 2);
+
+    // Show result
+    if (resultEl) resultEl.style.display = 'block';
+    if (statusEl) statusEl.textContent = pass ? '✅ Pass' : '❌ Fail (stub)';
+    if (badgeEl)  badgeEl.textContent  = 'Probe result: ' + (pass ? '✅ Pass (mock)' : '❌ Fail (mock)');
+    if (badgeEl)  badgeEl.style.color  = pass ? 'var(--green)' : 'var(--red)';
+    if (saveBtn)  saveBtn.style.display = pass ? 'inline-block' : 'none';
+
+    if (n === 1) probeState.probe1Result = pass ? 'pass' : 'fail';
+    if (n === 2) probeState.probe2Result = pass ? 'pass' : 'fail';
+  }
+
+  /**
+   * probeSaveFlag — stub upsert into shopee_app.config.
+   * TODO LIVE CALL: real Supabase upsert (plan §3-3, §5-6, §9-3).
+   * Capability flag upsert shape:
+   *   table: shopee_app_config
+   *   upsert on conflict key:
+   *   { key: 'probe_item_name_ok', value: true, updated_at: now(), actor: 'v2-probe' }
+   */
+  async function probeSaveFlag(key, value) {
+    // TODO LIVE CALL: shopee_app.config table may not exist — plan §9-3.
+    // Upsert shape: { key, value, updated_at: new Date().toISOString(), actor: 'v2-probe' }
+    const upsertPayload = { key: key, value: value, updated_at: new Date().toISOString(), actor: 'v2-probe' };
+    console.log('[PROBE save-flag] TODO LIVE CALL — upsert into shopee_app_config:', upsertPayload);
+
+    // Try real upsert, gracefully handle missing table
+    try {
+      const { error } = await db.from('shopee_app_config').upsert(upsertPayload, { onConflict: 'key' });
+      if (error) {
+        if (/does not exist|schema cache|relation/i.test(error.message || '')) {
+          showToast('⚠ shopee_app_config 테이블 없음 (plan §9-3). 로컬 console에만 저장됨.', '');
+        } else {
+          showToast('flag 저장 오류: ' + error.message, 'err');
+        }
+        return;
+      }
+      showToast('✓ capability flag 저장: ' + key + ' = ' + value, 'ok');
+      await probeLoadFlags(); // refresh flags panel
+    } catch (e) {
+      showToast('flag 저장 예외: ' + String(e.message || e), 'err');
+    }
+  }
+
+  /**
+   * initProbeListeners — wire all probe view button handlers.
+   * Safe to call multiple times (checks for existing listener via dataset).
+   */
+  function initProbeListeners() {
+    // Burnable item picker
+    const selectBtn = document.getElementById('probe-item-select');
+    if (selectBtn && !selectBtn.dataset.probeBound) {
+      selectBtn.dataset.probeBound = '1';
+      selectBtn.addEventListener('click', probeSelectItem);
+      document.getElementById('probe-item-id')?.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') probeSelectItem();
+      });
+    }
+
+    // Flags refresh
+    const flagsRefresh = document.getElementById('probe-flags-refresh');
+    if (flagsRefresh && !flagsRefresh.dataset.probeBound) {
+      flagsRefresh.dataset.probeBound = '1';
+      flagsRefresh.addEventListener('click', probeLoadFlags);
+    }
+
+    // Probe 1: item_name
+    const p1Btn = document.getElementById('probe1-run');
+    if (p1Btn && !p1Btn.dataset.probeBound) {
+      p1Btn.dataset.probeBound = '1';
+      p1Btn.addEventListener('click', function() {
+        probeRunSequence({
+          probeNum: 1,
+          stepBUrl: SHOPEE_BRIDGE + '/update_global_item?region=SG',
+          stepBBody: {
+            global_item_id: Number(probeState.globalItemId),
+            global_item_name: '[PROBE TEST]',
+            // Note: update_global_item also requires image.image_id_list (required per docs_ai).
+            // TODO LIVE CALL: fetch image_id_list from get_global_item_info before write (plan §5-2).
+          },
+          mockOldVal: '[PRE ORDER] Test Product',
+          mockNewVal: '[PROBE TEST]',
+          matchFn: function(old, readback) { return readback === '[PROBE TEST]'; },
+        });
+      });
+    }
+    const p1Save = document.getElementById('probe1-save');
+    if (p1Save && !p1Save.dataset.probeBound) {
+      p1Save.dataset.probeBound = '1';
+      p1Save.addEventListener('click', function() {
+        probeSaveFlag('probe_item_name_ok', probeState.probe1Result === 'pass');
+      });
+    }
+
+    // Probe 2: model weight
+    const p2Btn = document.getElementById('probe2-run');
+    if (p2Btn && !p2Btn.dataset.probeBound) {
+      p2Btn.dataset.probeBound = '1';
+      p2Btn.addEventListener('click', function() {
+        const modelId  = (document.getElementById('probe-model-id')?.value  || '').trim();
+        const modelSku = (document.getElementById('probe-model-sku')?.value || '').trim();
+        if (!modelId || !/^\d+$/.test(modelId)) {
+          showToast('숫자 global_model_id를 입력하세요.', 'err'); return;
+        }
+        if (!modelSku) {
+          showToast('현재 global_model_sku를 입력하세요 (required by update_global_model API).', 'err'); return;
+        }
+        probeRunSequence({
+          probeNum: 2,
+          stepBUrl: SHOPEE_BRIDGE + '/update_global_model?region=SG',
+          stepBBody: {
+            global_item_id: Number(probeState.globalItemId),
+            // Note (KRSC / P0-4 policy): update_global_model.weight is TOP-LEVEL — applies to ALL
+            // models listed in this call. Use single-model probe payload to limit scope.
+            // Source: docs_ai global_product.update_global_model body_params + plan §5-2.
+            weight: 0.08,   // 80g in KG — top-level, not per-model element
+            global_model: [{
+              global_model_id: Number(modelId),
+              global_model_sku: modelSku,
+              // package_height/length/width (top-level, required by update_global_model per docs_ai §5-2)
+              // TODO LIVE CALL: fetch current values from get_global_item_info before write (plan §5-2).
+            }],
+          },
+          mockOldVal: 0.065,   // 65g stub
+          mockNewVal: 0.08,
+          matchFn: function(old, readback) { return String(readback) === '0.08'; },
+        });
+      });
+    }
+    const p2Save = document.getElementById('probe2-save');
+    if (p2Save && !p2Save.dataset.probeBound) {
+      p2Save.dataset.probeBound = '1';
+      p2Save.addEventListener('click', function() {
+        probeSaveFlag('probe_model_weight_ok', probeState.probe2Result === 'pass');
+      });
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // HISTORY VIEW (plan §5-5, §3-2)
+  // ════════════════════════════════════════════════════════════════
+
+  const HIST_PAGE = 200; // rows per page (plan §5-5)
+
+  const histState = {
+    offset: 0,
+    total: null,       // parsed from Content-Range header
+    rows: [],
+    filters: {},
+    expandedRowId: null,
+    initialized: false,
+  };
+
+  /**
+   * renderHistoryView — entry point, called when tab activates.
+   * @param {boolean} forceRefresh  bypass in-memory cache
+   */
+  async function renderHistoryView(forceRefresh) {
+    if (!histState.initialized) {
+      histInitFilters();
+      histInitListeners();
+      histState.initialized = true;
+    }
+    if (forceRefresh || !histState.rows.length) {
+      histState.offset = 0;
+      await histFetch();
+    }
+  }
+
+  /**
+   * histFetch — load shopee_mutation_log rows from Supabase REST.
+   * URL pattern:
+   *   GET /rest/v1/shopee_mutation_log?select=*&order=created_at.desc&<filters>
+   *   Headers: Range: offset-(offset+PAGE-1), Prefer: count=exact
+   * Total extracted from Content-Range header: "0-199/4521" → total = 4521.
+   * Gracefully handles 404/400 (table missing — plan §3-2).
+   */
+  async function histFetch() {
+    const loadingEl = document.getElementById('hist-loading');
+    const bannerEl  = document.getElementById('hist-banner');
+    const tbody     = document.getElementById('hist-body');
+
+    if (loadingEl) loadingEl.style.display = 'block';
+    if (bannerEl)  bannerEl.style.display  = 'none';
+
+    try {
+      let qs = '?select=id,created_at,actor,action,region,target_global_item_id,'
+        + 'target_shop_item_id,status,payload_hash,error_msg,duration_ms,request_payload,response'
+        + '&order=created_at.desc';
+
+      const f = histState.filters;
+      if (f.actor)  qs += '&actor=eq.' + encodeURIComponent(f.actor);
+      if (f.status) qs += '&status=eq.' + encodeURIComponent(f.status);
+      if (f.region) qs += '&region=eq.' + encodeURIComponent(f.region);
+      if (f.action) qs += '&action=eq.' + encodeURIComponent(f.action);
+      if (f.from)   qs += '&created_at=gte.' + encodeURIComponent(f.from + 'T00:00:00Z');
+      if (f.to)     qs += '&created_at=lte.' + encodeURIComponent(f.to   + 'T23:59:59Z');
+
+      const url = SUPABASE_URL + '/rest/v1/shopee_mutation_log' + qs;
+      const end  = histState.offset + HIST_PAGE - 1;
+      const res  = await fetch(url, {
+        headers: Object.assign({}, AUTH_HEADERS, {
+          'Range-Unit': 'items',
+          'Range': histState.offset + '-' + end,
+          'Prefer': 'count=exact',
+        }),
+      });
+
+      if (!res.ok) {
+        // 404 / 400 → table missing (plan §3-2)
+        const isMissing = res.status === 404 || res.status === 400;
+        histState.rows  = [];
+        histState.total = 0;
+        histRenderEmpty(isMissing);
+        histUpdateStats(0, [], isMissing);
+        if (loadingEl) loadingEl.style.display = 'none';
+        return;
+      }
+
+      // Parse Content-Range: "items 0-199/4521"
+      const cr = res.headers.get('Content-Range') || '';
+      // format: items <start>-<end>/<total>  OR  items */<total>
+      const crMatch = cr.match(/(\d+|\*)\/(\d+|\*)/);
+      histState.total = crMatch && crMatch[2] !== '*' ? parseInt(crMatch[2], 10) : null;
+
+      const rows = await res.json();
+      histState.rows = Array.isArray(rows) ? rows : [];
+      histRenderTable(histState.rows);
+      histUpdateStats(histState.total, histState.rows, false);
+      histPopulateActionFilter(histState.rows);
+      histUpdatePagination();
+
+    } catch (e) {
+      if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="empty" style="color:var(--red);">오류: ' + esc(String(e.message || e)) + '</td></tr>';
+    } finally {
+      if (loadingEl) loadingEl.style.display = 'none';
+    }
+  }
+
+  /**
+   * histRenderEmpty — show graceful empty/missing state (plan §5-5 spec).
+   */
+  function histRenderEmpty(tableMissing) {
+    const tbody   = document.getElementById('hist-body');
+    const bannerEl = document.getElementById('hist-banner');
+
+    const emptyMsg = '📜 mutation log 이 비어있습니다. v2 마법사로 mutation 이 실행되면 여기에 기록됩니다.';
+    const noteMsg  = tableMissing
+      ? 'shopee_mutation_log 테이블은 v2 첫 mutation 시 자동 생성됩니다. (현재는 set_price_sync_on/set_sync_field 만 기록되어 있습니다.)'
+      : '';
+
+    if (tbody) tbody.innerHTML = '<tr><td colspan="9" class="empty">'
+      + esc(emptyMsg)
+      + (noteMsg ? '<br><span class="muted" style="font-size:11px;">' + esc(noteMsg) + '</span>' : '')
+      + '</td></tr>';
+
+    if (bannerEl && tableMissing) {
+      bannerEl.style.display = 'block';
+      bannerEl.textContent = '⚠ shopee_mutation_log 테이블이 없거나 접근 불가 (plan §3-2). '
+        + 'v2 첫 mutation 시 자동 생성됩니다.';
+    }
+  }
+
+  /**
+   * histRenderTable — render rows into #hist-body.
+   */
+  function histRenderTable(rows) {
+    const tbody = document.getElementById('hist-body');
+    if (!tbody) return;
+
+    if (!rows.length) {
+      histRenderEmpty(false);
+      return;
+    }
+
+    tbody.innerHTML = rows.map(function(r) {
+      const target = r.target_global_item_id || r.target_shop_item_id || '—';
+      const hash12 = r.payload_hash ? String(r.payload_hash).slice(0, 12) : '—';
+      const badgeCls = {
+        ok: 'hist-badge-ok', dry_run: 'hist-badge-dry',
+        error: 'hist-badge-error', skipped: 'hist-badge-skipped',
+      }[r.status] || 'hist-badge-skipped';
+
+      const ts = r.created_at ? new Date(r.created_at).toLocaleString('ko-KR', { hour12: false }) : '—';
+
+      return '<tr data-hist-id="' + esc(String(r.id)) + '">'
+        + '<td style="font-size:11px;white-space:nowrap;" class="mono">' + esc(ts) + '</td>'
+        + '<td style="font-size:11px;">' + esc(r.actor || '—') + '</td>'
+        + '<td style="font-size:11px;" class="mono">' + esc(r.action || '—') + '</td>'
+        + '<td style="font-size:11px;">' + esc(r.region || '—') + '</td>'
+        + '<td style="font-size:11px;" class="mono">' + esc(String(target)) + '</td>'
+        + '<td><span class="hist-badge ' + badgeCls + '">' + esc(r.status || '—') + '</span></td>'
+        + '<td class="mono" style="font-size:11px;">'
+        +   esc(hash12)
+        +   '<button class="hist-hash-copy" data-copy="' + esc(r.payload_hash || '') + '" title="복사" onclick="event.stopPropagation();">⧉</button>'
+        + '</td>'
+        + '<td style="font-size:11px;color:var(--red);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+        +   esc(r.error_msg || '') + '</td>'
+        + '<td style="font-size:11px;text-align:right;">' + esc(String(r.duration_ms ?? '—')) + '</td>'
+        + '</tr>';
+    }).join('');
+
+    // Wire copy buttons
+    tbody.querySelectorAll('.hist-hash-copy').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        navigator.clipboard?.writeText(btn.dataset.copy || '');
+        showToast('payload_hash 복사됨', 'ok');
+      });
+    });
+
+    // Wire row click → expand
+    tbody.querySelectorAll('tr[data-hist-id]').forEach(function(tr) {
+      tr.addEventListener('click', function() {
+        const id = tr.dataset.histId;
+        const row = histState.rows.find(function(r) { return String(r.id) === id; });
+        if (row) histExpandRow(tr, row);
+      });
+    });
+  }
+
+  /**
+   * histExpandRow — toggle inline JSON expand panel below table.
+   */
+  function histExpandRow(tr, row) {
+    const panel  = document.getElementById('hist-expand-panel');
+    const reqPre = document.getElementById('hist-expand-req');
+    const resPre = document.getElementById('hist-expand-res');
+
+    // Toggle off if same row
+    if (histState.expandedRowId === String(row.id)) {
+      histState.expandedRowId = null;
+      if (panel) panel.style.display = 'none';
+      tr.classList.remove('hist-expanded');
+      return;
+    }
+
+    // Clear old highlight
+    document.querySelectorAll('#hist-body tr.hist-expanded').forEach(function(t) {
+      t.classList.remove('hist-expanded');
+    });
+
+    histState.expandedRowId = String(row.id);
+    tr.classList.add('hist-expanded');
+
+    if (reqPre) reqPre.textContent = row.request_payload
+      ? JSON.stringify(row.request_payload, null, 2) : '(없음)';
+    if (resPre) resPre.textContent = row.response
+      ? JSON.stringify(row.response, null, 2) : '(없음)';
+    if (panel)  panel.style.display = 'block';
+    if (panel)  panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  /**
+   * histUpdateStats — update stat strip from loaded data.
+   * Total comes from Content-Range header; row-level stats computed locally.
+   */
+  function histUpdateStats(total, rows, tableMissing) {
+    const totalEl   = document.getElementById('hist-total');
+    const okRateEl  = document.getElementById('hist-ok-rate');
+    const errToday  = document.getElementById('hist-err-today');
+    const last1h    = document.getElementById('hist-last1h');
+
+    if (totalEl)  totalEl.textContent  = tableMissing ? '—' : (total !== null ? total.toLocaleString() : '?');
+
+    if (!rows.length || tableMissing) {
+      if (okRateEl) okRateEl.textContent = '—';
+      if (errToday) errToday.textContent = '—';
+      if (last1h)   last1h.textContent   = '—';
+      return;
+    }
+
+    const okCount  = rows.filter(function(r) { return r.status === 'ok'; }).length;
+    const rate     = rows.length > 0 ? Math.round((okCount / rows.length) * 100) : 0;
+    if (okRateEl) okRateEl.textContent = rate + '%';
+
+    const now      = new Date();
+    const todayStr = now.toISOString().slice(0, 10);
+    const errTodayCount = rows.filter(function(r) {
+      return r.status === 'error' && r.created_at && r.created_at.slice(0, 10) === todayStr;
+    }).length;
+    if (errToday) errToday.textContent = String(errTodayCount);
+
+    const oneHourAgo = new Date(now.getTime() - 3600 * 1000).toISOString();
+    const last1hCount = rows.filter(function(r) {
+      return r.created_at && r.created_at > oneHourAgo;
+    }).length;
+    if (last1h) last1h.textContent = String(last1hCount);
+  }
+
+  /**
+   * histPopulateActionFilter — fill #hist-f-action select from distinct action values in loaded rows.
+   */
+  function histPopulateActionFilter(rows) {
+    const sel = document.getElementById('hist-f-action');
+    if (!sel) return;
+    const actions = Array.from(new Set(rows.map(function(r) { return r.action; }).filter(Boolean))).sort();
+    // Keep existing selection
+    const current = sel.value;
+    sel.innerHTML = '<option value="">action: 전체</option>'
+      + actions.map(function(a) { return '<option value="' + esc(a) + '">' + esc(a) + '</option>'; }).join('');
+    if (current && actions.includes(current)) sel.value = current;
+  }
+
+  /**
+   * histUpdatePagination — enable/disable prev/next buttons, update info label.
+   */
+  function histUpdatePagination() {
+    const prevBtn  = document.getElementById('hist-prev-page');
+    const nextBtn  = document.getElementById('hist-next-page');
+    const infoEl   = document.getElementById('hist-page-info');
+    const rowCount = histState.rows.length;
+    const start    = histState.offset + 1;
+    const end      = histState.offset + rowCount;
+    const total    = histState.total;
+
+    if (infoEl) infoEl.textContent = rowCount > 0
+      ? start + '–' + end + ' / ' + (total !== null ? total.toLocaleString() : '?') + '건'
+      : '0건';
+    if (prevBtn) prevBtn.disabled = histState.offset === 0;
+    if (nextBtn) nextBtn.disabled = rowCount < HIST_PAGE;
+  }
+
+  /**
+   * histInitFilters — set default date range to last 7 days.
+   */
+  function histInitFilters() {
+    const toEl   = document.getElementById('hist-f-to');
+    const fromEl = document.getElementById('hist-f-from');
+    if (!toEl || !fromEl) return;
+    const today = new Date();
+    const sevenAgo = new Date(today.getTime() - 7 * 86400 * 1000);
+    toEl.value   = today.toISOString().slice(0, 10);
+    fromEl.value = sevenAgo.toISOString().slice(0, 10);
+    // Apply defaults to state
+    histState.filters = { from: fromEl.value, to: toEl.value };
+  }
+
+  /**
+   * histApplyFilters — read filter UI into histState.filters, reset offset, re-fetch.
+   */
+  async function histApplyFilters() {
+    histState.filters = {
+      actor:  document.getElementById('hist-f-actor')?.value  || '',
+      status: document.getElementById('hist-f-status')?.value || '',
+      region: document.getElementById('hist-f-region')?.value || '',
+      action: document.getElementById('hist-f-action')?.value || '',
+      from:   document.getElementById('hist-f-from')?.value   || '',
+      to:     document.getElementById('hist-f-to')?.value     || '',
+    };
+    histState.offset = 0;
+    histState.expandedRowId = null;
+    const panel = document.getElementById('hist-expand-panel');
+    if (panel) panel.style.display = 'none';
+    await histFetch();
+  }
+
+  /**
+   * histResetFilters — clear all filters, restore default 7-day range, re-fetch.
+   */
+  async function histResetFilters() {
+    const today = new Date();
+    const sevenAgo = new Date(today.getTime() - 7 * 86400 * 1000);
+    const fmt = function(d) { return d.toISOString().slice(0, 10); };
+
+    ['hist-f-actor','hist-f-status','hist-f-region','hist-f-action'].forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    const fromEl = document.getElementById('hist-f-from');
+    const toEl   = document.getElementById('hist-f-to');
+    if (fromEl) fromEl.value = fmt(sevenAgo);
+    if (toEl)   toEl.value   = fmt(today);
+
+    histState.filters = { from: fmt(sevenAgo), to: fmt(today) };
+    histState.offset  = 0;
+    await histFetch();
+  }
+
+  /**
+   * histInitListeners — wire all history view button handlers.
+   */
+  function histInitListeners() {
+    document.getElementById('hist-refresh')?.addEventListener('click', function() {
+      histState.rows = [];
+      renderHistoryView(true);
+    });
+    document.getElementById('hist-filter-apply')?.addEventListener('click', histApplyFilters);
+    document.getElementById('hist-filter-reset')?.addEventListener('click', histResetFilters);
+
+    document.getElementById('hist-prev-page')?.addEventListener('click', async function() {
+      if (histState.offset === 0) return;
+      histState.offset = Math.max(0, histState.offset - HIST_PAGE);
+      await histFetch();
+    });
+    document.getElementById('hist-next-page')?.addEventListener('click', async function() {
+      if (histState.rows.length < HIST_PAGE) return;
+      histState.offset += HIST_PAGE;
+      await histFetch();
+    });
+
+    document.getElementById('hist-expand-close')?.addEventListener('click', function() {
+      histState.expandedRowId = null;
+      const panel = document.getElementById('hist-expand-panel');
+      if (panel) panel.style.display = 'none';
+      document.querySelectorAll('#hist-body tr.hist-expanded').forEach(function(t) {
+        t.classList.remove('hist-expanded');
+      });
+    });
+  }
 
 </script>
 </body>

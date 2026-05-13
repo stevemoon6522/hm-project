@@ -324,6 +324,11 @@
       padding: 48px 24px; text-align: center; color: var(--muted);
       border: 1px dashed var(--border); border-radius: 8px;
     }
+    #view-pre-order .placeholder-view,
+    #view-ready-stock .placeholder-view { display: none; }
+    #view-pre-order > .toolbar:nth-of-type(2),
+    #po-loading,
+    #po-table-wrap { display: none !important; }
     .placeholder-view h3 { font-size: 16px; margin-bottom: 8px; color: var(--text); }
 
     /* ── Wizard steps (plan §5-1-A) ── */
@@ -880,41 +885,47 @@
          VIEW: PRE ORDER 목록 (plan §5-1-A, Phase A1)
          ═══════════════════════════════════════════════ -->
     <div id="view-pre-order" class="view">
+      <!-- toolbar -->
       <div class="toolbar">
-        <input id="pre-order-search" type="search" placeholder="PRE ORDER search: SKU / product / option">
-        <select id="pre-order-region">
-          <option value="">All regions</option>
-          <option value="SG">SG</option>
-          <option value="TW">TW</option>
-          <option value="TH">TH</option>
-          <option value="MY">MY</option>
-          <option value="PH">PH</option>
-          <option value="BR">BR</option>
+        <input id="po-search" type="search" placeholder="SKU / 상품명 / 옵션 검색">
+        <div id="po-region-filters" style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+          <span style="font-size:12px;color:var(--muted);">Region:</span>
+        </div>
+        <select id="po-sort">
+          <option value="newest">최신 등록순</option>
+          <option value="oldest">오래된 순</option>
+          <option value="unpublished">Region 미발행 많은 순</option>
         </select>
-        <button id="pre-order-refresh" type="button">Refresh</button>
-        <button id="pre-order-open-ready" type="button" class="primary" disabled>Selected to READY STOCK</button>
+        <button id="po-refresh" type="button">새로고침</button>
+        <span id="po-count" style="font-size:12px;font-weight:600;color:var(--accent);white-space:nowrap;"></span>
+        <span id="po-error" class="status err" style="display:none;"></span>
       </div>
-      <div class="panel table-scroll">
-        <table>
-          <thead>
+
+      <!-- loading indicator -->
+      <div id="po-loading" style="text-align:center;padding:24px;color:var(--muted);display:none;">
+        로딩 중…
+      </div>
+
+      <!-- table -->
+      <div class="panel table-scroll" id="po-table-wrap">
+        <table id="po-table" style="table-layout:auto;">
+          <thead id="po-thead">
             <tr>
-              <th style="width:42px;"><input id="pre-order-select-all" type="checkbox" title="Select all visible"></th>
-              <th style="width:160px;">SKU</th>
-              <th>PRE ORDER product</th>
-              <th style="width:120px;">Weight g</th>
-              <th style="width:220px;">Global / model</th>
-              <th style="width:220px;">Regions</th>
+              <th style="min-width:180px;">상품</th>
+              <th style="min-width:120px;">SKU</th>
+              <th style="min-width:120px;">shopee_item_id</th>
+              <!-- region badge columns injected by renderPreOrderView() -->
+              <th style="min-width:80px;">Cost (₩)</th>
+              <th style="min-width:70px;">Weight (g)</th>
+              <th style="min-width:80px;">등록일</th>
+              <th style="min-width:55px;">경과</th>
+              <th style="min-width:150px;">액션</th>
             </tr>
           </thead>
-          <tbody id="pre-order-body">
-            <tr><td colspan="6" class="empty">Loading PRE ORDER products...</td></tr>
+          <tbody id="po-body">
+            <tr><td colspan="9" class="empty">로딩 중…</td></tr>
           </tbody>
         </table>
-      </div>
-      <div class="placeholder-view">
-        <h3>🔖 PRE ORDER 목록</h3>
-        <p style="font-size:12px;margin-top:8px;">lifecycle_state = 'pre_order' 상품 리스트<br>
-        TODO plan §5-1-A §7 step 5: products 테이블 lifecycle_state='pre_order' rows 조회</p>
       </div>
     </div>
 
@@ -922,6 +933,51 @@
          VIEW: READY STOCK 전환 마법사 (plan §5-2, Phase B)
          ═══════════════════════════════════════════════ -->
     <div id="view-ready-stock" class="view">
+      <div class="ready-summary">
+        <div class="summary-tile"><div class="label">Selected rows</div><div class="value" id="ready-count">0</div></div>
+        <div class="summary-tile"><div class="label">Global item calls</div><div class="value" id="ready-item-call-count">0</div></div>
+        <div class="summary-tile"><div class="label">Model / SKU calls</div><div class="value" id="ready-model-call-count">0</div></div>
+        <div class="summary-tile"><div class="label">Days to ship</div><div class="value">1</div></div>
+      </div>
+      <div class="toolbar">
+        <button id="ready-load-pre-orders" type="button">Load PRE ORDER list</button>
+        <button id="ready-preview" type="button" class="primary" disabled>Preview & confirm</button>
+        <button id="ready-dry-run" type="button" disabled>Dry-run only</button>
+        <span id="ready-status" class="status"></span>
+      </div>
+      <div class="notice" style="margin-bottom:12px;">
+        This flow only transitions PRE ORDER to READY STOCK. It renames the prefix, sends DTS=1, updates edited SKU/weight fields, and writes row-level results. Repricing is intentionally out of scope.
+      </div>
+      <div class="panel table-scroll ready-editor">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:150px;">Current SKU</th>
+              <th>Product</th>
+              <th style="width:180px;">Edited SKU</th>
+              <th style="width:120px;">Weight g</th>
+              <th style="width:220px;">Target IDs</th>
+              <th style="width:170px;">Validation</th>
+            </tr>
+          </thead>
+          <tbody id="ready-body">
+            <tr><td colspan="6" class="empty">Select products in PRE ORDER list.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div id="ready-results" class="result-list" style="display:none;margin-top:14px;">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:150px;">Row</th>
+              <th style="width:170px;">Action</th>
+              <th style="width:90px;">Status</th>
+              <th>Message</th>
+            </tr>
+          </thead>
+          <tbody id="ready-result-body"></tbody>
+        </table>
+      </div>
       <div class="placeholder-view">
         <h3>🔄 READY STOCK 전환 마법사</h3>
         <p style="font-size:12px;margin-top:8px;">plan §5-2 — Phase B<br>
@@ -977,7 +1033,7 @@
     <div class="wiz-modal-body" id="wiz-modal-body"></div>
     <div class="wiz-modal-footer">
       <button onclick="closeWizModal()">취소</button>
-      <button id="wiz-modal-confirm-btn" class="btn-live" onclick="executeMockSubmit()" style="display:none;">🔥 실제 등록 (모의)</button>
+      <button id="wiz-modal-confirm-btn" class="btn-live" onclick="handleWizModalConfirm()" style="display:none;">🔥 실제 등록 (모의)</button>
     </div>
   </div>
 </div>
@@ -1178,6 +1234,25 @@
     variantBody: document.getElementById('variant-body'),
     resultSection: document.getElementById('result-section'),
     resultBody: document.getElementById('result-body'),
+    poSearch: document.getElementById('po-search'),
+    poSort: document.getElementById('po-sort'),
+    poRefresh: document.getElementById('po-refresh'),
+    poCount: document.getElementById('po-count'),
+    poError: document.getElementById('po-error'),
+    poLoading: document.getElementById('po-loading'),
+    poBody: document.getElementById('po-body'),
+    poThead: document.getElementById('po-thead'),
+    poRegionFilters: document.getElementById('po-region-filters'),
+    readyLoadPreOrders: document.getElementById('ready-load-pre-orders'),
+    readyPreview: document.getElementById('ready-preview'),
+    readyDryRun: document.getElementById('ready-dry-run'),
+    readyStatus: document.getElementById('ready-status'),
+    readyCount: document.getElementById('ready-count'),
+    readyItemCallCount: document.getElementById('ready-item-call-count'),
+    readyModelCallCount: document.getElementById('ready-model-call-count'),
+    readyBody: document.getElementById('ready-body'),
+    readyResults: document.getElementById('ready-results'),
+    readyResultBody: document.getElementById('ready-result-body'),
   };
 
   const state = {
@@ -1185,6 +1260,10 @@
     listings: [],
     currentProduct: null,
     variantRows: [],
+    selectedPreOrderIds: new Set(),
+    readyProductIds: new Set(),
+    readyRunId: null,
+    wizConfirmAction: null,
   };
 
   function showAuth(message = '') {
@@ -1262,18 +1341,26 @@
     }
     showApp();
     els.productBody.innerHTML = '<tr><td colspan="6" class="empty">Loading products...</td></tr>';
-    const [productsRes, listingsRes] = await Promise.all([
+    let [productsRes, listingsRes] = await Promise.all([
       db.from('products')
-        .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, position, created_at')
+        .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at')
         .order('position', { ascending: true })
         .order('created_at', { ascending: true }),
       db.from('product_shopee_listings').select('*'),
     ]);
+    if (productsRes.error && /lifecycle_state|weight_measured_at|schema cache|column/i.test(`${productsRes.error.message || ''} ${productsRes.error.details || ''}`)) {
+      productsRes = await db.from('products')
+        .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, position, created_at')
+        .order('position', { ascending: true })
+        .order('created_at', { ascending: true });
+    }
     if (productsRes.error) throw productsRes.error;
     if (listingsRes.error) throw listingsRes.error;
     state.products = productsRes.data || [];
     state.listings = listingsRes.data || [];
     renderProducts();
+    renderPreOrderList();
+    renderReadyTransition();
   }
 
   async function signIn() {
@@ -1326,6 +1413,410 @@
     els.productBody.querySelectorAll('[data-open]').forEach((btn) => {
       btn.addEventListener('click', () => openModal(btn.dataset.open));
     });
+  }
+
+  function productListings(productId) {
+    return state.listings.filter((l) => String(l.product_id) === String(productId));
+  }
+
+  function primaryListing(product) {
+    const rows = productListings(product.id);
+    return rows.find((l) => l.global_item_id && l.global_model_id)
+      || rows.find((l) => l.global_item_id)
+      || rows[0]
+      || {};
+  }
+
+  function isPreOrderProduct(product) {
+    const lifecycle = String(product.lifecycle_state || '').toLowerCase();
+    if (lifecycle === 'ready_stock' || lifecycle === 'archived') return false;
+    if (lifecycle === 'pre_order') return true;
+    const name = String(product.product_name || '').toUpperCase();
+    if (name.includes('[PRE ORDER]')) return true;
+    return productListings(product.id).some((l) => (
+      String(l.title_state || '').toUpperCase() === 'PRE_ORDER'
+      || Number(l.days_to_ship || 0) > 2
+    ));
+  }
+
+  function readyStockName(name) {
+    const cleaned = String(name || '').replace(/^\s*\[(PRE\s*ORDER|READY\s*STOCK)\]\s*/i, '').trim();
+    return `[READY STOCK] ${cleaned || String(name || '').trim()}`.trim();
+  }
+
+  function listingTargetSummary(product) {
+    const row = primaryListing(product);
+    const globalId = row.global_item_id || '';
+    const modelId = row.global_model_id || '';
+    if (!globalId && !modelId) return '<span class="row-error">Missing mapping</span>';
+    return [
+      globalId ? `G:${text(globalId)}` : '',
+      modelId ? `M:${text(modelId)}` : 'no model',
+    ].filter(Boolean).join('<br>');
+  }
+
+
+  function movePreOrderSelectionToReady() {
+    state.readyProductIds = new Set(state.selectedPreOrderIds);
+    window.showView('view-ready-stock');
+    renderReadyTransition();
+  }
+
+  function selectedReadyProducts() {
+    return state.products.filter((p) => state.readyProductIds.has(String(p.id)));
+  }
+
+  function readyInputValue(productId, fieldName, fallback = '') {
+    const input = document.getElementById(`ready-${fieldName}-${productId}`);
+    return input ? input.value : fallback;
+  }
+
+  function readyRowDraft(product) {
+    const currentSku = product.sku || '';
+    const currentWeight = Number(product.weight_g || 0) > 0 ? String(Math.round(Number(product.weight_g))) : '';
+    return {
+      product,
+      listing: primaryListing(product),
+      newSku: readyInputValue(product.id, 'sku', currentSku).trim(),
+      weightG: Number(readyInputValue(product.id, 'weight', currentWeight)),
+      newName: readyStockName(product.product_name || ''),
+    };
+  }
+
+  function buildReadyTransitionPlan() {
+    const rows = selectedReadyProducts().map(readyRowDraft);
+    const itemByGlobalId = new Map();
+    const modelCalls = [];
+    const rowErrors = new Map();
+
+    for (const row of rows) {
+      const productId = String(row.product.id);
+      const globalItemId = Number(row.listing.global_item_id);
+      const globalModelId = Number(row.listing.global_model_id);
+      const errors = [];
+      if (!globalItemId) errors.push('global_item_id missing');
+      if (!row.newSku) errors.push('SKU required');
+      if (!Number.isFinite(row.weightG) || row.weightG <= 0) errors.push('weight_g required');
+      if (errors.length) {
+        rowErrors.set(productId, errors);
+        continue;
+      }
+
+      if (!itemByGlobalId.has(globalItemId)) {
+        itemByGlobalId.set(globalItemId, {
+          action: 'update_global_item',
+          label: `global item ${globalItemId}`,
+          globalItemId,
+          productIds: [],
+          body: {
+            region: 'SG',
+            actor: 'v2-ready-stock-transition',
+            global_item_id: globalItemId,
+            global_item_name: row.newName,
+            days_to_ship: 1,
+            pre_order: { days_to_ship: 1 },
+          },
+        });
+      }
+      const itemCall = itemByGlobalId.get(globalItemId);
+      itemCall.productIds.push(productId);
+
+      if (Number.isFinite(globalModelId) && globalModelId > 0) {
+        modelCalls.push({
+          action: 'update_global_model',
+          label: `${row.newSku || row.product.sku || productId}`,
+          globalItemId,
+          globalModelId,
+          productId,
+          body: {
+            region: 'SG',
+            actor: 'v2-ready-stock-transition',
+            global_item_id: globalItemId,
+            global_model: [{
+              global_model_id: globalModelId,
+              global_model_sku: row.newSku,
+              weight: Math.round(row.weightG) / 1000,
+            }],
+          },
+        });
+      } else {
+        itemCall.body.global_item_sku = row.newSku;
+        itemCall.body.weight = Math.round(row.weightG) / 1000;
+      }
+    }
+
+    return {
+      rows,
+      itemCalls: Array.from(itemByGlobalId.values()),
+      modelCalls,
+      rowErrors,
+      valid: rows.length > 0 && rowErrors.size === 0,
+    };
+  }
+
+  function updateReadyPreviewState() {
+    const plan = buildReadyTransitionPlan();
+    if (els.readyCount) els.readyCount.textContent = String(plan.rows.length);
+    if (els.readyItemCallCount) els.readyItemCallCount.textContent = String(plan.itemCalls.length);
+    if (els.readyModelCallCount) els.readyModelCallCount.textContent = String(plan.modelCalls.length);
+    if (els.readyPreview) els.readyPreview.disabled = !plan.valid;
+    if (els.readyDryRun) els.readyDryRun.disabled = !plan.valid;
+    plan.rows.forEach((row) => {
+      const errorEl = document.getElementById(`ready-error-${row.product.id}`);
+      const errors = plan.rowErrors.get(String(row.product.id)) || [];
+      if (errorEl) {
+        errorEl.textContent = errors.length ? errors.join(', ') : 'Ready';
+        errorEl.className = errors.length ? 'row-error' : 'row-ok';
+      }
+    });
+  }
+
+  function renderReadyTransition() {
+    if (!els.readyBody) return;
+    const rows = selectedReadyProducts();
+    els.readyResults.style.display = 'none';
+    els.readyResultBody.innerHTML = '';
+    if (!rows.length) {
+      els.readyBody.innerHTML = '<tr><td colspan="6" class="empty">Select products in PRE ORDER list.</td></tr>';
+      updateReadyPreviewState();
+      return;
+    }
+    els.readyBody.innerHTML = rows.map((p) => {
+      const row = primaryListing(p);
+      const currentWeight = Number(p.weight_g || 0) > 0 ? Math.round(Number(p.weight_g)) : '';
+      return `
+        <tr data-ready-row="${text(p.id)}">
+          <td class="mono">${text(p.sku || '')}</td>
+          <td>
+            <div>${text(p.product_name || '')}</div>
+            <div class="muted">${text(p.option_name || '')}</div>
+            <div class="ready-name">${text(readyStockName(p.product_name || ''))}</div>
+          </td>
+          <td><input id="ready-sku-${text(p.id)}" data-ready-edit type="text" value="${text(p.sku || '')}" maxlength="100"></td>
+          <td><input id="ready-weight-${text(p.id)}" data-ready-edit type="number" min="1" step="1" value="${text(currentWeight)}"></td>
+          <td class="mono">${listingTargetSummary(p)}<br><span class="muted">${text((row.region || '').toUpperCase())}</span></td>
+          <td id="ready-error-${text(p.id)}" class="row-ok">Ready</td>
+        </tr>
+      `;
+    }).join('');
+    els.readyBody.querySelectorAll('[data-ready-edit]').forEach((input) => {
+      input.addEventListener('input', updateReadyPreviewState);
+    });
+    updateReadyPreviewState();
+  }
+
+  function renderReadyResults(rows) {
+    els.readyResults.style.display = 'block';
+    els.readyResultBody.innerHTML = rows.map((row) => `
+      <tr>
+        <td class="mono">${text(row.row || '')}</td>
+        <td class="mono">${text(row.action || '')}</td>
+        <td class="${row.ok ? 'row-ok' : 'row-error'}">${text(row.status || (row.ok ? 'ok' : 'error'))}</td>
+        <td class="${row.ok ? '' : 'row-error'}">${text(row.message || '')}</td>
+      </tr>
+    `).join('');
+  }
+
+  function bridgeResultMessage(json) {
+    return [
+      json?.error,
+      json?.message,
+      json?.result?.error,
+      json?.result?.message,
+      json?.resume_hint,
+      json?.skipped ? `skipped previous log ${json.previous_log_id || ''}` : '',
+      json?.dry_run ? `dry-run log ${json.log_id || ''}` : '',
+    ].filter(Boolean).join(' - ') || 'ok';
+  }
+
+  function bridgeResultOk(json) {
+    return Boolean(json?.ok || json?.skipped || json?.dry_run);
+  }
+
+  async function callBridgeMutation(action, body) {
+    const response = await fetch(`${SHOPEE_BRIDGE}/${action}`, {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify(body),
+    });
+    const json = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+    if (!response.ok && json.ok === undefined) json.ok = false;
+    return json;
+  }
+
+  async function updateProductReadyWithFallback(productId, fields) {
+    const attempts = [
+      fields,
+      Object.fromEntries(Object.entries(fields).filter(([key]) => key !== 'weight_measured_at')),
+      Object.fromEntries(Object.entries(fields).filter(([key]) => !['weight_measured_at', 'lifecycle_state'].includes(key))),
+    ];
+    let lastError = null;
+    for (const payload of attempts) {
+      const { error } = await db.from('products').update(payload).eq('id', productId);
+      if (!error) return { ok: true };
+      lastError = error;
+      if (!/column|schema cache|Could not find/i.test(`${error.message || ''} ${error.details || ''}`)) break;
+    }
+    return { ok: false, error: lastError };
+  }
+
+  async function updateListingsReadyWithFallback(productId, fields) {
+    const attempts = [
+      fields,
+      Object.fromEntries(Object.entries(fields).filter(([key]) => key !== 'last_pushed_at')),
+      Object.fromEntries(Object.entries(fields).filter(([key]) => !['last_pushed_at', 'last_pushed_name'].includes(key))),
+      Object.fromEntries(Object.entries(fields).filter(([key]) => ['days_to_ship', 'title_state'].includes(key))),
+    ];
+    let lastError = null;
+    for (const payload of attempts) {
+      const { error } = await db.from('product_shopee_listings').update(payload).eq('product_id', productId);
+      if (!error) return { ok: true };
+      lastError = error;
+      if (!/column|schema cache|Could not find/i.test(`${error.message || ''} ${error.details || ''}`)) break;
+    }
+    return { ok: false, error: lastError };
+  }
+
+  async function applyReadyTransition(dryRun = false) {
+    const plan = buildReadyTransitionPlan();
+    if (!plan.valid) {
+      updateReadyPreviewState();
+      if (els.readyStatus) {
+        els.readyStatus.textContent = 'Fix row validation errors first.';
+        els.readyStatus.className = 'status err';
+      }
+      return;
+    }
+    const runId = state.readyRunId || `ready-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    state.readyRunId = runId;
+    if (els.readyPreview) els.readyPreview.disabled = true;
+    if (els.readyDryRun) els.readyDryRun.disabled = true;
+    if (els.readyStatus) {
+      els.readyStatus.textContent = dryRun ? 'Running dry-run...' : 'Applying READY STOCK transition...';
+      els.readyStatus.className = 'status';
+    }
+
+    const resultRows = [];
+    const itemStatus = new Map();
+    const modelStatus = new Map();
+
+    for (const call of plan.itemCalls) {
+      const body = { ...call.body, run_id: runId, dry_run };
+      const json = await callBridgeMutation(call.action, body);
+      const ok = bridgeResultOk(json);
+      itemStatus.set(String(call.globalItemId), ok);
+      resultRows.push({
+        row: call.label,
+        action: call.action,
+        ok,
+        status: ok ? (json.skipped ? 'skipped' : (dryRun ? 'dry_run' : 'ok')) : 'error',
+        message: bridgeResultMessage(json),
+      });
+      renderReadyResults(resultRows);
+    }
+
+    for (const call of plan.modelCalls) {
+      const body = { ...call.body, run_id: runId, dry_run };
+      const json = await callBridgeMutation(call.action, body);
+      const ok = bridgeResultOk(json);
+      modelStatus.set(String(call.productId), ok);
+      resultRows.push({
+        row: call.label,
+        action: call.action,
+        ok,
+        status: ok ? (json.skipped ? 'skipped' : (dryRun ? 'dry_run' : 'ok')) : 'error',
+        message: bridgeResultMessage(json),
+      });
+      renderReadyResults(resultRows);
+    }
+
+    if (!dryRun) {
+      const now = new Date().toISOString();
+      for (const row of plan.rows) {
+        const productId = String(row.product.id);
+        const globalItemId = String(Number(row.listing.global_item_id));
+        const hasModel = Number(row.listing.global_model_id) > 0;
+        const mutationOk = itemStatus.get(globalItemId) && (!hasModel || modelStatus.get(productId));
+        if (!mutationOk) continue;
+        const productUpdate = await updateProductReadyWithFallback(row.product.id, {
+          sku: row.newSku,
+          weight_g: Math.round(row.weightG),
+          lifecycle_state: 'ready_stock',
+          weight_measured_at: now,
+        });
+        const listingUpdate = await updateListingsReadyWithFallback(row.product.id, {
+          days_to_ship: 1,
+          title_state: 'READY_STOCK',
+          last_pushed_name: row.newName,
+          last_pushed_at: now,
+        });
+        const dbOk = productUpdate.ok && listingUpdate.ok;
+        resultRows.push({
+          row: row.newSku,
+          action: 'db_update_ready_stock',
+          ok: dbOk,
+          status: dbOk ? 'ok' : 'error',
+          message: dbOk ? 'products + product_shopee_listings updated' : (productUpdate.error?.message || listingUpdate.error?.message || 'DB update failed'),
+        });
+        renderReadyResults(resultRows);
+      }
+      await loadData();
+    }
+
+    if (els.readyStatus) {
+      const okCount = resultRows.filter((r) => r.ok).length;
+      els.readyStatus.textContent = `${dryRun ? 'Dry-run' : 'Apply'} complete: ${okCount}/${resultRows.length} rows ok`;
+      els.readyStatus.className = resultRows.every((r) => r.ok) ? 'status ok' : 'status err';
+    }
+    if (els.readyPreview) els.readyPreview.disabled = false;
+    if (els.readyDryRun) els.readyDryRun.disabled = false;
+  }
+
+  function readyPreviewHtml(plan, dryRun) {
+    const calls = [...plan.itemCalls, ...plan.modelCalls];
+    const rowsHtml = plan.rows.map((row) => `
+      <tr>
+        <td class="mono">${text(row.product.sku || '')}</td>
+        <td>${text(row.newName)}</td>
+        <td class="mono">${text(row.newSku)}</td>
+        <td class="mono">${text(Math.round(row.weightG))}</td>
+      </tr>
+    `).join('');
+    const callsHtml = calls.map((call) => `
+      <div class="call-card">
+        <strong>${text(call.action)}</strong> <span class="muted">${text(call.label)}</span>
+        <pre>${text(JSON.stringify({ ...call.body, run_id: state.readyRunId || 'generated-on-apply', dry_run: dryRun }, null, 2))}</pre>
+      </div>
+    `).join('');
+    return `
+      <div class="notice ${dryRun ? '' : 'ok'}" style="margin-bottom:12px;">
+        ${dryRun ? 'Dry-run will log mutation payloads only.' : 'Confirm to apply live Shopee mutations and DB updates. No automatic rollback is performed; failed rows remain visible for retry.'}
+      </div>
+      <div class="panel table-scroll" style="margin-bottom:12px;">
+        <table>
+          <thead><tr><th>Current SKU</th><th>READY STOCK name</th><th>Edited SKU</th><th>Weight g</th></tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>
+      <div class="call-list">${callsHtml}</div>
+    `;
+  }
+
+  function showReadyPreviewModal(dryRun = false) {
+    const plan = buildReadyTransitionPlan();
+    updateReadyPreviewState();
+    if (!plan.valid) return;
+    state.readyRunId = `ready-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    state.wizConfirmAction = () => {
+      closeWizModal();
+      applyReadyTransition(dryRun);
+    };
+    field('wiz-modal-title').textContent = dryRun ? 'READY STOCK dry-run preview' : 'READY STOCK apply preview';
+    field('wiz-modal-body').innerHTML = readyPreviewHtml(plan, dryRun);
+    const confirm = field('wiz-modal-confirm-btn');
+    confirm.textContent = dryRun ? 'Run dry-run' : 'Apply READY STOCK';
+    confirm.style.display = 'inline-block';
+    field('wiz-modal-overlay').classList.add('show');
   }
 
   function renderRegionFields() {
@@ -1819,6 +2310,12 @@
   els.cancel.addEventListener('click', closeModal);
   els.modal.addEventListener('click', (e) => { if (e.target === els.modal) closeModal(); });
   els.submit.addEventListener('click', submitRegistration);
+  els.readyLoadPreOrders.addEventListener('click', () => {
+    window.showView('view-pre-order');
+    renderPreOrderList();
+  });
+  els.readyPreview.addEventListener('click', () => showReadyPreviewModal(false));
+  els.readyDryRun.addEventListener('click', () => showReadyPreviewModal(true));
   els.variantEnabled.addEventListener('change', () => {
     els.variantEditor.style.display = els.variantEnabled.checked ? 'block' : 'none';
     if (els.variantEnabled.checked && !state.variantRows.length && field('variant-values').value.trim()) {
@@ -1828,6 +2325,8 @@
   els.variantBuild.addEventListener('click', buildVariantRowsFromInputs);
 
   pingBridge();
+  initPoRegionFilters();
+  initPoListeners();
   db.auth.getSession().then(({ data }) => {
     if (data?.session) {
       return loadData();
@@ -2185,6 +2684,7 @@
   let _lastWizPayloads = null;
 
   function showWizModal(payloads, isLive) {
+    state.wizConfirmAction = null;
     _lastWizPayloads = payloads;
     g('wiz-modal-title').textContent = isLive ? '🔥 실제 등록 — 실행 예정 API 호출' : '🚀 Dry-run 미리보기 — 실제 호출 없음';
 
@@ -2235,6 +2735,14 @@
     g('wiz-modal-confirm-btn').style.display = isLive ? 'inline-block' : 'none';
     g('wiz-modal-overlay').classList.add('show');
   }
+
+  window.handleWizModalConfirm = function() {
+    if (typeof state.wizConfirmAction === 'function') {
+      state.wizConfirmAction();
+      return;
+    }
+    executeMockSubmit();
+  };
 
   window.closeWizModal = function() { g('wiz-modal-overlay').classList.remove('show'); };
 
@@ -2307,6 +2815,286 @@
     clearTimeout(window._toastTimer);
     window._toastTimer = setTimeout(() => { t.className = ''; }, 3000);
   }
+
+  // ════════════════════════════════════════════════════════════════
+  // PRE ORDER LIST VIEW (plan §5-1-A, Phase A1)
+  // ════════════════════════════════════════════════════════════════
+
+  const PO_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+  const PO_CACHE_TTL_MS = 60_000; // 60-second view cache
+  let _poCache = null;       // { products, listings, ts }
+  let _poChecked = new Set(PO_REGIONS); // region columns that are active (all on by default)
+
+  /** Build region checkboxes in the toolbar once after DOM ready. */
+  function initPoRegionFilters() {
+    const container = els.poRegionFilters;
+    if (!container) return;
+    PO_REGIONS.forEach(function(r) {
+      const label = document.createElement('label');
+      label.style.cssText = 'display:flex;align-items:center;gap:3px;font-size:12px;cursor:pointer;';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.id = 'po-rgn-' + r;
+      cb.checked = true;
+      cb.style.width = 'auto';
+      cb.addEventListener('change', function() {
+        if (cb.checked) _poChecked.add(r);
+        else _poChecked.delete(r);
+        applyPoFilter();
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(r));
+      container.appendChild(label);
+    });
+  }
+
+  /** Inject/update region <th> columns right after the shopee_item_id header. */
+  function syncPoRegionHeaders() {
+    const thead = els.poThead;
+    if (!thead) return;
+    const tr = thead.querySelector('tr');
+    if (!tr) return;
+    // Remove existing region th cells
+    tr.querySelectorAll('[data-po-region]').forEach(function(th) { th.remove(); });
+    const ths = Array.from(tr.querySelectorAll('th'));
+    const anchor = ths[2]; // 0=상품, 1=SKU, 2=shopee_item_id
+    if (!anchor) return;
+    const frag = document.createDocumentFragment();
+    PO_REGIONS.forEach(function(r) {
+      const th = document.createElement('th');
+      th.dataset.poRegion = r;
+      th.style.cssText = 'min-width:90px;font-size:11px;';
+      th.textContent = r;
+      th.style.opacity = _poChecked.has(r) ? '' : '0.35';
+      frag.appendChild(th);
+    });
+    anchor.after(frag);
+  }
+
+  /**
+   * Fetch all pre_order products + listings via PostgREST REST API.
+   * Uses explicit Range pagination to defeat the 1000-row PostgREST cap
+   * (same pattern as kpop-wms).
+   */
+  async function fetchPreOrderData(forceRefresh) {
+    const now = Date.now();
+    if (!forceRefresh && _poCache && (now - _poCache.ts) < PO_CACHE_TTL_MS) {
+      return _poCache;
+    }
+
+    const PAGE = 500;
+    let products = [];
+    let offset = 0;
+    while (true) {
+      const url = SUPABASE_URL + '/rest/v1/products'
+        + '?select=id,shopee_item_id,sku,option_name,cost_krw,weight_g,product_name,main_image,lifecycle_state,created_at'
+        + '&lifecycle_state=eq.pre_order'
+        + '&order=created_at.desc';
+      const res = await fetch(url, {
+        headers: Object.assign({}, AUTH_HEADERS, {
+          'Range-Unit': 'items',
+          'Range': offset + '-' + (offset + PAGE - 1),
+          'Prefer': 'count=none',
+        }),
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(function() { return res.statusText; });
+        throw new Error('products fetch ' + res.status + ': ' + msg);
+      }
+      const page = await res.json();
+      if (!Array.isArray(page) || page.length === 0) break;
+      products = products.concat(page);
+      if (page.length < PAGE) break;
+      offset += PAGE;
+    }
+
+    let listings = [];
+    if (products.length > 0) {
+      const ids = products.map(function(p) { return p.id; }).join(',');
+      let lOffset = 0;
+      while (true) {
+        const lUrl = SUPABASE_URL + '/rest/v1/product_shopee_listings'
+          + '?select=product_id,region,shop_item_id,shop_model_id,last_synced_price,last_synced_at'
+          + '&product_id=in.(' + ids + ')';
+        const lRes = await fetch(lUrl, {
+          headers: Object.assign({}, AUTH_HEADERS, {
+            'Range-Unit': 'items',
+            'Range': lOffset + '-' + (lOffset + PAGE - 1),
+            'Prefer': 'count=none',
+          }),
+        });
+        if (!lRes.ok) {
+          const msg = await lRes.text().catch(function() { return lRes.statusText; });
+          throw new Error('listings fetch ' + lRes.status + ': ' + msg);
+        }
+        const lPage = await lRes.json();
+        if (!Array.isArray(lPage) || lPage.length === 0) break;
+        listings = listings.concat(lPage);
+        if (lPage.length < PAGE) break;
+        lOffset += PAGE;
+      }
+    }
+
+    _poCache = { products: products, listings: listings, ts: now };
+    return _poCache;
+  }
+
+  /** Group listings: Map<pid, Map<region, listing>> */
+  function buildListingIndex(listings) {
+    const idx = new Map();
+    listings.forEach(function(l) {
+      const pid = String(l.product_id);
+      if (!idx.has(pid)) idx.set(pid, new Map());
+      idx.get(pid).set(String(l.region), l);
+    });
+    return idx;
+  }
+
+  function countMissing(pid, listingIdx) {
+    const byRegion = listingIdx.get(String(pid)) || new Map();
+    return PO_REGIONS.filter(function(r) { return !byRegion.get(r) || !byRegion.get(r).shop_item_id; }).length;
+  }
+
+  function fmtDatePo(iso) {
+    if (!iso) return '—';
+    return String(iso).slice(0, 10);
+  }
+
+  function daysSincePo(iso) {
+    if (!iso) return '—';
+    const diff = Date.now() - new Date(iso).getTime();
+    return Math.floor(diff / 86400000) + 'd';
+  }
+
+  function regionBadgeCell(listing, region) {
+    const dimmed = !_poChecked.has(region);
+    const dimStyle = dimmed ? 'opacity:0.35;' : '';
+    if (!listing || !listing.shop_item_id) {
+      return '<td data-po-region="' + text(region) + '" style="color:var(--muted);' + dimStyle + '">—</td>';
+    }
+    const priceTxt = listing.last_synced_price != null ? 'price: ' + Number(listing.last_synced_price).toLocaleString() : '';
+    const syncTxt = listing.last_synced_at ? 'synced: ' + fmtDatePo(listing.last_synced_at) : '';
+    const tooltip = [priceTxt, syncTxt].filter(Boolean).join(' | ');
+    return '<td data-po-region="' + text(region) + '" title="' + text(tooltip) + '" style="' + dimStyle + '">'
+      + '<span style="color:var(--green);font-size:11px;">&#10003;&nbsp;' + text(String(listing.shop_item_id)) + '</span>'
+      + '</td>';
+  }
+
+  /** Apply current search/sort filter and re-render tbody. */
+  function applyPoFilter() {
+    if (!_poCache) return;
+    const q = ((els.poSearch && els.poSearch.value) || '').trim().toLowerCase();
+    const sortVal = (els.poSort && els.poSort.value) || 'newest';
+    const listingIdx = buildListingIndex(_poCache.listings);
+    const colCount = 3 + PO_REGIONS.length + 5;
+
+    let rows = _poCache.products.filter(function(p) {
+      if (!q) return true;
+      return (String(p.product_name || '') + ' ' + String(p.sku || '') + ' ' + String(p.option_name || ''))
+        .toLowerCase().indexOf(q) !== -1;
+    });
+
+    if (sortVal === 'oldest') {
+      rows = rows.slice().sort(function(a, b) { return new Date(a.created_at) - new Date(b.created_at); });
+    } else if (sortVal === 'unpublished') {
+      rows = rows.slice().sort(function(a, b) { return countMissing(b.id, listingIdx) - countMissing(a.id, listingIdx); });
+    }
+
+    if (els.poCount) els.poCount.textContent = rows.length + '건 PRE ORDER';
+
+    // Dim/undim region headers
+    if (els.poThead) {
+      PO_REGIONS.forEach(function(r) {
+        const th = els.poThead.querySelector('[data-po-region="' + r + '"]');
+        if (th) th.style.opacity = _poChecked.has(r) ? '' : '0.35';
+      });
+    }
+
+    if (!rows.length) {
+      els.poBody.innerHTML = '<tr><td colspan="' + colCount + '" class="empty">PRE ORDER 단계 상품이 없습니다. 📦 상품 등록 탭에서 신규 등록하세요.</td></tr>';
+      return;
+    }
+
+    els.poBody.innerHTML = rows.map(function(p) {
+      const byRegion = listingIdx.get(String(p.id)) || new Map();
+      const regionCells = PO_REGIONS.map(function(r) { return regionBadgeCell(byRegion.get(r), r); }).join('');
+      const nameLine = '<div style="font-size:13px;">' + text(p.product_name || p.sku || '—') + '</div>'
+        + (p.option_name ? '<div class="muted" style="font-size:11px;">' + text(p.option_name) + '</div>' : '');
+      const skuCell = '<td class="mono" style="font-size:12px;">' + text(p.sku || '—') + '</td>';
+      const itemCell = '<td class="mono" style="font-size:12px;">'
+        + (p.shopee_item_id != null ? text(String(p.shopee_item_id)) : '<span class="muted">—</span>')
+        + '</td>';
+      const costCell = '<td class="mono" style="font-size:12px;">'
+        + (p.cost_krw != null ? Number(p.cost_krw).toLocaleString() : '—')
+        + '</td>';
+      const wtCell = '<td class="mono" style="font-size:12px;">'
+        + (p.weight_g != null ? Number(p.weight_g).toLocaleString() : '—')
+        + '</td>';
+      const dateCell = '<td style="font-size:12px;">' + fmtDatePo(p.created_at) + '</td>';
+      const ageCell = '<td style="font-size:12px;color:var(--muted);">' + daysSincePo(p.created_at) + '</td>';
+      const actionCell = '<td>'
+        + '<button type="button" style="font-size:12px;padding:5px 8px;white-space:nowrap;"'
+        + ' onclick="openReadyStockWizard(' + JSON.stringify(String(p.id)) + ')">'
+        + '🔄 READY STOCK 전환</button></td>';
+      return '<tr><td>' + nameLine + '</td>' + skuCell + itemCell + regionCells
+        + costCell + wtCell + dateCell + ageCell + actionCell + '</tr>';
+    }).join('');
+  }
+
+  /** Main render function — called from loadData() and from tab click. */
+  async function renderPreOrderView(forceRefresh) {
+    if (els.poError) { els.poError.style.display = 'none'; els.poError.textContent = ''; }
+    if (els.poLoading) els.poLoading.style.display = 'block';
+    try {
+      await fetchPreOrderData(!!forceRefresh);
+      syncPoRegionHeaders();
+      applyPoFilter();
+    } catch (e) {
+      const colCount = 3 + PO_REGIONS.length + 5;
+      if (els.poError) {
+        els.poError.textContent = '오류: ' + (e.message || e);
+        els.poError.style.display = '';
+      }
+      if (els.poBody) {
+        els.poBody.innerHTML = '<tr><td colspan="' + colCount + '" class="empty" style="color:var(--red);">'
+          + text(e.message || String(e)) + '</td></tr>';
+      }
+    } finally {
+      if (els.poLoading) els.poLoading.style.display = 'none';
+    }
+  }
+
+  /** Alias called from existing loadData() so backward compat is preserved. */
+  function renderPreOrderList() { renderPreOrderView(false); }
+
+  /**
+   * Called by the action button in each PRE ORDER row.
+   * TODO Phase B: replace alert+console.log with showView + READY STOCK wizard init.
+   */
+  window.openReadyStockWizard = function(productId) {
+    const product = (_poCache && _poCache.products || []).find(function(p) {
+      return String(p.id) === String(productId);
+    });
+    // TODO Phase B: showView('view-ready-stock') and wire wizard
+    alert('TODO: open READY STOCK wizard for this product');
+    console.log('[PRE ORDER -> READY STOCK] product row:', JSON.stringify(product, null, 2));
+  };
+
+  function initPoListeners() {
+    if (els.poSearch) els.poSearch.addEventListener('input', applyPoFilter);
+    if (els.poSort) els.poSort.addEventListener('change', applyPoFilter);
+    if (els.poRefresh) els.poRefresh.addEventListener('click', function() { renderPreOrderView(true); });
+  }
+
+  // Patch showView so clicking the PRE ORDER nav tab triggers a fresh fetch
+  (function patchShowView() {
+    const _origSV = window.showView;
+    window.showView = function(viewId) {
+      _origSV(viewId);
+      if (viewId === 'view-pre-order') renderPreOrderView(false);
+    };
+  }());
+
 
 </script>
 </body>

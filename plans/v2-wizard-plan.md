@@ -155,12 +155,15 @@ create index if not exists idx_shopee_mutation_log_created_at
   on shopee_mutation_log (created_at desc);
 create index if not exists idx_shopee_mutation_log_target_global_item
   on shopee_mutation_log (target_global_item_id);
+-- P0-1 (Codex §11): WHERE status='ok' 만 (dry_run 별도 경로 — dry_run row 는
+--   payload_hash 에 'dry:' prefix 붙여 별 hash 공간 사용). 그래야 dry_run
+--   다음 ok 실호출이 충돌 안 됨.
 create unique index if not exists uidx_shopee_mutation_log_idempotent
   on shopee_mutation_log (payload_hash)
-  where status in ('ok','dry_run');  -- 멱등 키: 같은 payload 두 번 ok로 들어가지 않음
+  where status = 'ok';
 ```
 
-멱등 키 unique 제약: 같은 region+target+action+payload_hash 가 한 번 'ok'로 들어가면 재시도 시 PG가 INSERT 거부 → 프론트가 'skipped'로 받음.
+멱등 키 unique 제약: 같은 region+target+action+payload_hash 가 한 번 'ok'로 들어가면 재시도 시 PG가 INSERT 거부 → 프론트가 'skipped'로 받음. **dry_run row 는 payload_hash 앞에 `dry:` prefix 를 붙여 저장** 하여 ok 와 hash 공간이 분리됨 (Codex P0-1 권고 반영).
 
 ### 3-3. Live probe (사용자 burnable product 선정 후 진행)
 - 대상: 사용자가 지정한 단일 test product, 단일 region (SG 권장)
@@ -206,7 +209,9 @@ create unique index if not exists uidx_shopee_mutation_log_idempotent
 | `update_global_item` | `body.item_name` (optional), `body.description` (optional) 추가. probe 미통과 시 무시 + 경고 응답 |
 | `update_global_model` | `body.global_model[].weight` (optional, 단위는 probe로 확인 g/kg) 추가. 동일 |
 
-probe 통과 여부는 `shopee_app.config` 테이블(또는 `country_settings`)의 boolean flag로 표시: `probe_item_name_ok`, `probe_model_weight_ok`. 통과 표시 없으면 edge function이 해당 필드 strip + 응답에 `warn` 추가.
+probe 통과 여부는 `shopee_app.config` 테이블(또는 `country_settings`)의 boolean flag로 표시: `probe_item_name_ok`, `probe_model_weight_ok`.
+
+**P0-4 (Codex §11) — preflight hard-block 정책**: 통과 표시 없으면 edge function 이 해당 필드를 **strip 하지 않고 호출 자체를 거부** (HTTP 412 + body `{ok:false, error:'probe_not_passed', field:'item_name'|'weight'}`). UI 는 운영자가 명시적으로 "degraded 모드 승인" 토글을 켠 경우에만 strip + 진행 모드로 fallback (모든 strip mutation 은 `shopee_mutation_log.warn` 컬럼에 기록).
 
 ### 4-2. ~~신규 액션 `update_shop_days_to_ship`~~ — **KRSC 사용 불가, 폐기**
 ~~shop-level `/api/v2/product/update_item` 기반~~. KRSC 셀러는 shop-level product API 사용 불가하므로 폐기.
@@ -273,11 +278,23 @@ PRE ORDER 탭 = lifecycle_state='pre_order' 인 상품 list. 운영자가 이 li
 - 하단 요약: "총 N개 region × M개 옵션 = R 호출. dry_run 권장 ☑"
 
 ### 5-4. 실행
-- "🚀 dry-run 실행" → mutation_log 에 dry_run row 들 INSERT (no Shopee call)
+- "🚀 dry-run 실행" → mutation_log 에 dry_run row 들 INSERT (no Shopee call). payload_hash 는 `dry:<hash>` prefix 로 저장하여 ok 와 hash 공간 분리.
 - 결과 후 행별 ✓/❌ 표시, 사용자가 dry-run 결과 만족 시 "🔥 실호출" 버튼 활성화
-- "🔥 실호출" → 같은 payload 들이 멱등 키 그대로 실호출. dry_run row 는 같은 payload_hash 라도 unique 제약에 안 걸림(WHERE status in ('ok','dry_run') 이므로 충돌 가능 — 별도 처리 필요 §11 Codex 검토 포인트)
-- 호출 순서: region별 직렬, region 내부 model 5 병렬 (Codex 권고)
-- 429/5xx 대응: exponential backoff (1s → 2s → 4s, max 3 retry), retry-after 헤더 우선
+
+**P0-2 (Codex §11) — token freshness preflight (실호출 직전)**:
+- 실호출 시작 직전, **region별 토큰 만료까지 < 10분** 인 경우 자동 refresh (`get_access_token` 또는 shopee-bridge `force_refresh`).
+- refresh 실패 → 그 region 의 fan-out 전체 차단 (해당 region 행 모두 ❌, 다른 region 은 진행).
+- 실호출 도중 invalid_access_token 응답 받으면 1회 refresh + retry. 두 번째 invalid → 차단 + 알림.
+
+**P0-3 (Codex §11) — 부분 실패 rollback 정책 = "no auto rollback + resume tool"** 채택 선언:
+- 30번째 mutation 에서 fail 발생 시 **앞서 성공한 mutation 들은 그대로 두고**, 실패 row 만 ❌ 표시 + 재시도 가능 (이미 §6 "부분 실패" 와 일치).
+- 자동 reverse-mutation 안 함 (스냅샷 비용 + 부분 reverse 도중 또 fail 시 복합 inconsistency 위험).
+- 대신 매 mutation 이 `mutation_log.before_payload` 에 호출 전 상태 저장 → **resume / inspect tool** 에서 1클릭 reverse 가능 (개별 row 단위).
+- 운영자 명시 승인 사항.
+
+- "🔥 실호출" → 멱등 키는 status='ok' 만 unique 이므로 dry_run row 들과 hash 충돌 없음.
+- 호출 순서: region별 직렬. **region 내부 model 병렬도 = `parallel=2`** (Codex P1-5: rate-limit 검증 안 된 5 병렬보다 보수). 첫 429 burst 시 자동 throttle.
+- 429/5xx 대응: exponential backoff (1s → 2s → 4s, max 3 retry), retry-after 헤더 우선.
 
 ### 5-5. 변경 이력 화면
 - `shopee_mutation_log` 최근 200건 테이블

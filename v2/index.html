@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>shopee-dashboard v2 — KRSC operator workflows</title>
+  <style>
+    :root { --accent:#7c4dff; --bg:#fafafa; --border:#e0e0e0; --text:#222; --muted:#888; --green:#0a8043; --red:#c93333; }
+    body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--text); background:var(--bg); }
+    header { background:#fff; border-bottom:1px solid var(--border); padding:.6rem 1.2rem; display:flex; align-items:center; gap:1rem; flex-wrap:wrap; }
+    header h1 { margin:0; font-size:1.1rem; font-weight:600 }
+    header h1 .v2 { color:var(--accent); margin-left:.2rem }
+    nav { display:flex; gap:.3rem; flex-wrap:wrap; flex:1 }
+    nav button { padding:.4rem .8rem; border:1px solid var(--border); background:#fff; border-radius:5px; cursor:pointer; font-size:.85rem }
+    nav button.active { background:var(--accent); color:#fff; border-color:var(--accent) }
+    nav button:hover:not(.active) { background:#f5f0ff }
+    #conn-status { font-size:.78rem; color:var(--muted) }
+    #conn-status.ok { color:var(--green) }
+    #conn-status.err { color:var(--red) }
+    main { padding:1.2rem; max-width:1400px; margin:0 auto }
+    .placeholder { padding:2rem; background:#fff; border:1px dashed var(--border); border-radius:8px; text-align:center; color:var(--muted) }
+    .placeholder h2 { margin:0 0 .5rem; color:var(--text) }
+    .placeholder p { margin:.3rem 0; font-size:.9rem }
+  </style>
+</head>
+<body>
+<header>
+  <h1>shopee-dashboard <span class="v2">v2</span></h1>
+  <nav id="nav">
+    <button data-view="register" class="active">📦 상품 등록</button>
+    <button data-view="pre-order">📋 PRE ORDER</button>
+    <button data-view="ready-stock">🔄 READY STOCK 전환</button>
+    <button data-view="catalog">💰 상품 조회 / 가격</button>
+    <button data-view="probe">🔬 Probe</button>
+    <button data-view="history">📜 변경 이력</button>
+  </nav>
+  <span id="conn-status">connecting…</span>
+</header>
+
+<main>
+  <div id="view-root" class="placeholder">
+    <h2>Loading…</h2>
+    <p>Supabase 연결 + Probe capability flags 확인 중</p>
+  </div>
+</main>
+
+<script type="module">
+  // ── Boot ───────────────────────────────────────────────────────────
+  // KRSC operator workflows. Phase A0 (상품 등록 → PRE ORDER), Phase B
+  // (PRE → READY 전환), Phase C (상품 조회 + 매입가 동기화).
+  // Plan: ../plans/v2-wizard-plan.md
+  //
+  // Every mutation goes through shopee-bridge edge function and is logged
+  // to shopee_mutation_log. Probe-gated fields (item_name, model weight)
+  // are disabled in UI until shopee_app.config probe flags pass.
+
+  const SUPABASE_URL = 'https://bpdafetvjyvvwbksvowu.supabase.co';
+  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwZGFmZXR2anl2dndia3N2b3d1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxODM4MjYsImV4cCI6MjA5Mjc1OTgyNn0.p9hYSOhVyLUUO8UyRJ7Av56pLgkPUAi1XCMtc6r-AZA';
+  const SHOPEE_BRIDGE = `${SUPABASE_URL}/functions/v1/shopee-bridge`;
+  const AUTH_HEADERS = { 'Authorization': `Bearer ${SUPABASE_ANON}`, 'apikey': SUPABASE_ANON };
+
+  const root = document.getElementById('view-root');
+  const statusEl = document.getElementById('conn-status');
+
+  async function pingBridge() {
+    try {
+      const r = await fetch(`${SHOPEE_BRIDGE}/tokens?region=SG`, { headers: AUTH_HEADERS });
+      statusEl.textContent = r.ok ? 'connected' : `bridge ${r.status}`;
+      statusEl.className = r.ok ? 'ok' : 'err';
+    } catch (e) {
+      statusEl.textContent = `bridge: ${e.message}`;
+      statusEl.className = 'err';
+    }
+  }
+
+  // ── Routing ────────────────────────────────────────────────────────
+  const VIEWS = {
+    register: { title: '📦 상품 등록 (Phase A0+A1)',  desc: 'KRSC global product API로 신규 상품 등록 + PRE_ORDER 분류' },
+    'pre-order': { title: '📋 PRE ORDER',             desc: 'lifecycle_state = pre_order 인 상품 list' },
+    'ready-stock': { title: '🔄 READY STOCK 전환 (Phase B)', desc: 'PRE → READY 전환 마법사 (입고 시점)' },
+    catalog:  { title: '💰 상품 조회 + 매입가 동기화 (Phase C)', desc: 'cost inline 편집 → region별 신규가 미리보기 → dry-run + 일괄 push' },
+    probe:    { title: '🔬 Probe',                    desc: 'update_global_item.item_name / update_global_model.weight 필드 수신 검증' },
+    history:  { title: '📜 변경 이력',                 desc: 'shopee_mutation_log 200건' },
+  };
+
+  function show(viewKey) {
+    document.querySelectorAll('#nav button').forEach(b => b.classList.toggle('active', b.dataset.view === viewKey));
+    const v = VIEWS[viewKey] || VIEWS.register;
+    root.innerHTML = `
+      <div class="placeholder">
+        <h2>${v.title}</h2>
+        <p>${v.desc}</p>
+        <p style="margin-top:1rem"><em>skeleton 단계 — 구현은 Sonnet 위임 작업 후 활성화됩니다.</em></p>
+      </div>
+    `;
+  }
+
+  for (const btn of document.querySelectorAll('#nav button')) {
+    btn.addEventListener('click', () => show(btn.dataset.view));
+  }
+
+  pingBridge();
+  show('register');
+</script>
+</body>
+</html>

@@ -461,7 +461,9 @@ function stripFieldsForDegradedPayload(action: string, requestPayload: any, bloc
   const payload = canonicalize(requestPayload);
   if (action === 'update_global_item') {
     if (blockedFields.includes('item_name')) delete payload.item_name;
+    if (blockedFields.includes('global_item_name')) delete payload.global_item_name;
     if (blockedFields.includes('description')) delete payload.description;
+    if (blockedFields.includes('weight')) delete payload.weight;
   }
   if (action === 'update_global_model' && blockedFields.includes('weight')) {
     payload.global_model = (payload.global_model || []).map((m: any) => {
@@ -478,7 +480,9 @@ async function enforceV2ProbePreflight(action: string, requestPayload: any, body
   const blockedFields: string[] = [];
   if (action === 'update_global_item') {
     if (requestPayload.item_name !== undefined && !flags.probe_item_name_ok) blockedFields.push('item_name');
+    if (requestPayload.global_item_name !== undefined && !flags.probe_item_name_ok) blockedFields.push('global_item_name');
     if (requestPayload.description !== undefined && !flags.probe_item_name_ok) blockedFields.push('description');
+    if (requestPayload.weight !== undefined && !flags.probe_model_weight_ok) blockedFields.push('weight');
   }
   if (action === 'update_global_model') {
     const hasWeight = Array.isArray(requestPayload.global_model)
@@ -655,18 +659,26 @@ async function runV2MutationAction(action: string, body: any) {
     const global_item_id = parseInt(body.global_item_id);
     const requestPayload: Record<string, any> = { global_item_id };
     const global_item_sku = typeof body.global_item_sku === 'string' ? body.global_item_sku.trim() : '';
-    const item_name = typeof body.item_name === 'string' ? body.item_name.trim() : '';
+    const item_name = typeof body.global_item_name === 'string'
+      ? body.global_item_name.trim()
+      : (typeof body.item_name === 'string' ? body.item_name.trim() : '');
     const description = typeof body.description === 'string' ? body.description.trim() : '';
+    const days_to_ship = Number(body.days_to_ship ?? body?.pre_order?.days_to_ship);
+    const weight = Number(body.weight);
     if (global_item_sku) requestPayload.global_item_sku = global_item_sku;
-    if (item_name) requestPayload.item_name = item_name;
+    if (item_name) requestPayload.global_item_name = item_name;
     if (description) requestPayload.description = description;
+    if (Number.isFinite(days_to_ship) && days_to_ship > 0) requestPayload.pre_order = { days_to_ship };
+    if (Number.isFinite(weight) && weight > 0) requestPayload.weight = weight;
     if (!global_item_id) return { ok: false, error: 'global_item_id required' };
-    if (!global_item_sku && !item_name && !description) return { ok: false, error: 'at least one of global_item_sku, item_name, description required' };
+    if (!global_item_sku && !item_name && !description && !requestPayload.pre_order && !requestPayload.weight) {
+      return { ok: false, error: 'at least one of global_item_sku, global_item_name, description, days_to_ship, weight required' };
+    }
 
     const preflight = await enforceV2ProbePreflight(action, requestPayload, body);
     if (!preflight.ok) return { ok: false, ...preflight };
     const finalPayload = preflight.requestPayload;
-    if (!finalPayload.global_item_sku && !finalPayload.item_name && !finalPayload.description) {
+    if (!finalPayload.global_item_sku && !finalPayload.global_item_name && !finalPayload.item_name && !finalPayload.description && !finalPayload.pre_order && !finalPayload.weight) {
       return { ok: false, error: 'v2_degraded_payload_empty', message: 'All requested fields were blocked by probe preflight.' };
     }
     const response = await executeLoggedMutation(action, r, finalPayload, body, payload =>

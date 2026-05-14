@@ -2912,11 +2912,17 @@
     try { await loadData(); }
     catch (e) { els.productBody.innerHTML = `<tr><td colspan="6" class="empty">${text(e.message || e)}</td></tr>`; }
   });
-  els.loginSubmit.addEventListener('click', signIn);
-  els.loginPassword.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') signIn();
-  });
-  els.logout.addEventListener('click', signOut);
+  // Auth listeners disabled — auth gate bypassed (see init block below).
+  // login-submit / logout DOM elements are kept hidden via the auth-panel
+  // container so existing CSS selectors stay valid until we redo the shell.
+  if (els.loginSubmit) {
+    els.loginSubmit.addEventListener('click', () => {
+      els.loginError.textContent = 'Auth gate disabled in v2 skeleton — bypass active.';
+    });
+  }
+  if (els.logout) {
+    els.logout.addEventListener('click', (e) => { e.preventDefault(); });
+  }
   els.close.addEventListener('click', closeModal);
   els.cancel.addEventListener('click', closeModal);
   els.modal.addEventListener('click', (e) => { if (e.target === els.modal) closeModal(); });
@@ -2935,14 +2941,14 @@
   initPoRegionFilters();
   initPoListeners();
   initRswListeners();
-  db.auth.getSession().then(({ data }) => {
-    if (data?.session) {
-      return loadData();
-    }
-    showAuth('');
-    return null;
-  }).catch((e) => {
-    showAuth(e.message || String(e));
+  // Sonnet 작업 중 임의 도입된 Supabase auth gate 우회. anon JWT 만으로 모든
+  // 작업이 가능하도록 [wms] 에서와 같은 RLS 정책이 적용되어 있고 (allow_anon
+  // policies, 2026-05-13 마이그레이션), v2 가 직원 기기에서도 작동해야 한다.
+  // 인증 흐름 자체는 plan v2-wizard-plan.md 의 비목표 영역이며 본 단계에서는
+  // 제거. 향후 Supabase auth 도입 시 다시 활성화.
+  showApp();
+  loadData().catch((e) => {
+    console.warn('[v2] initial loadData failed:', e);
   });
 
   // ════════════════════════════════════════════════════════════════

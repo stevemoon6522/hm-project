@@ -2938,8 +2938,6 @@
   els.variantBuild.addEventListener('click', buildVariantRowsFromInputs);
 
   pingBridge();
-  initPoRegionFilters();
-  initPoListeners();
   initRswListeners();
   // Sonnet 작업 중 임의 도입된 Supabase auth gate 우회. anon JWT 만으로 모든
   // 작업이 가능하도록 [wms] 에서와 같은 RLS 정책이 적용되어 있고 (allow_anon
@@ -5403,6 +5401,8 @@
 
   initCatRegionFilters();
   initCatalogListeners();
+  initPoRegionFilters();
+  initPoListeners();
 
   // Patch showView to trigger renderCatalogView when tab is clicked
   (function patchShowViewCatalog() {

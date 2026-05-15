@@ -5079,9 +5079,86 @@ let _gkpRows = [];
 let _gkpEnrichedFiltered = []; // enriched+filtered items, kept for expand/collapse rebuilds
 // expanded state per global_item_id
 const _gkpExpanded = new Set();
-// Cache enriched items for the lifetime of the modal session so re-searching
-// different keywords doesn't re-fetch the entire global catalog.
-let _gkpEnrichedCache = { items: [], fetchedAt: 0, fallbackMode: false };
+// Cache enriched items — persisted to localStorage so re-opening the modal
+// or refreshing the page doesn't re-fetch the entire global catalog.
+const GKP_CACHE_KEY = 'gkp_enriched_cache_v1';
+const GKP_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const GKP_PREFETCH_DELAY_MS = 5000; // wait 5s after dashboard load before prefetching
+
+function _gkpLoadPersistedCache() {
+  try {
+    const raw = localStorage.getItem(GKP_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || !Array.isArray(parsed.items) || parsed.schemaVersion !== 1) return null;
+    return parsed;
+  } catch (e) {
+    console.warn('[gkp] cache load failed:', e);
+    return null;
+  }
+}
+
+function _gkpSavePersistedCache(items, fallbackMode, fetchedAt) {
+  try {
+    const ts = Number(fetchedAt) || Date.now();
+    const existingRaw = localStorage.getItem(GKP_CACHE_KEY);
+    if (existingRaw) {
+      try {
+        const existing = JSON.parse(existingRaw);
+        // skip write if a fresher snapshot was already persisted (e.g. by another tab)
+        if (existing && Number(existing.fetchedAt) >= ts) return;
+      } catch (_) { /* corrupted, overwrite */ }
+    }
+    const payload = { schemaVersion: 1, items, fetchedAt: ts, fallbackMode };
+    localStorage.setItem(GKP_CACHE_KEY, JSON.stringify(payload));
+  } catch (e) {
+    console.warn('[gkp] cache save failed:', e);
+  }
+}
+
+function _gkpCacheIsFresh(cache) {
+  if (!cache || !cache.fetchedAt) return false;
+  return (Date.now() - cache.fetchedAt) < GKP_CACHE_TTL_MS;
+}
+
+let _gkpEnrichedCache = _gkpLoadPersistedCache() || { items: [], fetchedAt: 0, fallbackMode: false };
+
+let _gkpPrefetchInFlight = false;
+let _gkpPrefetchPromise = null;
+
+async function _gkpBackgroundPrefetch({ force = false } = {}) {
+  if (_gkpPrefetchInFlight && _gkpPrefetchPromise) return _gkpPrefetchPromise;
+  const cache = _gkpEnrichedCache;
+  if (!force && _gkpCacheIsFresh(cache) && cache.items.length > 0) return;
+  _gkpPrefetchInFlight = true;
+  // silent statusEl shim — does not touch any visible UI
+  const silentEl = { set textContent(_v) {} };
+  const startedAt = Date.now();
+  _gkpPrefetchPromise = (async () => {
+    try {
+      let items, fallbackMode = false;
+      try {
+        const allGlobal = await _gkpFetchAllGlobalItems(silentEl);
+        items = await _gkpEnrichItems(allGlobal, silentEl);
+      } catch (e) {
+        const msg = String(e?.message || e || '');
+        if (!/global_items 오류|product\.error_unknown|invalid_access_token|invalid_acceess_token/i.test(msg)) {
+          console.warn('[gkp] prefetch failed:', e);
+          return;
+        }
+        fallbackMode = true;
+        items = await _gkpFetchShopItemsFallback(silentEl);
+      }
+      _gkpEnrichedCache = { items, fetchedAt: startedAt, fallbackMode };
+      _gkpSavePersistedCache(items, fallbackMode, startedAt);
+      console.log(`[gkp] prefetch done: ${items.length} items (fallback=${fallbackMode})`);
+    } finally {
+      _gkpPrefetchInFlight = false;
+      _gkpPrefetchPromise = null;
+    }
+  })();
+  return _gkpPrefetchPromise;
+}
 
 async function _gkpFetchAllGlobalItems(statusEl) {
   const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
@@ -5340,7 +5417,7 @@ async function _gkpApply() {
       _gkpRows = [];
       _gkpEnrichedFiltered = [];
       _gkpExpanded.clear();
-      _gkpEnrichedCache = { items: [], fetchedAt: 0, fallbackMode: false };
+      // _gkpEnrichedCache is intentionally NOT reset here — preserve persistent cache across modal opens
       document.getElementById('gkp-results-wrap').style.display = 'none';
       document.getElementById('gkp-import-log').style.display = 'none';
       document.getElementById('gkp-import-log').textContent = '';
@@ -5363,13 +5440,31 @@ async function _gkpApply() {
 
         let enriched = [];
         let fallbackMode = false;
-        const cacheValid = _gkpEnrichedCache.items.length > 0;
+        let usedCache = false; // tracks whether final result came from any cache (incl. awaited prefetch)
+        const cache = _gkpEnrichedCache;
+        const cacheValid = cache.items.length > 0; // stale is still usable
+        const cacheStale = cacheValid && !_gkpCacheIsFresh(cache);
 
         if (cacheValid) {
+          enriched = cache.items;
+          fallbackMode = cache.fallbackMode;
+          usedCache = true;
+          const tag = cacheStale ? '캐시 사용 (만료, 백그라운드 갱신 중)' : '캐시 사용';
+          statusEl.textContent = `${tag} · ${enriched.length}건 · "${keyword || '(필터없음)'}" 필터 적용 중…`;
+          if (cacheStale) {
+            // fire-and-forget background refresh; doesn't block this search
+            _gkpBackgroundPrefetch({ force: true });
+          }
+        } else if (_gkpPrefetchPromise) {
+          // prefetch is already in-flight — await it instead of starting a duplicate fetch
+          statusEl.textContent = '백그라운드 로딩 완료 대기 중…';
+          await _gkpPrefetchPromise;
           enriched = _gkpEnrichedCache.items;
           fallbackMode = _gkpEnrichedCache.fallbackMode;
-          statusEl.textContent = `캐시된 ${enriched.length}건 사용 · "${keyword || '(필터없음)'}" 필터 적용 중…`;
+          usedCache = true;
+          statusEl.textContent = `로드 완료 · ${enriched.length}건 · "${keyword || '(필터없음)'}" 필터 적용 중…`;
         } else {
+          const startedAt = Date.now();
           try {
             const allGlobal = await _gkpFetchAllGlobalItems(statusEl);
             statusEl.textContent = `전체 ${allGlobal.length}건 로드. 상품 정보 조회 중…`;
@@ -5382,11 +5477,12 @@ async function _gkpApply() {
             fallbackMode = true;
             enriched = await _gkpFetchShopItemsFallback(statusEl);
           }
-          _gkpEnrichedCache = { items: enriched, fetchedAt: Date.now(), fallbackMode };
+          _gkpEnrichedCache = { items: enriched, fetchedAt: startedAt, fallbackMode };
+          _gkpSavePersistedCache(enriched, fallbackMode, startedAt);
         }
 
         const filtered = _gkpFilter(enriched, keyword);
-        const cacheTag = cacheValid ? ' (캐시)' : '';
+        const cacheTag = usedCache ? ' (캐시)' : '';
         statusEl.textContent = fallbackMode
           ? `Fallback 검색 사용 중${cacheTag} · "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`
           : `전체 ${enriched.length}개 중${cacheTag} "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`;
@@ -5422,6 +5518,13 @@ async function _gkpApply() {
     });
 
     applyBtn.addEventListener('click', _gkpApply);
+
+    // Kick off background prefetch once after page is idle — so the first modal open is instant
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => _gkpBackgroundPrefetch(), { timeout: GKP_PREFETCH_DELAY_MS + 5000 });
+    } else {
+      setTimeout(() => _gkpBackgroundPrefetch(), GKP_PREFETCH_DELAY_MS);
+    }
   };
   init();
 })();

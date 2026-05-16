@@ -6119,9 +6119,11 @@ async function _gkpEnsureModelsForItems(items, statusEl) {
     await Promise.all(batch.map(async item => {
       const mres = await fetch(`${SHOPEE_BRIDGE}/global_model_list?region=SG&global_item_id=${encodeURIComponent(item.global_item_id)}`, { headers: _bh })
         .then(x => x.json()).catch(() => null);
-      item.models = (mres && mres.ok)
-        ? (mres.result?.response?.global_model || mres.result?.response?.global_model_list || [])
-        : [];
+      const resp = (mres && mres.ok) ? (mres.result?.response || {}) : {};
+      item.models = resp.global_model || resp.global_model_list || [];
+      // Capture tier_variation so option_name can be resolved per model via tier_index.
+      // Shape: [{ name: "tier name", option_list: [{ option: "..." }] }]
+      item.tier_variation = Array.isArray(resp.tier_variation) ? resp.tier_variation : [];
       item._modelsLoaded = true;
       done += 1;
     }));
@@ -6183,16 +6185,43 @@ function _gkpModelProductName(parentName, model) {
   return tierLabel && parentName ? `${parentName} · ${tierLabel}` : (parentName || null);
 }
 
+// Resolve model.tier_index → option_name string using parent item's tier_variation.
+// Example: tier_variation = [{ name: "Photocard", option_list: [{option:"BRIDGE"},{option:"STREET"}] }],
+//          model.tier_index = [0] → returns "BRIDGE" (single tier) or "Photocard: BRIDGE / Size: M" (multi tier).
+function _gkpResolveOptionName(tierVariation, tierIndex) {
+  if (!Array.isArray(tierVariation) || !tierVariation.length) return null;
+  if (!Array.isArray(tierIndex) || !tierIndex.length) return null;
+  const parts = [];
+  for (let i = 0; i < tierIndex.length; i++) {
+    const tier = tierVariation[i];
+    if (!tier) continue;
+    const opt = tier.option_list?.[tierIndex[i]]?.option;
+    if (opt == null || opt === '') continue;
+    parts.push(String(opt).trim());
+  }
+  if (!parts.length) return null;
+  return parts.join(' / ');
+}
+
 function _gkpRowsForSelection(row) {
   if (!row) return [];
   const globalItemId = row.global_item_id != null ? String(row.global_item_id) : null;
   if (row.rowType === 'model_header') {
     const parentName = row.item_name || null;
+    const tierVariation = row.tier_variation || [];
     return (row.models || [])
       .map(model => {
         const sku = _gkpModelSku(model);
         if (!sku) return null;
-        return { sku, product_name: _gkpModelProductName(parentName, model), shopee_item_id: globalItemId };
+        const optionName = _gkpResolveOptionName(tierVariation, model?.tier_index)
+          || String(model?.model_name || model?.global_model_name || '').trim()
+          || null;
+        return {
+          sku,
+          product_name: _gkpModelProductName(parentName, model),
+          option_name: optionName,
+          shopee_item_id: globalItemId,
+        };
       })
       .filter(Boolean);
   }

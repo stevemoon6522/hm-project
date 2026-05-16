@@ -648,6 +648,139 @@
     #hist-body tr.hist-expanded td { background: #eef2ff; }
     /* hash copy button */
     .hist-hash-copy { font-size: 10px; padding: 1px 5px; margin-left: 4px; border-radius: 3px; }
+    /* ── Daily close dashboard ── */
+    .dc-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: flex-start;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+    }
+    .dc-title { font-size: 20px; margin: 0 0 4px; color: #111827; }
+    .dc-subtitle { font-size: 13px; color: #334155; font-weight: 600; }
+    .dc-updated { font-size: 12px; color: #334155; font-weight: 700; margin-top: 6px; }
+    .dc-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(180px, 1fr));
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .dc-card {
+      background: #fff;
+      border: 2px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 14px;
+      min-height: 150px;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, .08);
+    }
+    .dc-card.dc-ok { border-color: #15803d; }
+    .dc-card.dc-warn { border-color: #b45309; background: #fffaf0; }
+    .dc-card.dc-danger { border-color: #b42318; background: #fff7f6; }
+    .dc-card.dc-missing { border-color: #64748b; background: #f8fafc; }
+    .dc-card-head { display:flex;justify-content:space-between;align-items:flex-start;gap:8px; }
+    .dc-label {
+      font-size: 13px;
+      color: #111827;
+      font-weight: 800;
+      line-height: 1.35;
+    }
+    .dc-value {
+      font-size: 34px;
+      line-height: 1;
+      font-weight: 900;
+      color: #111827;
+      letter-spacing: 0;
+    }
+    .dc-card.dc-ok .dc-value { color: #15803d; }
+    .dc-card.dc-warn .dc-value { color: #92400e; }
+    .dc-card.dc-danger .dc-value { color: #b42318; }
+    .dc-chip {
+      display:inline-flex;
+      align-items:center;
+      padding:2px 7px;
+      border-radius:999px;
+      font-size:11px;
+      font-weight:800;
+      border:1px solid currentColor;
+      color:#334155;
+      white-space:nowrap;
+    }
+    .dc-chip.ok { color:#15803d; }
+    .dc-chip.warn { color:#92400e; }
+    .dc-chip.danger { color:#b42318; }
+    .dc-note {
+      font-size: 12px;
+      color: #334155;
+      line-height: 1.45;
+      font-weight: 600;
+    }
+    .dc-source {
+      margin-top: auto;
+      font-size: 11px;
+      color: #475569;
+      line-height: 1.35;
+      font-family: var(--mono);
+    }
+    .dc-source-missing {
+      color: #b42318;
+      font-weight: 900;
+      font-family: inherit;
+    }
+    .dc-summary-grid {
+      display: grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .dc-panel {
+      background:#fff;
+      border:1px solid #cbd5e1;
+      border-radius:8px;
+      padding:14px;
+      box-shadow:0 2px 8px rgba(15, 23, 42, .06);
+    }
+    .dc-panel h3 {
+      margin:0 0 10px;
+      font-size:15px;
+      color:#111827;
+    }
+    .dc-list { display:grid;gap:8px; }
+    .dc-list-row {
+      display:flex;
+      justify-content:space-between;
+      gap:10px;
+      align-items:center;
+      padding:9px 10px;
+      border:1px solid #e2e8f0;
+      border-radius:6px;
+      background:#f8fafc;
+      font-size:13px;
+      color:#111827;
+      font-weight:700;
+    }
+    .dc-list-row strong { font-size:16px; }
+    .dc-limitations {
+      display:grid;
+      gap:7px;
+      font-size:12px;
+      color:#334155;
+      line-height:1.45;
+      font-weight:600;
+    }
+    .dc-limitations code { color:#111827; font-weight:800; }
+
+    @media (max-width: 1180px) {
+      .dc-grid { grid-template-columns: repeat(2, minmax(180px, 1fr)); }
+      .dc-summary-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 760px) {
+      .dc-grid { grid-template-columns: 1fr; }
+      .dc-card { min-height: auto; }
+    }
   </style>
 </head>
 <body>
@@ -687,6 +820,7 @@
       <button class="nav-tab" onclick="showView('view-pre-order')">🔖 PRE ORDER</button>
       <button class="nav-tab" onclick="showView('view-ready-stock')">🔄 READY STOCK 전환</button>
       <button class="nav-tab" onclick="showView('view-price-sync')">💰 가격 동기화</button>
+      <button class="nav-tab" onclick="showView('view-daily-close')">🌙 일일 마감</button>
       <button class="nav-tab" onclick="showView('view-probe')">🔬 Probe</button>
       <button class="nav-tab" onclick="showView('view-history')">📜 변경 이력</button>
       <button id="logout" type="button" class="nav-tab" style="margin-left:auto;">Sign out</button>
@@ -1332,6 +1466,90 @@
       <div id="cat-loading" style="display:none;padding:18px;text-align:center;color:var(--muted);">로딩 중…</div>
 
     </div><!-- /view-price-sync -->
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: 일일 마감
+         Operator manual §9: failed batch, approval, pricing risk, drift, next-day priority.
+         ═══════════════════════════════════════════════ -->
+    <div id="view-daily-close" class="view">
+      <div class="dc-header">
+        <div>
+          <h2 class="dc-title">일일 마감</h2>
+          <div class="dc-subtitle">오늘 종료 전 확인할 5개 운영 지표</div>
+          <div id="dc-updated" class="dc-updated">업데이트: —</div>
+        </div>
+        <button type="button" id="dc-refresh" class="primary">새로고침</button>
+      </div>
+
+      <div id="dc-error" class="notice error" style="display:none;margin-bottom:12px;"></div>
+
+      <div class="dc-grid" aria-label="일일 마감 지표">
+        <div id="dc-card-failed" class="dc-card dc-missing">
+          <div class="dc-card-head">
+            <div class="dc-label">실패 배치 잔여</div>
+            <span class="dc-chip">확인 중</span>
+          </div>
+          <div class="dc-value">—</div>
+          <div class="dc-note">v2 mutation 실패 로그 기준</div>
+          <div class="dc-source">source: shopee_mutation_log</div>
+        </div>
+
+        <div id="dc-card-approval" class="dc-card dc-missing">
+          <div class="dc-card-head">
+            <div class="dc-label">승인 대기</div>
+            <span class="dc-chip">미연결</span>
+          </div>
+          <div class="dc-value">0</div>
+          <div class="dc-note">승인 큐 테이블 연결 후 자동 집계</div>
+          <div class="dc-source dc-source-missing">데이터 소스 미연결</div>
+        </div>
+
+        <div id="dc-card-pricing" class="dc-card dc-missing">
+          <div class="dc-card-head">
+            <div class="dc-label">가격 위험</div>
+            <span class="dc-chip">확인 중</span>
+          </div>
+          <div class="dc-value">—</div>
+          <div class="dc-note">매입가 누락, 오래된 원가, 큰 가격 차이 기준</div>
+          <div class="dc-source">source: products + product_shopee_listings</div>
+        </div>
+
+        <div id="dc-card-drift" class="dc-card dc-missing">
+          <div class="dc-card-head">
+            <div class="dc-label">동기화 불일치</div>
+            <span class="dc-chip">확인 중</span>
+          </div>
+          <div class="dc-value">—</div>
+          <div class="dc-note">마지막 sync 시각이 없거나 오래된 listing</div>
+          <div class="dc-source">source: product_shopee_listings</div>
+        </div>
+
+        <div id="dc-card-priority" class="dc-card dc-missing">
+          <div class="dc-card-head">
+            <div class="dc-label">내일 우선 상품군</div>
+            <span class="dc-chip">확인 중</span>
+          </div>
+          <div class="dc-value">—</div>
+          <div class="dc-note">PRE ORDER, 원가/무게 누락, stale 그룹 요약</div>
+          <div class="dc-source">source: products</div>
+        </div>
+      </div>
+
+      <div class="dc-summary-grid">
+        <div class="dc-panel">
+          <h3>다음날 우선 처리 상품군</h3>
+          <div id="dc-priority-list" class="dc-list">
+            <div class="dc-list-row"><span>로딩 중</span><strong>—</strong></div>
+          </div>
+        </div>
+        <div class="dc-panel">
+          <h3>데이터 소스 제한</h3>
+          <div id="dc-limitations" class="dc-limitations">
+            <div>로딩 중…</div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /view-daily-close -->
 
     <!-- catalog dry-run payload modal -->
     <div id="cat-modal-overlay">
@@ -3363,6 +3581,501 @@
   });
 
   function esc(s) {
+
+  // ════════════════════════════════════════════════════════════════
+  // DAILY CLOSE VIEW (operator manual §9)
+  // ════════════════════════════════════════════════════════════════
+
+  const DC_ACTIVE_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH'];
+  const DC_STALE_SYNC_HOURS = 72;
+  const DC_STALE_COST_DAYS = 14;
+  const DC_PRICE_DELTA_RISK_PCT = 50;
+  let _dcRenderedOnce = false;
+
+  function dcNowLabel() {
+    return new Date().toLocaleString('ko-KR', {
+      timeZone: 'Asia/Seoul',
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  }
+
+  function dcParseCount(res, fallback) {
+    const cr = res.headers.get('Content-Range') || res.headers.get('content-range') || '';
+    const m = cr.match(/\/(\d+|\*)$/);
+    if (m && m[1] !== '*') return Number(m[1]);
+    return fallback;
+  }
+
+  async function dcFetchAll(table, query, opts) {
+    const pageSize = opts?.pageSize || 500;
+    const maxRows = opts?.maxRows || 5000;
+    let offset = 0;
+    let rows = [];
+    while (rows.length < maxRows) {
+      const res = await fetch(SUPABASE_URL + '/rest/v1/' + table + query, {
+        headers: Object.assign({}, AUTH_HEADERS, {
+          'Range-Unit': 'items',
+          'Range': offset + '-' + (offset + pageSize - 1),
+          'Prefer': 'count=none',
+        }),
+      });
+      if (!res.ok) {
+        const msg = await res.text().catch(function() { return res.statusText; });
+        throw new Error(table + ' fetch ' + res.status + ': ' + msg);
+      }
+      const page = await res.json();
+      if (!Array.isArray(page) || page.length === 0) break;
+      rows = rows.concat(page);
+      if (page.length < pageSize) break;
+      offset += pageSize;
+    }
+    return rows.slice(0, maxRows);
+  }
+
+  async function dcCount(table, query) {
+    const res = await fetch(SUPABASE_URL + '/rest/v1/' + table + query, {
+      headers: Object.assign({}, AUTH_HEADERS, {
+        'Range-Unit': 'items',
+        'Range': '0-0',
+        'Prefer': 'count=exact',
+      }),
+    });
+    if (!res.ok) {
+      const msg = await res.text().catch(function() { return res.statusText; });
+      throw new Error(table + ' count ' + res.status + ': ' + msg);
+    }
+    const rows = await res.json();
+    return dcParseCount(res, Array.isArray(rows) ? rows.length : 0);
+  }
+
+  async function dcFetchProducts() {
+    const base = '?select=id,sku,product_name,option_name,cost_krw,weight_g,lifecycle_state,cost_updated_at,created_at'
+      + '&order=created_at.desc';
+    try {
+      return { rows: await dcFetchAll('products', base), fallback: false };
+    } catch (e) {
+      if (!/cost_updated_at|schema cache|column/i.test(String(e.message || e))) throw e;
+      const fallbackQuery = '?select=id,sku,product_name,option_name,cost_krw,weight_g,lifecycle_state,created_at'
+        + '&order=created_at.desc';
+      return { rows: await dcFetchAll('products', fallbackQuery), fallback: true };
+    }
+  }
+
+  async function dcFetchListings() {
+    return dcFetchAll(
+      'product_shopee_listings',
+      '?select=product_id,region,shop_item_id,last_synced_price,last_synced_at,status,last_error'
+        + '&order=region.asc',
+      { maxRows: 8000 }
+    );
+  }
+
+  async function dcFetchCountrySettings() {
+    return dcFetchAll('country_settings', '?select=*', { maxRows: 200 });
+  }
+
+  async function dcFetchSummaryRpc() {
+    const res = await fetch('/api/v2-daily-close-summary', { method: 'GET' });
+    if (!res.ok) {
+      const msg = await res.text().catch(function() { return res.statusText; });
+      throw new Error('v2_daily_close_summary_api ' + res.status + ': ' + msg);
+    }
+    const body = await res.json();
+    if (!body?.ok || !body?.summary) {
+      throw new Error(body?.error || 'daily close summary unavailable');
+    }
+    return body.summary;
+  }
+
+  function dcRiskClass(count, missing, dangerAt) {
+    if (missing) return 'dc-missing';
+    if (count <= 0) return 'dc-ok';
+    if (dangerAt != null && count >= dangerAt) return 'dc-danger';
+    return 'dc-warn';
+  }
+
+  function dcChip(count, missing, partial) {
+    if (missing) return { label: '미연결', cls: 'danger' };
+    if (partial) return { label: '부분 연결', cls: count > 0 ? 'warn' : 'ok' };
+    if (count > 0) return { label: '조치 필요', cls: 'warn' };
+    return { label: '정상', cls: 'ok' };
+  }
+
+  function dcSetCard(id, metric) {
+    const card = document.getElementById(id);
+    if (!card) return;
+    card.className = 'dc-card ' + dcRiskClass(metric.count, metric.missing, metric.dangerAt);
+    const valueEl = card.querySelector('.dc-value');
+    const chipEl = card.querySelector('.dc-chip');
+    const noteEl = card.querySelector('.dc-note');
+    const sourceEl = card.querySelector('.dc-source');
+    const chip = dcChip(metric.count, metric.missing, metric.partial);
+    if (valueEl) valueEl.textContent = metric.count == null ? '—' : Number(metric.count).toLocaleString();
+    if (chipEl) {
+      chipEl.textContent = chip.label;
+      chipEl.className = 'dc-chip ' + chip.cls;
+    }
+    if (noteEl) noteEl.textContent = metric.note || '';
+    if (sourceEl) {
+      sourceEl.textContent = metric.source || '';
+      sourceEl.classList.toggle('dc-source-missing', !!metric.missing || !!metric.sourceMissing);
+    }
+  }
+
+  function dcIsOlderThan(iso, ms) {
+    if (!iso) return true;
+    const t = new Date(iso).getTime();
+    if (!Number.isFinite(t)) return true;
+    return (Date.now() - t) > ms;
+  }
+
+  function dcBuildListingIndex(listings) {
+    const idx = new Map();
+    (listings || []).forEach(function(l) {
+      const pid = String(l.product_id || '');
+      if (!pid) return;
+      if (!idx.has(pid)) idx.set(pid, []);
+      idx.get(pid).push(l);
+    });
+    return idx;
+  }
+
+  function dcAnalyzePricing(products, listings) {
+    const listingIdx = dcBuildListingIndex(listings);
+    const riskIds = new Set();
+    const staleMs = DC_STALE_COST_DAYS * 86400000;
+
+    (products || []).forEach(function(p) {
+      const pid = String(p.id);
+      const cost = Number(p.cost_krw || 0);
+      const lc = String(p.lifecycle_state || '').toLowerCase();
+      if (!Number.isFinite(cost) || cost <= 0) {
+        riskIds.add(pid);
+        return;
+      }
+      if (lc === 'ready_stock' && dcIsOlderThan(p.cost_updated_at || p.created_at, staleMs)) {
+        riskIds.add(pid);
+        return;
+      }
+      const rows = listingIdx.get(pid) || [];
+      const hasLargeDelta = rows.some(function(l) {
+        const region = String(l.region || '').toUpperCase();
+        if (!DC_ACTIVE_REGIONS.includes(region)) return false;
+        const oldPrice = Number(l.last_synced_price);
+        const newPrice = catComputeNewPrice(cost, region);
+        if (!Number.isFinite(oldPrice) || oldPrice <= 0 || !Number.isFinite(newPrice) || newPrice <= 0) return false;
+        return Math.abs(newPrice - oldPrice) / oldPrice * 100 >= DC_PRICE_DELTA_RISK_PCT;
+      });
+      if (hasLargeDelta) riskIds.add(pid);
+    });
+
+    return {
+      count: riskIds.size,
+      note: '매입가 누락/0원, READY_STOCK 원가 14일 초과, 현재가 대비 50% 이상 차이를 합산',
+      source: 'products + product_shopee_listings · margin threshold rules는 데이터 소스 미연결',
+      partial: true,
+      sourceMissing: true,
+      dangerAt: 10,
+    };
+  }
+
+  function dcAnalyzeDrift(listings) {
+    const cutoffMs = DC_STALE_SYNC_HOURS * 3600000;
+    const byRegion = {};
+    let count = 0;
+    (listings || []).forEach(function(l) {
+      const region = String(l.region || '').toUpperCase();
+      if (!DC_ACTIVE_REGIONS.includes(region)) return;
+      const stale = !l.shop_item_id || dcIsOlderThan(l.last_synced_at, cutoffMs);
+      if (!stale) return;
+      count += 1;
+      byRegion[region] = (byRegion[region] || 0) + 1;
+    });
+    const regionText = Object.keys(byRegion).sort().map(function(r) {
+      return r + ' ' + byRegion[r];
+    }).join(', ');
+    return {
+      count,
+      note: regionText ? '지역별: ' + regionText : '72시간 내 sync 기록 확인됨',
+      source: 'product_shopee_listings.last_synced_at · remote drift snapshot 데이터 소스 미연결',
+      partial: true,
+      sourceMissing: true,
+      dangerAt: 30,
+    };
+  }
+
+  function dcAnalyzePriority(products) {
+    const staleMs = DC_STALE_COST_DAYS * 86400000;
+    const preOrder = [];
+    const missingCost = [];
+    const missingWeight = [];
+    const staleCost = [];
+
+    (products || []).forEach(function(p) {
+      const lc = String(p.lifecycle_state || '').toLowerCase();
+      const cost = Number(p.cost_krw || 0);
+      const weight = Number(p.weight_g || 0);
+      if (lc === 'pre_order') preOrder.push(p);
+      if (!Number.isFinite(cost) || cost <= 0) missingCost.push(p);
+      if (!Number.isFinite(weight) || weight <= 0) missingWeight.push(p);
+      if (lc === 'ready_stock' && dcIsOlderThan(p.cost_updated_at || p.created_at, staleMs)) staleCost.push(p);
+    });
+
+    const rows = [
+      { label: 'PRE ORDER → READY STOCK 전환 후보', count: preOrder.length },
+      { label: '매입가 누락/0원', count: missingCost.length },
+      { label: '무게 누락/0g', count: missingWeight.length },
+      { label: 'READY_STOCK 원가 14일 초과', count: staleCost.length },
+    ];
+    const activeGroups = rows.filter(function(r) { return r.count > 0; }).length;
+    return {
+      count: activeGroups,
+      rows,
+      note: activeGroups ? activeGroups + '개 상품군 우선 확인' : '내일 우선 처리 그룹 없음',
+      source: 'products.lifecycle_state/cost_krw/weight_g/cost_updated_at',
+      dangerAt: 4,
+    };
+  }
+
+  function dcRenderPriorityList(rows, missing) {
+    const el = document.getElementById('dc-priority-list');
+    if (!el) return;
+    if (missing) {
+      el.innerHTML = '<div class="dc-list-row"><span class="dc-source-missing">데이터 소스 미연결</span><strong>0</strong></div>';
+      return;
+    }
+    const safeRows = rows && rows.length ? rows : [{ label: '우선 처리 상품군 없음', count: 0 }];
+    el.innerHTML = safeRows.map(function(r) {
+      return '<div class="dc-list-row"><span>' + esc(r.label) + '</span><strong>' + Number(r.count || 0).toLocaleString() + '</strong></div>';
+    }).join('');
+  }
+
+  function dcRenderLimitations(items) {
+    const el = document.getElementById('dc-limitations');
+    if (!el) return;
+    el.innerHTML = items.map(function(item) {
+      return '<div>' + item + '</div>';
+    }).join('');
+  }
+
+  function dcLoadingCards() {
+    ['dc-card-failed', 'dc-card-approval', 'dc-card-pricing', 'dc-card-drift', 'dc-card-priority'].forEach(function(id) {
+      dcSetCard(id, { count: null, missing: true, note: '조회 중…', source: 'loading' });
+    });
+  }
+
+  async function renderDailyClose(forceRefresh) {
+    const errEl = document.getElementById('dc-error');
+    if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+    if (!_dcRenderedOnce || forceRefresh) dcLoadingCards();
+
+    const rpcP = dcFetchSummaryRpc()
+      .then(function(value) { return { ok: true, value }; })
+      .catch(function(error) { return { ok: false, error }; });
+    const failedP = dcCount('shopee_mutation_log', '?select=id&actor=eq.v2-wizard&status=eq.error')
+      .then(function(count) { return { ok: true, count }; })
+      .catch(function(error) { return { ok: false, error }; });
+    const productsP = dcFetchProducts()
+      .then(function(value) { return { ok: true, value }; })
+      .catch(function(error) { return { ok: false, error }; });
+    const listingsP = dcFetchListings()
+      .then(function(value) { return { ok: true, value }; })
+      .catch(function(error) { return { ok: false, error }; });
+    const countryP = dcFetchCountrySettings()
+      .then(function(value) { return { ok: true, value }; })
+      .catch(function(error) { return { ok: false, error }; });
+
+    const results = await Promise.all([rpcP, failedP, productsP, listingsP, countryP]);
+    const rpcRes = results[0];
+    const failed = results[1];
+    const productsRes = results[2];
+    const listingsRes = results[3];
+    const countryRes = results[4];
+    const products = productsRes.ok ? productsRes.value.rows : [];
+    const listings = listingsRes.ok ? listingsRes.value : [];
+    const countryRows = countryRes.ok ? countryRes.value : [];
+    const countryHasMargin = countryRows.some(function(r) { return r.margin_formula || r.exchange_rate; });
+
+    const rpc = rpcRes.ok && rpcRes.value && typeof rpcRes.value === 'object' ? rpcRes.value : null;
+    const failedCount = rpc ? Number(rpc.failed_batch_remaining_count || 0) : (failed.ok ? failed.count : 0);
+    const failedRawRows = rpc ? Number(rpc.failed_batch_raw_error_rows_count || 0) : failedCount;
+
+    dcSetCard('dc-card-failed', (rpc || failed.ok)
+      ? {
+          count: failedCount,
+          note: failedCount ? '실패 로그가 남아 있습니다. 변경 이력에서 error 행을 확인하세요.' : '남은 실패 배치 없음',
+          source: rpc
+            ? ('v2_daily_close_summary.failed_batch_remaining_count (' + (rpc.failed_batch_source_mode || 'fallback_zero') + ')')
+            : 'shopee_mutation_log.status=error, actor=v2-wizard',
+          dangerAt: 5,
+        }
+      : {
+          count: 0,
+          missing: true,
+          note: '실패 배치 로그를 읽지 못했습니다.',
+          source: '데이터 소스 미연결: shopee_mutation_log',
+        });
+
+    if (rpc) {
+      dcSetCard('dc-card-failed', {
+        count: failedCount,
+        note: failedCount
+          ? ('unresolved failed batches ' + failedCount + ' (raw error rows ' + failedRawRows + ')')
+          : ('no unresolved failed batch (raw error rows ' + failedRawRows + ')'),
+        source: 'v2_daily_close_summary.failed_batch_remaining_count (' + (rpc.failed_batch_source_mode || 'fallback_zero') + ')',
+        dangerAt: 5,
+      });
+    }
+
+    dcSetCard('dc-card-approval', {
+      count: rpc ? Number(rpc.approval_pending_count || 0) : 0,
+      missing: !(rpc && rpc.approval_source_mode === 'mutation_log_approval_required'),
+      note: (rpc && rpc.approval_source_mode === 'mutation_log_approval_required')
+        ? '변경 요청 중 명시 승인 필요한 건수를 집계합니다.'
+        : '승인 대기 소스 미연결: 안전 fallback 0',
+      source: rpc
+        ? 'v2_daily_close_summary.approval_pending_count (' + (rpc.approval_source_mode || 'fallback_zero') + ')'
+        : '데이터 소스 미연결: review/approval queue',
+    });
+
+    if (rpc) {
+      const pricingSourceLabel = (function() {
+        if (rpc.margin_source_mode === 'formula_based') return 'country_settings.margin_formula';
+        if (rpc.margin_source_mode === 'country_settings_derived') return 'country_settings fee fields';
+        return 'fallback multiplier';
+      })();
+      dcSetCard('dc-card-pricing', {
+        count: Number(rpc.pricing_risk_count || 0),
+        note: 'RPC 집계값 (매입가/원가 stale/가격 차이 기준)',
+        source: 'v2_daily_close_summary (' + pricingSourceLabel + ')',
+        partial: rpc.margin_source_mode === 'fallback_multiplier',
+        sourceMissing: rpc.margin_source_mode === 'fallback_multiplier',
+        dangerAt: 10,
+      });
+    } else if (productsRes.ok && listingsRes.ok) {
+      const metric = dcAnalyzePricing(products, listings);
+      if (countryHasMargin) {
+        metric.source = 'products + product_shopee_listings + country_settings.margin_formula';
+        metric.sourceMissing = false;
+      }
+      dcSetCard('dc-card-pricing', metric);
+    } else {
+      dcSetCard('dc-card-pricing', {
+        count: 0,
+        missing: true,
+        note: '가격 위험 계산용 products/listings 조회 실패',
+        source: '데이터 소스 미연결: products/product_shopee_listings',
+      });
+    }
+
+    if (rpc) {
+      const driftByRegion = rpc.sync_drift_by_region && typeof rpc.sync_drift_by_region === 'object'
+        ? Object.keys(rpc.sync_drift_by_region).sort().map(function(region) {
+            return region + ' ' + Number(rpc.sync_drift_by_region[region] || 0);
+          }).join(', ')
+        : '';
+      const driftSourceLabel = rpc.sync_drift_source_mode === 'remote_aware_mutation_log_checkpoint'
+        ? 'remote-aware checkpoint'
+        : 'local stale heuristic';
+      dcSetCard('dc-card-drift', {
+        count: Number(rpc.sync_drift_count || 0),
+        note: driftByRegion ? '지역별: ' + driftByRegion : '72시간 내 sync 기록 확인됨',
+        source: 'v2_daily_close_summary.sync_drift_count (' + driftSourceLabel + ')',
+        dangerAt: 30,
+      });
+    } else if (listingsRes.ok) {
+      dcSetCard('dc-card-drift', dcAnalyzeDrift(listings));
+    } else {
+      dcSetCard('dc-card-drift', {
+        count: 0,
+        missing: true,
+        note: 'listing sync 상태 조회 실패',
+        source: '데이터 소스 미연결: product_shopee_listings',
+      });
+    }
+
+    if (rpc) {
+      const priorityRows = [
+        { label: 'PRE ORDER → READY STOCK 전환 후보', count: Number(rpc.pre_order_count || 0) },
+        { label: '매입가 누락/0원', count: Number(rpc.missing_cost_count || 0) },
+        { label: '무게 누락/0g', count: Number(rpc.missing_weight_count || 0) },
+        { label: 'READY_STOCK 원가 14일 초과', count: Number(rpc.stale_cost_count || 0) },
+      ];
+      const activeGroups = priorityRows.filter(function(r) { return r.count > 0; }).length;
+      dcSetCard('dc-card-priority', {
+        count: activeGroups,
+        note: activeGroups ? activeGroups + '개 상품군 우선 확인' : '내일 우선 처리 그룹 없음',
+        source: 'v2_daily_close_summary product group aggregates',
+        dangerAt: 4,
+      });
+      dcRenderPriorityList(priorityRows, false);
+    } else {
+      const priority = productsRes.ok ? dcAnalyzePriority(products) : null;
+      dcSetCard('dc-card-priority', priority || {
+        count: 0,
+        missing: true,
+        note: '다음날 우선 상품군 계산용 products 조회 실패',
+        source: '데이터 소스 미연결: products',
+      });
+      dcRenderPriorityList(priority?.rows || [], !productsRes.ok);
+    }
+
+    const limitations = [];
+    if (rpc) {
+      limitations.push('<code>products</code>: anon 직접 조회 대신 <code>v2_daily_close_summary</code> RPC(SECURITY DEFINER) 사용');
+    } else {
+      if (!failed.ok) limitations.push('<code>shopee_mutation_log</code>: 실패 배치 잔여 count를 읽지 못함');
+      if (productsRes.ok && products.length === 0) limitations.push('<code>products</code>: 현재 조회 가능한 상품 0건');
+      if (!productsRes.ok) limitations.push('<code>products</code>: ' + esc(productsRes.error?.message || productsRes.error || '조회 실패'));
+      if (!listingsRes.ok) limitations.push('<code>product_shopee_listings</code>: ' + esc(listingsRes.error?.message || listingsRes.error || '조회 실패'));
+    }
+    if (rpc) {
+      if (rpc.approval_source_mode !== 'mutation_log_approval_required') {
+        limitations.push('<code>승인 대기</code>: review/approval queue 미연결, 안전 fallback 0 표시');
+      }
+    } else {
+      limitations.push('<code>승인 대기</code>: review/approval queue 테이블 미연결, 안전 fallback 0 표시');
+    }
+    if (rpc) {
+      if (rpc.margin_source_mode === 'fallback_multiplier') {
+        limitations.push('<code>가격 위험</code>: margin source fallback multiplier 사용');
+      } else if (rpc.margin_source_mode === 'country_settings_derived') {
+        limitations.push('<code>가격 위험</code>: country_settings 기반 파생 계산 사용 (formula 미사용)');
+      }
+    } else if (!countryHasMargin) {
+      limitations.push('<code>가격 위험</code>: margin threshold 설정 미연결, cost/stale/delta fallback 사용');
+    }
+    if (rpc) {
+      if (rpc.sync_drift_source_mode !== 'remote_aware_mutation_log_checkpoint') {
+        limitations.push('<code>동기화 불일치</code>: remote checkpoint unavailable, last_synced_at heuristic 사용');
+      }
+    } else {
+      limitations.push('<code>동기화 불일치</code>: 원격 diff snapshot 미연결, last_synced_at 72시간 기준 사용');
+    }
+    if (!rpc && rpcRes.error) {
+      limitations.push('<code>rpc</code>: ' + esc(rpcRes.error?.message || rpcRes.error || 'v2_daily_close_summary unavailable'));
+    }
+    dcRenderLimitations(limitations);
+
+    const updatedEl = document.getElementById('dc-updated');
+    if (updatedEl) updatedEl.textContent = '업데이트: ' + dcNowLabel();
+    _dcRenderedOnce = true;
+  }
+
+  function initDailyCloseListeners() {
+    const btn = document.getElementById('dc-refresh');
+    if (btn && !btn.dataset.dcBound) {
+      btn.dataset.dcBound = '1';
+      btn.addEventListener('click', function() { renderDailyClose(true); });
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
     return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
@@ -5400,6 +6113,7 @@
   // ── Boot ────────────────────────────────────────────────────────
 
   initCatRegionFilters();
+  initDailyCloseListeners();
   initCatalogListeners();
   initPoRegionFilters();
   initPoListeners();
@@ -5410,6 +6124,7 @@
     window.showView = function(viewId) {
       _origSV2(viewId);
       if (viewId === 'view-price-sync') renderCatalogView(false);
+      if (viewId === 'view-daily-close') renderDailyClose(false);
       if (viewId === 'view-probe')   renderProbeView();
       if (viewId === 'view-history') renderHistoryView(false);
     };

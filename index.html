@@ -3598,8 +3598,9 @@ async function _joomBulkSync() {
 async function _readyStockBulkApply() {
   const selected = _getSelectedMasterRows();
   if (!selected.length) return;
-  // Dedupe by global_item_id (multiple variant rows share one parent)
-  const uniqueGids = [...new Set(selected.map(r => String(r.shopee_item_id || '').trim()).filter(s => /^\d+$/.test(s)))]
+  // Dedupe by global_item_id (multiple variant rows share one parent).
+  // state.rows uses `itemId` (mapped from DB shopee_item_id via dbRowToProduct).
+  const uniqueGids = [...new Set(selected.map(r => String(r.itemId || '').trim()).filter(s => /^\d+$/.test(s)))]
     .map(Number);
   if (!uniqueGids.length) {
     alert('선택된 상품에 Shopee global_item_id 가 없습니다.\n먼저 상품 검색 또는 매핑 동기화로 ID 를 채워주세요.');
@@ -3618,6 +3619,7 @@ async function _readyStockBulkApply() {
 
   let ok = 0, fail = 0;
   const errors = [];
+  const successfulGids = new Set();  // gid strings that successfully updated
   const PARALLELISM = 5;
   for (let i = 0; i < uniqueGids.length; i += PARALLELISM) {
     const chunk = uniqueGids.slice(i, i + PARALLELISM);
@@ -3630,18 +3632,24 @@ async function _readyStockBulkApply() {
       if (!j.ok) throw new Error(`gid=${gid}: ${j.error || j.result?.error || j.result?.message || 'unknown'}`);
       return gid;
     }));
-    for (const r of results) {
-      if (r.status === 'fulfilled') ok++;
-      else { fail++; errors.push(r.reason?.message || String(r.reason)); }
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j];
+      const gid = chunk[j];
+      if (r.status === 'fulfilled') {
+        ok++;
+        successfulGids.add(String(gid));
+      } else {
+        fail++;
+        errors.push(r.reason?.message || String(r.reason));
+      }
     }
     if (btn) btn.textContent = `⏳ ${Math.min((i + PARALLELISM), uniqueGids.length)}/${uniqueGids.length} 처리됨...`;
   }
 
-  // Update DB lifecycle_state for the rows whose global_item was updated
-  if (ok > 0) {
-    const successfulGids = new Set(uniqueGids.slice(0, uniqueGids.length - fail).map(String));
+  // Update DB lifecycle_state for the rows whose global_item was successfully updated
+  if (successfulGids.size > 0) {
     const productIdsToUpdate = selected
-      .filter(r => successfulGids.has(String(r.shopee_item_id)))
+      .filter(r => successfulGids.has(String(r.itemId)))
       .map(r => r.id);
     if (productIdsToUpdate.length) {
       try {

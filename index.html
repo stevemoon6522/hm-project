@@ -1536,6 +1536,7 @@ const Storage = {
           global_item_id: l.global_item_id,
           status: l.status,
           published_at: l.published_at,
+          last_synced_at: l.last_synced_at,
         };
       }
       for (const r of rows) {
@@ -2428,21 +2429,64 @@ async function _preflightShopeePriceTargets(targets, headers) {
   const valid = [];
   const blocked = [];
 
-  // Phase 1: pre-fetch all unique (region, item_id) model_list calls in parallel.
-  // Plan: shopee-price-sync-perf-plan.md §2 옵션 A — 2-3분 직렬 호출을 ~30초로 단축.
-  const uniqueKeys = [];
-  const seen = new Set();
+  // Plan: shopee-price-sync-perf-plan.md §2 옵션 A + B.
+  // 옵션 B: status='mapped' AND last_synced_at < 6h ago → trust mapping, skip API validation.
+  // Trusted (region, item_id) keys get a synthetic cache entry; untrusted go through Phase 1 fetch.
+  const PREFLIGHT_TRUST_TTL_MS = 6 * 60 * 60 * 1000;
+  const now = Date.now();
+  function isTrustedListing(listing) {
+    if (!listing || listing.status !== 'mapped') return false;
+    // Trust freshness: prefer last_synced_at (last successful update_price), fallback to published_at (mapping creation).
+    const tsRaw = listing.last_synced_at || listing.published_at;
+    if (!tsRaw) return false;
+    const ts = Date.parse(tsRaw);
+    if (!Number.isFinite(ts)) return false;
+    return (now - ts) < PREFLIGHT_TRUST_TTL_MS;
+  }
+
+  // Phase 1: 2-pass classification (Codex review fix — avoid iteration-order ambiguity).
+  // Pass 1 finds mixedKeys = keys with ≥1 untrusted target → must fetch.
+  // Pass 2 collects model_ids only for FULLY-trusted keys → synthesize cache.
+  const allKeys = new Map();        // key → {region, item_id}
+  const mixedKeys = new Set();      // keys with at least one untrusted target
   for (const t of targets) {
     const itemId = parseInt(t.item_id);
     if (!Number.isFinite(itemId) || itemId <= 0) continue;
     const k = `${t.region}:${itemId}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    uniqueKeys.push({ key: k, region: t.region, item_id: itemId });
+    if (!allKeys.has(k)) allKeys.set(k, { region: t.region, item_id: itemId });
+    if (!isTrustedListing(t._listing)) mixedKeys.add(k);
+  }
+  const trustedModelIds = new Map();   // key → Set<model_id>  (only for keys not in mixedKeys)
+  const trustedItemNoModel = new Set();
+  for (const t of targets) {
+    const itemId = parseInt(t.item_id);
+    if (!Number.isFinite(itemId) || itemId <= 0) continue;
+    const k = `${t.region}:${itemId}`;
+    if (mixedKeys.has(k)) continue;
+    const mid = t._listing && t._listing.shop_model_id ? Number(t._listing.shop_model_id) : null;
+    if (mid) {
+      if (!trustedModelIds.has(k)) trustedModelIds.set(k, new Set());
+      trustedModelIds.get(k).add(mid);
+    } else {
+      trustedItemNoModel.add(k);
+    }
+  }
+  for (const [k, modelIds] of trustedModelIds.entries()) {
+    cache.set(k, { ok: true, hasModel: modelIds.size > 0, modelIds, _trusted: true });
+  }
+  for (const k of trustedItemNoModel) {
+    if (!cache.has(k)) {
+      cache.set(k, { ok: true, hasModel: false, modelIds: new Set(), _trusted: true });
+    }
+  }
+  const needsFetch = [];
+  for (const k of mixedKeys) {
+    const info = allKeys.get(k);
+    if (info) needsFetch.push({ key: k, region: info.region, item_id: info.item_id });
   }
   const PREFLIGHT_PARALLELISM = 5;
-  for (let i = 0; i < uniqueKeys.length; i += PREFLIGHT_PARALLELISM) {
-    const chunk = uniqueKeys.slice(i, i + PREFLIGHT_PARALLELISM);
+  for (let i = 0; i < needsFetch.length; i += PREFLIGHT_PARALLELISM) {
+    const chunk = needsFetch.slice(i, i + PREFLIGHT_PARALLELISM);
     await Promise.all(chunk.map(async (u) => {
       const info = await _fetchShopeeModelIndex(u.region, u.item_id, headers);
       cache.set(u.key, info);
@@ -2505,8 +2549,9 @@ async function _shopeeUpdatePrices() {
     const price = calc?.listing;
     if (!Number.isFinite(price) || price <= 0) return;
     // Pull shop_model_id from existing mapping — present only for variant SKUs (multi-model items)
-    const model_id = (row.shopeeListings || {})[region]?.shop_model_id || null;
-    targets.push({ region, item_id, model_id, price, statusEl: div.querySelector('.sp-row-status') });
+    const _listing = (row.shopeeListings || {})[region] || null;
+    const model_id = _listing?.shop_model_id || null;
+    targets.push({ region, item_id, model_id, price, statusEl: div.querySelector('.sp-row-status'), _listing });
   });
 
   if (targets.length === 0) {
@@ -2766,7 +2811,7 @@ async function _shopeeBulkSync() {
       if (!Number.isFinite(item_id) || item_id <= 0) continue;
       const price = calcRow(row, region)?.listing;
       if (!Number.isFinite(price) || price <= 0) continue;
-      targets.push({ row, region, item_id, model_id: listing.shop_model_id || null, price });
+      targets.push({ row, region, item_id, model_id: listing.shop_model_id || null, price, _listing: listing });
     }
   }
 
@@ -6026,6 +6071,9 @@ async function _gkpApply() {
               shop_model_id,
               status: row_status,
               last_error,
+              // Set published_at so isTrustedListing in preflight can skip API validation for 6h.
+              // (Plan: shopee-price-sync-perf-plan.md §2 옵션 B)
+              published_at: new Date().toISOString(),
             });
           }
         }

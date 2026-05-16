@@ -5929,7 +5929,8 @@ let _gkpEnrichedFiltered = []; // enriched+filtered items, kept for expand/colla
 const _gkpExpanded = new Set();
 // Cache enriched items — persisted to localStorage so re-opening the modal
 // or refreshing the page doesn't re-fetch the entire global catalog.
-const GKP_CACHE_KEY = 'gkp_enriched_cache_v1';
+// v2 schema: enriched items now include tier_variation (added 2026-05-16 for option_name auto-fill)
+const GKP_CACHE_KEY = 'gkp_enriched_cache_v2';
 const GKP_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 const GKP_PREFETCH_DELAY_MS = 5000; // wait 5s after dashboard load before prefetching
 
@@ -6356,7 +6357,7 @@ async function _gkpApply() {
   try {
     // Avoid ON CONFLICT dependency: fetch existing SKUs, then insert only missing rows.
     const skuList = uniqueRows.map(r => r.sku);
-    const { data: existingRows, error: existingErr } = await db.from('products').select('id,sku,shopee_item_id').in('sku', skuList);
+    const { data: existingRows, error: existingErr } = await db.from('products').select('id,sku,shopee_item_id,option_name').in('sku', skuList);
     if (existingErr) throw existingErr;
 
     const existingBySku = new Map((existingRows || []).map(r => [r.sku, r]));
@@ -6365,6 +6366,10 @@ async function _gkpApply() {
     const updates = uniqueRows
       .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
       .filter(x => x.prev && String(x.prev.shopee_item_id || '') !== String(x.next.shopee_item_id || ''));
+    // Fill option_name for existing rows that are missing it (backfill / re-search case)
+    const optionNameUpdates = uniqueRows
+      .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
+      .filter(x => x.prev && !x.prev.option_name && x.next.option_name);
 
     if (missingRows.length > 0) {
       const { error: insertErr } = await db.from('products').insert(missingRows);
@@ -6379,11 +6384,17 @@ async function _gkpApply() {
         if (updateErr) throw updateErr;
       }));
     }
+    if (optionNameUpdates.length > 0) {
+      await Promise.all(optionNameUpdates.map(async ({ prev, next }) => {
+        await db.from('products').update({ option_name: next.option_name }).eq('id', prev.id);
+      }));
+    }
 
     const inserted = missingRows.length;
     const updated = updates.length;
+    const optionFilled = optionNameUpdates.length;
     const skipped = uniqueRows.length - inserted - updated;
-    logEl.textContent = `✅ ${inserted}건 추가 / ${updated}건 Item ID 업데이트 / ${skipped}건 기존 유지. 매핑 중…`;
+    logEl.textContent = `✅ ${inserted}건 추가 / ${updated}건 Item ID 업데이트 / ${optionFilled}건 옵션명 채움 / ${skipped}건 기존 유지. 매핑 중…`;
 
     // === Auto shop-mapping (per plan gkp-auto-shop-mapping-plan.md) ===
     const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };

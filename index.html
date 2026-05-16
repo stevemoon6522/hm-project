@@ -364,6 +364,13 @@
     color: var(--text);
     font-weight: 500;
   }
+  /* Region cell badge when price came from Shopee (last_synced_price) instead of calc */
+  table.master td.country-col.from-shopee::before {
+    content: '🛒';
+    font-size: 9px;
+    margin-right: 3px;
+    opacity: 0.6;
+  }
   table.master td.numeric { text-align: right; }
 
   table.master tr.row:hover {
@@ -4073,10 +4080,21 @@ function renderTableBody() {
     const cells = COUNTRY_CODES.map(code => {
       const c = state.countries[code];
       const r = calcRow(row, code);
-      const sid = (row.shopeeListings || {})[code]?.shop_item_id;
+      const listing = (row.shopeeListings || {})[code] || null;
+      const sid = listing?.shop_item_id;
       const itemIdHtml = sid ? `<span class="country-item-id" data-copy="${sid}" title="클릭하여 복사">${sid}</span>` : '';
+      // User request 2026-05-16: region 가격 column 은 Shopee 의 actual 가격을 우선 표시
+      // (last_synced_price = GKP 추가 시 fetch / 이후 우리 push 결과). 없으면 calc.
+      const actualPrice = listing?.last_synced_price;
+      const displayPrice = (Number.isFinite(Number(actualPrice)) && Number(actualPrice) > 0)
+        ? Number(actualPrice)
+        : r.listing;
+      const fromShopee = (displayPrice === Number(actualPrice));
+      const priceTitle = fromShopee
+        ? `Shopee 현재 가격 (last sync: ${listing.last_synced_at ? new Date(listing.last_synced_at).toLocaleString() : '?'})`
+        : `계산값 (cost × ${(c.exchangeRate || 0)} ÷ region fees)`;
       return `
-        <td class="country-col" style="--country-color:${c.color};">${fmt(r.listing)}${itemIdHtml}</td>
+        <td class="country-col${fromShopee ? ' from-shopee' : ''}" style="--country-color:${c.color};" title="${priceTitle}">${fmt(displayPrice)}${itemIdHtml}</td>
         <td class="sale-col">${fmt(r.sales)}</td>
       `;
     }).join('');
@@ -6296,18 +6314,33 @@ function _gkpRowsForSelection(row) {
         const optionName = _gkpResolveOptionName(tierVariation, model?.tier_index)
           || String(model?.model_name || model?.global_model_name || '').trim()
           || null;
+        // Global SKU price → cost_krw (Shopee CBSC global price for KRSC seller is in KRW per
+         // get_global_model_list.price_info verification). Plan: user request 2026-05-16.
+        const globalPriceKrw = (() => {
+          const p = model?.price_info;
+          if (!p) return null;
+          const v = Number(p.original_price);
+          return Number.isFinite(v) && v > 0 ? Math.round(v) : null;
+        })();
         return {
           sku,
           product_name: _gkpModelProductName(parentName, model),
           option_name: optionName,
           shopee_item_id: globalItemId,
           global_model_id: model?.global_model_id != null ? Number(model.global_model_id) : null,
+          cost_krw: globalPriceKrw,
         };
       })
       .filter(Boolean);
   }
   const sku = _gkpCleanSku(row.item_sku);
-  return sku ? [{ sku, product_name: row.item_name || null, shopee_item_id: globalItemId }] : [];
+  if (!sku) return [];
+  // Single (no-variant) item: get price from row.price (set by _gkpEnrichItemsComplete from get_global_item_info)
+  // Plan: user request 2026-05-16 — auto-fill cost_krw from Global SKU price.
+  let costKrw = null;
+  const pRaw = Number(row.price);
+  if (Number.isFinite(pRaw) && pRaw > 0) costKrw = Math.round(pRaw);
+  return [{ sku, product_name: row.item_name || null, shopee_item_id: globalItemId, cost_krw: costKrw }];
 }
 
 function _gkpSkuSummary(row) {
@@ -6399,7 +6432,7 @@ async function _gkpApply() {
   try {
     // Avoid ON CONFLICT dependency: fetch existing SKUs, then insert only missing rows.
     const skuList = uniqueRows.map(r => r.sku);
-    const { data: existingRows, error: existingErr } = await db.from('products').select('id,sku,shopee_item_id,option_name,global_model_id').in('sku', skuList);
+    const { data: existingRows, error: existingErr } = await db.from('products').select('id,sku,shopee_item_id,option_name,global_model_id,cost_krw').in('sku', skuList);
     if (existingErr) throw existingErr;
 
     const existingBySku = new Map((existingRows || []).map(r => [r.sku, r]));
@@ -6416,6 +6449,11 @@ async function _gkpApply() {
     const globalModelIdUpdates = uniqueRows
       .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
       .filter(x => x.prev && !x.prev.global_model_id && x.next.global_model_id);
+    // Fill cost_krw for existing rows that have no cost set (initialize from Global SKU Price).
+    // Don't overwrite a manually-set cost — only fill when prev.cost_krw is null/0.
+    const costKrwUpdates = uniqueRows
+      .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
+      .filter(x => x.prev && (!x.prev.cost_krw || Number(x.prev.cost_krw) <= 0) && Number(x.next.cost_krw) > 0);
 
     if (missingRows.length > 0) {
       const { error: insertErr } = await db.from('products').insert(missingRows);
@@ -6440,12 +6478,18 @@ async function _gkpApply() {
         await db.from('products').update({ global_model_id: next.global_model_id }).eq('id', prev.id);
       }));
     }
+    if (costKrwUpdates.length > 0) {
+      await Promise.all(costKrwUpdates.map(async ({ prev, next }) => {
+        await db.from('products').update({ cost_krw: next.cost_krw }).eq('id', prev.id);
+      }));
+    }
 
     const inserted = missingRows.length;
     const updated = updates.length;
     const optionFilled = optionNameUpdates.length;
+    const costFilled = costKrwUpdates.length;
     const skipped = uniqueRows.length - inserted - updated;
-    logEl.textContent = `✅ ${inserted}건 추가 / ${updated}건 Item ID 업데이트 / ${optionFilled}건 옵션명 채움 / ${skipped}건 기존 유지. 매핑 중…`;
+    logEl.textContent = `✅ ${inserted}건 추가 / ${updated}건 Item ID 업데이트 / ${optionFilled}건 옵션명 채움 / ${costFilled}건 정산가 채움 / ${skipped}건 기존 유지. 매핑 중…`;
 
     // === Auto shop-mapping (per plan gkp-auto-shop-mapping-plan.md) ===
     const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
@@ -6505,6 +6549,7 @@ async function _gkpApply() {
           }
 
           let shopModelMap = null; // Map<model_sku_string, model_id>
+          let shopModelPriceMap = null; // Map<model_sku_string, original_price> — for last_synced_price init
           if (isVariant) {
             try {
               const mr = await fetch(`${SHOPEE_BRIDGE}/shop_model_list?region=${encodeURIComponent(p.shop_region)}&item_id=${p.item_id}`, { headers: _bh });
@@ -6512,8 +6557,14 @@ async function _gkpApply() {
               if (!mj.ok) { mappingErrors.push(`${p.shop_region}/gid=${gid} model_list: ${mj.error || mj.result?.error || 'unknown'}`); continue; }
               const models = mj.result?.response?.model || [];
               shopModelMap = new Map();
+              shopModelPriceMap = new Map();
               for (const m of models) {
-                if (m.model_sku) shopModelMap.set(String(m.model_sku), Number(m.model_id));
+                if (!m.model_sku) continue;
+                const skuKey = String(m.model_sku);
+                shopModelMap.set(skuKey, Number(m.model_id));
+                const priceInfo = Array.isArray(m.price_info) ? m.price_info[0] : null;
+                const op = priceInfo ? Number(priceInfo.original_price) : null;
+                if (Number.isFinite(op) && op > 0) shopModelPriceMap.set(skuKey, op);
               }
             } catch (e) {
               mappingErrors.push(`${p.shop_region}/gid=${gid} model_list 실패: ${e.message}`);
@@ -6545,7 +6596,14 @@ async function _gkpApply() {
               }
             }
 
-            listingRows.push({
+            // Initialize last_synced_price from Shopee's current shop-level price (user request 2026-05-16).
+            // For variants: shopModelPriceMap.get(sku). For singles: skipped (cost_krw covers via calc).
+            let initPrice = null;
+            if (isVariant && shopModelPriceMap) {
+              const p2 = shopModelPriceMap.get(String(pickedRow.sku));
+              if (Number.isFinite(p2) && p2 > 0) initPrice = p2;
+            }
+            const listingPayload = {
               product_id,
               region: p.shop_region,
               global_item_id: gid,
@@ -6556,7 +6614,12 @@ async function _gkpApply() {
               // Set published_at so isTrustedListing in preflight can skip API validation for 6h.
               // (Plan: shopee-price-sync-perf-plan.md §2 옵션 B)
               published_at: new Date().toISOString(),
-            });
+            };
+            if (initPrice != null) {
+              listingPayload.last_synced_price = initPrice;
+              listingPayload.last_synced_at = new Date().toISOString();
+            }
+            listingRows.push(listingPayload);
           }
         }
         processed += 1;

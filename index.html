@@ -1416,6 +1416,7 @@ function dbRowToProduct(row) {
   return {
     id: row.id,
     itemId: row.shopee_item_id || '',
+    globalModelId: row.global_model_id != null ? String(row.global_model_id) : '',
     sku: row.sku || '',
     productName: row.product_name || '',
     option: row.option_name || '',
@@ -2871,6 +2872,41 @@ async function _shopeeBulkSync() {
     const result = await _sendShopeeSkuTarget(t, authHeaders);
     return { ...result, rowId: t.row.id };
   }));
+
+  // Always-push current DB SKU via Global API (in addition to skuBuild for explicit edits).
+  // User request 2026-05-16: Shopee 동기화 클릭 시 row.sku 를 항상 Global product 에 push.
+  // Global 1번 호출로 region SKU 자동 propagate.
+  // Skip rows already covered by skuBuild (edit path).
+  const rowIdsInEditPath = new Set(skuBuild.targets.map(t => String(t.row.id)));
+  const alwaysPushTargets = [];
+  for (const row of selectedRows) {
+    if (rowIdsInEditPath.has(String(row.id))) continue;
+    const sku = String(row.sku || '').trim();
+    if (!sku) continue;
+    const globalModelId = row.globalModelId ? parseInt(row.globalModelId) : null;
+    const globalItemId = row.itemId ? parseInt(row.itemId) : null;
+    if (globalModelId && globalItemId) {
+      alwaysPushTargets.push({
+        scope: 'global_model', row, region: 'SG',
+        global_item_id: globalItemId, global_model_id: globalModelId,
+        sku, fromSku: null,
+      });
+    } else if (globalItemId) {
+      alwaysPushTargets.push({
+        scope: 'global_item', row, region: 'SG',
+        global_item_id: globalItemId,
+        sku, fromSku: null,
+      });
+    }
+  }
+  // Parallel chunk 5 to avoid rate-limit bursts
+  const ALWAYS_PUSH_PARALLELISM = 5;
+  const alwaysPushSettled = [];
+  for (let i = 0; i < alwaysPushTargets.length; i += ALWAYS_PUSH_PARALLELISM) {
+    const chunk = alwaysPushTargets.slice(i, i + ALWAYS_PUSH_PARALLELISM);
+    const results = await Promise.allSettled(chunk.map(t => _sendShopeeSkuTarget(t, authHeaders)));
+    alwaysPushSettled.push(...results);
+  }
   const skuByRow = new Map();
   for (let i = 0; i < skuSettled.length; i++) {
     const settled = skuSettled[i];
@@ -2894,8 +2930,10 @@ async function _shopeeBulkSync() {
   const priceFail = allPriceResults.length - priceOk;
   const skuOk = skuSettled.filter(r => r.status === 'fulfilled').length;
   const skuFail = skuSettled.length - skuOk;
-  const ok = priceOk + skuOk;
-  const fail = priceFail + skuFail;
+  const alwaysPushOk = alwaysPushSettled.filter(r => r.status === 'fulfilled').length;
+  const alwaysPushFail = alwaysPushSettled.length - alwaysPushOk;
+  const ok = priceOk + skuOk + alwaysPushOk;
+  const fail = priceFail + skuFail + alwaysPushFail;
   const failMessages = [
     ...allPriceResults
       .filter(r => r.status === 'rejected')
@@ -2903,6 +2941,9 @@ async function _shopeeBulkSync() {
     ...skuSettled
       .filter(r => r.status === 'rejected')
       .map(r => 'sku ' + (r.reason?.message || String(r.reason || 'unknown'))),
+    ...alwaysPushSettled
+      .filter(r => r.status === 'rejected')
+      .map(r => 'global-sku ' + (r.reason?.message || String(r.reason || 'unknown'))),
   ];
   const skuLogs = skuSettled.map((r, i) => {
     const t = skuBuild.targets[i];
@@ -6260,6 +6301,7 @@ function _gkpRowsForSelection(row) {
           product_name: _gkpModelProductName(parentName, model),
           option_name: optionName,
           shopee_item_id: globalItemId,
+          global_model_id: model?.global_model_id != null ? Number(model.global_model_id) : null,
         };
       })
       .filter(Boolean);
@@ -6357,7 +6399,7 @@ async function _gkpApply() {
   try {
     // Avoid ON CONFLICT dependency: fetch existing SKUs, then insert only missing rows.
     const skuList = uniqueRows.map(r => r.sku);
-    const { data: existingRows, error: existingErr } = await db.from('products').select('id,sku,shopee_item_id,option_name').in('sku', skuList);
+    const { data: existingRows, error: existingErr } = await db.from('products').select('id,sku,shopee_item_id,option_name,global_model_id').in('sku', skuList);
     if (existingErr) throw existingErr;
 
     const existingBySku = new Map((existingRows || []).map(r => [r.sku, r]));
@@ -6370,6 +6412,10 @@ async function _gkpApply() {
     const optionNameUpdates = uniqueRows
       .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
       .filter(x => x.prev && !x.prev.option_name && x.next.option_name);
+    // Fill global_model_id for existing rows that are missing it (backfill for Shopee SKU sync)
+    const globalModelIdUpdates = uniqueRows
+      .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
+      .filter(x => x.prev && !x.prev.global_model_id && x.next.global_model_id);
 
     if (missingRows.length > 0) {
       const { error: insertErr } = await db.from('products').insert(missingRows);
@@ -6387,6 +6433,11 @@ async function _gkpApply() {
     if (optionNameUpdates.length > 0) {
       await Promise.all(optionNameUpdates.map(async ({ prev, next }) => {
         await db.from('products').update({ option_name: next.option_name }).eq('id', prev.id);
+      }));
+    }
+    if (globalModelIdUpdates.length > 0) {
+      await Promise.all(globalModelIdUpdates.map(async ({ prev, next }) => {
+        await db.from('products').update({ global_model_id: next.global_model_id }).eq('id', prev.id);
       }));
     }
 

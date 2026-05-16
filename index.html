@@ -395,6 +395,23 @@
     color: var(--accent);
   }
   table.master td.numeric input { text-align: right; }
+  .shopee-sku-dirty {
+    display: inline-block;
+    margin-left: 5px;
+    padding: 0 4px;
+    border: 1px solid rgba(180, 83, 9, 0.35);
+    border-radius: 3px;
+    background: rgba(180, 83, 9, 0.10);
+    color: #b45309;
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .shopee-sku-dirty.is-error {
+    border-color: rgba(214, 39, 84, 0.35);
+    background: rgba(214, 39, 84, 0.10);
+    color: var(--accent);
+  }
 
   /* SKU & 옵션명 */
   table.master td.sku {
@@ -1207,7 +1224,7 @@
   <div class="modal" style="max-width:900px;">
     <h3>🔍 상품 검색</h3>
     <p style="color:#5a5a66;font-size:11px;margin-bottom:14px;line-height:1.5;">
-      Shopee Global SKU 상품을 키워드로 검색합니다. 선택 후 확인을 누르면 상품 마스터에 추가됩니다 (SKU + 상품명). Multi-model 상품은 ▶로 펼쳐 확인할 수 있습니다 (아이템 단위로 1행 삽입).
+      Shopee Global SKU 상품을 키워드로 검색합니다. 선택 후 확인을 누르면 상품 마스터에 추가됩니다 (SKU + 상품명). Multi-model 상품은 옵션 SKU 기준으로 추가되며, Global SKU는 옵션이 없는 단일 상품에만 필요합니다.
     </p>
     <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
       <div>
@@ -1481,6 +1498,7 @@ let state = {
   tagFilter: '',
   nextId: 1,
   bundleSkus: new Set(), // kpop-wms inventory 의 bundle SKU 목록 (📦 SET 배지용)
+  shopeeSkuEdits: new Map(), // product_id -> { from, to, lastError }
 };
 
 /* ─── Supabase Storage 인터페이스 ─────────────────────────────── */
@@ -2377,6 +2395,98 @@ async function _shopeeTestImage() {
   }
 }
 
+function _normalizeShopeeOriginalPrice(region, rawPrice) {
+  const n = Number(rawPrice);
+  if (!Number.isFinite(n) || n <= 0) return { ok: false, reason: 'listing price invalid' };
+  const decimals = (region === 'SG' || region === 'MY' || region === 'BR') ? 2 : 0;
+  const normalized = decimals === 0 ? Math.round(n) : Number(n.toFixed(decimals));
+  if (!Number.isFinite(normalized) || normalized <= 0) return { ok: false, reason: 'normalized price invalid' };
+  return { ok: true, value: normalized, changed: normalized !== n, decimals };
+}
+
+async function _fetchShopeeModelIndex(region, item_id, headers) {
+  const qs = new URLSearchParams();
+  qs.set('region', region);
+  qs.set('path', '/api/v2/product/get_model_list');
+  qs.append('q', `item_id=${item_id}`);
+  const r = await fetch(`${SHOPEE_BRIDGE}/raw_call?${qs.toString()}`, { headers });
+  const j = await _readJsonResponse(r);
+  if (!j.ok || j.result?.error) {
+    return { ok: false, error: _edgeErrorMessage(j, r) };
+  }
+  const modelList = j.result?.response?.model || j.result?.response?.model_list || [];
+  const ids = new Set(
+    modelList
+      .map(m => parseInt(m?.model_id))
+      .filter(v => Number.isFinite(v) && v > 0)
+  );
+  return { ok: true, hasModel: ids.size > 0, modelIds: ids };
+}
+
+async function _preflightShopeePriceTargets(targets, headers) {
+  const cache = new Map();
+  const valid = [];
+  const blocked = [];
+
+  // Phase 1: pre-fetch all unique (region, item_id) model_list calls in parallel.
+  // Plan: shopee-price-sync-perf-plan.md §2 옵션 A — 2-3분 직렬 호출을 ~30초로 단축.
+  const uniqueKeys = [];
+  const seen = new Set();
+  for (const t of targets) {
+    const itemId = parseInt(t.item_id);
+    if (!Number.isFinite(itemId) || itemId <= 0) continue;
+    const k = `${t.region}:${itemId}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    uniqueKeys.push({ key: k, region: t.region, item_id: itemId });
+  }
+  const PREFLIGHT_PARALLELISM = 5;
+  for (let i = 0; i < uniqueKeys.length; i += PREFLIGHT_PARALLELISM) {
+    const chunk = uniqueKeys.slice(i, i + PREFLIGHT_PARALLELISM);
+    await Promise.all(chunk.map(async (u) => {
+      const info = await _fetchShopeeModelIndex(u.region, u.item_id, headers);
+      cache.set(u.key, info);
+    }));
+  }
+
+  // Phase 2: walk targets sequentially using populated cache (all hits, no I/O).
+  for (const t of targets) {
+    const p = _normalizeShopeeOriginalPrice(t.region, t.price);
+    if (!p.ok) {
+      blocked.push({ ...t, reason: p.reason });
+      continue;
+    }
+    const item_id = parseInt(t.item_id);
+    const model_id = t.model_id ? parseInt(t.model_id) : null;
+    const cacheKey = `${t.region}:${item_id}`;
+    const info = cache.get(cacheKey);
+    if (!info) {
+      // Should not happen — Phase 1 covers all valid item_ids; only thrown if item_id was invalid.
+      blocked.push({ ...t, reason: 'preflight failed: invalid item_id' });
+      continue;
+    }
+    if (!info.ok) {
+      blocked.push({ ...t, reason: `preflight failed: ${info.error}` });
+      continue;
+    }
+    if (info.hasModel && !model_id) {
+      blocked.push({ ...t, reason: 'item has models but shop_model_id mapping is missing' });
+      continue;
+    }
+    if (!info.hasModel && model_id) {
+      blocked.push({ ...t, reason: 'item has no models but mapping has shop_model_id' });
+      continue;
+    }
+    if (model_id && !info.modelIds.has(model_id)) {
+      blocked.push({ ...t, reason: `model_id ${model_id} not found for item ${item_id}` });
+      continue;
+    }
+    valid.push({ ...t, item_id, model_id, price: p.value, _priceAdjusted: p.changed, _priceDecimals: p.decimals });
+  }
+
+  return { valid, blocked };
+}
+
 async function _shopeeUpdatePrices() {
   const row = _shopeeCurrentRow;
   if (!row) return;
@@ -2408,15 +2518,35 @@ async function _shopeeUpdatePrices() {
   status.style.color = '#5a5a66';
   status.textContent = '⏳ ' + targets.length + ' 개 region 병렬 push 중...';
   const authHeaders = await _joomAuthHeaders();
+  const preflight = await _preflightShopeePriceTargets(targets, authHeaders);
+  const blocked = preflight.blocked || [];
+  const validTargets = preflight.valid || [];
 
   // Mark all targets in-flight
-  for (const t of targets) {
-    t.statusEl.textContent = '⏳';
-    t.statusEl.style.color = '#b45309';
+  for (const t of validTargets) {
+    if (t.statusEl) {
+      t.statusEl.textContent = '⏳';
+      t.statusEl.style.color = '#b45309';
+    }
+  }
+  for (const b of blocked) {
+    if (b.statusEl) {
+      b.statusEl.textContent = '✕';
+      b.statusEl.style.color = '#d62754';
+      b.statusEl.title = b.reason;
+    }
+  }
+
+  if (validTargets.length === 0) {
+    status.style.color = '#d62754';
+    status.innerHTML = '✓ 0 성공 · ✕ ' + blocked.length + ' 차단 (API 호출 전)<br><pre style="font-size:10px;max-height:120px;overflow:auto;background:#fafafc;padding:6px;border-radius:3px;margin-top:6px;">'
+      + esc(JSON.stringify(blocked.map(b => ({ region: b.region, item_id: b.item_id, model_id: b.model_id || null, reason: b.reason })), null, 2))
+      + '</pre>';
+    return;
   }
 
   // Fire all region updates in parallel — one slow region won't block others
-  const results = await Promise.all(targets.map(async (t) => {
+  const results = await Promise.all(validTargets.map(async (t) => {
     try {
       // model_id present -> variant-level price update; absent -> item-level (single-SKU listing)
       const priceEntry = t.model_id ? { model_id: t.model_id, original_price: t.price } : { original_price: t.price };
@@ -2450,13 +2580,165 @@ async function _shopeeUpdatePrices() {
       return { region: t.region, ok: false, error: e.message };
     }
   }));
+  const blockedResults = blocked.map(b => ({ region: b.region, ok: false, blocked: true, error: b.reason }));
+  const mergedResults = [...results, ...blockedResults];
 
-  const okCount = results.filter(r => r.ok).length;
-  const failCount = results.length - okCount;
+  const okCount = mergedResults.filter(r => r.ok).length;
+  const failCount = mergedResults.length - okCount;
   status.style.color = failCount === 0 ? '#15803d' : (okCount > 0 ? '#b45309' : '#d62754');
-  status.innerHTML = '✓ ' + okCount + ' 성공' + (failCount > 0 ? ' · ✕ ' + failCount + ' 실패 (각 region 우측 아이콘 마우스오버 → 에러)' : '')
+  status.innerHTML = '✓ ' + okCount + ' 성공' + (failCount > 0 ? ' · ✕ ' + failCount + ' 실패/차단 (각 region 우측 아이콘 마우스오버 → 에러)' : '')
     + '<br><pre style="font-size:10px;max-height:120px;overflow:auto;background:#fafafc;padding:6px;border-radius:3px;margin-top:6px;">'
-    + esc(JSON.stringify(results, null, 2)) + '</pre>';
+    + esc(JSON.stringify(mergedResults, null, 2)) + '</pre>';
+}
+
+function _setShopeeSkuEditError(row, message) {
+  const edit = _getShopeeSkuEdit(row);
+  if (!edit) return;
+  edit.lastError = message || null;
+  state.shopeeSkuEdits.set(_skuEditKey(row), edit);
+}
+
+function _clearShopeeSkuEdit(row) {
+  const key = _skuEditKey(row);
+  if (key) state.shopeeSkuEdits.delete(key);
+}
+
+function _candidateGlobalItemId(row, listing) {
+  const explicit = listing?.global_item_id;
+  const raw = explicit || row.itemId || '';
+  const val = String(raw || '').trim();
+  if (!/^\d+$/.test(val)) return null;
+  if (!explicit) {
+    const localIds = Object.values(row.shopeeListings || {})
+      .map(l => String(l?.shop_item_id || '').trim())
+      .filter(Boolean);
+    if (localIds.includes(val)) return null;
+  }
+  return Number(val);
+}
+
+function _validateShopeeSkuEdits(rows) {
+  const edits = rows.map(row => ({ row, edit: _getShopeeSkuEdit(row) })).filter(x => x.edit);
+  const errors = [];
+  const seen = new Map();
+  for (const { row, edit } of edits) {
+    const sku = String(edit.to || row.sku || '').trim();
+    const norm = _normalizeSku(sku);
+    if (!sku) {
+      errors.push(`${row.option || row.productName || row.id}: empty SKU`);
+      continue;
+    }
+    if (_normalizeSku(edit.from) === norm) continue;
+    if (seen.has(norm)) {
+      const prev = seen.get(norm);
+      errors.push(`duplicate SKU in selected rows: ${sku} (${prev.row.option || prev.row.id}, ${row.option || row.id})`);
+    } else {
+      seen.set(norm, { row, sku });
+    }
+  }
+  return { edits, errors };
+}
+
+async function _findGlobalModelIdForSku(globalItemId, fromSku, headers) {
+  if (!globalItemId || !fromSku) return null;
+  const r = await fetch(`${SHOPEE_BRIDGE}/global_model_list?region=SG&global_item_id=${encodeURIComponent(globalItemId)}`, { headers });
+  const j = await _readJsonResponse(r);
+  if (!j.ok || j.result?.error) throw new Error(_edgeErrorMessage(j, r));
+  const models = j.result?.response?.global_model || j.result?.response?.global_model_list || [];
+  const fromKey = _normalizeSku(fromSku);
+  const match = models.find(m => _normalizeSku(m.global_model_sku || m.model_sku || '') === fromKey);
+  return match?.global_model_id || null;
+}
+
+async function _buildShopeeSkuTargets(rows, headers) {
+  const { edits, errors } = _validateShopeeSkuEdits(rows);
+  if (errors.length) return { targets: [], errors };
+
+  const targets = [];
+  for (const { row, edit } of edits) {
+    const sku = String(edit.to || row.sku || '').trim();
+    if (!sku || _normalizeSku(edit.from) === _normalizeSku(sku)) continue;
+    const listings = row.shopeeListings || {};
+    const mapped = SHOPEE_REGIONS
+      .map(region => ({ region, listing: listings[region] }))
+      .filter(x => x.listing?.shop_item_id);
+
+    if (!mapped.length) {
+      errors.push(`${row.sku || row.id}: no mapped Shopee listing`);
+      continue;
+    }
+
+    for (const { region, listing } of mapped) {
+      const item_id = parseInt(listing.shop_item_id);
+      if (!Number.isFinite(item_id) || item_id <= 0) continue;
+      const model_id = listing.shop_model_id ? parseInt(listing.shop_model_id) : null;
+      targets.push({
+        scope: model_id ? 'local_model' : 'local_item',
+        row, region, item_id, model_id,
+        fromSku: edit.from, sku,
+      });
+    }
+
+    const firstListing = mapped[0]?.listing || null;
+    const global_item_id = _candidateGlobalItemId(row, firstListing);
+    if (global_item_id) {
+      const hasModel = mapped.some(x => x.listing?.shop_model_id);
+      if (hasModel) {
+        try {
+          const global_model_id = await _findGlobalModelIdForSku(global_item_id, edit.from, headers);
+          if (global_model_id) {
+            targets.push({ scope: 'global_model', row, region: 'SG', global_item_id, global_model_id, fromSku: edit.from, sku });
+          } else {
+            targets.push({ scope: 'global_model_error', row, region: 'SG', global_item_id, fromSku: edit.from, sku, error: `global model not found for previous SKU ${edit.from}` });
+          }
+        } catch (e) {
+          targets.push({ scope: 'global_model_error', row, region: 'SG', global_item_id, fromSku: edit.from, sku, error: `global model lookup failed: ${e.message}` });
+        }
+      } else {
+        targets.push({ scope: 'global_item', row, region: 'SG', global_item_id, fromSku: edit.from, sku });
+      }
+    }
+  }
+
+  return { targets, errors };
+}
+
+async function _sendShopeeSkuTarget(t, headers) {
+  if (t.error) throw new Error(t.error);
+  let endpoint = '';
+  let body = {};
+  if (t.scope === 'local_model') {
+    endpoint = '/update_model_sku';
+    body = { region: t.region, item_id: t.item_id, model: [{ model_id: t.model_id, model_sku: t.sku }] };
+  } else if (t.scope === 'local_item') {
+    endpoint = '/update_item_sku';
+    body = { region: t.region, item_id: t.item_id, item_sku: t.sku };
+  } else if (t.scope === 'global_model') {
+    endpoint = '/update_global_model';
+    body = { region: t.region, global_item_id: t.global_item_id, global_model: [{ global_model_id: t.global_model_id, global_model_sku: t.sku }] };
+  } else if (t.scope === 'global_item') {
+    endpoint = '/update_global_item';
+    body = { region: t.region, global_item_id: t.global_item_id, global_item_sku: t.sku };
+  } else {
+    throw new Error(`unknown SKU target scope: ${t.scope}`);
+  }
+
+  const r = await fetch(SHOPEE_BRIDGE + endpoint, {
+    method: 'POST', headers,
+    body: JSON.stringify(body),
+  });
+  const j = await _readJsonResponse(r);
+  if (!j.ok || j.result?.error) throw new Error(_edgeErrorMessage(j, r));
+  return {
+    ok: true,
+    scope: t.scope,
+    region: t.region,
+    item_id: t.item_id || null,
+    model_id: t.model_id || null,
+    global_item_id: t.global_item_id || null,
+    global_model_id: t.global_model_id || null,
+    sku: t.sku,
+  };
 }
 
 async function _shopeeBulkSync() {
@@ -2469,10 +2751,13 @@ async function _shopeeBulkSync() {
   btn.disabled = true;
   btn.textContent = '⏳ 동기화 중...';
 
+  await flushSaveQueue();
+
+  const selectedRows = checkedIds
+    .map(id => state.rows.find(r => String(r.id) === id))
+    .filter(Boolean);
   const targets = [];
-  for (const id of checkedIds) {
-    const row = state.rows.find(r => String(r.id) === id);
-    if (!row) continue;
+  for (const row of selectedRows) {
     const listings = row.shopeeListings || {};
     for (const region of SHOPEE_REGIONS) {
       const listing = listings[region];
@@ -2485,15 +2770,30 @@ async function _shopeeBulkSync() {
     }
   }
 
-  if (targets.length === 0) {
+  const authHeaders = await _joomAuthHeaders();
+  const skuBuild = await _buildShopeeSkuTargets(selectedRows, authHeaders);
+  if (skuBuild.errors.length) {
+    for (const row of selectedRows) {
+      if (_getShopeeSkuEdit(row)) _setShopeeSkuEditError(row, skuBuild.errors.join('\n'));
+    }
+    alert('Shopee SKU sync validation failed:\n' + skuBuild.errors.join('\n'));
+    btn.disabled = false;
+    btn.innerHTML = origHtml;
+    renderTableBody();
+    return;
+  }
+
+  if (targets.length === 0 && skuBuild.targets.length === 0) {
     alert('동기화할 Shopee 매핑이 없습니다. Shopee 매핑 동기화를 먼저 실행하세요.');
     btn.disabled = false;
     btn.innerHTML = origHtml;
     return;
   }
 
-  const authHeaders = await _joomAuthHeaders();
-  const results = await Promise.allSettled(targets.map(async t => {
+  const preflight = await _preflightShopeePriceTargets(targets, authHeaders);
+  const blocked = preflight.blocked || [];
+  const validTargets = preflight.valid || [];
+  const results = await Promise.allSettled(validTargets.map(async t => {
     const priceEntry = t.model_id
       ? { model_id: t.model_id, original_price: t.price }
       : { original_price: t.price };
@@ -2512,24 +2812,73 @@ async function _shopeeBulkSync() {
     throw new Error(t.region + ': ' + _edgeErrorMessage(j, r));
   }));
 
-  const ok = results.filter(r => r.status === 'fulfilled').length;
-  const fail = results.length - ok;
-  const failMessages = results
-    .filter(r => r.status === 'rejected')
-    .map(r => r.reason?.message || String(r.reason || 'unknown'));
+  const blockedPriceResults = blocked.map(b => ({
+    status: 'rejected',
+    reason: new Error(`${b.region}: blocked preflight - ${b.reason}`),
+  }));
+  const allPriceResults = [...results, ...blockedPriceResults];
+
+  const skuSettled = await Promise.allSettled(skuBuild.targets.map(async t => {
+    const result = await _sendShopeeSkuTarget(t, authHeaders);
+    return { ...result, rowId: t.row.id };
+  }));
+  const skuByRow = new Map();
+  for (let i = 0; i < skuSettled.length; i++) {
+    const settled = skuSettled[i];
+    const target = skuBuild.targets[i];
+    const rowId = String(target.row.id);
+    if (!skuByRow.has(rowId)) skuByRow.set(rowId, []);
+    skuByRow.get(rowId).push({ settled, target });
+  }
+  for (const [rowId, entries] of skuByRow.entries()) {
+    const row = state.rows.find(r => String(r.id) === rowId);
+    if (!row) continue;
+    const failed = entries.filter(x => x.settled.status === 'rejected');
+    if (failed.length) {
+      _setShopeeSkuEditError(row, failed.map(x => x.settled.reason?.message || String(x.settled.reason || 'unknown')).join('\n'));
+    } else {
+      _clearShopeeSkuEdit(row);
+    }
+  }
+
+  const priceOk = allPriceResults.filter(r => r.status === 'fulfilled').length;
+  const priceFail = allPriceResults.length - priceOk;
+  const skuOk = skuSettled.filter(r => r.status === 'fulfilled').length;
+  const skuFail = skuSettled.length - skuOk;
+  const ok = priceOk + skuOk;
+  const fail = priceFail + skuFail;
+  const failMessages = [
+    ...allPriceResults
+      .filter(r => r.status === 'rejected')
+      .map(r => 'price ' + (r.reason?.message || String(r.reason || 'unknown'))),
+    ...skuSettled
+      .filter(r => r.status === 'rejected')
+      .map(r => 'sku ' + (r.reason?.message || String(r.reason || 'unknown'))),
+  ];
+  const skuLogs = skuSettled.map((r, i) => {
+    const t = skuBuild.targets[i];
+    return r.status === 'fulfilled'
+      ? { ok: true, row_id: t.row.id, sku: t.sku, scope: t.scope, region: t.region, item_id: t.item_id || null, model_id: t.model_id || null, global_item_id: t.global_item_id || null, global_model_id: t.global_model_id || null }
+      : { ok: false, row_id: t.row.id, sku: t.sku, scope: t.scope, region: t.region, error: r.reason?.message || String(r.reason || 'unknown') };
+  });
+  if (skuLogs.length) console.info('[Shopee SKU sync]', skuLogs);
   const statusEl = document.getElementById('save-status');
   if (statusEl) {
     const firstFail = failMessages[0] ? ` · ${failMessages[0]}` : '';
     statusEl.textContent = fail > 0
       ? `Shopee: ${ok}건 성공 / ${fail}건 실패${firstFail}`
       : `✓ Shopee ${ok}건 가격 업데이트 완료`;
+    statusEl.textContent = fail > 0
+      ? `Shopee: price ${priceOk}/${allPriceResults.length}, SKU ${skuOk}/${skuSettled.length} success / ${fail} fail${firstFail}`
+      : `Shopee sync done: price ${priceOk}, SKU ${skuOk}`;
     statusEl.style.color = fail > 0 ? '#d62754' : '#15803d';
-    statusEl.title = failMessages.join('\n');
+    statusEl.title = [...failMessages, skuLogs.length ? JSON.stringify(skuLogs, null, 2) : ''].filter(Boolean).join('\n');
     setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; statusEl.title = ''; }, 5000);
   }
 
   btn.disabled = false;
   btn.innerHTML = origHtml;
+  renderTableBody();
 }
 
 (function bindShopeeModal() {
@@ -2676,6 +3025,39 @@ function _normalizeName(s) {
   return _normalize(s);
 }
 
+function _skuEditKey(row) {
+  return row?.id != null ? String(row.id) : '';
+}
+
+function _getShopeeSkuEdit(row) {
+  const key = _skuEditKey(row);
+  const edit = key ? state.shopeeSkuEdits.get(key) : null;
+  if (!edit) return null;
+  const to = String(row?.sku || '').trim();
+  if (_normalizeSku(edit.from) === _normalizeSku(to)) {
+    state.shopeeSkuEdits.delete(key);
+    return null;
+  }
+  if (edit.to !== to) {
+    edit.to = to;
+    state.shopeeSkuEdits.set(key, edit);
+  }
+  return edit;
+}
+
+function _markShopeeSkuDirty(row, previousSku, nextSku) {
+  const key = _skuEditKey(row);
+  if (!key) return;
+  const existing = state.shopeeSkuEdits.get(key);
+  const from = existing?.from ?? String(previousSku || '').trim();
+  const to = String(nextSku || '').trim();
+  if (_normalizeSku(from) === _normalizeSku(to)) {
+    state.shopeeSkuEdits.delete(key);
+    return;
+  }
+  state.shopeeSkuEdits.set(key, { from, to, lastError: null });
+}
+
 // Hard guardrail for this account's 6 operating regions.
 // If source token shop_id doesn't match expected mapping, that region sync is blocked.
 const EXPECTED_REGION_SHOP_IDS = {
@@ -2688,6 +3070,7 @@ const EXPECTED_REGION_SHOP_IDS = {
 };
 
 let _syncMatches = null;  // {regionMap, productMatches} — sync-apply 가 사용
+const SHOPEE_SYNC_MAX_ITEMS = 2000;
 
 async function _shopeeSyncFetchRegion(region, progressEl) {
   const t0 = Date.now();
@@ -2696,8 +3079,8 @@ async function _shopeeSyncFetchRegion(region, progressEl) {
     // Fetch NORMAL + UNLIST in parallel to catch all registered items regardless of status
     const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
     const [rNormal, rUnlist] = await Promise.all([
-      fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&item_status=NORMAL&max_items=500', { headers: _bh }).then(r => r.json()),
-      fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&item_status=UNLIST&max_items=500', { headers: _bh }).then(r => r.json()),
+      fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&item_status=NORMAL&max_items=' + SHOPEE_SYNC_MAX_ITEMS, { headers: _bh }).then(r => r.json()),
+      fetch(SHOPEE_BRIDGE + '/list_items?region=' + region + '&item_status=UNLIST&max_items=' + SHOPEE_SYNC_MAX_ITEMS, { headers: _bh }).then(r => r.json()),
     ]);
     const dur = ((Date.now() - t0) / 1000).toFixed(1);
     const items = [...(rNormal.ok ? rNormal.items || [] : []), ...(rUnlist.ok ? rUnlist.items || [] : [])];
@@ -3224,6 +3607,10 @@ function renderTableBody() {
     const bundleBadge = (row.sku && state.bundleSkus.has(row.sku))
       ? ' <span title="kpop-wms 에서 번들로 등록된 SKU — 출고 시 컴포넌트로 분해됨" style="display:inline-block;margin-left:4px;padding:0 4px;border-radius:3px;background:rgba(124,77,255,0.15);color:#7c4dff;font-size:9px;font-weight:600;letter-spacing:0.3px">📦 SET</span>'
       : '';
+    const skuEdit = _getShopeeSkuEdit(row);
+    const skuSyncBadge = skuEdit
+      ? `<span class="shopee-sku-dirty${skuEdit.lastError ? ' is-error' : ''}" title="Shopee SKU sync pending: ${esc(skuEdit.from)} -> ${esc(skuEdit.to)}${skuEdit.lastError ? '\n' + esc(skuEdit.lastError) : ''}">SKU push</span>`
+      : '';
     const tagBadgesHtml = (row.tags && row.tags.length)
       ? row.tags.map(t => `<span class="tag-badge">${t}</span>`).join('')
       : '<span style="font-size:9px;color:var(--text-faint);cursor:pointer;">+ 태그</span>';
@@ -3234,7 +3621,7 @@ function renderTableBody() {
         <td class="master-url-cell" data-id="${row.id}" title="더블클릭하여 URL 편집" style="width:140px;">${renderStaronemallCell(row)}</td>
         <td class="itemid editable" data-field="itemId" title="${row.itemId || ''}">${row.itemId || '<span style="color:var(--text-faint);">—</span>'}</td>
         <td class="product-name editable" data-field="productName" title="${esc(row.productName || '')}" style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${row.productName ? esc(row.productName) : '<span style="color:var(--text-faint);">—</span>'}</td>
-        <td class="sku editable" data-field="sku" title="${row.sku}">${row.sku}${bundleBadge}
+        <td class="sku editable" data-field="sku" title="${esc(row.sku)}">${esc(row.sku)}${bundleBadge}${skuSyncBadge}
           <div class="tag-badges-wrap" data-id="${row.id}">${tagBadgesHtml}</div></td>
         <td class="option editable" data-field="option">${row.option || ''}</td>
         <td class="numeric editable" data-field="sourcingPrice" style="color:var(--text-dim);">${row.sourcingPrice ? fmtKRW(row.sourcingPrice) : '<span style="color:var(--text-faint);">—</span>'}</td>
@@ -3417,8 +3804,28 @@ function filterRows() {
   const t = state.tagFilter;
   const base = state.rows.filter(r => r.purpose !== 'registration');
   const byTag = t ? base.filter(r => (r.tags || []).includes(t)) : base;
-  if (!q) return byTag;
-  return byTag.filter(r =>
+  const sorted = byTag
+    .map((r, idx) => ({ r, idx }))
+    .sort((a, b) => {
+      const aId = String(a.r.itemId || '').trim();
+      const bId = String(b.r.itemId || '').trim();
+      const aEmpty = !aId;
+      const bEmpty = !bId;
+      if (aEmpty !== bEmpty) return aEmpty ? 1 : -1; // empty Item ID goes last
+
+      const aNum = Number(aId);
+      const bNum = Number(bId);
+      const aNumOk = Number.isFinite(aNum) && aId !== '';
+      const bNumOk = Number.isFinite(bNum) && bId !== '';
+      if (aNumOk && bNumOk && aNum !== bNum) return aNum - bNum;
+      if (aId !== bId) return aId.localeCompare(bId, undefined, { numeric: true, sensitivity: 'base' });
+
+      // Stable order for equal Item ID (keeps multi-model option rows coherent)
+      return a.idx - b.idx;
+    })
+    .map(x => x.r);
+  if (!q) return sorted;
+  return sorted.filter(r =>
     (r.sku || '').toLowerCase().includes(q) ||
     (r.productName || '').toLowerCase().includes(q) ||
     (r.option || '').toLowerCase().includes(q) ||
@@ -3492,7 +3899,12 @@ function startEdit(td) {
     const dropdown = td.querySelector('.sku-ac-dropdown');
     input.focus(); input.select();
     _attachSkuAc(input, dropdown, val => {
-      if (row.sku !== val) { row.sku = val; markProductDirty(row); }
+      if (row.sku !== val) {
+        const previousSku = row.sku || '';
+        row.sku = val;
+        _markShopeeSkuDirty(row, previousSku, val);
+        markProductDirty(row);
+      }
       renderTableBody(); renderVerify();
     });
     input.addEventListener('keydown', e => {
@@ -5139,7 +5551,7 @@ async function _gkpBackgroundPrefetch({ force = false } = {}) {
       let items, fallbackMode = false;
       try {
         const allGlobal = await _gkpFetchAllGlobalItems(silentEl);
-        items = await _gkpEnrichItems(allGlobal, silentEl);
+        items = await _gkpEnrichItemsComplete(allGlobal, silentEl);
       } catch (e) {
         const msg = String(e?.message || e || '');
         if (!/global_items 오류|product\.error_unknown|invalid_access_token|invalid_acceess_token/i.test(msg)) {
@@ -5163,10 +5575,12 @@ async function _gkpBackgroundPrefetch({ force = false } = {}) {
 async function _gkpFetchAllGlobalItems(statusEl) {
   const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
   const pageSize = 50;
-  let offset = 0, allItems = [], hasMore = true;
+  let offset = '', allItems = [], hasMore = true;
+  const seenOffsets = new Set();
   while (hasMore) {
     statusEl.textContent = `Global 상품 목록 로딩 중… (${allItems.length}건)`;
-    const res = await fetch(`${SHOPEE_BRIDGE}/global_items?region=SG&page_size=${pageSize}&offset=${offset}`, { headers: _bh })
+    const url = `${SHOPEE_BRIDGE}/global_items?region=SG&page_size=${pageSize}` + (offset ? `&offset=${encodeURIComponent(offset)}` : '');
+    const res = await fetch(url, { headers: _bh })
       .then(x => x.json()).catch(e => ({ ok: false, _fetchErr: e.message }));
     if (!res.ok) {
       const errDetail = res.result?.error || res.error || res._fetchErr || JSON.stringify(res).slice(0, 200);
@@ -5178,8 +5592,10 @@ async function _gkpFetchAllGlobalItems(statusEl) {
     const page = respData.global_item_list || respData.item_list || [];
     if (!page.length) break;
     allItems = allItems.concat(page);
-    offset += page.length;
-    hasMore = respData.has_next_page ?? (page.length === pageSize);
+    const nextOffset = respData.offset || '';
+    hasMore = Boolean(respData.has_next_page) && Boolean(nextOffset) && !seenOffsets.has(nextOffset);
+    if (nextOffset) seenOffsets.add(nextOffset);
+    offset = nextOffset;
   }
   return allItems;
 }
@@ -5257,6 +5673,63 @@ async function _gkpEnrichItems(items, statusEl) {
   return enriched;
 }
 
+async function _gkpEnrichItemsComplete(items, statusEl) {
+  const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
+  const enriched = [];
+  const batchSize = 50;
+
+  for (let i = 0; i < items.length; i += batchSize) {
+    statusEl.textContent = `상품 상세 로딩 중 (${Math.min(i + batchSize, items.length)}/${items.length})`;
+    const batch = items.slice(i, i + batchSize);
+    const query = batch.map(item => `global_item_id=${encodeURIComponent(item.global_item_id)}`).join('&');
+    const info = await fetch(`${SHOPEE_BRIDGE}/global_item_info?region=SG&${query}`, { headers: _bh })
+      .then(x => x.json()).catch(() => null);
+    const infoList = (info && info.ok) ? (info.result?.response?.global_item_list || []) : [];
+    const infoById = new Map(infoList.map(it => [String(it.global_item_id), it]));
+
+    for (const item of batch) {
+      const it = infoById.get(String(item.global_item_id)) || {};
+      const globalItemId = it.global_item_id || item.global_item_id;
+      const itemName = it.global_item_name || it.item_name || item.global_item_name || item.item_name || String(globalItemId);
+      const itemSku = it.global_item_sku || it.item_sku || item.global_item_sku || item.item_sku || '';
+      const priceInfo = it.price_info?.[0] || {};
+      const hasModel = it.has_model ?? false;
+      enriched.push({
+        type: hasModel ? 'model_header' : 'item',
+        global_item_id: globalItemId,
+        item_name: itemName,
+        item_sku: itemSku,
+        price: hasModel ? '' : (priceInfo.original_price ?? ''),
+        models: [],
+      });
+    }
+  }
+
+  const idOrder = items.map(it => String(it.global_item_id));
+  enriched.sort((a, b) => idOrder.indexOf(String(a.global_item_id)) - idOrder.indexOf(String(b.global_item_id)));
+  return enriched;
+}
+
+async function _gkpEnsureModelsForItems(items, statusEl) {
+  const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
+  const modelItems = items.filter(it => it.type === 'model_header' && !it._modelsLoaded);
+  const concurrency = 6;
+  let done = 0;
+  for (let i = 0; i < modelItems.length; i += concurrency) {
+    const batch = modelItems.slice(i, i + concurrency);
+    statusEl.textContent = `모델 상세 로딩 중 (${Math.min(done + batch.length, modelItems.length)}/${modelItems.length})`;
+    await Promise.all(batch.map(async item => {
+      const mres = await fetch(`${SHOPEE_BRIDGE}/global_model_list?region=SG&global_item_id=${encodeURIComponent(item.global_item_id)}`, { headers: _bh })
+        .then(x => x.json()).catch(() => null);
+      item.models = (mres && mres.ok)
+        ? (mres.result?.response?.global_model || mres.result?.response?.global_model_list || [])
+        : [];
+      item._modelsLoaded = true;
+      done += 1;
+    }));
+  }
+}
+
 function _gkpNormalize(s) {
   // Lowercase + strip whitespace and common separators so "BOY NEXT DOOR",
   // "boy-next-door", "boynextdoor" all match the same canonical form.
@@ -5284,8 +5757,8 @@ function _gkpBuildRows(filteredItems) {
       rows.push({ rowType: 'item', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, price: it.price, global_model_id: null });
     } else {
       // model_header row
-      rows.push({ rowType: 'model_header', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, modelCount: it.models.length });
-      if (_gkpExpanded.has(it.global_item_id)) {
+      rows.push({ rowType: 'model_header', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, modelCount: it.models.length, models: it.models || [] });
+      if (_gkpExpanded.has(String(it.global_item_id))) {
         for (const m of it.models) {
           const priceInfo = m.price_info || {};
           const modelLabel = m.tier_index ? m.tier_index.join('-') : '';
@@ -5295,6 +5768,45 @@ function _gkpBuildRows(filteredItems) {
     }
   }
   return rows;
+}
+
+function _gkpCleanSku(value) {
+  return String(value || '').trim();
+}
+
+function _gkpModelSku(model) {
+  return _gkpCleanSku(model?.global_model_sku || model?.model_sku || model?.item_sku);
+}
+
+function _gkpModelProductName(parentName, model) {
+  const name = String(model?.model_name || model?.global_model_name || '').trim();
+  if (name) return parentName ? `${parentName} · ${name}` : name;
+  const tierLabel = Array.isArray(model?.tier_index) ? model.tier_index.join('-') : '';
+  return tierLabel && parentName ? `${parentName} · ${tierLabel}` : (parentName || null);
+}
+
+function _gkpRowsForSelection(row) {
+  if (!row) return [];
+  const globalItemId = row.global_item_id != null ? String(row.global_item_id) : null;
+  if (row.rowType === 'model_header') {
+    const parentName = row.item_name || null;
+    return (row.models || [])
+      .map(model => {
+        const sku = _gkpModelSku(model);
+        if (!sku) return null;
+        return { sku, product_name: _gkpModelProductName(parentName, model), shopee_item_id: globalItemId };
+      })
+      .filter(Boolean);
+  }
+  const sku = _gkpCleanSku(row.item_sku);
+  return sku ? [{ sku, product_name: row.item_name || null, shopee_item_id: globalItemId }] : [];
+}
+
+function _gkpSkuSummary(row) {
+  const itemSku = _gkpCleanSku(row.item_sku);
+  if (itemSku) return esc(itemSku);
+  const optionSkuCount = (row.models || []).filter(model => _gkpModelSku(model)).length;
+  return optionSkuCount ? `옵션 SKU ${optionSkuCount}개` : '';
 }
 
 function _gkpRenderResults() {
@@ -5309,14 +5821,14 @@ function _gkpRenderResults() {
   }
   tbody.innerHTML = rows.map((row, i) => {
     if (row.rowType === 'model_header') {
-      const expanded = _gkpExpanded.has(row.global_item_id);
+      const expanded = _gkpExpanded.has(String(row.global_item_id));
       return `<tr data-idx="${i}" style="background:#f7f7fb;border-bottom:1px solid #d8d8e0;">
         <td style="padding:5px 8px;text-align:center;"><input type="checkbox" class="gkp-row-chk" data-idx="${i}"></td>
         <td style="padding:5px 8px;text-align:center;">
           <button class="gkp-expand-btn" data-gid="${row.global_item_id}" style="background:none;border:none;cursor:pointer;font-size:12px;padding:2px 4px;">${expanded ? '▼' : '▶'}</button>
         </td>
         <td style="padding:5px 8px;font-weight:600;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(row.item_name)}">${esc(row.item_name)} <span style="font-size:10px;color:#888;font-weight:400;">(${row.modelCount}개 모델)</span></td>
-        <td style="padding:5px 8px;font-family:monospace;font-size:10px;">${esc(row.item_sku)}</td>
+        <td style="padding:5px 8px;font-family:monospace;font-size:10px;">${_gkpSkuSummary(row)}</td>
         <td style="padding:5px 8px;font-family:monospace;font-size:10px;color:#888;">${row.global_item_id}</td>
       </tr>`;
     }
@@ -5354,13 +5866,15 @@ async function _gkpApply() {
   const checked = Array.from(document.querySelectorAll('.gkp-row-chk:checked'));
   if (!checked.length) return;
 
-  const picked = checked.map(chk => {
+  const picked = checked.flatMap(chk => {
     const row = _gkpRows[Number(chk.dataset.idx)];
-    if (!row) return null;
-    return { sku: row.item_sku || null, product_name: row.item_name || null };
-  }).filter(r => r && r.sku);
+    return _gkpRowsForSelection(row);
+  });
 
-  if (!picked.length) { alert('SKU가 있는 상품을 선택해주세요.'); return; }
+  if (!picked.length) {
+    alert('옵션 상품은 옵션 SKU가 1개 이상 필요하고, 단일 상품은 Global/Item SKU가 필요합니다.');
+    return;
+  }
 
   // Deduplicate by SKU in-memory first.
   const uniqueBySku = new Map();
@@ -5377,20 +5891,34 @@ async function _gkpApply() {
   try {
     // Avoid ON CONFLICT dependency: fetch existing SKUs, then insert only missing rows.
     const skuList = uniqueRows.map(r => r.sku);
-    const { data: existingRows, error: existingErr } = await db.from('products').select('id, sku').in('sku', skuList);
+    const { data: existingRows, error: existingErr } = await db.from('products').select('id,sku,shopee_item_id').in('sku', skuList);
     if (existingErr) throw existingErr;
 
-    const existing = new Set((existingRows || []).map(r => r.sku));
+    const existingBySku = new Map((existingRows || []).map(r => [r.sku, r]));
+    const existing = new Set(existingBySku.keys());
     const missingRows = uniqueRows.filter(r => !existing.has(r.sku));
+    const updates = uniqueRows
+      .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
+      .filter(x => x.prev && String(x.prev.shopee_item_id || '') !== String(x.next.shopee_item_id || ''));
 
     if (missingRows.length > 0) {
       const { error: insertErr } = await db.from('products').insert(missingRows);
       if (insertErr) throw insertErr;
     }
+    if (updates.length > 0) {
+      await Promise.all(updates.map(async ({ prev, next }) => {
+        const { error: updateErr } = await db
+          .from('products')
+          .update({ shopee_item_id: next.shopee_item_id || null })
+          .eq('id', prev.id);
+        if (updateErr) throw updateErr;
+      }));
+    }
 
     const inserted = missingRows.length;
-    const skipped = uniqueRows.length - inserted;
-    logEl.textContent = `✅ ${inserted}건 추가 / ${skipped}건 기존 SKU 건너뜀. 매핑 중…`;
+    const updated = updates.length;
+    const skipped = uniqueRows.length - inserted - updated;
+    logEl.textContent = `✅ ${inserted}건 추가 / ${updated}건 Item ID 업데이트 / ${skipped}건 기존 유지. 매핑 중…`;
 
     // === Auto shop-mapping (per plan gkp-auto-shop-mapping-plan.md) ===
     const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
@@ -5406,7 +5934,7 @@ async function _gkpApply() {
     }
 
     // 2. Load active shops
-    const { data: shopsData } = await db.from('shopee_shops').select('region, shop_id, status').eq('status', 'active');
+    const { data: shopsData, error: shopsErr } = await db.from('shopee_shops').select('region, shop_id, status').eq('status', 'active');
     const shops = (shopsData || []).map(s => ({ region: s.region, shop_id: Number(s.shop_id) }));
     const activeShopIdSet = new Set(shops.map(s => s.shop_id));
 
@@ -5449,7 +5977,7 @@ async function _gkpApply() {
             continue;
           }
 
-          let shopModelMap = null;
+          let shopModelMap = null; // Map<model_sku_string, model_id>
           if (isVariant) {
             try {
               const mr = await fetch(`${SHOPEE_BRIDGE}/shop_model_list?region=${encodeURIComponent(p.shop_region)}&item_id=${p.item_id}`, { headers: _bh });
@@ -5516,7 +6044,7 @@ async function _gkpApply() {
     }
 
     // 5. Compose log
-    let logMsg = `✅ ${inserted}건 추가 / ${skipped}건 기존 유지 / ${upsertedCount}건 매핑.`;
+    let logMsg = `✅ ${inserted}건 추가 / ${updated}건 ID 업데이트 / ${skipped}건 기존 유지 / ${upsertedCount}건 매핑.`;
     if (mappingErrors.length) {
       const headerErrors = mappingErrors.slice(0, 10);
       logMsg += `\n⚠️ ${mappingErrors.length}건 매핑 이슈:\n${headerErrors.join('\n')}`;
@@ -5612,7 +6140,7 @@ async function _gkpApply() {
             statusEl.textContent = `전체 ${allGlobal.length}건 로드. 상품 정보 조회 중…`;
             // No pre-filter by item_name — listing endpoint may not include reliable names,
             // so we must enrich all items first and filter on the full data.
-            enriched = await _gkpEnrichItems(allGlobal, statusEl);
+            enriched = await _gkpEnrichItemsComplete(allGlobal, statusEl);
           } catch (e) {
             const msg = String(e?.message || e || '');
             if (!/global_items 오류|product\.error_unknown|invalid_access_token|invalid_acceess_token/i.test(msg)) throw e;
@@ -5623,7 +6151,9 @@ async function _gkpApply() {
           _gkpSavePersistedCache(enriched, fallbackMode, startedAt);
         }
 
-        const filtered = _gkpFilter(enriched, keyword);
+        let filtered = _gkpFilter(enriched, keyword);
+        await _gkpEnsureModelsForItems(filtered, statusEl);
+        filtered = _gkpFilter(enriched, keyword);
         const cacheTag = usedCache ? ' (캐시)' : '';
         statusEl.textContent = fallbackMode
           ? `Fallback 검색 사용 중${cacheTag} · "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`
@@ -5644,7 +6174,7 @@ async function _gkpApply() {
     document.getElementById('gkp-results-body').addEventListener('click', e => {
       const btn = e.target.closest('.gkp-expand-btn');
       if (!btn) return;
-      const gid = Number(btn.dataset.gid);
+      const gid = btn.dataset.gid;
       if (_gkpExpanded.has(gid)) _gkpExpanded.delete(gid); else _gkpExpanded.add(gid);
       _gkpRows = _gkpBuildRows(_gkpEnrichedFiltered);
       _gkpRenderResults();

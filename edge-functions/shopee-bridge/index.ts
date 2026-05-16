@@ -1603,6 +1603,19 @@ Deno.serve(async (req) => {
       const result = await shopApiCall(r, '/api/v2/product/update_model', { method: 'POST', body: { item_id, model: cleaned } });
       return jsonResp({ ok: !result.error, region: r, item_id, sent_model: cleaned, result });
     }
+    if (action === 'published_list') {
+      const global_item_id = parseInt(url.searchParams.get('global_item_id') || '0');
+      if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
+      // No shop_id_list per plan R2 — Shopee returns publishable shops automatically (max 300, we have 6)
+      const result = await merchantApiCall(region, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
+      return jsonResp({ ok: !result.error, region, global_item_id, result });
+    }
+    if (action === 'shop_model_list') {
+      const item_id = parseInt(url.searchParams.get('item_id') || '0');
+      if (!item_id) return jsonResp({ ok: false, error: 'item_id required' }, 400);
+      const result = await shopApiCall(region, '/api/v2/product/get_model_list', { query: { item_id } });
+      return jsonResp({ ok: !result.error, region, item_id, result });
+    }
     if (action === 'global_items') {
       const page_size = parseInt(url.searchParams.get('page_size') || '50');
       const offset = url.searchParams.get('offset') || '';

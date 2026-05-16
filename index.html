@@ -5377,7 +5377,7 @@ async function _gkpApply() {
   try {
     // Avoid ON CONFLICT dependency: fetch existing SKUs, then insert only missing rows.
     const skuList = uniqueRows.map(r => r.sku);
-    const { data: existingRows, error: existingErr } = await db.from('products').select('sku').in('sku', skuList);
+    const { data: existingRows, error: existingErr } = await db.from('products').select('id, sku').in('sku', skuList);
     if (existingErr) throw existingErr;
 
     const existing = new Set((existingRows || []).map(r => r.sku));
@@ -5390,11 +5390,153 @@ async function _gkpApply() {
 
     const inserted = missingRows.length;
     const skipped = uniqueRows.length - inserted;
-    logEl.textContent = `✅ ${inserted}건 추가 완료 / ${skipped}건 기존 SKU 건너뜀. 상품 마스터 새로고침 중…`;
-    setTimeout(async () => {
-      document.getElementById('keyword-price-modal').classList.remove('show');
+    logEl.textContent = `✅ ${inserted}건 추가 / ${skipped}건 기존 SKU 건너뜀. 매핑 중…`;
+
+    // === Auto shop-mapping (per plan gkp-auto-shop-mapping-plan.md) ===
+    const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
+
+    // 1. Build productIdBySku from existing + newly inserted
+    const productIdBySku = new Map();
+    for (const r of (existingRows || [])) productIdBySku.set(r.sku, r.id);
+    if (missingRows.length) {
+      const { data: insertedIds, error: fetchInsertedErr } = await db.from('products').select('id, sku').in('sku', missingRows.map(r => r.sku));
+      if (!fetchInsertedErr) {
+        for (const r of (insertedIds || [])) productIdBySku.set(r.sku, r.id);
+      }
+    }
+
+    // 2. Load active shops
+    const { data: shopsData } = await db.from('shopee_shops').select('region, shop_id, status').eq('status', 'active');
+    const shops = (shopsData || []).map(s => ({ region: s.region, shop_id: Number(s.shop_id) }));
+    const activeShopIdSet = new Set(shops.map(s => s.shop_id));
+
+    // 3. Per unique global_item_id: published_list + (variant only) per-region shop_model_list
+    const globalItemIds = [...new Set(uniqueRows.map(r => Number(r.shopee_item_id)).filter(Boolean))];
+    const mappingErrors = [];
+    const listingRows = [];
+    let processed = 0;
+
+    const PARALLELISM = 5;
+    for (let chunkStart = 0; chunkStart < globalItemIds.length; chunkStart += PARALLELISM) {
+      const chunk = globalItemIds.slice(chunkStart, chunkStart + PARALLELISM);
+      await Promise.all(chunk.map(async (gid) => {
+        const enriched = _gkpEnrichedCache.items.find(it => Number(it.global_item_id) === gid);
+        if (!enriched) {
+          // Cache lost between search and apply (rare). We can't tell variant vs single safely.
+          mappingErrors.push(`gid=${gid}: enrich 데이터 누락 — 모달 다시 열고 재시도 필요 (skip)`);
+          return;
+        }
+        const isVariant = Array.isArray(enriched.models) && enriched.models.length > 0;
+
+        let publishedItems = [];
+        try {
+          const r = await fetch(`${SHOPEE_BRIDGE}/published_list?region=SG&global_item_id=${gid}`, { headers: _bh });
+          const j = await r.json();
+          if (!j.ok) { mappingErrors.push(`gid=${gid} published_list: ${j.error || j.result?.error || 'unknown'}`); return; }
+          publishedItems = j.result?.response?.published_item || [];
+        } catch (e) {
+          mappingErrors.push(`gid=${gid} published_list 실패: ${e.message}`);
+          return;
+        }
+
+        const usable = publishedItems.filter(p => activeShopIdSet.has(Number(p.shop_id)));
+        for (const p of usable) {
+          const status = Number(p.item_status);
+          if (![1, 8].includes(status)) {
+            if ([2, 3, 6].includes(status)) {
+              mappingErrors.push(`${p.shop_region}/gid=${gid}: item_status=${status} (skip)`);
+            }
+            continue;
+          }
+
+          let shopModelMap = null;
+          if (isVariant) {
+            try {
+              const mr = await fetch(`${SHOPEE_BRIDGE}/shop_model_list?region=${encodeURIComponent(p.shop_region)}&item_id=${p.item_id}`, { headers: _bh });
+              const mj = await mr.json();
+              if (!mj.ok) { mappingErrors.push(`${p.shop_region}/gid=${gid} model_list: ${mj.error || mj.result?.error || 'unknown'}`); continue; }
+              const models = mj.result?.response?.model || [];
+              shopModelMap = new Map();
+              for (const m of models) {
+                if (m.model_sku) shopModelMap.set(String(m.model_sku), Number(m.model_id));
+              }
+            } catch (e) {
+              mappingErrors.push(`${p.shop_region}/gid=${gid} model_list 실패: ${e.message}`);
+              continue;
+            }
+          }
+
+          const picksForThisGid = uniqueRows.filter(r => Number(r.shopee_item_id) === gid);
+          for (const pickedRow of picksForThisGid) {
+            const product_id = productIdBySku.get(pickedRow.sku);
+            if (!product_id) {
+              mappingErrors.push(`${pickedRow.sku}: product_id 조회 실패 (insert 후 재조회 누락)`);
+              continue;
+            }
+
+            let shop_model_id = null;
+            let last_error = null;
+            let row_status = 'mapped';
+
+            if (isVariant) {
+              // PER PLAN R1: SKU match only. NO INDEX FALLBACK. Mark mapping_pending if mismatch.
+              const matched = shopModelMap.get(String(pickedRow.sku));
+              if (matched) {
+                shop_model_id = matched;
+              } else {
+                row_status = 'mapping_pending';
+                last_error = 'shop_model_sku_mismatch';
+                mappingErrors.push(`${p.shop_region}/${pickedRow.sku}: shop_model_sku_mismatch (수동 보완 필요)`);
+              }
+            }
+
+            listingRows.push({
+              product_id,
+              region: p.shop_region,
+              global_item_id: gid,
+              shop_item_id: Number(p.item_id),
+              shop_model_id,
+              status: row_status,
+              last_error,
+            });
+          }
+        }
+        processed += 1;
+        logEl.textContent = `매핑 진행 중… ${processed}/${globalItemIds.length} 글로벌 상품 처리됨`;
+      }));
+    }
+
+    // 4. Upsert in batches of 50
+    let upsertedCount = 0;
+    for (let i = 0; i < listingRows.length; i += 50) {
+      const batch = listingRows.slice(i, i + 50);
+      const { error: upsertErr } = await db.from('product_shopee_listings').upsert(batch, { onConflict: 'product_id,region' });
+      if (upsertErr) { mappingErrors.push(`upsert 실패: ${upsertErr.message}`); break; }
+      upsertedCount += batch.length;
+    }
+
+    // 5. Compose log
+    let logMsg = `✅ ${inserted}건 추가 / ${skipped}건 기존 유지 / ${upsertedCount}건 매핑.`;
+    if (mappingErrors.length) {
+      const headerErrors = mappingErrors.slice(0, 10);
+      logMsg += `\n⚠️ ${mappingErrors.length}건 매핑 이슈:\n${headerErrors.join('\n')}`;
+      if (mappingErrors.length > 10) logMsg += `\n... ${mappingErrors.length - 10}건 더 (콘솔 참조)`;
+      console.warn('[gkp] mapping errors:', mappingErrors);
+    }
+    logEl.textContent = logMsg;
+    // === end mapping ===
+
+    if (mappingErrors.length > 0) {
+      // Don't auto-close — user needs to read the warnings and decide what to fix manually.
+      logEl.textContent = logMsg + '\n\n(매핑 이슈 발견 — 모달은 수동으로 닫아주세요. 데이터는 자동 새로고침됨)';
       await initStorage();
-    }, 1000);
+      document.getElementById('gkp-apply').disabled = false;
+    } else {
+      setTimeout(async () => {
+        document.getElementById('keyword-price-modal').classList.remove('show');
+        await initStorage();
+      }, 1500);
+    }
   } catch (e) {
     logEl.textContent = `❌ 오류: ${e.message || e}`;
     document.getElementById('gkp-apply').disabled = false;

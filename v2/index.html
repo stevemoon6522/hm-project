@@ -348,6 +348,62 @@
     .step-body { display: none; }
     .step-body.active { display: block; }
 
+    .register-flow-panel {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+      margin-bottom: 18px;
+      box-shadow: 0 1px 5px rgba(102, 16, 212, .05);
+    }
+    .flow-status-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      margin-bottom: 10px;
+    }
+    .flow-eyebrow {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      color: #5c24b0;
+    }
+    .flow-title { font-size: 15px; font-weight: 800; margin-top: 3px; }
+    .flow-copy { font-size: 12px; color: var(--muted); margin-top: 4px; line-height: 1.45; }
+    .flow-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+    .flow-badge {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 9px;
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--muted);
+      background: #f7f8fa;
+    }
+    .flow-badge.is-active { color: #5c24b0; background: #f8ecff; border-color: #d8c4f1; }
+    .flow-badge.is-done { color: var(--green); background: #f1fff7; border-color: #9bd8b8; }
+    .flow-blockers {
+      margin: 0;
+      padding: 10px 12px 10px 28px;
+      border: 1px solid #f4c790;
+      background: #fff8ed;
+      border-radius: 6px;
+      color: #7a3e00;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .flow-blockers.is-clear {
+      border-color: #9bd8b8;
+      background: #f1fff7;
+      color: var(--green);
+    }
+    @media (max-width: 760px) {
+      .flow-status-row { flex-direction: column; }
+      .flow-badges { justify-content: flex-start; }
+    }
+
     /* ── Wizard form elements ── */
     .wfield { margin-bottom: 16px; }
     .wfield label { display: block; font-size: 12px; color: #344054; font-weight: 700; margin-bottom: 5px; }
@@ -359,6 +415,17 @@
     .section-sep { font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color: var(--muted);
       margin: 20px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
     .section-sep:first-child { margin-top: 0; }
+
+    .lookup-panel {
+      border: 1px solid var(--border); border-radius: 7px; background: #fffdfd;
+      padding: 12px; margin-bottom: 16px;
+    }
+    .lookup-panel.is-locked { background: #fff7f7; border-color: #f2aaa5; }
+    .lookup-panel-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 10px; }
+    .lookup-panel-title { font-weight: 800; color: #344054; }
+    .lookup-panel-note { font-size: 11px; color: var(--muted); line-height: 1.45; }
+    .lookup-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .lookup-status { font-size: 11px; color: var(--muted); font-weight: 700; }
 
     /* toggle row */
     .trow {
@@ -838,38 +905,87 @@
         <span style="font-size:12px;color:var(--muted);">PRE ORDER 분류 &bull; Global Product API</span>
       </div>
 
-      <!-- Step progress pills -->
-      <div class="wizard-steps">
-        <div class="step-pill active" id="wpill-1"><span class="sn">1</span>카테고리 &amp; 기본정보</div>
-        <div class="step-pill" id="wpill-2"><span class="sn">2</span>이미지 &amp; 미디어</div>
-        <div class="step-pill" id="wpill-3"><span class="sn">3</span>옵션/변형</div>
-        <div class="step-pill" id="wpill-4"><span class="sn">4</span>Region Publish</div>
+      <!-- Seller Centre section order -->
+      <div class="wizard-steps" aria-label="Shopee Seller Centre registration flow">
+        <div class="step-pill active" id="wpill-1"><span class="sn">1</span>Basic Information</div>
+        <div class="step-pill" id="wpill-2"><span class="sn">2</span>Specification</div>
+        <div class="step-pill" id="wpill-3"><span class="sn">3</span>Sales Information</div>
+        <div class="step-pill" id="wpill-4"><span class="sn">4</span>Shipping</div>
+        <div class="step-pill" id="wpill-5"><span class="sn">5</span>Others / Publish</div>
       </div>
 
-      <!-- ─── Step 1: Category + Basic info ─────────────────────────
-           Fields mirror add_global_item.json body_params.
-           required_params: category_id, global_item_name, description,
-             image.image_id_list, original_price, weight,
-             dimension.package_{length,width,height},
-             pre_order.days_to_ship, seller_stock[].stock
-           ──────────────────────────────────────────────────────── -->
-      <div class="step-body active" id="wstep-1">
+      <div class="register-flow-panel" id="w-flow-panel" data-flow-state="draft">
+        <div class="flow-status-row">
+          <div>
+            <div class="flow-eyebrow">Master Data First</div>
+            <div class="flow-title">상태: <span id="w-flow-status-label">Draft</span></div>
+            <div class="flow-copy" id="w-flow-status-detail">
+              기본 저장은 Shopee API를 호출하지 않고 master data draft를 먼저 검증/저장합니다.
+            </div>
+          </div>
+          <div class="flow-badges" aria-label="register flow state">
+            <span class="flow-badge is-active" id="w-flow-badge-draft">Draft</span>
+            <span class="flow-badge" id="w-flow-badge-validated">Validated</span>
+            <span class="flow-badge" id="w-flow-badge-publish-ready">Publish-ready</span>
+          </div>
+        </div>
+        <ul class="flow-blockers" id="w-publish-blockers">
+          <li>입력값 validation과 Master Data 저장이 끝나야 Shopee 발행 미리보기가 열립니다.</li>
+        </ul>
+      </div>
 
-        <div class="section-sep">카테고리</div>
+      <!-- ─── Step 1: Basic Information ─────────────────────────────
+           Shopee Seller Centre order: basic identity and media first.
+           Sales, shipping, and publish-specific fields are intentionally
+           kept in later sections so the default flow stays master-data-first.
+           ──────────────────────────────────────────────────────── -->
+      <div class="step-body active" id="wstep-1" data-register-section="basic-information">
+
+        <div class="section-sep">Basic Information</div>
 
         <div class="wfield">
-          <label for="w-category-id">category_id <span class="req">*</span>
-            <span class="hint">int64 — add_global_item required</span>
+          <label for="w-staronemall-url">Staronemall source URL
+            <span class="hint">explicitly generates and uploads the representative Shopee image_id</span>
           </label>
-          <!--
-            TODO plan §5-1-A: category tree picker.
-            bridge raw_call: GET /raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fget_category
-          -->
-          <input type="number" id="w-category-id" placeholder="예: 14695" min="1">
-          <div class="werr" id="werr-category-id">category_id는 필수입니다.</div>
+          <div style="display:flex;gap:8px;align-items:flex-start;">
+            <input type="url" id="w-staronemall-url" placeholder="https://www.staronemall.com/shop/detail.php?pno=..." style="flex:1;">
+            <button type="button" id="w-staronemall-refresh" style="white-space:nowrap;">Generate + upload</button>
+            <button type="button" id="w-staronemall-apply-cover" style="display:none;white-space:nowrap;">Apply as cover</button>
+          </div>
+          <div id="w-staronemall-status" style="font-size:11px;color:var(--muted);margin-top:5px;"></div>
+          <img id="w-staronemall-preview" alt="" style="display:none;width:96px;height:96px;object-fit:cover;border:1px solid var(--border);border-radius:6px;margin-top:8px;background:#fff;">
         </div>
 
-        <div class="section-sep">기본 정보</div>
+        <div class="wfield">
+          <label for="w-image-ids">image_id_list <span class="req">*</span>
+            <span class="hint">string[] — 쉼표로 구분된 Shopee image ID</span>
+          </label>
+          <!--
+            TODO plan §5-1-A: integrate media_space.upload_image.
+            bridge raw_call: POST /raw_call?region=SG&path=%2Fapi%2Fv2%2Fmedia_space%2Fupload_image
+            현재: 운영자가 image ID 직접 입력 (이미지는 별도 업로드 후).
+          -->
+          <textarea id="w-image-ids" rows="3"
+            placeholder="c54265d475b85e00ffb2404585e32b6f, 6fb33d484f232510b5f9b169f2758322"></textarea>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;">
+            ⚠ TODO: media_space.upload_image 통합 전까지 image ID 직접 입력 (plan §5-1-A)
+          </div>
+          <div class="werr" id="werr-image-ids">이미지 ID를 1개 이상 입력하세요.</div>
+        </div>
+
+        <div class="wfield">
+          <label for="w-video-id">video_upload_id
+            <span class="hint">string — optional; max 1개 허용 (API spec)</span>
+          </label>
+          <!--
+            TODO plan §5-1-A: integrate media_space video upload.
+            bridge raw_call: POST /raw_call?region=SG&path=%2Fapi%2Fv2%2Fmedia_space%2Fupload_video
+          -->
+          <input type="text" id="w-video-id" placeholder="00a2258551b5a2f0a7c283f877330f93 (선택)">
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;">
+            TODO: media_space video upload 통합 (plan §5-1-A)
+          </div>
+        </div>
 
         <div class="wfield">
           <label for="w-item-name">global_item_name <span class="req">*</span>
@@ -882,6 +998,18 @@
           <input type="text" id="w-item-name" placeholder="예: BTS - Butter (Album) Photocard Set" maxlength="100">
           <div class="name-preview" id="w-name-preview"></div>
           <div class="werr" id="werr-item-name">global_item_name은 필수입니다.</div>
+        </div>
+
+        <div class="wfield">
+          <label for="w-category-id">category_id <span class="req">*</span>
+            <span class="hint">int64 — add_global_item required; Specification lookup 선행조건</span>
+          </label>
+          <!--
+            TODO plan §5-1-A: category tree picker.
+            bridge raw_call: GET /raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fget_category
+          -->
+          <input type="number" id="w-category-id" placeholder="예: 14695" min="1">
+          <div class="werr" id="werr-category-id">category_id는 필수입니다.</div>
         </div>
 
         <div class="wfield">
@@ -899,7 +1027,107 @@
           <input type="text" id="w-item-sku" placeholder="예: BTSBUTTER-PC-SET">
         </div>
 
-        <div class="section-sep">가격 / 재고 / 무게</div>
+        <div class="wbtn-row">
+          <button onclick="wizNext(1)">다음 →</button>
+        </div>
+      </div><!-- /wstep-1 -->
+
+      <!-- ─── Step 2: Specification ─────────────────────────────────
+           brand object and category-dependent attributes.
+           get_brand_list/get_attribute_tree require category context before operator interaction.
+           ──────────────────────────────────────────────────────── -->
+      <div class="step-body" id="wstep-2" data-register-section="specification">
+
+        <div class="section-sep">Specification</div>
+
+        <div class="lookup-panel is-locked" id="w-spec-lookup-panel" data-category-required="true" aria-disabled="true">
+          <div class="lookup-panel-head">
+            <div>
+              <div class="lookup-panel-title">Category-dependent brand / attribute lookup</div>
+              <div class="lookup-panel-note">
+                category_id 입력 후 get_brand_list / get_attribute_tree 패널을 사용할 수 있습니다.
+              </div>
+            </div>
+            <span class="lookup-status" id="w-spec-lock-status">category_id 필요</span>
+          </div>
+          <div class="lookup-actions">
+            <button type="button" id="w-load-brand-list" data-category-gated onclick="handleSpecLookupClick('brand')">get_brand_list 준비</button>
+            <button type="button" id="w-load-attribute-tree" data-category-gated onclick="handleSpecLookupClick('attribute')">get_attribute_tree 준비</button>
+          </div>
+        </div>
+
+        <div class="section-sep">brand — optional (add_global_item optional object)</div>
+        <!--
+          brand object: brand.original_brand_name (string, optional), brand.brand_id (int64, optional).
+          Note: 2022-06-17 update_log removed top-level original_brand_name; now nested in brand{}.
+          TODO plan §5-1-A: brand_id lookup via get_brand_list.
+          bridge raw_call: GET /raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fget_brand_list
+        -->
+        <div class="wrow">
+          <div class="wfield">
+            <label for="w-brand-name">brand.original_brand_name
+              <span class="hint">string — optional</span>
+            </label>
+            <input type="text" id="w-brand-name" placeholder="예: HYBE" data-category-gated>
+          </div>
+          <div class="wfield">
+            <label for="w-brand-id">brand.brand_id
+              <span class="hint">int64 — optional; 0 = no ID
+                <!-- TODO: brand picker via get_brand_list (plan §5-1-A) --></span>
+            </label>
+            <input type="number" id="w-brand-id" placeholder="0" min="0" step="1" value="0" data-category-gated>
+          </div>
+        </div>
+
+        <div class="wfield">
+          <label for="w-condition">condition
+            <span class="hint">string — NEW / USED (optional)</span>
+          </label>
+          <select id="w-condition">
+            <option value="NEW">NEW</option>
+            <option value="USED">USED</option>
+          </select>
+        </div>
+
+        <div class="section-sep">attributes — category-dependent optional JSON</div>
+        <div class="wfield">
+          <label for="w-attribute-list">attribute_list JSON
+            <span class="hint">array — get_attribute_tree 기준으로 운영자가 입력</span>
+          </label>
+          <textarea id="w-attribute-list" rows="4" data-category-gated
+            placeholder='[{"attribute_id":100037,"attribute_value_list":[{"original_value_name":"South Korea"}]}]'></textarea>
+          <div style="font-size:11px;color:var(--muted);margin-top:3px;">
+            TODO: get_attribute_tree 통합 전까지 필요한 attribute_list만 JSON으로 직접 입력합니다.
+          </div>
+          <div class="werr" id="werr-attribute-list">attribute_list는 JSON array 형식이어야 합니다.</div>
+        </div>
+
+        <div class="wbtn-row">
+          <button onclick="wizPrev(2)">← 이전</button>
+          <button onclick="wizNext(2)">다음 →</button>
+        </div>
+      </div><!-- /wstep-2 -->
+
+      <!-- ─── Step 3: Sales Information ─────────────────────────────
+           Base sales price/stock plus optional model rows.
+           add_global_model body_params (authoritative — add_global_model.json):
+              global_item_id: int64, required (from add_global_item response)
+              global_model[]: object[], required
+               global_model[].tier_index: int32[], required
+               global_model[].seller_stock[].stock: int32, required
+               global_model[].original_price: float, required
+               global_model[].global_model_sku: string, optional
+             weight: float, optional — model-level KG override (top-level, applies to all models in call)
+             package_{length,width,height}: int32, required at top-level if dimension set
+             days_to_ship: int32, required at TOP-LEVEL (not inside pre_order in this endpoint)
+
+           SCHEMA NOTE: add_global_model weight is top-level (not per-model).
+            Per-model weight NOT supported in add_global_model — single top-level value.
+            Plan §9-1 risk: weight unit g/kg unconfirmed — using KG per docs.
+            ──────────────────────────────────────────────────────── -->
+      <div class="step-body" id="wstep-3" data-register-section="sales-information">
+
+        <div class="section-sep">Sales Information</div>
 
         <div class="wrow">
           <div class="wfield">
@@ -923,154 +1151,7 @@
             <input type="number" id="w-stock" placeholder="예: 100" min="0" step="1">
             <div class="werr" id="werr-stock">stock은 필수입니다.</div>
           </div>
-          <div class="wfield">
-            <label for="w-weight">weight <span class="req">*</span>
-              <span class="hint">float, KG — add_global_item required (KRSC unit: KG)</span>
-            </label>
-            <input type="number" id="w-weight" placeholder="예: 0.1" step="0.001" min="0.001">
-            <div class="werr" id="werr-weight">weight(KG)은 필수입니다.</div>
-          </div>
         </div>
-
-        <div class="section-sep">pre_order — add_global_item required object (pre_order.days_to_ship required)</div>
-
-        <div class="wrow">
-          <div class="wfield">
-            <!--
-              add_global_item: pre_order object is required; pre_order.days_to_ship is required int64.
-              PRE ORDER default DTS = 50 (plan §0-1).
-              KRSC: global-level DTS only — no per-region DTS (plan §0-4).
-            -->
-            <label for="w-days-to-ship">pre_order.days_to_ship <span class="req">*</span>
-              <span class="hint">int64 — PRE ORDER 기본값 50 (plan §0-1)</span>
-            </label>
-            <input type="number" id="w-days-to-ship" value="50" min="1" max="90" step="1">
-            <div class="werr" id="werr-days-to-ship">days_to_ship은 필수입니다.</div>
-          </div>
-          <div class="wfield">
-            <label for="w-condition">condition
-              <span class="hint">string — NEW / USED (optional)</span>
-            </label>
-            <select id="w-condition">
-              <option value="NEW">NEW</option>
-              <option value="USED">USED</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="section-sep">dimension — add_global_item required object (package_{length,width,height} required)</div>
-
-        <div class="wrow">
-          <div class="wfield">
-            <label for="w-pkg-length">package_length <span class="req">*</span><span class="hint">int64, cm</span></label>
-            <input type="number" id="w-pkg-length" placeholder="예: 20" min="1" step="1">
-            <div class="werr" id="werr-pkg-length">필수</div>
-          </div>
-          <div class="wfield">
-            <label for="w-pkg-width">package_width <span class="req">*</span><span class="hint">int64, cm</span></label>
-            <input type="number" id="w-pkg-width" placeholder="예: 15" min="1" step="1">
-            <div class="werr" id="werr-pkg-width">필수</div>
-          </div>
-          <div class="wfield">
-            <label for="w-pkg-height">package_height <span class="req">*</span><span class="hint">int64, cm</span></label>
-            <input type="number" id="w-pkg-height" placeholder="예: 3" min="1" step="1">
-            <div class="werr" id="werr-pkg-height">필수</div>
-          </div>
-        </div>
-
-        <div class="section-sep">brand — optional (add_global_item optional object)</div>
-        <!--
-          brand object: brand.original_brand_name (string, optional), brand.brand_id (int64, optional).
-          Note: 2022-06-17 update_log removed top-level original_brand_name; now nested in brand{}.
-          TODO plan §5-1-A: brand_id lookup via get_brand_list.
-          bridge raw_call: GET /raw_call?region=SG&path=%2Fapi%2Fv2%2Fglobal_product%2Fget_brand_list
-        -->
-        <div class="wrow">
-          <div class="wfield">
-            <label for="w-brand-name">brand.original_brand_name
-              <span class="hint">string — optional</span>
-            </label>
-            <input type="text" id="w-brand-name" placeholder="예: HYBE">
-          </div>
-          <div class="wfield">
-            <label for="w-brand-id">brand.brand_id
-              <span class="hint">int64 — optional; 0 = no ID
-                <!-- TODO: brand picker via get_brand_list (plan §5-1-A) --></span>
-            </label>
-            <input type="number" id="w-brand-id" placeholder="0" min="0" step="1" value="0">
-          </div>
-        </div>
-
-        <div class="wbtn-row">
-          <button onclick="wizNext(1)">다음 →</button>
-        </div>
-      </div><!-- /wstep-1 -->
-
-      <!-- ─── Step 2: Images & Media ────────────────────────────────
-           image.image_id_list: REQUIRED (add_global_item required_params: image.image_id_list)
-           The image field is nested: body.image.image_id_list (string[])
-           video_upload_id: optional string[], max 1 per API spec.
-           ──────────────────────────────────────────────────────── -->
-      <div class="step-body" id="wstep-2">
-
-        <div class="section-sep">image.image_id_list — add_global_item required (nested in image object)</div>
-
-        <div class="wfield">
-          <label for="w-image-ids">image_id_list <span class="req">*</span>
-            <span class="hint">string[] — 쉼표로 구분된 Shopee image ID</span>
-          </label>
-          <!--
-            TODO plan §5-1-A: integrate media_space.upload_image.
-            bridge raw_call: POST /raw_call?region=SG&path=%2Fapi%2Fv2%2Fmedia_space%2Fupload_image
-            현재: 운영자가 image ID 직접 입력 (이미지는 별도 업로드 후).
-          -->
-          <textarea id="w-image-ids" rows="3"
-            placeholder="c54265d475b85e00ffb2404585e32b6f, 6fb33d484f232510b5f9b169f2758322"></textarea>
-          <div style="font-size:11px;color:var(--muted);margin-top:3px;">
-            ⚠ TODO: media_space.upload_image 통합 전까지 image ID 직접 입력 (plan §5-1-A)
-          </div>
-          <div class="werr" id="werr-image-ids">이미지 ID를 1개 이상 입력하세요.</div>
-        </div>
-
-        <div class="section-sep">video_upload_id — optional (add_global_item: string[], max 1)</div>
-
-        <div class="wfield">
-          <label for="w-video-id">video_upload_id
-            <span class="hint">string — optional; max 1개 허용 (API spec)</span>
-          </label>
-          <!--
-            TODO plan §5-1-A: integrate media_space video upload.
-            bridge raw_call: POST /raw_call?region=SG&path=%2Fapi%2Fv2%2Fmedia_space%2Fupload_video
-          -->
-          <input type="text" id="w-video-id" placeholder="00a2258551b5a2f0a7c283f877330f93 (선택)">
-          <div style="font-size:11px;color:var(--muted);margin-top:3px;">
-            TODO: media_space video upload 통합 (plan §5-1-A)
-          </div>
-        </div>
-
-        <div class="wbtn-row">
-          <button onclick="wizPrev(2)">← 이전</button>
-          <button onclick="wizNext(2)">다음 →</button>
-        </div>
-      </div><!-- /wstep-2 -->
-
-      <!-- ─── Step 3: Variants (optional) ────────────────────────────
-           add_global_model body_params (authoritative — add_global_model.json):
-             global_item_id: int64, required (from add_global_item response)
-             global_model[]: object[], required
-               global_model[].tier_index: int32[], required
-               global_model[].seller_stock[].stock: int32, required
-               global_model[].original_price: float, required
-               global_model[].global_model_sku: string, optional
-             weight: float, optional — model-level KG override (top-level, applies to all models in call)
-             package_{length,width,height}: int32, required at top-level if dimension set
-             days_to_ship: int32, required at TOP-LEVEL (not inside pre_order in this endpoint)
-
-           SCHEMA NOTE: add_global_model weight is top-level (not per-model).
-           Per-model weight NOT supported in add_global_model — single top-level value.
-           Plan §9-1 risk: weight unit g/kg unconfirmed — using KG per docs.
-           ──────────────────────────────────────────────────────── -->
-      <div class="step-body" id="wstep-3">
 
         <div class="trow">
           <input type="checkbox" id="w-has-variants" onchange="toggleVariantSection(this.checked)">
@@ -1118,18 +1199,74 @@
         </div>
       </div><!-- /wstep-3 -->
 
-      <!-- ─── Step 4: Region Publish ──────────────────────────────────
+      <!-- ─── Step 4: Shipping ───────────────────────────────────────
+           Default global package weight/dimensions and PRE ORDER DTS.
+           ──────────────────────────────────────────────────────── -->
+      <div class="step-body" id="wstep-4" data-register-section="shipping">
+
+        <div class="section-sep">Shipping</div>
+
+        <div class="wfield">
+          <label for="w-weight">weight <span class="req">*</span>
+            <span class="hint">float, KG — add_global_item required (KRSC unit: KG)</span>
+          </label>
+          <input type="number" id="w-weight" placeholder="예: 0.1" step="0.001" min="0.001">
+          <div class="werr" id="werr-weight">weight(KG)은 필수입니다.</div>
+        </div>
+
+        <div class="section-sep">dimension — add_global_item required object (package_{length,width,height} required)</div>
+
+        <div class="wrow">
+          <div class="wfield">
+            <label for="w-pkg-length">package_length <span class="req">*</span><span class="hint">int64, cm</span></label>
+            <input type="number" id="w-pkg-length" placeholder="예: 20" min="1" step="1">
+            <div class="werr" id="werr-pkg-length">필수</div>
+          </div>
+          <div class="wfield">
+            <label for="w-pkg-width">package_width <span class="req">*</span><span class="hint">int64, cm</span></label>
+            <input type="number" id="w-pkg-width" placeholder="예: 15" min="1" step="1">
+            <div class="werr" id="werr-pkg-width">필수</div>
+          </div>
+          <div class="wfield">
+            <label for="w-pkg-height">package_height <span class="req">*</span><span class="hint">int64, cm</span></label>
+            <input type="number" id="w-pkg-height" placeholder="예: 3" min="1" step="1">
+            <div class="werr" id="werr-pkg-height">필수</div>
+          </div>
+        </div>
+
+        <div class="section-sep">pre_order — add_global_item required object (pre_order.days_to_ship required)</div>
+
+        <div class="wfield">
+          <!--
+            add_global_item: pre_order object is required; pre_order.days_to_ship is required int64.
+            PRE ORDER default DTS = 50 (plan §0-1).
+            KRSC: global-level DTS only — no per-region DTS (plan §0-4).
+          -->
+          <label for="w-days-to-ship">pre_order.days_to_ship <span class="req">*</span>
+            <span class="hint">int64 — PRE ORDER 기본값 50 (plan §0-1)</span>
+          </label>
+          <input type="number" id="w-days-to-ship" value="50" min="1" max="90" step="1">
+          <div class="werr" id="werr-days-to-ship">days_to_ship은 필수입니다.</div>
+        </div>
+
+        <div class="wbtn-row">
+          <button onclick="wizPrev(4)">← 이전</button>
+          <button onclick="wizNext(4)">다음 →</button>
+        </div>
+      </div><!-- /wstep-4 -->
+
+      <!-- ─── Step 5: Others / Publish ───────────────────────────────
            create_publish_task body_params (authoritative — create_publish_task.json):
-             global_item_id: int64, required
-             shop_id: int32, required
+              global_item_id: int64, required
+              shop_id: int32, required
              shop_region: string, required
              item.pre_order.is_pre_order: boolean, required if item.pre_order provided
-             item.pre_order.days_to_ship: int32, conditional (mandatory if is_pre_order=true)
+              item.pre_order.days_to_ship: int32, conditional (mandatory if is_pre_order=true)
            get_publishable_shop: GET; returns response.publishable_shop[].{shop_id, shop_region}
            ──────────────────────────────────────────────────────── -->
-      <div class="step-body" id="wstep-4">
+      <div class="step-body" id="wstep-5" data-register-section="others-publish">
 
-        <div class="section-sep">운영 Region 선택</div>
+        <div class="section-sep">Others / Publish</div>
         <div style="font-size:11px;color:var(--muted);margin-bottom:14px;">
           <!--
             TODO plan §4-0: get_publishable_shop 결과로 각 region의 shop_id 실시간 조회.
@@ -1186,13 +1323,15 @@
         </div>
 
         <div class="wbtn-row">
-          <button onclick="wizPrev(4)">← 이전</button>
-          <button class="btn-dry" onclick="handleWizDryRun()">🚀 Dry-run 미리보기</button>
-          <button class="btn-live" onclick="handleWizLiveSubmit()">🔥 실제 등록</button>
+          <button onclick="wizPrev(5)">← 이전</button>
+          <button class="btn-dry" onclick="handleWizDryRun()">Payload 미리보기</button>
+          <button class="primary" id="w-save-master-btn" onclick="handleWizSaveMaster()">Master Data 저장</button>
+          <button class="btn-live" id="w-publish-shopee-btn" onclick="handleWizLiveSubmit()" disabled>Shopee 발행 미리보기</button>
         </div>
-      </div><!-- /wstep-4 -->
+      </div><!-- /wstep-5 -->
 
     </div><!-- /view-register -->
+
 
     <!-- ═══════════════════════════════════════════════
          VIEW: 상품 목록 (existing product table)
@@ -2079,6 +2218,19 @@
     readyProductIds: new Set(),
     readyRunId: null,
     wizConfirmAction: null,
+
+    registerFlow: {
+      state: 'draft',
+      validatedAt: null,
+      savedAt: null,
+      savedProductIds: [],
+      masterKey: null,
+      lastPayloads: null,
+      lastError: null,
+      dirty: true,
+      staronemallImage: null,
+      pendingStaronemallImage: null,
+    },
     // RSW Phase B wizard state
     rswStep: 1,               // current step 1-4
     rswSelectedIds: new Set(),// product IDs selected in step 1
@@ -3271,6 +3423,472 @@
 
   function g(id) { return document.getElementById(id) || {}; }
 
+
+  function registerSelectedRegions() {
+    return ['SG', 'TW', 'TH', 'MY', 'PH'].filter((r) => {
+      const cb = document.getElementById(`w-reg-${r}`);
+      return cb && cb.checked;
+    });
+  }
+
+  // V1 parity: scrape StarOneMall, proxy the source image, draw our shop layer,
+  // then upload the generated representative image to Shopee media space.
+  const STARPHOTOCARD_LAYER = '/starphotocard-layer.png';
+  const STARONEMALL_LAYER_VERSION = 'starphotocard-layer-20260515a';
+  const REGISTER_MAX_IMAGE_IDS = 9;
+  const EXTENSION_IDS = [
+    'omkllbjahclcjooeifpbbbnchmjiafin',
+    'napnekadejnlhcbobpanjpgcipgeaajh',
+  ];
+  let registerStaronemallImageSeq = 0;
+
+  async function _sendToExtension(message) {
+    if (typeof chrome === 'undefined' || !chrome?.runtime?.sendMessage) {
+      throw new Error('Chrome extension is not installed or not available on this page.');
+    }
+    let lastErr = null;
+    for (const id of EXTENSION_IDS) {
+      try {
+        const resp = await new Promise((resolve, reject) => {
+          chrome.runtime.sendMessage(id, message, (r) => {
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve(r);
+          });
+        });
+        return resp;
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw new Error(lastErr?.message || 'No configured StarOneMall extension responded.');
+  }
+
+  async function _joomScrapeAssets(url) {
+    const resp = await _sendToExtension({ type: 'scrapeStaronemallFull', url });
+    if (!resp?.ok) throw new Error(resp?.error || 'StarOneMall scrape failed.');
+    return resp.data || {};
+  }
+
+  function _loadImage(src, crossOrigin) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      if (crossOrigin) img.crossOrigin = crossOrigin;
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('Image load failed: ' + src));
+      img.src = src;
+    });
+  }
+
+  async function _loadImageFromAuthedUrl(authedUrl) {
+    const r = await fetch(authedUrl, { headers: AUTH_HEADERS });
+    if (!r.ok) {
+      const body = await r.text().catch(() => '');
+      throw new Error(`Image proxy failed ${r.status}${body ? ': ' + body.slice(0, 140) : ''}`);
+    }
+    const blob = await r.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    try {
+      return await _loadImage(objectUrl, null);
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
+  }
+
+  async function applyShopLayer(productImageUrl) {
+    const [layerImg, productImg] = await Promise.all([
+      _loadImage(STARPHOTOCARD_LAYER, null),
+      _loadImageFromAuthedUrl(productImageUrl),
+    ]);
+    const size = Math.min(Math.max(productImg.naturalWidth, productImg.naturalHeight, 600), 800);
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, size, size);
+    const scale = Math.min(size / productImg.naturalWidth, size / productImg.naturalHeight);
+    const w = productImg.naturalWidth * scale;
+    const h = productImg.naturalHeight * scale;
+    ctx.drawImage(productImg, (size - w) / 2, (size - h) / 2, w, h);
+    ctx.drawImage(layerImg, 0, 0, size, size);
+    return canvas.toDataURL('image/jpeg', 0.92);
+  }
+
+  function _normalizeShopeeImageUrl(rawUrl, basePageUrl) {
+    const input = String(rawUrl || '').trim();
+    if (!input) return '';
+    if (input.startsWith('//')) return 'https:' + input;
+    if (input.startsWith('/')) {
+      try { return new URL(input, basePageUrl || window.location.href).toString(); } catch (_) { return ''; }
+    }
+    if (/^https?:\/\//i.test(input)) return input;
+    try {
+      return new URL(input, basePageUrl || window.location.href).toString();
+    } catch (_) {
+      return input;
+    }
+  }
+
+  function normalizeStaronemallInput(raw) {
+    const input = String(raw || '').trim();
+    if (!input) return '';
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(input)) return input;
+    return 'https://' + input.replace(/^\/+/, '');
+  }
+
+  function isValidStaronemallUrl(raw) {
+    try {
+      const u = new URL(normalizeStaronemallInput(raw));
+      return /(^|\.)staronemall\.com$/i.test(u.hostname);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setRegisterStaronemallStatus(message, kind = '') {
+    const el = document.getElementById('w-staronemall-status');
+    if (!el) return;
+    el.textContent = message || '';
+    el.style.color = kind === 'ok' ? '#15803d' : (kind === 'err' ? 'var(--red)' : 'var(--muted)');
+  }
+
+  function setRegisterStaronemallPreview(dataUrl) {
+    const preview = document.getElementById('w-staronemall-preview');
+    if (!preview) return;
+    if (!dataUrl) {
+      preview.removeAttribute('src');
+      preview.style.display = 'none';
+      return;
+    }
+    preview.src = dataUrl;
+    preview.style.display = 'block';
+  }
+
+  function readRegisterImageIds() {
+    const field = document.getElementById('w-image-ids');
+    if (!field) return [];
+    return String(field.value || '').split(',').map((s) => s.trim()).filter(Boolean);
+  }
+
+  function writeRegisterImageIds(imageIds) {
+    const field = document.getElementById('w-image-ids');
+    if (!field) return;
+    field.value = imageIds.join(', ');
+    field.classList.remove('invalid');
+    document.getElementById('werr-image-ids')?.classList.remove('show');
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  async function sha256TextHex(value) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value || '')));
+    return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function setRegisterApplyCoverButton(visible) {
+    const btn = document.getElementById('w-staronemall-apply-cover');
+    if (!btn) return;
+    btn.style.display = visible ? 'inline-block' : 'none';
+    btn.disabled = !visible;
+  }
+
+  function clearPendingRegisterCoverImage() {
+    const field = document.getElementById('w-image-ids');
+    if (field) field.dataset.staronemallPendingImageId = '';
+    if (state.registerFlow) state.registerFlow.pendingStaronemallImage = null;
+    setRegisterApplyCoverButton(false);
+  }
+
+  function applyPendingRegisterCoverImage() {
+    const field = document.getElementById('w-image-ids');
+    const pending = state.registerFlow?.pendingStaronemallImage;
+    const pendingImageId = pending?.imageId || field?.dataset.staronemallPendingImageId || '';
+    if (!field || !pendingImageId) {
+      setRegisterStaronemallStatus('Shopee Media 미적용: 적용 대기 중인 image_id가 없습니다.', 'err');
+      return;
+    }
+    const current = readRegisterImageIds();
+    if (current.length === 0) current.push(pendingImageId);
+    else current[0] = pendingImageId;
+    field.dataset.staronemallImageId = pendingImageId;
+    writeRegisterImageIds(current);
+    clearPendingRegisterCoverImage();
+    setRegisterStaronemallStatus(`대표이미지 적용됨: ${pendingImageId}`, 'ok');
+  }
+
+  function updateRegisterRepresentativeImageId(imageId, meta = {}) {
+    const field = document.getElementById('w-image-ids');
+    if (!field || !imageId) return { applied: false, reason: 'missing-field-or-image' };
+    const current = readRegisterImageIds();
+    const previousGenerated = field.dataset.staronemallImageId || state.registerFlow?.staronemallImage?.imageId || '';
+    const firstImageId = current[0] || '';
+    const canApplyNow = !firstImageId || firstImageId === previousGenerated;
+
+    if (!canApplyNow) {
+      field.dataset.staronemallPendingImageId = imageId;
+      if (state.registerFlow) {
+        state.registerFlow.pendingStaronemallImage = { ...meta, imageId };
+      }
+      setRegisterApplyCoverButton(true);
+      setRegisterStaronemallStatus(`Shopee Media 미적용: 업로드 실행됨, 수동 대표이미지 보호로 ${imageId}는 대기 상태입니다. Apply as cover를 누르면 대표이미지로 적용됩니다.`, 'err');
+      return { applied: false, pending: true };
+    }
+
+    if (current.length === 0) {
+      current.push(imageId);
+    } else {
+      current[0] = imageId;
+    }
+    field.dataset.staronemallImageId = imageId;
+    writeRegisterImageIds(current);
+    clearPendingRegisterCoverImage();
+    setRegisterStaronemallStatus(`대표이미지 적용됨: Shopee Media 업로드 실행됨 (${imageId})`, 'ok');
+    return { applied: true };
+  }
+
+  async function uploadRegisterLayeredImage(dataUrl, meta = {}) {
+    const selectedRegions = registerSelectedRegions();
+    const uploadRegion = selectedRegions[0] || 'SG';
+    const outputHash = await sha256TextHex(dataUrl);
+    const response = await fetch(SHOPEE_BRIDGE + '/upload_image', {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({
+        region: uploadRegion,
+        image_base64: dataUrl,
+        source_url: meta.sourceUrl || '',
+        main_image_url: meta.mainImageUrl || '',
+        layer_version: STARONEMALL_LAYER_VERSION,
+        output_hash: outputHash,
+      }),
+    });
+    const json = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+    if (!response.ok || !json.ok) {
+      throw new Error(json.error || json.message || `upload_image failed: HTTP ${response.status}`);
+    }
+    if (!json.image_id) throw new Error('upload_image returned no image_id.');
+    return { ...json, uploadRegion, outputHash };
+  }
+
+  async function generateRegisterLayeredImageFromStaronemall() {
+    const input = document.getElementById('w-staronemall-url');
+    if (!input) return { ok: false, skipped: 'missing-input' };
+    const raw = input.value.trim();
+    if (!raw) {
+      registerStaronemallImageSeq += 1;
+      setRegisterStaronemallStatus('Shopee Media 미적용: StarOneMall URL이 없습니다.');
+      setRegisterStaronemallPreview('');
+      return { ok: false, skipped: 'empty-url' };
+    }
+    if (!isValidStaronemallUrl(raw)) {
+      registerStaronemallImageSeq += 1;
+      setRegisterStaronemallStatus('Shopee Media 미적용: StarOneMall URL이 아닙니다. image_id_list는 변경되지 않았습니다.', 'err');
+      return { ok: false, skipped: 'invalid-url' };
+    }
+
+    const normalizedUrl = normalizeStaronemallInput(raw);
+    if (normalizedUrl !== raw) input.value = normalizedUrl;
+    const seq = ++registerStaronemallImageSeq;
+    const refreshBtn = document.getElementById('w-staronemall-refresh');
+    if (refreshBtn) refreshBtn.disabled = true;
+    setRegisterStaronemallStatus('Shopee Media 업로드 실행됨: StarOneMall 이미지를 읽는 중...');
+
+    try {
+      const assets = await _joomScrapeAssets(normalizedUrl);
+      if (seq !== registerStaronemallImageSeq) return { ok: false, skipped: 'stale' };
+      const mainImage = _normalizeShopeeImageUrl(assets.mainImage, normalizedUrl);
+      if (!mainImage) throw new Error('mainImage URL missing from StarOneMall scrape.');
+
+      setRegisterStaronemallStatus('Shopee Media 업로드 실행됨: 대표이미지 레이어 합성 중...');
+      const candidates = [mainImage];
+      if (/^https:\/\//i.test(mainImage)) candidates.push(mainImage.replace(/^https:\/\//i, 'http://'));
+      let dataUrl = null;
+      let lastErr = null;
+      for (const src of candidates) {
+        try {
+          const proxyUrl = SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(src);
+          dataUrl = await applyShopLayer(proxyUrl);
+          break;
+        } catch (e) {
+          lastErr = e;
+        }
+      }
+      if (!dataUrl) throw (lastErr || new Error('Shop-layer image generation failed.'));
+      if (seq !== registerStaronemallImageSeq) return { ok: false, skipped: 'stale' };
+      setRegisterStaronemallPreview(dataUrl);
+
+      setRegisterStaronemallStatus('Shopee Media 업로드 실행됨: 대표이미지 업로드 중...');
+      const uploaded = await uploadRegisterLayeredImage(dataUrl, {
+        sourceUrl: normalizedUrl,
+        mainImageUrl: mainImage,
+      });
+      if (seq !== registerStaronemallImageSeq) return { ok: false, skipped: 'stale' };
+      const imageUpdate = updateRegisterRepresentativeImageId(uploaded.image_id, {
+        sourceUrl: normalizedUrl,
+        mainImageUrl: mainImage,
+        imageUrl: uploaded.image_url || '',
+        uploadRegion: uploaded.uploadRegion,
+        cached: !!uploaded.cached,
+      });
+
+      if (!g('w-item-name').value.trim() && assets.name) {
+        g('w-item-name').value = String(assets.name).trim();
+        if (typeof updateNamePreview === 'function') updateNamePreview();
+      }
+
+      state.registerFlow.staronemallImage = {
+        sourceUrl: normalizedUrl,
+        imageId: uploaded.image_id,
+        imageUrl: uploaded.image_url || '',
+        uploadRegion: uploaded.uploadRegion,
+        cached: !!uploaded.cached,
+        applied: !!imageUpdate.applied,
+        pending: !!imageUpdate.pending,
+      };
+      return { ok: true, imageId: uploaded.image_id, applied: !!imageUpdate.applied, pending: !!imageUpdate.pending };
+    } catch (e) {
+      if (seq === registerStaronemallImageSeq) {
+        state.registerFlow.staronemallImage = {
+          sourceUrl: normalizedUrl,
+          error: e.message || String(e),
+        };
+        const msg = e.message || String(e);
+        const prefix = /extension|Chrome extension|No configured/i.test(msg) ? '확장프로그램 미사용: ' : '';
+        setRegisterStaronemallStatus(`${prefix}Shopee Media 미적용: ${msg}. image_id_list는 변경되지 않았습니다.`, 'err');
+      }
+      return { ok: false, error: e.message || String(e) };
+    } finally {
+      if (refreshBtn) refreshBtn.disabled = false;
+    }
+  }
+
+  function bindRegisterStaronemallImage() {
+    const input = document.getElementById('w-staronemall-url');
+    if (!input || input.dataset.bound) return;
+    input.dataset.bound = '1';
+    const refreshBtn = document.getElementById('w-staronemall-refresh');
+    let timer = null;
+    const clearPending = () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    };
+    const schedule = () => {
+      clearPending();
+      registerStaronemallImageSeq += 1;
+      const raw = input.value.trim();
+      if (!raw) {
+        setRegisterStaronemallStatus('Shopee Media 미적용: StarOneMall URL이 없습니다.');
+        setRegisterStaronemallPreview('');
+        return;
+      }
+      if (!isValidStaronemallUrl(raw)) {
+        setRegisterStaronemallStatus('Shopee Media 미적용: StarOneMall URL이 아닙니다. image_id_list는 변경되지 않았습니다.', 'err');
+        return;
+      }
+      setRegisterStaronemallStatus('Shopee Media 미적용: URL 확인 중입니다. 업로드는 Generate + upload 버튼에서만 실행됩니다.');
+      timer = setTimeout(() => {
+        if (isValidStaronemallUrl(input.value)) {
+          setRegisterStaronemallStatus('Shopee Media 미적용: URL 확인 완료. Generate + upload 버튼을 누르면 업로드됩니다.', 'ok');
+        }
+      }, 700);
+    };
+    input.addEventListener('input', schedule);
+    input.addEventListener('change', () => {
+      clearPending();
+      schedule();
+    });
+    refreshBtn?.addEventListener('click', () => {
+      clearPending();
+      generateRegisterLayeredImageFromStaronemall();
+    });
+    document.getElementById('w-staronemall-apply-cover')?.addEventListener('click', applyPendingRegisterCoverImage);
+  }
+
+  function validateAllWizSteps(includePublishStep = true) {
+    clearWizErrors();
+    let ok = true;
+    const maxStep = includePublishStep ? TOTAL_STEPS : 4;
+    for (let step = 1; step <= maxStep; step++) {
+      if (!validateWizStep(step, { clear: false })) ok = false;
+    }
+    if (!ok) {
+      setRegisterFlowState('draft', { error: 'Validation failed. 필수값과 옵션 행을 확인하세요.' });
+    } else {
+      setRegisterFlowState(state.registerFlow.savedAt && !state.registerFlow.dirty ? 'publish-ready' : 'validated');
+    }
+    return ok;
+  }
+
+  function registerFlowDetails(flowState) {
+    if (flowState === 'publish-ready') {
+      return 'Master Data 저장이 끝났습니다. Shopee 발행은 별도 버튼에서 payload preview로만 진행됩니다.';
+    }
+    if (flowState === 'validated') {
+      return '필수값 검증은 통과했습니다. Master Data 저장을 완료해야 Shopee 발행 버튼이 열립니다.';
+    }
+    return '기본 저장은 Shopee API를 호출하지 않고 master data draft를 먼저 검증/저장합니다.';
+  }
+
+  function registerPublishBlockers() {
+    const blockers = [];
+    if (state.registerFlow.state === 'draft') blockers.push('입력값 validation이 필요합니다.');
+    if (state.registerFlow.savedAt && state.registerFlow.dirty) blockers.push('Master Data 저장 후 변경된 입력값이 있습니다. 다시 저장하세요.');
+    if (!state.registerFlow.savedAt) blockers.push('Master Data 저장이 아직 완료되지 않았습니다.');
+    if (!registerSelectedRegions().length) blockers.push('발행 대상 region을 1개 이상 선택해야 합니다.');
+    if (blockers.length === 0) {
+      blockers.push('Live Shopee 발행은 get_publishable_shop/shop_id 연결 전까지 차단됩니다. 현재 버튼은 발행 payload preview 전용입니다.');
+    }
+    return blockers;
+  }
+
+  function setRegisterFlowState(nextState, options = {}) {
+    const flow = state.registerFlow;
+    flow.state = nextState;
+    flow.lastError = options.error || null;
+    if (nextState === 'validated') flow.validatedAt = new Date().toISOString();
+    if (nextState === 'publish-ready') flow.dirty = false;
+
+    const label = document.getElementById('w-flow-status-label');
+    const detail = document.getElementById('w-flow-status-detail');
+    const panel = document.getElementById('w-flow-panel');
+    const blockersEl = document.getElementById('w-publish-blockers');
+    const publishBtn = document.getElementById('w-publish-shopee-btn');
+
+    if (label) label.textContent = nextState === 'publish-ready' ? 'Publish-ready' : (nextState === 'validated' ? 'Validated' : 'Draft');
+    if (detail) detail.textContent = options.error || registerFlowDetails(nextState);
+    if (panel) panel.dataset.flowState = nextState;
+
+    ['draft', 'validated', 'publish-ready'].forEach((stateName) => {
+      const badge = document.getElementById(`w-flow-badge-${stateName}`);
+      if (!badge) return;
+      badge.classList.remove('is-active', 'is-done');
+      if (stateName === nextState) badge.classList.add('is-active');
+      if (nextState === 'validated' && stateName === 'draft') badge.classList.add('is-done');
+      if (nextState === 'publish-ready' && stateName !== 'publish-ready') badge.classList.add('is-done');
+    });
+
+    const hardPublishReady = nextState === 'publish-ready' && !!flow.savedAt && !flow.dirty && registerSelectedRegions().length > 0;
+    if (publishBtn) publishBtn.disabled = !hardPublishReady;
+    if (blockersEl) {
+      const blockers = registerPublishBlockers();
+      blockersEl.innerHTML = blockers.map((msg) => `<li>${esc(msg)}</li>`).join('');
+      blockersEl.classList.toggle('is-clear', hardPublishReady);
+    }
+  }
+
+  function markRegisterDraft(event) {
+    if (!state.registerFlow) return;
+    const targetId = event?.target?.id || '';
+    if (targetId.startsWith('w-reg-')) {
+      setRegisterFlowState(state.registerFlow.savedAt && !state.registerFlow.dirty ? 'publish-ready' : state.registerFlow.state);
+      return;
+    }
+    state.registerFlow.dirty = true;
+    state.registerFlow.savedAt = null;
+    state.registerFlow.savedProductIds = [];
+    state.registerFlow.masterKey = null;
+    setRegisterFlowState('draft');
+
+
   // ════════════════════════════════════════════════════════════════
   // [PRE ORDER] NAME PREVIEW
   // ════════════════════════════════════════════════════════════════
@@ -3495,18 +4113,53 @@
   // DRY-RUN + SUBMIT HANDLERS
   // ════════════════════════════════════════════════════════════════
   window.handleWizDryRun = function() {
-    if (!validateWizStep(4)) return;
+    if (!validateAllWizSteps(true)) return;
     const p = buildAllWizPayloads(true);
     if (!p) return;
     showWizModal(p, false);
   };
 
+
+  window.handleWizSaveMaster = async function() {
+    if (!validateAllWizSteps(false)) return;
+    const payloads = {
+      addItemPayload: buildAddGlobalItemPayload(),
+      addModelPayload: buildAddGlobalModelPayload(MOCK_GID),
+      publishPayloads: buildCreatePublishTaskPayloads(MOCK_GID),
+      dryRun: true,
+    };
+    const saveBtn = document.getElementById('w-save-master-btn');
+    if (saveBtn) saveBtn.disabled = true;
+    try {
+      const saved = await saveRegisterMasterData(payloads);
+      state.registerFlow.savedAt = new Date().toISOString();
+      state.registerFlow.savedProductIds = saved.savedIds;
+      state.registerFlow.masterKey = saved.payloadHash;
+      state.registerFlow.lastPayloads = payloads;
+      state.registerFlow.dirty = false;
+      setRegisterFlowState(registerSelectedRegions().length ? 'publish-ready' : 'validated');
+      showToast(`Master Data 저장 완료 (${saved.savedIds.length} products row)`, 'ok');
+      await loadData();
+    } catch (e) {
+      setRegisterFlowState('draft', { error: e.message || String(e) });
+      showToast(e.message || String(e), 'err');
+    } finally {
+      if (saveBtn) saveBtn.disabled = false;
+    }
+  };
+
   window.handleWizLiveSubmit = function() {
-    if (!validateWizStep(4)) return;
+    if (!state.registerFlow.savedAt || state.registerFlow.dirty) {
+      setRegisterFlowState('draft', { error: 'Shopee 발행 전에 Master Data 저장을 먼저 완료하세요.' });
+      showToast('Master Data 저장 후 Shopee 발행 미리보기를 열 수 있습니다.', 'err');
+      return;
+    }
+    if (!validateAllWizSteps(true)) return;
     const p = buildAllWizPayloads(false);
     if (!p) return;
     showWizModal(p, true);
   };
+
 
   // ════════════════════════════════════════════════════════════════
   // WIZARD MODAL (payload preview)

@@ -1,4 +1,6 @@
-// Shopee Bridge ??v40: GlobalProduct registration uses add_global_item -> init_tier_variation/add_global_model -> create_publish_task -> get_publish_task_result.
+// Shopee Bridge v42: harden StarOneMall image proxy/upload_image validation and generated-upload idempotency.
+// v41: /health reports the hosted deployment version from DENO_DEPLOYMENT_ID.
+// v40: GlobalProduct registration uses add_global_item -> init_tier_variation/add_global_model -> create_publish_task -> get_publish_task_result.
 // v39: KRSC/CBSC merchant flow ??merchantApiCall reads `region='_MERCHANT'` row first (main_account OAuth token). Auto-refresh with merchant_id principal. Shop-token fallback retained.
 // v38: CBSC merchant token via main_account_id (was merchant_id) ??Shopee CBSC OAuth scope. merchantApiCall tries issued merchant token first, shop-token fallback. New /try_main_account_refresh debug endpoint.
 // v37: CBSC global_product flow. merchantApiCall now uses shop access_token + merchant_id signing (bypasses broken issueMerchantToken). New endpoints: /add_global_item, /create_publish_task, /publish_task_result, /register_cbsc.
@@ -29,6 +31,40 @@ const ENV_PARTNER_ID = Deno.env.get("SHOPEE_PARTNER_ID") || "";
 const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 // CBSC main account ID ??Shopee CB Mall / KRSC group. Same across all 10 region shops in our setup.
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
+const SOURCE_VERSION = 42;
+const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
+const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
+const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
+const HEALTH_VERSION = DEPLOYMENT_VERSION ?? SOURCE_VERSION;
+const OPERATING_REGIONS = ['SG', 'BR', 'MY', 'PH', 'TH', 'TW'];
+const OPERATING_REGION_SET = new Set(OPERATING_REGIONS);
+const DEFAULT_REFRESH_THRESHOLD_SEC = 7200;
+const DEFAULT_REFRESH_ATTEMPTS = 3;
+const DEFAULT_RETRY_BASE_MS = 1000;
+const PROXY_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
+const UPLOAD_IMAGE_MIN_DIMENSION = 300;
+const UPLOAD_IMAGE_MAX_DIMENSION = 4096;
+const GENERATED_UPLOAD_CACHE_TTL_MS = 30 * 60 * 1000;
+const IMAGE_PROXY_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Cache-Control': 'no-store',
+};
+const PROXY_ALLOWED_HOSTS = new Set([
+  'staronemall.com',
+  'www.staronemall.com',
+  'staronemall2.wisacdn.com',
+  'cf.shopee.sg',
+  'cf.shopee.tw',
+  'cf.shopee.ph',
+  'cf.shopee.com.my',
+  'cf.shopee.co.th',
+  'cf.shopee.com.br',
+]);
+const PROXY_ALLOWED_SUFFIXES = [
+  '.wisacdn.com',
+  '.shopeesz.com',
+];
 
 async function getApp() {
   const { data } = await supabase.from('shopee_app').select('*').eq('id', 1).single();
@@ -50,6 +86,164 @@ function audit(event: string, payload: Record<string, unknown> = {}) {
   console.log(JSON.stringify({ service: 'shopee-bridge', event, ts: new Date().toISOString(), ...payload }));
 }
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+function parsePositiveInt(value: string | null, fallback: number, min = 1, max = 86400): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(n)));
+}
+
+function parseTargetRegions(raw: string | null): string[] {
+  if (!raw) return OPERATING_REGIONS;
+  const wanted = raw
+    .split(',')
+    .map(v => v.trim().toUpperCase())
+    .filter(Boolean);
+  const allowed = new Set(OPERATING_REGIONS);
+  const deduped = [...new Set(wanted.filter(v => allowed.has(v)))];
+  return deduped.length ? deduped : OPERATING_REGIONS;
+}
+
+function normalizeRegion(value: unknown): string | null {
+  const region = String(value || 'SG').trim().toUpperCase();
+  return OPERATING_REGION_SET.has(region) ? region : null;
+}
+
+function imageProxyError(error: string, status = 400, extra: Record<string, unknown> = {}) {
+  return jsonResp({ ok: false, error, ...extra }, status);
+}
+
+function normalizeHostname(hostname: string): string {
+  return String(hostname || '').trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
+}
+
+function isAllowedProxyHost(hostname: string): boolean {
+  const host = normalizeHostname(hostname);
+  if (PROXY_ALLOWED_HOSTS.has(host)) return true;
+  return PROXY_ALLOWED_SUFFIXES.some((suffix) => host.endsWith(suffix));
+}
+
+function isPrivateIpv4(ip: string): boolean {
+  const parts = ip.split('.').map((p) => Number(p));
+  if (parts.length !== 4 || parts.some((p) => !Number.isInteger(p) || p < 0 || p > 255)) return false;
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224
+  );
+}
+
+function isPrivateIpv6(ip: string): boolean {
+  const value = normalizeHostname(ip);
+  if (!value.includes(':')) return false;
+  const mapped = value.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) return isPrivateIpv4(mapped[1]);
+  return (
+    value === '::' ||
+    value === '::1' ||
+    value.startsWith('fc') ||
+    value.startsWith('fd') ||
+    value.startsWith('fe80:') ||
+    value.startsWith('fec0:') ||
+    value.startsWith('ff')
+  );
+}
+
+function isPrivateOrLocalHost(hostname: string): boolean {
+  const host = normalizeHostname(hostname);
+  if (!host || host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(host)) return isPrivateIpv4(host);
+  if (host.includes(':')) return isPrivateIpv6(host);
+  return false;
+}
+
+async function assertPublicProxyTarget(upstream: URL) {
+  const hostname = normalizeHostname(upstream.hostname);
+  if (!isAllowedProxyHost(hostname)) {
+    return { ok: false, status: 403, error: 'proxy_host_not_allowed' };
+  }
+  if (isPrivateOrLocalHost(hostname)) {
+    return { ok: false, status: 403, error: 'proxy_private_host_blocked' };
+  }
+  try {
+    const aRecords = await Deno.resolveDns(hostname, 'A');
+    if (aRecords.some((ip) => isPrivateIpv4(ip))) {
+      return { ok: false, status: 403, error: 'proxy_private_dns_blocked' };
+    }
+  } catch (_) {
+    // Some edge runtimes do not expose DNS resolution consistently; host allowlist still applies.
+  }
+  try {
+    const aaaaRecords = await Deno.resolveDns(hostname, 'AAAA');
+    if (aaaaRecords.some((ip) => isPrivateIpv6(ip))) {
+      return { ok: false, status: 403, error: 'proxy_private_dns_blocked' };
+    }
+  } catch (_) {
+    // Some allowed CDN hosts publish A-only records.
+  }
+  return { ok: true };
+}
+
+function isSvgLike(contentType: string, bytes?: Uint8Array): boolean {
+  if (/svg/i.test(contentType)) return true;
+  if (!bytes || bytes.length === 0) return false;
+  const head = new TextDecoder().decode(bytes.slice(0, Math.min(bytes.length, 256))).trimStart();
+  return /^<\?xml/i.test(head) || /^<svg[\s>]/i.test(head);
+}
+
+function isSupportedImageContentType(contentType: string): boolean {
+  const ct = contentType.toLowerCase().split(';')[0].trim();
+  return ct.startsWith('image/') && ct !== 'image/svg+xml';
+}
+
+function isTransientRefreshErrorMessage(message: string): boolean {
+  return /system_error|service_unavailable|temporar|server_error|internal_error|timeout|network|fetch failed|too_many_request|rate_limit|HTTP 5\d\d/i.test(message);
+}
+
+function isPermanentRefreshErrorMessage(message: string): boolean {
+  return /refresh token|refresh_token|wrong|invalid_refresh|error_user_refresh_token|unauthori[sz]ed|access_denied|shop_banned|banned|revoked|frozen|principal mismatch|merchant_id.*wrong|shop_id.*wrong|error_auth/i.test(message);
+}
+
+async function refreshWithRetry(label: string, fn: () => Promise<any>, maxAttempts: number, baseDelayMs: number) {
+  let lastError = '';
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return { ok: true, value: await fn(), attempts: attempt, error: null, transient: false, permanent: false };
+    } catch (e: any) {
+      lastError = String(e?.message || e);
+      const transient = isTransientRefreshErrorMessage(lastError);
+      if (!transient || attempt >= maxAttempts) {
+        return {
+          ok: false,
+          value: null,
+          attempts: attempt,
+          error: lastError,
+          transient,
+          permanent: isPermanentRefreshErrorMessage(lastError),
+        };
+      }
+      audit('token_refresh_retry', { label, attempt, max_attempts: maxAttempts, error: lastError });
+      await sleep(baseDelayMs * Math.pow(2, attempt - 1));
+    }
+  }
+  return {
+    ok: false,
+    value: null,
+    attempts: maxAttempts,
+    error: lastError || 'refresh failed',
+    transient: isTransientRefreshErrorMessage(lastError),
+    permanent: isPermanentRefreshErrorMessage(lastError),
+  };
+}
+
 function fp(v: string | null | undefined): string {
   if (!v) return '';
   let h = 0;
@@ -66,6 +260,9 @@ async function getRegionShopRow(region: string, shopId: string | number) {
   if (!data) throw new Error(`principal missing in shopee_shops for region=${region}, shop_id=${shopId}`);
   if (String(data.region || '') !== String(region)) {
     throw new Error(`principal mismatch region/shop: token_region=${region} shops_region=${data.region} shop_id=${shopId}`);
+  }
+  if (data.status === 'banned') {
+    throw new Error(`shop banned: region=${region} shop_id=${shopId}`);
   }
   return data;
 }
@@ -306,9 +503,9 @@ async function shopApiCall(region: string, path: string, opts: any = {}) {
 }
 
 // Refresh the _MERCHANT row's access_token using merchant_id principal.
-async function refreshMerchantRowToken(): Promise<{ access_token: string; merchant_id: number } | null> {
+async function refreshMerchantRowTokenStrict(): Promise<{ access_token: string; merchant_id: number; expires_at: number }> {
   const { data } = await supabase.from('shopee_tokens').select('*').eq('region', '_MERCHANT').single();
-  if (!data || !data.refresh_token || !data.merchant_id) return null;
+  if (!data || !data.refresh_token || !data.merchant_id) throw new Error('merchant row token missing');
   const app = await getApp();
   const path = '/api/v2/auth/access_token/get';
   const ts = Math.floor(Date.now() / 1000);
@@ -322,7 +519,7 @@ async function refreshMerchantRowToken(): Promise<{ access_token: string; mercha
   const j = await r.json();
   if (j.error || !j.access_token) {
     audit('merchant_row_refresh_fail', { error: j.error, message: j.message });
-    return null;
+    throw new Error(`merchant row refresh: ${j.error || 'missing_access_token'} ${j.message || ''}`.trim());
   }
   const newExpiry = Math.floor(Date.now() / 1000) + (j.expire_in || 14400);
   await supabase.from('shopee_tokens').update({
@@ -331,18 +528,55 @@ async function refreshMerchantRowToken(): Promise<{ access_token: string; mercha
     expires_at: newExpiry,
   }).eq('region', '_MERCHANT');
   audit('merchant_row_refresh_ok', { merchant_id: data.merchant_id, expire_in: j.expire_in });
-  return { access_token: j.access_token, merchant_id: data.merchant_id };
+  return { access_token: j.access_token, merchant_id: data.merchant_id, expires_at: newExpiry };
+}
+
+async function refreshMerchantRowToken(): Promise<{ access_token: string; merchant_id: number; expires_at?: number } | null> {
+  try {
+    return await refreshMerchantRowTokenStrict();
+  } catch (e: any) {
+    audit('merchant_row_refresh_unavailable', { error: String(e?.message || e) });
+    return null;
+  }
 }
 
 // Get valid merchant token from _MERCHANT row, refreshing if needed.
-async function getValidMerchantToken(): Promise<{ access_token: string; merchant_id: number } | null> {
+async function getValidMerchantToken(): Promise<{ access_token: string; merchant_id: number; expires_at?: number } | null> {
   const { data } = await supabase.from('shopee_tokens').select('*').eq('region', '_MERCHANT').single();
   if (!data || !data.access_token || !data.merchant_id) return null;
   const now = Math.floor(Date.now() / 1000);
   if (data.expires_at && now < data.expires_at - 60) {
-    return { access_token: data.access_token, merchant_id: data.merchant_id };
+    return { access_token: data.access_token, merchant_id: data.merchant_id, expires_at: data.expires_at };
   }
   return await refreshMerchantRowToken();
+}
+
+async function probeMerchantToken(app: any, accessToken: string, merchantId: number | string) {
+  const path = '/api/v2/global_product/get_category';
+  const ts = Math.floor(Date.now() / 1000);
+  const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}${accessToken}${merchantId}`);
+  const query = new URLSearchParams({
+    partner_id: String(app.partner_id),
+    timestamp: String(ts),
+    sign,
+    access_token: accessToken,
+    merchant_id: String(merchantId),
+    language: 'en',
+  });
+  try {
+    const r = await fetch(`https://${host(app.is_sandbox)}${path}?${query}`);
+    const j = await r.json();
+    return {
+      ok: !j?.error,
+      http_status: r.status,
+      error: j?.error || null,
+      message: j?.message || null,
+      request_id: j?.request_id || null,
+      category_count: Array.isArray(j?.response?.category_list) ? j.response.category_list.length : null,
+    };
+  } catch (e: any) {
+    return { ok: false, http_status: 0, error: 'merchant_probe_failed', message: String(e?.message || e), request_id: null };
+  }
 }
 
 async function merchantApiCall(region: string, path: string, opts: any = {}) {
@@ -433,6 +667,193 @@ async function sha256Hex(value: unknown): Promise<string> {
   const text = typeof value === 'string' ? value : JSON.stringify(canonicalize(value));
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function decodeBase64Image(raw: string) {
+  const input = String(raw || '').trim();
+  if (!input) return { ok: false, error: 'image_base64 required' };
+  const dataUrlMatch = input.match(/^data:([^;,]+);base64,(.+)$/i);
+  const mimeHint = (dataUrlMatch?.[1] || '').toLowerCase();
+  if (mimeHint && (/svg/i.test(mimeHint) || !/^image\/(jpeg|jpg|png)$/.test(mimeHint))) {
+    return { ok: false, error: 'unsupported_image_type' };
+  }
+  const b64 = dataUrlMatch ? dataUrlMatch[2] : input.replace(/^data:[^;]+;base64,/i, '');
+  const compact = b64.replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(compact)) return { ok: false, error: 'invalid_base64' };
+  if (Math.floor(compact.length * 3 / 4) > UPLOAD_IMAGE_MAX_BYTES) return { ok: false, error: 'image_too_large' };
+  let binaryStr = '';
+  try {
+    binaryStr = atob(compact);
+  } catch (_) {
+    return { ok: false, error: 'invalid_base64' };
+  }
+  const bytes = new Uint8Array(binaryStr.length);
+  for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+  if (bytes.byteLength > UPLOAD_IMAGE_MAX_BYTES) return { ok: false, error: 'image_too_large' };
+  return { ok: true, bytes, mimeHint };
+}
+
+function parsePngDimensions(bytes: Uint8Array) {
+  if (bytes.length < 24) return null;
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (!sig.every((v, i) => bytes[i] === v)) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return { width: view.getUint32(16), height: view.getUint32(20), mime: 'image/png' };
+}
+
+function parseJpegDimensions(bytes: Uint8Array) {
+  if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8) return null;
+  let offset = 2;
+  while (offset + 9 < bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      offset += 1;
+      continue;
+    }
+    const marker = bytes[offset + 1];
+    if (marker === 0xd9 || marker === 0xda) break;
+    if (offset + 4 >= bytes.length) break;
+    const length = (bytes[offset + 2] << 8) + bytes[offset + 3];
+    if (length < 2 || offset + 2 + length > bytes.length) break;
+    const isSof = marker >= 0xc0 && marker <= 0xcf && ![0xc4, 0xc8, 0xcc].includes(marker);
+    if (isSof && offset + 8 < bytes.length) {
+      const height = (bytes[offset + 5] << 8) + bytes[offset + 6];
+      const width = (bytes[offset + 7] << 8) + bytes[offset + 8];
+      return { width, height, mime: 'image/jpeg' };
+    }
+    offset += 2 + length;
+  }
+  return null;
+}
+
+function inspectUploadImage(bytes: Uint8Array, mimeHint = '') {
+  if (isSvgLike(mimeHint, bytes)) return { ok: false, error: 'svg_not_allowed' };
+  const dims = parsePngDimensions(bytes) || parseJpegDimensions(bytes);
+  if (!dims) return { ok: false, error: 'unsupported_image_signature' };
+  if (
+    dims.width < UPLOAD_IMAGE_MIN_DIMENSION ||
+    dims.height < UPLOAD_IMAGE_MIN_DIMENSION ||
+    dims.width > UPLOAD_IMAGE_MAX_DIMENSION ||
+    dims.height > UPLOAD_IMAGE_MAX_DIMENSION
+  ) {
+    return { ok: false, error: 'image_dimensions_out_of_range', width: dims.width, height: dims.height };
+  }
+  return { ok: true, ...dims };
+}
+
+function extractPerImageErrors(uploadJson: any) {
+  const rows = Array.isArray(uploadJson?.response?.image_info_list) ? uploadJson.response.image_info_list : [];
+  return rows
+    .filter((row: any) => row?.error)
+    .map((row: any) => ({ id: row?.id ?? null, error: row?.error || '', message: row?.message || '' }));
+}
+
+function extractUploadImageInfo(uploadJson: any, region: string) {
+  const firstListInfo = Array.isArray(uploadJson?.response?.image_info_list)
+    ? uploadJson.response.image_info_list.find((row: any) => !row?.error)?.image_info
+    : null;
+  const info = uploadJson?.response?.image_info || firstListInfo || uploadJson?.response || {};
+  const list = info.image_url_list || uploadJson?.response?.image_url_list || [];
+  const matched = Array.isArray(list) ? list.find((e: any) => String(e.image_url_region || '').toUpperCase() === region) : null;
+  const image_url = matched?.image_url || matched?.url
+    || (Array.isArray(list) ? (list[0]?.image_url || list[0]?.url) : '')
+    || uploadJson?.response?.image_url || '';
+  const image_id = info.image_id || uploadJson?.response?.image_id || '';
+  return { image_id, image_url, request_id: uploadJson?.request_id || null };
+}
+
+function shouldFallbackToShopSignedUpload(uploadJson: any) {
+  const text = `${uploadJson?.error || ''} ${uploadJson?.message || ''}`.toLowerCase();
+  return /access_token|shop_id|permission|auth|sign/.test(text);
+}
+
+async function fetchShopeeUpload(app: any, path: string, query: URLSearchParams, bytes: Uint8Array, mime: string, body: any, authShape: string) {
+  const uploadUrl = `https://${host(app.is_sandbox)}${path}?${query}`;
+  const formData = new FormData();
+  formData.append('image', new Blob([bytes], { type: mime }), mime === 'image/png' ? 'product.png' : 'product.jpg');
+  formData.append('scene', String(body.scene || 'normal'));
+  if (body.ratio) formData.append('ratio', String(body.ratio));
+  const started = Date.now();
+  const uploadResp = await fetch(uploadUrl, { method: 'POST', body: formData });
+  const uploadJson = await uploadResp.json().catch(() => ({ error: 'invalid_json_response', message: 'Shopee returned non-JSON response' }));
+  return { http_status: uploadResp.status, duration_ms: Date.now() - started, auth_shape: authShape, ...uploadJson };
+}
+
+async function uploadShopeeMediaImage(region: string, bytes: Uint8Array, mime: string, body: any) {
+  const app = await getApp();
+  const path = '/api/v2/media_space/upload_image';
+  const ts = Math.floor(Date.now() / 1000);
+  const partnerSign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
+  const partnerQuery = new URLSearchParams({
+    partner_id: String(app.partner_id),
+    timestamp: String(ts),
+    sign: partnerSign,
+  });
+  const partnerResult = await fetchShopeeUpload(app, path, partnerQuery, bytes, mime, body, 'partner_public');
+  if (!partnerResult.error || !shouldFallbackToShopSignedUpload(partnerResult)) return partnerResult;
+
+  const t = await getValidToken(region, 'shop');
+  const shopTs = Math.floor(Date.now() / 1000);
+  const shopSign = await hmac(app.partner_key, `${app.partner_id}${path}${shopTs}${t.access_token}${t.shop_id}`);
+  const shopQuery = new URLSearchParams({
+    partner_id: String(app.partner_id),
+    timestamp: String(shopTs),
+    access_token: t.access_token,
+    shop_id: String(t.shop_id),
+    sign: shopSign,
+  });
+  const shopResult = await fetchShopeeUpload(app, path, shopQuery, bytes, mime, body, 'shop_access_token_fallback');
+  return { ...shopResult, first_error: partnerResult.error || null, first_message: partnerResult.message || null };
+}
+
+async function findRecentGeneratedUpload(idempotencyKeyHash: string, region: string) {
+  if (!idempotencyKeyHash) return null;
+  const since = new Date(Date.now() - GENERATED_UPLOAD_CACHE_TTL_MS).toISOString();
+  const { data, error } = await supabase
+    .from('shopee_mutation_log')
+    .select('id, created_at, response')
+    .eq('action', 'upload_image')
+    .eq('status', 'ok')
+    .eq('region', region)
+    .eq('request_payload->>idempotency_key_hash', idempotencyKeyHash)
+    .gte('created_at', since)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    audit('upload_image_cache_lookup_failed', { region, error: error.message });
+    return null;
+  }
+  return data || null;
+}
+
+async function insertUploadLog(params: {
+  region: string;
+  payloadHash: string;
+  requestPayload: any;
+  status: 'ok' | 'error' | 'skipped';
+  response?: any;
+  errorMsg?: string | null;
+  requestId?: string | null;
+  durationMs?: number | null;
+  body?: any;
+}) {
+  try {
+    return await insertMutationLog({
+      action: 'upload_image',
+      region: params.region,
+      payloadHash: params.payloadHash,
+      requestPayload: params.requestPayload,
+      status: params.status,
+      response: params.response,
+      errorMsg: params.errorMsg,
+      requestId: params.requestId,
+      durationMs: params.durationMs,
+      body: { ...(params.body || {}), actor: params.body?.actor || 'v2-staronemall-media' },
+    });
+  } catch (e: any) {
+    audit('upload_image_log_failed', { region: params.region, status: params.status, error: String(e?.message || e) });
+    return { id: null, skipped: false };
+  }
 }
 
 function approvalFields(body: any): string[] {
@@ -1195,7 +1616,20 @@ Deno.serve(async (req) => {
   try {
     if (action === 'health') {
       const app = await getApp();
-      return jsonResp({ ok: true, service: 'shopee-bridge', version: 40, env: { partner_id: app.partner_id, is_sandbox: app.is_sandbox, has_env_partner_id: !!ENV_PARTNER_ID, has_env_partner_key: !!ENV_PARTNER_KEY } });
+      return jsonResp({
+        ok: true,
+        service: 'shopee-bridge',
+        version: HEALTH_VERSION,
+        source_version: SOURCE_VERSION,
+        deployment_version: DEPLOYMENT_VERSION,
+        deployment_id: DENO_DEPLOYMENT_ID || null,
+        env: {
+          partner_id: app.partner_id,
+          is_sandbox: app.is_sandbox,
+          has_env_partner_id: !!ENV_PARTNER_ID,
+          has_env_partner_key: !!ENV_PARTNER_KEY,
+        },
+      });
     }
     if (action === 'try_refresh_variants') {
       // Tries all known refresh parameter shapes for the current region to find the one that returns a valid token.
@@ -1258,52 +1692,259 @@ Deno.serve(async (req) => {
     }
     if (action === 'token_health' || action === 'token-health') {
       const runRefresh = url.searchParams.get('run_refresh') === '1';
+      const includeMerchant = url.searchParams.get('include_merchant') !== '0';
+      const targetRegions = parseTargetRegions(url.searchParams.get('regions'));
+      const refreshThresholdSec = parsePositiveInt(url.searchParams.get('refresh_threshold_sec'), DEFAULT_REFRESH_THRESHOLD_SEC, 60, 21600);
+      const maxRefreshAttempts = parsePositiveInt(url.searchParams.get('max_refresh_attempts'), DEFAULT_REFRESH_ATTEMPTS, 1, 5);
+      const retryBaseMs = parsePositiveInt(url.searchParams.get('retry_base_ms'), DEFAULT_RETRY_BASE_MS, 100, 10000);
+      const app = await getApp();
+      const now = Math.floor(Date.now() / 1000);
       const { data } = await supabase
         .from('shopee_tokens')
         .select('region, shop_id, merchant_id, expires_at, is_sandbox, access_token')
+        .in('region', targetRegions)
         .order('region', { ascending: true });
-      const now = Math.floor(Date.now() / 1000);
-      const rows = data || [];
+      const byRegion = new Map((data || []).map((row: any) => [String(row.region), row]));
       const results: any[] = [];
       const counters = {
-        total: rows.length,
+        total: 0,
         probe_ok: 0,
         probe_fail: 0,
+        refresh_attempted: 0,
         refresh_ok: 0,
         refresh_fail: 0,
+        pre_expiry_refresh: 0,
+        transient_fail: 0,
+        permanent_fail: 0,
         principal_mismatch: 0,
+        skipped_banned: 0,
+        missing_token: 0,
+        shop_total: 0,
+        shop_ok: 0,
+        shop_fail: 0,
+        merchant_total: 0,
+        merchant_ok: 0,
+        merchant_fail: 0,
       };
-      for (const row of rows) {
-        const probe = await probeShopToken(await getApp(), row.access_token, row.shop_id);
-        if (probe.ok) counters.probe_ok++;
-        else counters.probe_fail++;
+
+      for (const regionName of targetRegions) {
+        counters.total++;
+        counters.shop_total++;
+        const row: any = byRegion.get(regionName);
+        if (!row) {
+          counters.missing_token++;
+          counters.shop_fail++;
+          results.push({
+            principal: 'shop',
+            region: regionName,
+            ok: false,
+            error: 'token_missing',
+            refresh_skipped: 'missing_token_row',
+          });
+          continue;
+        }
+
+        const expiresIn = Number(row.expires_at || 0) - now;
         const out: any = {
+          principal: 'shop',
           region: row.region,
           shop_id: row.shop_id,
           merchant_id: row.merchant_id,
-          expires_in_sec: row.expires_at - now,
-          probe_ok: probe.ok,
-          probe_error: probe.error || null,
-          probe_message: probe.message || null,
+          expires_in_sec: expiresIn,
+          refresh_threshold_sec: refreshThresholdSec,
+          next_refresh_due_in_sec: expiresIn - refreshThresholdSec,
         };
-        if (runRefresh && !probe.ok) {
-          try {
-            const refreshed = await forceRefreshShopToken(row.region);
-            counters.refresh_ok++;
-            out.refresh_ok = true;
-            out.refreshed_expires_at = refreshed.expires_at;
-          } catch (e: any) {
-            const msg = String(e?.message || e);
-            if (msg.includes('principal mismatch')) counters.principal_mismatch++;
-            counters.refresh_fail++;
-            out.refresh_ok = false;
-            out.refresh_error = msg;
-          }
+
+        const { data: shopRow } = await supabase
+          .from('shopee_shops')
+          .select('shop_id, region, merchant_id, status')
+          .eq('shop_id', String(row.shop_id))
+          .maybeSingle();
+        out.shop_status = shopRow?.status || null;
+        if (!shopRow) {
+          counters.principal_mismatch++;
+          counters.shop_fail++;
+          out.ok = false;
+          out.error = 'shop_principal_missing';
+          out.refresh_skipped = 'missing_shopee_shops_row';
+          results.push(out);
+          continue;
         }
+        if (String(shopRow.region || '') !== String(row.region)) {
+          counters.principal_mismatch++;
+          counters.shop_fail++;
+          out.ok = false;
+          out.error = 'shop_principal_region_mismatch';
+          out.refresh_skipped = 'principal_mismatch';
+          results.push(out);
+          continue;
+        }
+        if (shopRow.status === 'banned') {
+          counters.skipped_banned++;
+          counters.shop_fail++;
+          out.ok = false;
+          out.error = 'shop_banned';
+          out.refresh_skipped = 'banned_shop';
+          results.push(out);
+          continue;
+        }
+
+        const probe = row.access_token ? await probeShopToken(app, row.access_token, row.shop_id) : { ok: false, http_status: 0, error: 'missing_access_token', message: 'missing access_token', request_id: null };
+        if (probe.ok) counters.probe_ok++;
+        else counters.probe_fail++;
+        out.probe_ok = probe.ok;
+        out.probe_http_status = probe.http_status;
+        out.probe_error = probe.error || null;
+        out.probe_message = probe.message || null;
+
+        const refreshReasons: string[] = [];
+        if (expiresIn <= refreshThresholdSec) refreshReasons.push('pre_expiry');
+        if (!probe.ok) refreshReasons.push('probe_failed');
+        out.refresh_reasons = refreshReasons;
+        out.refresh_needed = runRefresh && refreshReasons.length > 0;
+        if (runRefresh && refreshReasons.length > 0) {
+          counters.refresh_attempted++;
+          if (refreshReasons.includes('pre_expiry')) counters.pre_expiry_refresh++;
+          const refreshed = await refreshWithRetry(`shop:${row.region}`, () => forceRefreshShopToken(row.region), maxRefreshAttempts, retryBaseMs);
+          out.refresh_attempts = refreshed.attempts;
+          if (refreshed.ok) {
+            counters.refresh_ok++;
+            const refreshedValue = refreshed.value;
+            const nowAfter = Math.floor(Date.now() / 1000);
+            out.refresh_ok = true;
+            out.refreshed_expires_at = refreshedValue.expires_at;
+            out.expires_in_sec = refreshedValue.expires_at - nowAfter;
+            out.next_refresh_due_in_sec = out.expires_in_sec - refreshThresholdSec;
+            out.probe_after_refresh_ok = true;
+            out.ok = true;
+          } else {
+            counters.refresh_fail++;
+            if (refreshed.transient) counters.transient_fail++;
+            if (refreshed.permanent) counters.permanent_fail++;
+            if (String(refreshed.error || '').includes('principal mismatch')) counters.principal_mismatch++;
+            out.refresh_ok = false;
+            out.refresh_error = refreshed.error;
+            out.failure_kind = refreshed.permanent ? 'permanent' : (refreshed.transient ? 'transient' : 'unknown');
+            out.ok = false;
+          }
+        } else {
+          out.ok = probe.ok && expiresIn > 0;
+        }
+        if (out.ok) counters.shop_ok++;
+        else counters.shop_fail++;
         results.push(out);
       }
-      audit('token_health_scan', { run_refresh: runRefresh, ...counters });
-      return jsonResp({ ok: true, run_refresh: runRefresh, counters, results });
+
+      let merchantResult: any = null;
+      if (includeMerchant) {
+        counters.total++;
+        counters.merchant_total++;
+        const { data: merchantRow } = await supabase
+          .from('shopee_tokens')
+          .select('region, merchant_id, expires_at, is_sandbox, access_token')
+          .eq('region', '_MERCHANT')
+          .maybeSingle();
+        if (!merchantRow) {
+          counters.missing_token++;
+          counters.merchant_fail++;
+          merchantResult = {
+            principal: 'merchant',
+            region: '_MERCHANT',
+            ok: false,
+            error: 'merchant_row_missing',
+            refresh_skipped: 'missing_token_row',
+          };
+        } else {
+          const expiresIn = Number(merchantRow.expires_at || 0) - now;
+          merchantResult = {
+            principal: 'merchant',
+            region: '_MERCHANT',
+            merchant_id: merchantRow.merchant_id,
+            expires_in_sec: expiresIn,
+            refresh_threshold_sec: refreshThresholdSec,
+            next_refresh_due_in_sec: expiresIn - refreshThresholdSec,
+          };
+          const probe = merchantRow.access_token && merchantRow.merchant_id
+            ? await probeMerchantToken(app, merchantRow.access_token, merchantRow.merchant_id)
+            : { ok: false, http_status: 0, error: 'merchant_principal_missing', message: 'missing access_token or merchant_id', request_id: null };
+          if (probe.ok) counters.probe_ok++;
+          else counters.probe_fail++;
+          merchantResult.probe_ok = probe.ok;
+          merchantResult.probe_http_status = probe.http_status;
+          merchantResult.probe_error = probe.error || null;
+          merchantResult.probe_message = probe.message || null;
+          merchantResult.category_count = (probe as any).category_count ?? null;
+
+          const refreshReasons: string[] = [];
+          if (expiresIn <= refreshThresholdSec) refreshReasons.push('pre_expiry');
+          if (!probe.ok) refreshReasons.push('probe_failed');
+          merchantResult.refresh_reasons = refreshReasons;
+          merchantResult.refresh_needed = runRefresh && refreshReasons.length > 0;
+          if (runRefresh && refreshReasons.length > 0) {
+            counters.refresh_attempted++;
+            if (refreshReasons.includes('pre_expiry')) counters.pre_expiry_refresh++;
+            const refreshed = await refreshWithRetry('merchant:_MERCHANT', () => refreshMerchantRowTokenStrict(), maxRefreshAttempts, retryBaseMs);
+            merchantResult.refresh_attempts = refreshed.attempts;
+            if (refreshed.ok) {
+              counters.refresh_ok++;
+              const refreshedValue = refreshed.value;
+              const nowAfter = Math.floor(Date.now() / 1000);
+              const afterProbe = await probeMerchantToken(app, refreshedValue.access_token, refreshedValue.merchant_id);
+              merchantResult.refresh_ok = true;
+              merchantResult.refreshed_expires_at = refreshedValue.expires_at;
+              merchantResult.expires_in_sec = refreshedValue.expires_at - nowAfter;
+              merchantResult.next_refresh_due_in_sec = merchantResult.expires_in_sec - refreshThresholdSec;
+              merchantResult.probe_after_refresh_ok = afterProbe.ok;
+              merchantResult.probe_after_refresh_error = afterProbe.error || null;
+              merchantResult.ok = afterProbe.ok;
+            } else {
+              counters.refresh_fail++;
+              if (refreshed.transient) counters.transient_fail++;
+              if (refreshed.permanent) counters.permanent_fail++;
+              merchantResult.refresh_ok = false;
+              merchantResult.refresh_error = refreshed.error;
+              merchantResult.failure_kind = refreshed.permanent ? 'permanent' : (refreshed.transient ? 'transient' : 'unknown');
+              merchantResult.ok = false;
+            }
+          } else {
+            merchantResult.ok = probe.ok && expiresIn > 0;
+          }
+          if (merchantResult.ok) counters.merchant_ok++;
+          else counters.merchant_fail++;
+        }
+        results.push(merchantResult);
+      }
+
+      const failures = results.filter((r: any) => !r.ok);
+      const ok = failures.length === 0;
+      audit('token_health_scan', {
+        run_refresh: runRefresh,
+        refresh_threshold_sec: refreshThresholdSec,
+        max_refresh_attempts: maxRefreshAttempts,
+        target_regions: targetRegions,
+        ...counters,
+      });
+      return jsonResp({
+        ok,
+        overall_ok: ok,
+        run_refresh: runRefresh,
+        include_merchant: includeMerchant,
+        target_regions: targetRegions,
+        refresh_threshold_sec: refreshThresholdSec,
+        max_refresh_attempts: maxRefreshAttempts,
+        counters,
+        failures: failures.map((r: any) => ({
+          principal: r.principal,
+          region: r.region,
+          shop_id: r.shop_id || null,
+          merchant_id: r.merchant_id || null,
+          error: r.error || r.probe_error || r.refresh_error || null,
+          failure_kind: r.failure_kind || null,
+        })),
+        shop_results: results.filter((r: any) => r.principal === 'shop'),
+        merchant_result: merchantResult,
+        results,
+      });
     }
     if (action === 'shop_info') return jsonResp(await shopApiCall(region, '/api/v2/shop/get_shop_info'));
     // Debug: raw shop API call. GET /raw_call?region=SG&path=/api/v2/...&q=k1=v1&q=k2=v2
@@ -1753,10 +2394,10 @@ Deno.serve(async (req) => {
 
     // --- v20: product registration helpers ---
 
-    // GET /proxy_image?url=<encoded> ??proxy StarOneMall images with CORS headers for browser canvas use
+    // GET /proxy_image?url=<encoded> - proxy only StarOneMall/known CDN images for browser canvas use.
     if (action === 'proxy_image') {
       const imageUrlRaw = url.searchParams.get('url') || '';
-      if (!imageUrlRaw) return jsonResp({ ok: false, error: 'url required' }, 400);
+      if (!imageUrlRaw) return imageProxyError('url required', 400);
       try {
         let normalized = imageUrlRaw.trim();
         if (normalized.startsWith('//')) normalized = 'https:' + normalized;
@@ -1771,80 +2412,167 @@ Deno.serve(async (req) => {
           let upstream: URL;
           try { upstream = new URL(imageUrl); } catch { continue; }
           if (upstream.protocol !== 'https:' && upstream.protocol !== 'http:') continue;
+          const targetCheck = await assertPublicProxyTarget(upstream);
+          if (!targetCheck.ok) return imageProxyError(targetCheck.error || 'proxy_target_blocked', targetCheck.status || 403);
+          if (/\.svg(\?|$)/i.test(upstream.pathname)) return imageProxyError('svg_not_allowed', 415);
 
           const referers = Array.from(new Set([
             `${upstream.protocol}//${upstream.hostname}/`,
             'https://www.staronemall.com/',
-            'http://www.staronemall.com/',
           ]));
 
           for (const referer of referers) {
             let r: Response;
             try {
               r = await fetch(imageUrl, {
+                redirect: 'manual',
                 headers: {
                   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                  'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+                  'Accept': 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*;q=0.8',
                   'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
                   'Referer': referer,
                 },
               });
             } catch (e: any) {
-              lastErr = `fetch exception (url=${imageUrl}, referer=${referer}): ${String(e?.message || e)}`;
+              lastErr = 'upstream_fetch_failed';
+              continue;
+            }
+            if (r.status >= 300 && r.status < 400) {
+              lastErr = 'upstream_redirect_blocked';
               continue;
             }
             if (r.ok) {
-              const ct = r.headers.get('content-type') || 'image/jpeg';
+              const ct = r.headers.get('content-type') || '';
+              if (!isSupportedImageContentType(ct)) return imageProxyError('upstream_content_type_not_image', 415);
+              const len = Number(r.headers.get('content-length') || 0);
+              if (len > PROXY_IMAGE_MAX_BYTES) return imageProxyError('upstream_image_too_large', 413);
               const buf = await r.arrayBuffer();
-              return new Response(buf, { status: 200, headers: { 'Content-Type': ct, ...CORS } });
+              if (buf.byteLength > PROXY_IMAGE_MAX_BYTES) return imageProxyError('upstream_image_too_large', 413);
+              const bytes = new Uint8Array(buf);
+              if (isSvgLike(ct, bytes)) return imageProxyError('svg_not_allowed', 415);
+              audit('proxy_image_ok', { host: upstream.hostname, bytes: buf.byteLength, content_type: ct });
+              return new Response(buf, { status: 200, headers: { 'Content-Type': ct, ...IMAGE_PROXY_HEADERS } });
             }
-            lastErr = `upstream ${r.status} (url=${imageUrl}, referer=${referer})`;
+            lastErr = `upstream_${r.status}`;
           }
         }
-        return jsonResp({ ok: false, error: lastErr }, 502);
+        return imageProxyError(lastErr, 502);
       } catch (e: any) {
-        return jsonResp({ ok: false, error: String(e?.message || e) }, 502);
+        audit('proxy_image_error', { error: String(e?.message || e) });
+        return imageProxyError('proxy_image_failed', 502);
       }
     }
 
-    // POST /upload_image ??decode base64 JPEG and upload to Shopee media space
-    // Body: { region, image_base64 }  Returns: { ok, image_url }
+    // POST /upload_image - validate a base64 JPEG/PNG and upload to Shopee media space.
+    // Body: { region, image_base64, source_url?, main_image_url?, layer_version?, output_hash? }
     if (action === 'upload_image' && req.method === 'POST') {
-      const body = await req.json();
-      const r = body.region || 'SG';
-      const raw_b64: string = body.image_base64 || '';
-      if (!raw_b64) return jsonResp({ ok: false, error: 'image_base64 required' }, 400);
-      // Strip data URL prefix if present
-      const b64 = raw_b64.replace(/^data:[^;]+;base64,/, '');
-      const binaryStr = atob(b64);
-      const bytes = new Uint8Array(binaryStr.length);
-      for (let i = 0; i < binaryStr.length; i++) bytes[i] = binaryStr.charCodeAt(i);
+      const body = await req.json().catch(() => null);
+      if (!body || typeof body !== 'object') return jsonResp({ ok: false, error: 'invalid_json' }, 400);
+      const r = normalizeRegion(body.region);
+      if (!r) return jsonResp({ ok: false, error: 'invalid_region', allowed_regions: OPERATING_REGIONS }, 400);
 
-      const app = await getApp();
-      const t = await getValidToken(r, 'shop');
-      const path = '/api/v2/media_space/upload_image';
-      const ts = Math.floor(Date.now() / 1000);
-      const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}${t.access_token}${t.shop_id}`);
-      const qp = new URLSearchParams({
-        partner_id: String(app.partner_id), timestamp: String(ts),
-        access_token: t.access_token, shop_id: String(t.shop_id), sign,
+      const decoded = decodeBase64Image(body.image_base64 || '');
+      if (!decoded.ok) return jsonResp({ ok: false, error: decoded.error }, decoded.error === 'image_too_large' ? 413 : 400);
+      const inspected = inspectUploadImage(decoded.bytes, decoded.mimeHint);
+      if (!inspected.ok) {
+        return jsonResp({
+          ok: false,
+          error: inspected.error,
+          width: (inspected as any).width,
+          height: (inspected as any).height,
+        }, inspected.error === 'image_dimensions_out_of_range' ? 413 : 415);
+      }
+
+      const sourceUrl = String(body.source_url || '').trim();
+      const mainImageUrl = String(body.main_image_url || '').trim();
+      const layerVersion = String(body.layer_version || '').trim();
+      const outputHash = String(body.output_hash || '').trim();
+      const hasGeneratedKey = !!(sourceUrl && mainImageUrl && layerVersion && outputHash);
+      const idempotencyKeyHash = hasGeneratedKey
+        ? await sha256Hex({ sourceUrl, mainImageUrl, layerVersion, outputHash, region: r })
+        : '';
+      const payloadHash = hasGeneratedKey
+        ? `upload_image:${idempotencyKeyHash}:${Math.floor(Date.now() / GENERATED_UPLOAD_CACHE_TTL_MS)}`
+        : await sha256Hex({ action: 'upload_image', region: r, outputHash: outputHash || await sha256Hex(decoded.bytes), bytes: decoded.bytes.byteLength });
+      const requestPayload = {
+        region: r,
+        source_url: sourceUrl || null,
+        main_image_url: mainImageUrl || null,
+        layer_version: layerVersion || null,
+        output_hash: outputHash || null,
+        idempotency_key_hash: idempotencyKeyHash || null,
+        bytes: decoded.bytes.byteLength,
+        mime: inspected.mime,
+        width: inspected.width,
+        height: inspected.height,
+      };
+
+      if (hasGeneratedKey) {
+        const cached = await findRecentGeneratedUpload(idempotencyKeyHash, r);
+        const cachedResponse = cached?.response || null;
+        if (cachedResponse?.image_id) {
+          audit('upload_image_cache_hit', { region: r, idempotency_key_hash: idempotencyKeyHash, log_id: cached.id });
+          return jsonResp({
+            ok: true,
+            region: r,
+            image_url: cachedResponse.image_url || '',
+            image_id: cachedResponse.image_id,
+            request_id: cachedResponse.request_id || null,
+            cached: true,
+            previous_log_id: cached.id,
+          });
+        }
+      }
+
+      audit('upload_image_started', {
+        region: r,
+        bytes: decoded.bytes.byteLength,
+        mime: inspected.mime,
+        width: inspected.width,
+        height: inspected.height,
+        idempotency_key_hash: idempotencyKeyHash || null,
       });
-      const uploadUrl = `https://${host(app.is_sandbox)}${path}?${qp}`;
-      const formData = new FormData();
-      formData.append('image', new Blob([bytes], { type: 'image/jpeg' }), 'product.jpg');
-      const uploadResp = await fetch(uploadUrl, { method: 'POST', body: formData });
-      const uploadJson = await uploadResp.json();
-      if (uploadJson.error) return jsonResp({ ok: false, region: r, error: uploadJson.error, message: uploadJson.message, raw: uploadJson }, 502);
-      // Response shape: response.image_info.image_url_list[]{image_url_region, image_url} (newer format),
-      // older format: response.image_url_list[]{url|image_url}, or response.image_url
-      const info = uploadJson.response?.image_info || uploadJson.response || {};
-      const list = info.image_url_list || uploadJson.response?.image_url_list || [];
-      const matched = list.find((e: any) => String(e.image_url_region || '').toUpperCase() === r);
-      const image_url = matched?.image_url || matched?.url
-        || list[0]?.image_url || list[0]?.url
-        || uploadJson.response?.image_url || '';
-      const image_id = info.image_id || uploadJson.response?.image_id || '';
-      return jsonResp({ ok: true, region: r, image_url, image_id, raw: uploadJson });
+      const uploadJson = await uploadShopeeMediaImage(r, decoded.bytes, inspected.mime, body);
+      const perImageErrors = extractPerImageErrors(uploadJson);
+      const imageInfo = extractUploadImageInfo(uploadJson, r);
+      const durationMs = uploadJson.duration_ms ?? null;
+
+      if (uploadJson.error || perImageErrors.length > 0 || !imageInfo.image_id) {
+        const clientError = uploadJson.error || perImageErrors[0]?.error || 'upload_image_failed';
+        const clientMessage = uploadJson.message || perImageErrors[0]?.message || 'Shopee media upload failed';
+        await insertUploadLog({
+          region: r,
+          payloadHash,
+          requestPayload,
+          status: 'error',
+          response: { error: uploadJson.error || null, message: uploadJson.message || null, per_image_errors: perImageErrors, request_id: uploadJson.request_id || null, auth_shape: uploadJson.auth_shape || null },
+          errorMsg: `${clientError} ${clientMessage}`.trim(),
+          requestId: uploadJson.request_id || null,
+          durationMs,
+          body,
+        });
+        audit('upload_image_failed', { region: r, error: clientError, message: clientMessage, request_id: uploadJson.request_id || null, per_image_errors: perImageErrors });
+        return jsonResp({ ok: false, region: r, error: clientError, message: clientMessage, per_image_errors: perImageErrors, request_id: uploadJson.request_id || null }, 502);
+      }
+
+      const responsePayload = {
+        image_url: imageInfo.image_url,
+        image_id: imageInfo.image_id,
+        request_id: imageInfo.request_id,
+        auth_shape: uploadJson.auth_shape || null,
+      };
+      const log = await insertUploadLog({
+        region: r,
+        payloadHash,
+        requestPayload,
+        status: 'ok',
+        response: responsePayload,
+        requestId: imageInfo.request_id,
+        durationMs,
+        body,
+      });
+      audit('upload_image_ok', { region: r, image_id: imageInfo.image_id, request_id: imageInfo.request_id, log_id: log.id || null, auth_shape: uploadJson.auth_shape || null });
+      return jsonResp({ ok: true, region: r, image_url: imageInfo.image_url, image_id: imageInfo.image_id, request_id: imageInfo.request_id, cached: false });
     }
 
     // POST /add_item ??create a new Shopee product listing (shop-level, unlisted by default)
@@ -1942,6 +2670,7 @@ Deno.serve(async (req) => {
 
     return jsonResp({ ok: false, error: `unknown: ${action}` }, 404);
   } catch (e: any) {
-    return jsonResp({ ok: false, error: String(e?.message || e), stack: e?.stack }, 500);
+    audit('request_unhandled_error', { action, error: String(e?.message || e), stack: e?.stack ? String(e.stack).slice(0, 800) : null });
+    return jsonResp({ ok: false, error: 'internal_error', message: 'Unexpected shopee-bridge error' }, 500);
   }
 });

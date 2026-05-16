@@ -2257,6 +2257,23 @@ Deno.serve(async (req) => {
       const result = await shopApiCall(region, '/api/v2/product/get_model_list', { query: { item_id } });
       return jsonResp({ ok: !result.error, region, item_id, result });
     }
+    if (action === 'update_global_dts' && req.method === 'POST') {
+      // Plan: plans/shopee-dts-bulk-update-plan.md. Single API call applies DTS to all
+      // published shops (KRSC seller — global_product API only).
+      const body = await req.json();
+      const global_item_id = parseInt(body.global_item_id);
+      const days_to_ship = parseInt(body.days_to_ship);
+      const is_pre_order = !!body.is_pre_order;
+      if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
+      if (!Number.isFinite(days_to_ship) || days_to_ship < 1 || days_to_ship > 30) {
+        return jsonResp({ ok: false, error: 'days_to_ship must be int 1-30' }, 400);
+      }
+      const result = await merchantApiCall(region, '/api/v2/global_product/update_global_item', {
+        method: 'POST',
+        body: { global_item_id, pre_order: { is_pre_order, days_to_ship } },
+      });
+      return jsonResp({ ok: !result.error, region, global_item_id, days_to_ship, is_pre_order, result });
+    }
     if (action === 'global_items') {
       const page_size = parseInt(url.searchParams.get('page_size') || '50');
       const offset = url.searchParams.get('offset') || '';

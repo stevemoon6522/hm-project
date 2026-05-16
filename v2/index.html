@@ -7,16 +7,19 @@
   <link rel="icon" href="data:,">
   <style>
     :root {
-      --accent: #2563eb;
-      --accent-strong: #1d4ed8;
-      --bg: #f7f8fa;
-      --border: #d8dde7;
+      --accent: #ff2d8f;
+      --accent-strong: #e02480;
+      --accent-2: #6610d4;
+      --bg: #fff8fc;
       --panel: #ffffff;
-      --text: #172033;
-      --muted: #667085;
+      --text: #0f172a;
+      --muted: #5b4365;
+      --border: #dbc0d7;
       --green: #087443;
       --red: #b42318;
       --yellow: #a15c07;
+      --gradient-accent: linear-gradient(90deg, #ff2d8f 0%, #6610d4 100%);
+      --gradient-soft: linear-gradient(135deg, #fff5fa 0%, #faf3ff 100%);
       --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
 
@@ -24,7 +27,8 @@
     body {
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      background: var(--bg);
+      background: var(--gradient-soft);
+      background-attachment: fixed;
       color: var(--text);
       font-size: 14px;
     }
@@ -32,6 +36,7 @@
     header {
       background: var(--panel);
       border-bottom: 1px solid var(--border);
+      box-shadow: 0 1px 6px rgba(102, 16, 212, .08);
       padding: 12px 18px;
       display: flex;
       align-items: center;
@@ -42,8 +47,8 @@
       z-index: 10;
     }
     h1 { font-size: 18px; margin: 0; letter-spacing: 0; }
-    .subhead { color: var(--muted); font-size: 12px; }
-    .status { font-size: 12px; color: var(--muted); }
+    .subhead { color: var(--muted); font-size: 12px; font-weight: 500; }
+    .status { font-size: 12px; color: var(--muted); font-weight: 500; }
     .status.ok { color: var(--green); }
     .status.err { color: var(--red); }
 
@@ -64,15 +69,16 @@
       border: 1px solid var(--border);
       border-radius: 6px;
       padding: 8px 10px;
-      background: #fff;
+      background: #fffdfd;
       color: var(--text);
       font: inherit;
       min-width: 0;
     }
     textarea { resize: vertical; line-height: 1.45; }
     input:focus, textarea:focus, select:focus {
-      outline: 2px solid rgba(37, 99, 235, .18);
-      border-color: var(--accent);
+      outline: 2px solid rgba(255, 45, 143, .2);
+      border-color: #cc2d97;
+      box-shadow: 0 0 0 1px rgba(102, 16, 212, .16);
     }
 
     button {
@@ -83,22 +89,31 @@
       padding: 8px 12px;
       cursor: pointer;
       font: inherit;
+      font-weight: 600;
       white-space: nowrap;
+      transition: background-color .12s, border-color .12s, color .12s, box-shadow .12s;
+      box-shadow: 0 1px 0 rgba(15, 23, 42, .03);
+    }
+    button:hover {
+      background: #fff3fa;
+      border-color: #d9bbd1;
     }
     button.primary {
-      background: var(--accent);
-      border-color: var(--accent);
+      background: var(--gradient-accent);
+      border-color: transparent;
       color: #fff;
       font-weight: 600;
+      box-shadow: 0 2px 10px rgba(255, 45, 143, .26);
     }
-    button.primary:hover { background: var(--accent-strong); }
-    button:disabled { opacity: .55; cursor: not-allowed; }
+    button.primary:hover { filter: brightness(1.05); border-color: transparent; }
+    button:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 
     .panel {
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 8px;
       overflow: hidden;
+      box-shadow: 0 2px 8px rgba(102, 16, 212, .06);
     }
     table {
       width: 100%;
@@ -107,13 +122,13 @@
     }
     th, td {
       padding: 9px 10px;
-      border-bottom: 1px solid #edf0f5;
+      border-bottom: 1px solid #ead8e8;
       text-align: left;
       vertical-align: top;
     }
     th {
-      background: #f1f4f9;
-      color: #344054;
+      background: #faeef8;
+      color: #3c1d57;
       font-size: 12px;
       font-weight: 700;
     }
@@ -126,14 +141,14 @@
       border-radius: 999px;
       padding: 2px 7px;
       font-size: 11px;
-      color: var(--muted);
-      background: #fff;
+      color: #523563;
+      background: #fff6fc;
       margin: 1px 3px 1px 0;
     }
     .empty {
       padding: 36px 18px;
       text-align: center;
-      color: var(--muted);
+      color: #644576;
       background: #fff;
     }
     .auth-panel {
@@ -305,15 +320,16 @@
       margin-bottom: 18px; overflow-x: auto;
     }
     .nav-tab {
-      padding: 9px 16px; background: none; border: none; border-bottom: 2px solid transparent;
+      padding: 9px 16px; background: transparent; border: none; border-bottom: 2px solid transparent;
       cursor: pointer; font: inherit; font-size: 13px; color: var(--muted);
-      white-space: nowrap; margin-bottom: -1px; transition: color .14s, border-color .14s;
+      font-weight: 600;
+      white-space: nowrap; margin-bottom: -1px; transition: color .14s, border-color .14s, background-color .14s;
     }
-    .nav-tab:hover { color: var(--text); }
-    .nav-tab.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+    .nav-tab:hover { color: var(--text); background: #fff2f9; }
+    .nav-tab.active { color: #5c24b0; border-bottom-color: var(--accent); background: #f8ecff; }
     .badge-krsc {
       display: inline-block; padding: 1px 6px; border-radius: 4px;
-      background: #eef2ff; color: var(--accent); font-size: 10px;
+      background: #f8ecff; color: #5c24b0; font-size: 10px;
       letter-spacing: .1em; text-transform: uppercase; margin-left: 6px; vertical-align: middle;
     }
 
@@ -333,7 +349,8 @@
 
     /* ── Wizard steps (plan §5-1-A) ── */
     .wizard-steps {
-      display: flex; margin-bottom: 24px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
+      display: grid; grid-template-columns: repeat(5, minmax(128px, 1fr));
+      margin-bottom: 24px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
     }
     .step-pill {
       flex: 1; padding: 10px 12px; background: #f7f8fa; border-right: 1px solid var(--border);
@@ -343,6 +360,11 @@
     .step-pill.active { background: #eef2ff; color: var(--accent); font-weight: 600; }
     .step-pill.done { background: #f0fdf4; color: var(--green); }
     .step-pill .sn { font-weight: 700; margin-right: 5px; }
+    @media (max-width: 860px) {
+      .wizard-steps { grid-template-columns: 1fr; }
+      .step-pill { border-right: none; border-bottom: 1px solid var(--border); }
+      .step-pill:last-child { border-bottom: none; }
+    }
 
     /* ── Wizard step bodies ── */
     .step-body { display: none; }
@@ -415,7 +437,6 @@
     .section-sep { font-size: 11px; letter-spacing: .15em; text-transform: uppercase; color: var(--muted);
       margin: 20px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
     .section-sep:first-child { margin-top: 0; }
-
     .lookup-panel {
       border: 1px solid var(--border); border-radius: 7px; background: #fffdfd;
       padding: 12px; margin-bottom: 16px;
@@ -460,9 +481,11 @@
     /* wizard btn row */
     .wbtn-row { display: flex; gap: 10px; margin-top: 24px; justify-content: flex-end; }
     .btn-dry {
-      background: none; border-color: var(--accent); color: var(--accent);
+      background: #fff;
+      border-color: var(--accent-2);
+      color: var(--accent-2);
     }
-    .btn-dry:hover { background: #eef2ff; }
+    .btn-dry:hover { background: #f8ecff; }
     .btn-live { background: var(--red); border-color: var(--red); color: #fff; }
     .btn-live:hover { background: #8f1a10; }
 
@@ -648,19 +671,19 @@
     }
     .cat-table-wrap { overflow-x: auto; }
     .cat-table { table-layout: auto; min-width: 1100px; }
-    .cat-table th, .cat-table td { padding: 7px 9px; border-bottom: 1px solid #edf0f5; vertical-align: middle; }
-    .cat-table th { background: #f1f4f9; font-size: 11px; font-weight: 700; white-space: nowrap; }
+    .cat-table th, .cat-table td { padding: 7px 9px; border-bottom: 1px solid #ead8e8; vertical-align: middle; }
+    .cat-table th { background: #faeef8; color: #3c1d57; font-size: 11px; font-weight: 700; white-space: nowrap; }
     .cat-cb { width: auto; }
     /* lifecycle badges */
     .badge-pre  { background: #ede9fe; color: #6d28d9; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 600; }
     .badge-rdy  { background: #d1fae5; color: #065f46; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 600; }
-    .badge-none { background: #f1f4f9; color: var(--muted); border-radius: 4px; padding: 2px 6px; font-size: 10px; }
+    .badge-none { background: #f7ebf6; color: #6a4b79; border-radius: 4px; padding: 2px 6px; font-size: 10px; }
     /* cost input */
     .cat-cost-input {
       width: 90px; padding: 4px 6px; font-size: 12px;
       border: 1px solid var(--border); border-radius: 4px; text-align: right;
     }
-    .cat-cost-input:focus { border-color: var(--accent); outline: 2px solid rgba(37,99,235,.15); }
+    .cat-cost-input:focus { border-color: var(--accent); outline: 2px solid rgba(255,45,143,.2); }
     .cat-cost-input.cost-warn { border-color: #e89b00; background: #fffbeb; }
     /* row warnings */
     .cat-row-warn { background: #fffbeb !important; }
@@ -708,13 +731,14 @@
     .hist-badge-ok      { background: #d1fae5; color: #065f46; }
     .hist-badge-dry     { background: #e0f2fe; color: #0369a1; }
     .hist-badge-error   { background: #fee2e2; color: var(--red); }
-    .hist-badge-skipped { background: #f1f4f9; color: var(--muted); }
+    .hist-badge-skipped { background: #f7ebf6; color: #6a4b79; }
     /* expand-toggle rows */
     #hist-body tr { cursor: pointer; }
-    #hist-body tr:hover td { background: #f7f8fa; }
-    #hist-body tr.hist-expanded td { background: #eef2ff; }
+    #hist-body tr:hover td { background: #fff3fa; }
+    #hist-body tr.hist-expanded td { background: #f8ecff; }
     /* hash copy button */
     .hist-hash-copy { font-size: 10px; padding: 1px 5px; margin-left: 4px; border-radius: 3px; }
+
     /* ── Daily close dashboard ── */
     .dc-header {
       display: flex;
@@ -894,7 +918,7 @@
     </div>
 
     <!-- ═══════════════════════════════════════════════
-         VIEW: 상품 등록 — 4-step wizard (plan §5-1-A)
+         VIEW: 상품 등록 — 5-section Seller Centre flow (plan §5-1-A)
          Phase A0 + A1: add_global_item → add_global_model → create_publish_task
          All fields mirror docs_ai JSON body_params exactly.
          ═══════════════════════════════════════════════ -->
@@ -1331,7 +1355,6 @@
       </div><!-- /wstep-5 -->
 
     </div><!-- /view-register -->
-
 
     <!-- ═══════════════════════════════════════════════
          VIEW: 상품 목록 (existing product table)
@@ -1937,7 +1960,7 @@
     <div class="wiz-modal-body" id="wiz-modal-body"></div>
     <div class="wiz-modal-footer">
       <button onclick="closeWizModal()">취소</button>
-      <button id="wiz-modal-confirm-btn" class="btn-live" onclick="handleWizModalConfirm()" style="display:none;">🔥 실제 등록 (모의)</button>
+      <button id="wiz-modal-confirm-btn" class="btn-live" onclick="handleWizModalConfirm()" style="display:none;">Shopee publish payload 기록</button>
     </div>
   </div>
 </div>
@@ -2218,7 +2241,6 @@
     readyProductIds: new Set(),
     readyRunId: null,
     wizConfirmAction: null,
-
     registerFlow: {
       state: 'draft',
       validatedAt: null,
@@ -2315,11 +2337,6 @@
   }
 
   async function loadData() {
-    const { data: sessionData } = await db.auth.getSession();
-    if (!sessionData?.session) {
-      showAuth('');
-      return;
-    }
     showApp();
     els.productBody.innerHTML = '<tr><td colspan="6" class="empty">Loading products...</td></tr>';
     let [productsRes, listingsRes] = await Promise.all([
@@ -3344,7 +3361,7 @@
   // ════════════════════════════════════════════════════════════════
   // WIZARD STEP MANAGEMENT (plan §5-1-A)
   // ════════════════════════════════════════════════════════════════
-  const TOTAL_STEPS = 4;
+  const TOTAL_STEPS = 5;
   let currentWizStep = 1;
 
   function goToWizStep(n) {
@@ -3384,8 +3401,8 @@
     if (err) err.classList.add('show');
   }
 
-  function validateWizStep(step) {
-    clearWizErrors();
+  function validateWizStep(step, options = {}) {
+    if (options.clear !== false) clearWizErrors();
     let ok = true;
 
     if (step === 1) {
@@ -3393,10 +3410,51 @@
       if (!catId || catId < 1) { wizErr('w-category-id', 'werr-category-id'); ok = false; }
       if (!g('w-item-name').value.trim()) { wizErr('w-item-name', 'werr-item-name'); ok = false; }
       if (!g('w-description').value.trim()) { wizErr('w-description', 'werr-description'); ok = false; }
+      const imgRaw = g('w-image-ids').value.trim();
+      const imgIds = imgRaw.split(',').map((s) => s.trim()).filter(Boolean);
+      if (!imgIds.length) { wizErr('w-image-ids', 'werr-image-ids'); ok = false; }
+      if (imgIds.length > REGISTER_MAX_IMAGE_IDS) {
+        wizErr('w-image-ids', 'werr-image-ids');
+        showToast(`image_id_list는 최대 ${REGISTER_MAX_IMAGE_IDS}개까지 허용됩니다.`, 'err');
+        ok = false;
+      }
+    }
+
+    if (step === 2) {
+      const attrRaw = (g('w-attribute-list').value || '').trim();
+      if (attrRaw) {
+        try {
+          const parsed = JSON.parse(attrRaw);
+          if (!Array.isArray(parsed)) throw new Error('attribute_list must be an array');
+        } catch (_) {
+          wizErr('w-attribute-list', 'werr-attribute-list');
+          ok = false;
+        }
+      }
+    }
+
+    if (step === 3) {
       const price = parseFloat(g('w-original-price').value);
       if (!price || price <= 0) { wizErr('w-original-price', 'werr-original-price'); ok = false; }
       const stock = parseInt(g('w-stock').value);
       if (isNaN(stock) || stock < 0) { wizErr('w-stock', 'werr-stock'); ok = false; }
+      if (g('w-has-variants').checked) {
+        const variants = collectVariants();
+        if (!variants.length) ok = false;
+        const seen = new Set();
+        variants.forEach((variant) => {
+          if (!variant.optionName) ok = false;
+          const sku = String(variant.globalModelSku || '').trim();
+          if (sku && seen.has(sku)) ok = false;
+          if (sku) seen.add(sku);
+          if (!variant.originalPrice || variant.originalPrice <= 0) ok = false;
+          if (variant.stock == null || variant.stock < 0) ok = false;
+        });
+        if (!ok) showToast('옵션명, 가격, 재고를 확인하세요. SKU 중복은 저장할 수 없습니다.', 'err');
+      }
+    }
+
+    if (step === 4) {
       const wt = parseFloat(g('w-weight').value);
       if (!wt || wt <= 0) { wizErr('w-weight', 'werr-weight'); ok = false; }
       const dts = parseInt(g('w-days-to-ship').value);
@@ -3409,20 +3467,17 @@
       if (!pH || pH < 1) { wizErr('w-pkg-height', 'werr-pkg-height'); ok = false; }
     }
 
-    if (step === 2) {
-      const imgRaw = g('w-image-ids').value.trim();
-      const imgIds = imgRaw.split(',').map((s) => s.trim()).filter(Boolean);
-      if (!imgIds.length) { wizErr('w-image-ids', 'werr-image-ids'); ok = false; }
+    if (step === 5) {
+      if (!registerSelectedRegions().length) {
+        showToast('최소 1개 region을 선택하세요.', 'err');
+        ok = false;
+      }
     }
-
-    // step 3: optional variants, no blocking validation
-    // step 4: region checked in buildPayloads
 
     return ok;
   }
 
   function g(id) { return document.getElementById(id) || {}; }
-
 
   function registerSelectedRegions() {
     return ['SG', 'TW', 'TH', 'MY', 'PH'].filter((r) => {
@@ -3887,7 +3942,19 @@
     state.registerFlow.savedProductIds = [];
     state.registerFlow.masterKey = null;
     setRegisterFlowState('draft');
+  }
 
+  function bindRegisterDirtyTracking() {
+    const root = document.getElementById('view-register');
+    if (!root || root.dataset.dirtyBound) return;
+    root.dataset.dirtyBound = '1';
+    root.addEventListener('input', markRegisterDraft);
+    root.addEventListener('change', markRegisterDraft);
+  }
+
+  bindRegisterDirtyTracking();
+  bindRegisterStaronemallImage();
+  setRegisterFlowState('draft');
 
   // ════════════════════════════════════════════════════════════════
   // [PRE ORDER] NAME PREVIEW
@@ -3948,11 +4015,12 @@
     const rows = document.querySelectorAll('#w-vrows-container .vrow');
     return Array.from(rows).map((row, i) => {
       const id = row.id.replace('wvrow-', '');
+      const stockRaw = document.getElementById(`wv-stock-${id}`)?.value;
       return {
         optionName: (document.getElementById(`wv-name-${id}`)?.value || '').trim(),
         globalModelSku: (document.getElementById(`wv-sku-${id}`)?.value || '').trim() || undefined,
         originalPrice: parseFloat(document.getElementById(`wv-price-${id}`)?.value) || null,
-        stock: parseInt(document.getElementById(`wv-stock-${id}`)?.value) || null,
+        stock: stockRaw === '' || stockRaw == null ? null : parseInt(stockRaw),
         weight: parseFloat(document.getElementById(`wv-weight-${id}`)?.value) || undefined,
         tierIndex: [i],
       };
@@ -3970,8 +4038,7 @@
     const rawName = (g('w-item-name').value || '').trim();
     const itemName = prefixOn ? `[PRE ORDER] ${rawName}` : rawName;
 
-    const imgRaw = (g('w-image-ids').value || '').trim();
-    const imageIdList = imgRaw.split(',').map((s) => s.trim()).filter(Boolean);
+    const imageIdList = readRegisterImageIds().slice(0, REGISTER_MAX_IMAGE_IDS);
     const videoRaw = (g('w-video-id').value || '').trim();
     const brandId = parseInt(g('w-brand-id').value) || 0;
     const brandName = (g('w-brand-name').value || '').trim();
@@ -4016,6 +4083,16 @@
       if (brandId > 0) payload.brand.brand_id = brandId;
     }
 
+    const attrRaw = (g('w-attribute-list').value || '').trim();
+    if (attrRaw) {
+      try {
+        const attributeList = JSON.parse(attrRaw);
+        if (Array.isArray(attributeList)) payload.attribute_list = attributeList;
+      } catch (_) {
+        // validateWizStep surfaces the operator-facing error before save/publish.
+      }
+    }
+
     // video_upload_id (optional, max 1 per API spec: "Only accept one video_upload_id at most.")
     if (videoRaw) payload.video_upload_id = [videoRaw];
 
@@ -4052,7 +4129,7 @@
       }),
       days_to_ship: dts,                                      // int32, required at top-level
       // dimension fields: required at top-level per required_params
-      package_length: parseInt(g('w-pkg-length').value),      // inherit from step 1
+      package_length: parseInt(g('w-pkg-length').value),      // inherit from shipping step
       package_width:  parseInt(g('w-pkg-width').value),
       package_height: parseInt(g('w-pkg-height').value),
     };
@@ -4075,10 +4152,8 @@
     // required: global_item_id, shop_id, shop_region
     // item.pre_order.is_pre_order: required if item.pre_order is provided
     const dts = parseInt(g('w-days-to-ship').value);
-    const selectedRegions = ['SG', 'TW', 'TH', 'MY', 'PH'].filter((r) => {
-      const cb = document.getElementById(`w-reg-${r}`);
-      return cb && cb.checked;
-    });
+    const selectedRegions = registerSelectedRegions();
+    const imageIdList = readRegisterImageIds().slice(0, REGISTER_MAX_IMAGE_IDS);
 
     return selectedRegions.map((region) => ({
       global_item_id: globalItemId,
@@ -4087,6 +4162,7 @@
       shop_id: null,   // TODO: populate from get_publishable_shop
       shop_region: region,
       item: {
+        image: { image_id_list: imageIdList },
         pre_order: {
           is_pre_order: true,      // boolean, required when item.pre_order present
           days_to_ship: dts,       // int32, mandatory when is_pre_order=true
@@ -4096,10 +4172,7 @@
   }
 
   function buildAllWizPayloads(dryRun = true) {
-    const selectedRegions = ['SG', 'TW', 'TH', 'MY', 'PH'].filter((r) => {
-      const cb = document.getElementById(`w-reg-${r}`);
-      return cb && cb.checked;
-    });
+    const selectedRegions = registerSelectedRegions();
     if (!selectedRegions.length) { showToast('최소 1개 Region을 선택하세요.', 'err'); return null; }
 
     const addItemPayload = buildAddGlobalItemPayload();
@@ -4107,6 +4180,153 @@
     const publishPayloads = buildCreatePublishTaskPayloads(dryRun ? MOCK_GID : MOCK_GID);
 
     return { addItemPayload, addModelPayload, publishPayloads, dryRun };
+  }
+
+  function registerMasterSkuBase(addItemPayload) {
+    const explicitSku = String(addItemPayload.global_item_sku || '').trim();
+    if (explicitSku) return explicitSku;
+    const hashInput = JSON.stringify({
+      category_id: addItemPayload.category_id,
+      global_item_name: addItemPayload.global_item_name,
+      image: addItemPayload.image,
+    });
+    return `MD-${simpleHash(hashInput).toUpperCase()}`;
+  }
+
+  function registerMasterRowsFromPayloads(payloads) {
+    const addItemPayload = payloads.addItemPayload;
+    const baseSku = registerMasterSkuBase(addItemPayload);
+    const variants = g('w-has-variants').checked ? collectVariants() : [];
+    const baseWeightG = Math.round(Number(addItemPayload.weight || 0) * 1000);
+    const sourceUrlRaw = (g('w-staronemall-url').value || '').trim();
+    const sourceUrl = sourceUrlRaw && isValidStaronemallUrl(sourceUrlRaw) ? normalizeStaronemallInput(sourceUrlRaw) : null;
+
+    if (variants.length) {
+      return variants.map((variant, index) => ({
+        sku: variant.globalModelSku || `${baseSku}-${String(index + 1).padStart(2, '0')}`,
+        product_name: addItemPayload.global_item_name,
+        option_name: variant.optionName || `Option ${index + 1}`,
+        weight_g: Math.round(Number(variant.weight || addItemPayload.weight || 0) * 1000),
+        staronemall_url: sourceUrl,
+      }));
+    }
+
+    return [{
+      sku: baseSku,
+      product_name: addItemPayload.global_item_name,
+      option_name: '',
+      weight_g: baseWeightG,
+      staronemall_url: sourceUrl,
+    }];
+  }
+
+  function registerProductPayload(row, mode = 'insert', includeLifecycle = true) {
+    const payload = {
+      sku: row.sku,
+      product_name: row.product_name,
+      option_name: row.option_name || null,
+      weight_g: row.weight_g || 0,
+      staronemall_url: row.staronemall_url || null,
+    };
+    if (mode === 'insert') {
+      payload.cost_krw = 0;
+      payload.position = 0;
+      payload.shopee_item_id = null;
+    }
+    if (includeLifecycle) payload.lifecycle_state = 'pre_order';
+    return payload;
+  }
+
+  async function registerUpdateProductWithFallback(productId, row) {
+    const attempts = [
+      registerProductPayload(row, 'update', true),
+      registerProductPayload(row, 'update', false),
+    ];
+    let lastError = null;
+    for (const payload of attempts) {
+      const { error } = await db.from('products').update(payload).eq('id', productId);
+      if (!error) return { ok: true, id: productId };
+      lastError = error;
+      if (!/column|schema cache|Could not find|lifecycle_state/i.test(`${error.message || ''} ${error.details || ''}`)) break;
+    }
+    return { ok: false, error: lastError };
+  }
+
+  async function registerInsertProductsWithFallback(rows) {
+    const attempts = [
+      rows.map((row) => registerProductPayload(row, 'insert', true)),
+      rows.map((row) => registerProductPayload(row, 'insert', false)),
+    ];
+    let lastError = null;
+    for (const payload of attempts) {
+      const { data, error } = await db.from('products').insert(payload).select('id,sku');
+      if (!error) return { ok: true, rows: data || [] };
+      lastError = error;
+      if (!/column|schema cache|Could not find|lifecycle_state/i.test(`${error.message || ''} ${error.details || ''}`)) break;
+    }
+    return { ok: false, error: lastError };
+  }
+
+  async function saveRegisterMasterData(payloads) {
+    const rows = registerMasterRowsFromPayloads(payloads);
+    const uniqueRows = [];
+    const seen = new Set();
+    for (const row of rows) {
+      const sku = String(row.sku || '').trim();
+      if (!sku || seen.has(sku)) continue;
+      seen.add(sku);
+      uniqueRows.push({ ...row, sku });
+    }
+    if (!uniqueRows.length) throw new Error('저장할 SKU가 없습니다.');
+
+    const skuList = uniqueRows.map((row) => row.sku);
+    const { data: existingRows, error: existingErr } = await db.from('products').select('id,sku').in('sku', skuList);
+    if (existingErr) throw existingErr;
+
+    const existingBySku = new Map((existingRows || []).map((row) => [String(row.sku), row]));
+    const savedIds = [];
+    const toInsert = [];
+
+    for (const row of uniqueRows) {
+      const existing = existingBySku.get(row.sku);
+      if (existing) {
+        const updated = await registerUpdateProductWithFallback(existing.id, row);
+        if (!updated.ok) throw updated.error || new Error(`products update failed: ${row.sku}`);
+        savedIds.push(existing.id);
+      } else {
+        toInsert.push(row);
+      }
+    }
+
+    if (toInsert.length) {
+      const inserted = await registerInsertProductsWithFallback(toInsert);
+      if (!inserted.ok) throw inserted.error || new Error('products insert failed');
+      (inserted.rows || []).forEach((row) => savedIds.push(row.id));
+    }
+
+    const payloadHash = `master:${simpleHash(JSON.stringify({ rows: uniqueRows, addItemPayload: payloads.addItemPayload, addModelPayload: payloads.addModelPayload }))}`;
+    try {
+      const logRow = {
+        actor: 'v2-register',
+        action: 'register_master_save',
+        payload_hash: payloadHash,
+        request_payload: {
+          master_rows: uniqueRows,
+          add_global_item: payloads.addItemPayload,
+          add_global_model: payloads.addModelPayload,
+        },
+        status: 'ok',
+        rollback_policy: 'no_auto_rollback_resume_only',
+      };
+      const { error: logErr } = await db.from('shopee_mutation_log').insert(logRow);
+      if (logErr && !/duplicate key|does not exist|schema cache/i.test(logErr.message || '')) {
+        console.warn('[register] master save log insert failed:', logErr.message);
+      }
+    } catch (e) {
+      console.warn('[register] mutation log unavailable:', e.message || e);
+    }
+
+    return { rows: uniqueRows, savedIds, payloadHash };
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -4118,7 +4338,6 @@
     if (!p) return;
     showWizModal(p, false);
   };
-
 
   window.handleWizSaveMaster = async function() {
     if (!validateAllWizSteps(false)) return;
@@ -4160,7 +4379,6 @@
     showWizModal(p, true);
   };
 
-
   // ════════════════════════════════════════════════════════════════
   // WIZARD MODAL (payload preview)
   // ════════════════════════════════════════════════════════════════
@@ -4169,7 +4387,9 @@
   function showWizModal(payloads, isLive) {
     state.wizConfirmAction = null;
     _lastWizPayloads = payloads;
-    g('wiz-modal-title').textContent = isLive ? '🔥 실제 등록 — 실행 예정 API 호출' : '🚀 Dry-run 미리보기 — 실제 호출 없음';
+    g('wiz-modal-title').textContent = isLive
+      ? 'Shopee 발행 미리보기 — Master Data 저장 후 수동 단계'
+      : 'Payload 미리보기 — 저장/발행 호출 없음';
 
     const calls = [];
 
@@ -4203,8 +4423,8 @@
     });
 
     let html = isLive
-      ? '<div style="padding:8px 12px;background:#fff4f3;border:1px solid #f2aaa5;border-radius:6px;margin-bottom:14px;font-size:11px;color:var(--red);">⚠ Mock 모드 — 실제 Shopee API 미호출. console에 payload 출력됨.</div>'
-      : '<div style="padding:8px 12px;background:#eef2ff;border:1px solid #c7d7fd;border-radius:6px;margin-bottom:14px;font-size:11px;color:var(--accent);">🚀 Dry-run — 실제 호출 없음. global_item_id = ' + MOCK_GID + ' (mock)</div>';
+      ? '<div style="padding:8px 12px;background:#fff8ed;border:1px solid #f4c790;border-radius:6px;margin-bottom:14px;font-size:11px;color:#7a3e00;">Master Data 저장 완료 후 여는 별도 Shopee 단계입니다. get_publishable_shop/shop_id 연결 전까지 live API 호출은 차단되며, confirm은 console payload 기록만 수행합니다.</div>'
+      : '<div style="padding:8px 12px;background:#eef2ff;border:1px solid #c7d7fd;border-radius:6px;margin-bottom:14px;font-size:11px;color:var(--accent);">Payload preview — 저장/발행 호출 없음. global_item_id = ' + MOCK_GID + ' (mock)</div>';
 
     calls.forEach((c) => {
       html += `<div class="call-block">
@@ -4234,6 +4454,8 @@
   });
 
   function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
 
   // ════════════════════════════════════════════════════════════════
   // DAILY CLOSE VIEW (operator manual §9)
@@ -4729,10 +4951,6 @@
   }
 
   // ════════════════════════════════════════════════════════════════
-    return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  }
-
-  // ════════════════════════════════════════════════════════════════
   // MOCK SUBMIT (plan §5 — no real Shopee calls yet)
   // ════════════════════════════════════════════════════════════════
   window.executeMockSubmit = function() {
@@ -4745,9 +4963,8 @@
     //   3. For each region: GET /raw_call?region={r}&path=.../get_publishable_shop → get shop_id
     //   4. For each region: POST /raw_call?region={r}&path=.../create_publish_task
     //   5. For each region: poll GET /raw_call?region={r}&path=.../get_publish_task_result (5s, 60s timeout)
-    // TODO plan §5-1-A step 5: Storage.upsertProduct into Supabase products table:
-    //   { lifecycle_state:'pre_order', cost_price, weight, image_url, shopee_item_id }
-    //   Also insert product_shopee_listings rows per region with days_to_ship=50, title_state='PRE_ORDER'
+    // Master data persistence is handled earlier by handleWizSaveMaster().
+    // This secondary path only previews/logs the Shopee payloads until shop_id lookup is wired.
 
     console.log('// TODO LIVE CALL — add_global_item:', JSON.stringify(_lastWizPayloads.addItemPayload, null, 2));
     if (_lastWizPayloads.addModelPayload) {
@@ -4757,29 +4974,8 @@
       console.log(`// TODO LIVE CALL — create_publish_task [${p.shop_region}]:`, JSON.stringify(p, null, 2));
     });
 
-    showToast('✓ 등록 완료 (모의) — console에 payload 출력됨', 'ok');
-
-    // Reset wizard
-    setTimeout(() => {
-      goToWizStep(1);
-      ['w-category-id','w-item-name','w-description','w-item-sku','w-original-price',
-       'w-stock','w-weight','w-pkg-length','w-pkg-width','w-pkg-height',
-       'w-brand-name','w-image-ids','w-video-id'].forEach((id) => {
-        const el = g(id);
-        if (el && 'value' in el) el.value = '';
-      });
-      if (g('w-brand-id')) g('w-brand-id').value = '0';
-      if (g('w-condition')) g('w-condition').value = 'NEW';
-      if (g('w-days-to-ship')) g('w-days-to-ship').value = '50';
-      if (g('w-pre-order-prefix')) g('w-pre-order-prefix').checked = true;
-      if (g('w-has-variants')) g('w-has-variants').checked = false;
-      const vs = document.getElementById('w-variant-section');
-      if (vs) vs.style.display = 'none';
-      const vc = document.getElementById('w-vrows-container');
-      if (vc) vc.innerHTML = '';
-      _variantCount = 0;
-      updateNamePreview();
-    }, 1500);
+    showToast('Shopee publish payload 기록 완료 — 실제 API 호출 없음', 'ok');
+    setRegisterFlowState('publish-ready');
   };
 
   // ════════════════════════════════════════════════════════════════
@@ -6766,8 +6962,8 @@
   // ── Boot ────────────────────────────────────────────────────────
 
   initCatRegionFilters();
-  initDailyCloseListeners();
   initCatalogListeners();
+  initDailyCloseListeners();
   initPoRegionFilters();
   initPoListeners();
 

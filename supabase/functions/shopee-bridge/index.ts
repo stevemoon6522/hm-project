@@ -2274,6 +2274,49 @@ Deno.serve(async (req) => {
       });
       return jsonResp({ ok: !result.error, region, global_item_id, days_to_ship, is_pre_order, result });
     }
+    if (action === 'update_shop_item_dts' && req.method === 'POST') {
+      // Shop-level DTS update — tries shopApiCall (KRSC may block; we'll see the error).
+      // Body: { region, item_id, days_to_ship, is_pre_order }
+      const body = await req.json();
+      const r = String(body.region || region || '').toUpperCase();
+      const item_id = parseInt(body.item_id);
+      const days_to_ship = parseInt(body.days_to_ship);
+      const is_pre_order = !!body.is_pre_order;
+      if (!r) return jsonResp({ ok: false, error: 'region required' }, 400);
+      if (!item_id) return jsonResp({ ok: false, error: 'item_id required' }, 400);
+      if (!Number.isFinite(days_to_ship) || days_to_ship < 1 || days_to_ship > 30) {
+        return jsonResp({ ok: false, error: 'days_to_ship must be int 1-30' }, 400);
+      }
+      const result = await shopApiCall(r, '/api/v2/product/update_item', {
+        method: 'POST',
+        body: { item_id, pre_order: { is_pre_order, days_to_ship } },
+      });
+      return jsonResp({ ok: !result.error, region: r, item_id, days_to_ship, is_pre_order, result });
+    }
+    if (action === 'set_dts_sync' && req.method === 'POST') {
+      // Enable days_to_ship sync from global → shop for a list of shops. Required when
+      // shop_sync_list[].days_to_ship is false (default in some setups), otherwise
+      // update_global_item.pre_order.days_to_ship does NOT propagate to shop listings.
+      // Body: { shops: [{shop_id, shop_region}, ...] }
+      const body = await req.json();
+      const shops = Array.isArray(body.shops) ? body.shops : [];
+      if (!shops.length) return jsonResp({ ok: false, error: 'shops[] required' }, 400);
+      // Default: turn ON days_to_ship sync, leave other flags as the caller specified (default true).
+      const shop_sync_list = shops.map((s: any) => ({
+        shop_id: Number(s.shop_id),
+        shop_region: String(s.shop_region || '').toUpperCase(),
+        name_and_description: s.name_and_description !== false,
+        media_information: s.media_information !== false,
+        tier_variation_name_and_option: s.tier_variation_name_and_option !== false,
+        price: s.price !== false,
+        days_to_ship: s.days_to_ship !== false, // default true
+      }));
+      const result = await merchantApiCall(region, '/api/v2/global_product/set_sync_field', {
+        method: 'POST',
+        body: { shop_sync_list },
+      });
+      return jsonResp({ ok: !result.error, region, sent: shop_sync_list, result });
+    }
     if (action === 'global_items') {
       const page_size = parseInt(url.searchParams.get('page_size') || '50');
       const offset = url.searchParams.get('offset') || '';

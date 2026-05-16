@@ -3590,23 +3590,41 @@ async function _joomBulkSync() {
 })();
 
 /* ════════════════════════════════════════════════════════════════════
-   READY STOCK BULK — DTS=1 for all selected products (plan: plans/shopee-dts-bulk-update-plan.md)
-   Single button: applies is_pre_order=false + days_to_ship=1 to every selected row's
-   global_item_id via Shopee global_product/update_global_item. KRSC seller → all
-   published shops (SG/TW/MY/TH/PH/BR) get the same DTS automatically.
+   READY STOCK BULK — DTS=1 for all selected products + 모든 region.
+   Plan: plans/shopee-dts-bulk-update-plan.md.
+
+   학습 (2026-05-16): update_global_item 의 pre_order.days_to_ship 변경은 Global
+   catalog 에만 반영되고 shop-level item 에는 propagate 되지 않는다 (set_sync_field
+   호출해도 동일). 따라서 다음 흐름으로 동작:
+     1. update_global_item: Global catalog DTS = 1 (이후 새 publish 시 inherit)
+     2. 각 row 의 shopeeListings 에서 region/shop_item_id 추출 후 shop-level
+        product/update_item 으로 region 마다 직접 호출. Shopee 는 region 의
+        minimum DTS 로 자동 clamp (TW:1, SG/MY/PH:2, BR:3 typical).
+     3. is_pre_order=false 로 ready_stock 전환
+     4. DB lifecycle_state='ready_stock' 자동 갱신
    ════════════════════════════════════════════════════════════════════ */
 async function _readyStockBulkApply() {
   const selected = _getSelectedMasterRows();
   if (!selected.length) return;
-  // Dedupe by global_item_id (multiple variant rows share one parent).
-  // state.rows uses `itemId` (mapped from DB shopee_item_id via dbRowToProduct).
   const uniqueGids = [...new Set(selected.map(r => String(r.itemId || '').trim()).filter(s => /^\d+$/.test(s)))]
     .map(Number);
-  if (!uniqueGids.length) {
-    alert('선택된 상품에 Shopee global_item_id 가 없습니다.\n먼저 상품 검색 또는 매핑 동기화로 ID 를 채워주세요.');
+  // Build region/item_id targets from each row's shopeeListings
+  const shopTargets = [];
+  for (const row of selected) {
+    const listings = row.shopeeListings || {};
+    for (const region of SHOPEE_REGIONS) {
+      const l = listings[region];
+      if (!l?.shop_item_id) continue;
+      const item_id = parseInt(l.shop_item_id);
+      if (!Number.isFinite(item_id) || item_id <= 0) continue;
+      shopTargets.push({ row, region, item_id });
+    }
+  }
+  if (!uniqueGids.length && !shopTargets.length) {
+    alert('선택된 상품에 Shopee global_item_id 또는 region 매핑이 없습니다.\n먼저 상품 검색 또는 매핑 동기화로 ID 를 채워주세요.');
     return;
   }
-  if (!confirm(`${selected.length}개 row (${uniqueGids.length}개 global product) 의 모든 region 의 Days-to-Ship 을 1일로 변경합니다.\n(Ready Stock 처리 — 즉시 출고)\n\n계속하시겠습니까?`)) return;
+  if (!confirm(`${selected.length}개 row 의 Ready Stock 처리:\n• Global catalog: ${uniqueGids.length}개 product → DTS=1\n• Shop-level: ${shopTargets.length}개 (region, shop_item) → DTS=1 (region 별 최소값으로 자동 조정될 수 있음)\n• is_pre_order=false 로 전환\n\n계속하시겠습니까?`)) return;
 
   const btn = document.getElementById('ready-stock-bulk');
   const orig = btn ? btn.innerHTML : null;
@@ -3617,9 +3635,10 @@ async function _readyStockBulkApply() {
     'Content-Type': 'application/json',
   };
 
-  let ok = 0, fail = 0;
-  const errors = [];
-  const successfulGids = new Set();  // gid strings that successfully updated
+  // Phase 1: Update Global catalog (parallel chunk 5)
+  let globalOk = 0, globalFail = 0;
+  const globalErrors = [];
+  const successfulGids = new Set();
   const PARALLELISM = 5;
   for (let i = 0; i < uniqueGids.length; i += PARALLELISM) {
     const chunk = uniqueGids.slice(i, i + PARALLELISM);
@@ -3635,21 +3654,38 @@ async function _readyStockBulkApply() {
     for (let j = 0; j < results.length; j++) {
       const r = results[j];
       const gid = chunk[j];
-      if (r.status === 'fulfilled') {
-        ok++;
-        successfulGids.add(String(gid));
-      } else {
-        fail++;
-        errors.push(r.reason?.message || String(r.reason));
-      }
+      if (r.status === 'fulfilled') { globalOk++; successfulGids.add(String(gid)); }
+      else { globalFail++; globalErrors.push(r.reason?.message || String(r.reason)); }
     }
-    if (btn) btn.textContent = `⏳ ${Math.min((i + PARALLELISM), uniqueGids.length)}/${uniqueGids.length} 처리됨...`;
+    if (btn) btn.textContent = `⏳ Global ${Math.min((i + PARALLELISM), uniqueGids.length)}/${uniqueGids.length}...`;
   }
 
-  // Update DB lifecycle_state for the rows whose global_item was successfully updated
-  if (successfulGids.size > 0) {
+  // Phase 2: Update shop-level item per region (parallel chunk 5)
+  let shopOk = 0, shopFail = 0;
+  const shopErrors = [];
+  for (let i = 0; i < shopTargets.length; i += PARALLELISM) {
+    const chunk = shopTargets.slice(i, i + PARALLELISM);
+    const results = await Promise.allSettled(chunk.map(async (t) => {
+      const r = await fetch(`${SHOPEE_BRIDGE}/update_shop_item_dts`, {
+        method: 'POST', headers,
+        body: JSON.stringify({ region: t.region, item_id: t.item_id, days_to_ship: 1, is_pre_order: false }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(`${t.region}/${t.item_id}: ${j.error || j.result?.error || j.result?.message || 'unknown'}`);
+      return t;
+    }));
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j];
+      if (r.status === 'fulfilled') shopOk++;
+      else { shopFail++; shopErrors.push(r.reason?.message || String(r.reason)); }
+    }
+    if (btn) btn.textContent = `⏳ Shop ${Math.min((i + PARALLELISM), shopTargets.length)}/${shopTargets.length}...`;
+  }
+
+  // Phase 3: Update DB lifecycle_state for selected products (all that had ANY successful update)
+  if (successfulGids.size > 0 || shopOk > 0) {
     const productIdsToUpdate = selected
-      .filter(r => successfulGids.has(String(r.itemId)))
+      .filter(r => successfulGids.has(String(r.itemId)) || (r.shopeeListings && Object.values(r.shopeeListings).some(l => l?.shop_item_id)))
       .map(r => r.id);
     if (productIdsToUpdate.length) {
       try {
@@ -3661,14 +3697,16 @@ async function _readyStockBulkApply() {
   }
 
   const statusEl = document.getElementById('save-status');
-  const summary = `Ready Stock: ${ok}/${uniqueGids.length} global product 성공 · DTS=1 적용 (모든 region)`;
+  const allErrors = [...globalErrors, ...shopErrors];
+  const totalFail = globalFail + shopFail;
+  const summary = `Ready Stock: global ${globalOk}/${uniqueGids.length}, shop ${shopOk}/${shopTargets.length} 성공`;
   if (statusEl) {
-    statusEl.textContent = fail ? summary + ` · ${fail} 실패` : summary;
-    statusEl.style.color = fail ? '#d62754' : '#15803d';
-    statusEl.title = errors.slice(0, 20).join('\n');
-    setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; statusEl.title = ''; }, 10000);
+    statusEl.textContent = totalFail ? `${summary} · ${totalFail} 실패` : summary;
+    statusEl.style.color = totalFail ? '#d62754' : '#15803d';
+    statusEl.title = allErrors.slice(0, 20).join('\n');
+    setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; statusEl.title = ''; }, 12000);
   }
-  if (errors.length) console.warn('[ready-stock] errors:', errors);
+  if (allErrors.length) console.warn('[ready-stock] errors:', allErrors);
   if (btn) { btn.disabled = false; btn.innerHTML = orig; }
   try { await initStorage(); } catch (_) {}
 }

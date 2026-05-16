@@ -792,6 +792,8 @@
       <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
       <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
       <button class="btn" id="joom-bulk-sync" disabled title="선택된 행의 Joom SKU 를 lookup 하고 가격을 동기화 (lookup → DB 저장 → update-price)">🌐 Joom 동기화 (<span id="joom-sync-count">0</span>)</button>
+      <button class="btn" id="sheets-push" title="DB → Google Sheets 내보내기 (모든 row 덮어쓰기)">📤 Sheet 내보내기</button>
+      <button class="btn" id="sheets-pull" title="Google Sheets 에서 변경된 셀을 DB 에 적용 (먼저 미리보기 → 확인 → 적용)">📥 Sheet → DB</button>
       <button class="btn" id="bulk-clear-mapping" disabled title="선택된 상품의 Shopee region 매핑만 삭제 (상품은 유지)">🧹 매핑 삭제 (<span id="bulk-clear-count">0</span>)</button>
       <button class="btn danger" id="bulk-complete-remove" disabled title="선택된 상품을 완료 처리하고 상품 마스터에서 삭제">✅ 완료 처리 (<span id="bulk-complete-count">0</span>)</button>
     </div>
@@ -3578,6 +3580,124 @@ async function _joomBulkSync() {
     if (btn.dataset.bound) return;
     btn.dataset.bound = '1';
     btn.addEventListener('click', _joomBulkSync);
+  };
+  init();
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   SHEETS SYNC — 양방향 Google Sheets sync (plan: plans/spreadsheet-backup-plan.md)
+   ════════════════════════════════════════════════════════════════════ */
+const SHEETS_SYNC = SUPABASE_URL + '/functions/v1/sheets-sync';
+
+async function _sheetsPush() {
+  const tables = ['products', 'product_shopee_listings', 'country_settings'];
+  const btn = document.getElementById('sheets-push');
+  const orig = btn ? btn.innerHTML : null;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Sheet 내보내는 중...'; }
+  const headers = {
+    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+    'apikey': SUPABASE_ANON_KEY,
+  };
+  const results = [];
+  for (const table of tables) {
+    try {
+      const r = await fetch(`${SHEETS_SYNC}/push?table=${encodeURIComponent(table)}`, { headers });
+      const j = await r.json();
+      results.push({ table, ok: j.ok, rows: j.rows ?? 0, error: j.error || null });
+    } catch (e) {
+      results.push({ table, ok: false, error: e.message });
+    }
+  }
+  const okCount = results.filter(r => r.ok).length;
+  const fail = results.filter(r => !r.ok);
+  const summary = `Sheet 내보내기: ${okCount}/${results.length} 탭 성공 (${results.map(r => `${r.table}=${r.rows}`).join(', ')})`;
+  const statusEl = document.getElementById('save-status');
+  if (statusEl) {
+    statusEl.textContent = summary;
+    statusEl.style.color = fail.length ? '#d62754' : '#15803d';
+    statusEl.title = fail.map(r => `${r.table}: ${r.error}`).join('\n');
+    setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; statusEl.title = ''; }, 8000);
+  }
+  if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  if (fail.length) console.warn('[sheets-push] failures:', fail);
+}
+
+async function _sheetsPull() {
+  // 1. Preview first → show user the diff → confirm before applying
+  const tables = ['products', 'product_shopee_listings', 'country_settings'];
+  const btn = document.getElementById('sheets-pull');
+  const orig = btn ? btn.innerHTML : null;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ 변경 확인 중...'; }
+  const headers = {
+    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+    'apikey': SUPABASE_ANON_KEY,
+  };
+  const previews = [];
+  for (const table of tables) {
+    try {
+      const r = await fetch(`${SHEETS_SYNC}/preview-pull?table=${encodeURIComponent(table)}`, { headers });
+      const j = await r.json();
+      previews.push({ table, ok: j.ok, change_count: j.change_count ?? 0, changes: j.changes || [], error: j.error || null });
+    } catch (e) {
+      previews.push({ table, ok: false, error: e.message });
+    }
+  }
+  const totalChanges = previews.reduce((s, p) => s + p.change_count, 0);
+  if (totalChanges === 0) {
+    const statusEl = document.getElementById('save-status');
+    if (statusEl) {
+      statusEl.textContent = 'Sheet 에 변경 사항 없음 (DB 와 동일)';
+      statusEl.style.color = '#5a5a66';
+      setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 5000);
+    }
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+    return;
+  }
+  // Show summary + confirm
+  const summary = previews.map(p => `${p.table}: ${p.change_count} 변경`).join('\n');
+  const sample = previews.flatMap(p => (p.changes || []).slice(0, 3).map(c => `  ${p.table} ${c.pk}: ${(c.cells || []).map(ce => `${ce.col} "${ce.from}" → "${ce.to}"`).join(', ')}`)).slice(0, 10).join('\n');
+  const confirmMsg = `총 ${totalChanges}개 셀 변경 (각 테이블 백업 후 적용):\n\n${summary}\n\n샘플:\n${sample}\n\nDB 에 적용할까요?`;
+  if (!confirm(confirmMsg)) {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+    return;
+  }
+  // 2. Apply
+  if (btn) btn.textContent = '⏳ DB 에 적용 중...';
+  const results = [];
+  for (const table of tables) {
+    const preview = previews.find(p => p.table === table);
+    if (!preview || preview.change_count === 0) continue;
+    try {
+      const r = await fetch(`${SHEETS_SYNC}/pull?table=${encodeURIComponent(table)}`, { headers });
+      const j = await r.json();
+      results.push({ table, ok: j.ok, applied: j.applied || 0, backup_tab: j.backup_tab || null, errors: j.errors || [] });
+    } catch (e) {
+      results.push({ table, ok: false, error: e.message });
+    }
+  }
+  const totalApplied = results.reduce((s, r) => s + (r.applied || 0), 0);
+  const fail = results.filter(r => !r.ok || (r.errors && r.errors.length));
+  const statusEl = document.getElementById('save-status');
+  if (statusEl) {
+    statusEl.textContent = `✓ ${totalApplied}개 셀 DB 반영 / ${fail.length} 실패 (백업 탭: ${results.map(r => r.backup_tab).filter(Boolean).join(', ')})`;
+    statusEl.style.color = fail.length ? '#d62754' : '#15803d';
+    setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 12000);
+  }
+  if (fail.length) console.warn('[sheets-pull] failures:', fail);
+  if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  try { await initStorage(); } catch (_) {}
+}
+
+(function bindSheetsSync() {
+  const init = () => {
+    const pushBtn = document.getElementById('sheets-push');
+    const pullBtn = document.getElementById('sheets-pull');
+    if (!pushBtn || !pullBtn) { document.addEventListener('DOMContentLoaded', init); return; }
+    if (pushBtn.dataset.bound) return;
+    pushBtn.dataset.bound = '1';
+    pullBtn.dataset.bound = '1';
+    pushBtn.addEventListener('click', _sheetsPush);
+    pullBtn.addEventListener('click', _sheetsPull);
   };
   init();
 })();

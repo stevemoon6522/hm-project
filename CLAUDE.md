@@ -7,6 +7,9 @@
 ## Stack
 Single `index.html` HTML+CSS+JS SPA, Supabase JS SDK for DB, fetch for `shopee-bridge` Edge Function. No build step.
 
+## Shared Goal
+Project objective is documented at `plans/project-goal.md` and should be treated as the primary product direction for Codex/Claude collaboration.
+
 ## Vercel deploy
 **NOT auto-deployed from GitHub.** After `git push origin main`, run `vercel deploy --prod --yes` from the repo dir to push live.
 

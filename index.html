@@ -791,6 +791,7 @@
       <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품 검색 후 상품 마스터에 추가">🔍 상품 검색</button>
       <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
       <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
+      <button class="btn" id="joom-bulk-sync" disabled title="선택된 행의 Joom SKU 를 lookup 하고 가격을 동기화 (lookup → DB 저장 → update-price)">🌐 Joom 동기화 (<span id="joom-sync-count">0</span>)</button>
       <button class="btn" id="bulk-clear-mapping" disabled title="선택된 상품의 Shopee region 매핑만 삭제 (상품은 유지)">🧹 매핑 삭제 (<span id="bulk-clear-count">0</span>)</button>
       <button class="btn danger" id="bulk-complete-remove" disabled title="선택된 상품을 완료 처리하고 상품 마스터에서 삭제">✅ 완료 처리 (<span id="bulk-complete-count">0</span>)</button>
     </div>
@@ -2966,18 +2967,22 @@ function _updateSelectionUi() {
   const all = [...tbody.querySelectorAll('.row-select')];
   const checked = all.filter(cb => cb.checked);
   const btn = document.getElementById('shopee-bulk-sync');
+  const joomBtn = document.getElementById('joom-bulk-sync');
   const mapBtn = document.getElementById('shopee-sync-mapping');
   const clearBtn = document.getElementById('bulk-clear-mapping');
   const completeBtn = document.getElementById('bulk-complete-remove');
   const countEl = document.getElementById('bulk-sync-count');
+  const joomCountEl = document.getElementById('joom-sync-count');
   const clearCountEl = document.getElementById('bulk-clear-count');
   const completeCountEl = document.getElementById('bulk-complete-count');
   const count = checked.length;
   if (btn) btn.disabled = count === 0;
+  if (joomBtn) joomBtn.disabled = count === 0;
   if (mapBtn) mapBtn.disabled = count === 0;
   if (clearBtn) clearBtn.disabled = count === 0;
   if (completeBtn) completeBtn.disabled = count === 0;
   if (countEl) countEl.textContent = count;
+  if (joomCountEl) joomCountEl.textContent = count;
   if (clearCountEl) clearCountEl.textContent = count;
   if (completeCountEl) completeCountEl.textContent = count;
   all.forEach(cb => {
@@ -3445,6 +3450,134 @@ async function _shopeeSyncApply() {
     if (btn.dataset.bound) return;
     btn.dataset.bound = '1';
     btn.addEventListener('click', _shopeeBulkSync);
+  };
+  init();
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   JOOM BULK SYNC — manual trigger button (plan: plans/joom-sku-matching-plan.md)
+   Per-row flow:
+   1. lookup-sku → resolve Joom product_id + variant_id + currency
+   2. Persist to products.joom_* columns
+   3. update-price with the row's calculated price (uses Joom currency from lookup)
+   4. Update joom_last_synced_price + joom_last_synced_at on success
+   ════════════════════════════════════════════════════════════════════ */
+async function _joomBulkSync() {
+  const selected = _getSelectedMasterRows();
+  if (!selected.length) return;
+  const btn = document.getElementById('joom-bulk-sync');
+  const orig = btn ? btn.innerHTML : null;
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Joom 동기화 중...'; }
+  const headers = {
+    'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+    'apikey': SUPABASE_ANON_KEY,
+    'Content-Type': 'application/json',
+  };
+  let lookupOk = 0, lookupFail = 0, priceOk = 0, priceFail = 0;
+  const errors = [];
+  // Joom sells globally — region label here is informational only. Calculate price
+  // using the SG row (default) or first available pricing. User can refine later.
+  const PRICE_REGION = 'SG';
+
+  for (const row of selected) {
+    try {
+      // 1. Lookup
+      let lookup;
+      try {
+        const r = await fetch(`${JOOM_BRIDGE}/lookup-sku?sku=${encodeURIComponent(row.sku)}`, { headers });
+        lookup = await r.json();
+        if (!lookup.ok) {
+          lookupFail++;
+          errors.push(`${row.sku}: lookup ${lookup.error || 'unknown'}`);
+          // Persist mapping_failed so user can retry/fix
+          await db.from('products').update({
+            joom_mapping_status: 'mapping_failed',
+            joom_mapping_error: lookup.error || 'unknown',
+          }).eq('id', row.id);
+          continue;
+        }
+        lookupOk++;
+      } catch (e) {
+        lookupFail++;
+        errors.push(`${row.sku}: lookup exception ${e.message}`);
+        continue;
+      }
+
+      // 2. Persist mapping (idempotent — same value on re-run)
+      const persistFields = {
+        joom_product_id: lookup.joom_product_id,
+        joom_variant_id: lookup.joom_variant_id,
+        joom_currency: lookup.joom_currency,
+        joom_mapping_status: 'mapped',
+        joom_mapping_error: null,
+      };
+      await db.from('products').update(persistFields).eq('id', row.id);
+
+      // 3. Calculate target price for this row. Use SG region as proxy (Joom is global,
+      //    has one selling price in its native currency — usually USD).
+      const calc = calcRow(row, PRICE_REGION);
+      const price = calc?.listing;
+      if (!Number.isFinite(price) || price <= 0) {
+        priceFail++;
+        errors.push(`${row.sku}: price 계산 불가 (region=${PRICE_REGION})`);
+        continue;
+      }
+      // Joom requires 2-decimal-place price. Round to 2 dp.
+      const joomPrice = Number(price.toFixed(2));
+
+      // 4. update-price (uses variant's existing currency, preserved by bridge v12)
+      try {
+        const r = await fetch(`${JOOM_BRIDGE}/update-price`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            productId: lookup.joom_product_id,
+            sku: row.sku,
+            price: joomPrice,
+          }),
+        });
+        const j = await r.json();
+        if (j.ok) {
+          priceOk++;
+          await db.from('products').update({
+            joom_last_synced_price: joomPrice,
+            joom_last_synced_at: new Date().toISOString(),
+          }).eq('id', row.id);
+        } else {
+          priceFail++;
+          errors.push(`${row.sku}: update-price ${j.error || 'unknown'}`);
+        }
+      } catch (e) {
+        priceFail++;
+        errors.push(`${row.sku}: update-price exception ${e.message}`);
+      }
+    } catch (e) {
+      errors.push(`${row.sku}: 예외 ${e.message}`);
+    }
+  }
+
+  const summary = `Joom: lookup ${lookupOk}/${selected.length}, price ${priceOk}/${lookupOk} 성공` +
+    (errors.length ? ` · ${errors.length} 실패` : '');
+  if (errors.length) console.warn('[joom-sync] errors:', errors);
+  const statusEl = document.getElementById('save-status');
+  if (statusEl) {
+    statusEl.textContent = summary;
+    statusEl.style.color = (lookupFail + priceFail) === 0 ? '#15803d' : '#d62754';
+    statusEl.title = errors.slice(0, 20).join('\n');
+    setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; statusEl.title = ''; }, 8000);
+  }
+  if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  // Reload to reflect joom_last_synced_at + joom_mapping_status in UI
+  try { await initStorage(); } catch (_) {}
+}
+
+(function bindJoomBulkSync() {
+  const init = () => {
+    const btn = document.getElementById('joom-bulk-sync');
+    if (!btn) { document.addEventListener('DOMContentLoaded', init); return; }
+    if (btn.dataset.bound) return;
+    btn.dataset.bound = '1';
+    btn.addEventListener('click', _joomBulkSync);
   };
   init();
 })();

@@ -1,0 +1,23 @@
+{
+  "idempotency_key": "sku-change-demo-20260516-sg",
+  "created_by": "operator",
+  "source": "manual_csv",
+  "regions": ["SG"],
+  "item_statuses": ["NORMAL", "UNLIST"],
+  "max_items": 5000,
+  "mapping": [
+    {
+      "region": "SG",
+      "shop_id": "1669858301",
+      "item_id": 23620853561,
+      "model_id": 221404189791,
+      "new_sku": "NEW-MODEL-SKU-001"
+    },
+    {
+      "region": "SG",
+      "shop_id": "1669858301",
+      "item_id": 23620853562,
+      "new_sku": "NEW-ITEM-SKU-001"
+    }
+  ]
+}

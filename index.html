@@ -182,6 +182,49 @@
   .btn.danger { border-color: #555; color: #888; }
   .btn.danger:hover { border-color: #c33; color: #c33; }
 
+  .batch-filters {
+    display: grid;
+    grid-template-columns: 1fr 1fr 120px 140px 1fr auto;
+    gap: 8px;
+    margin-bottom: 12px;
+    align-items: center;
+  }
+  .batch-filters input,
+  .batch-filters select {
+    width: 100%;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 8px 10px;
+    border-radius: 2px;
+    outline: none;
+  }
+  .batch-filters input:focus,
+  .batch-filters select:focus { border-color: var(--accent); }
+  .batch-summary {
+    color: var(--text-dim);
+    font-size: 11px;
+    margin-bottom: 8px;
+  }
+  .batch-detail {
+    margin-top: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    border-radius: 2px;
+    padding: 10px;
+  }
+  .batch-detail pre {
+    margin-top: 8px;
+    max-height: 220px;
+    overflow: auto;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    padding: 8px;
+    font-size: 11px;
+  }
+
   .search-box {
     flex: 1; max-width: 360px;
     position: relative;
@@ -787,6 +830,7 @@
   <div class="main-nav">
     <button class="main-tab active" data-tab="price">💰 가격 수정</button>
     <button class="main-tab" data-tab="register">📦 상품 등록</button>
+    <button class="main-tab" data-tab="batch-history">📜 Batch History</button>
   </div>
 
   <!-- ── 가격 수정 패널 ── -->
@@ -892,6 +936,63 @@
     </button>
 
   </div><!-- /tab-register -->
+
+  <div id="tab-batch-history" class="main-panel" style="display:none">
+    <div class="section-head">
+      <span class="num">01</span>
+      <h2>배치 이력</h2>
+      <div class="rule"></div>
+      <span class="count" id="batch-history-count">0 BATCHES</span>
+    </div>
+
+    <div class="batch-filters">
+      <input id="bh-from" type="date" aria-label="from date">
+      <input id="bh-to" type="date" aria-label="to date">
+      <select id="bh-platform" aria-label="platform">
+        <option value="all">platform: all</option>
+        <option value="shopee">shopee</option>
+        <option value="joom">joom</option>
+        <option value="qoo10">qoo10</option>
+      </select>
+      <select id="bh-status" aria-label="status">
+        <option value="all">status: all</option>
+        <option value="success">success</option>
+        <option value="partial_failed">partial_failed</option>
+        <option value="failed">failed</option>
+        <option value="running">running</option>
+      </select>
+      <input id="bh-keyword" type="text" placeholder="batch id / sku / text keyword">
+      <button class="btn" id="bh-refresh">새로고침</button>
+    </div>
+
+    <div class="batch-summary" id="bh-summary">필터를 적용해 이력을 조회하세요.</div>
+
+    <div class="table-wrap">
+      <table class="master">
+        <thead>
+          <tr>
+            <th>created_at</th>
+            <th>platform</th>
+            <th>scope</th>
+            <th class="numeric">total</th>
+            <th class="numeric">success</th>
+            <th class="numeric">failed</th>
+            <th>status</th>
+            <th>request_id / batch_id</th>
+          </tr>
+        </thead>
+        <tbody id="bh-tbody">
+          <tr><td colspan="8" class="empty-state">로딩 전</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="batch-detail" id="bh-detail" style="display:none">
+      <strong id="bh-detail-title">batch detail</strong>
+      <div id="bh-detail-meta" style="margin-top:6px;color:var(--text-dim);font-size:11px;"></div>
+      <pre id="bh-detail-errors"></pre>
+    </div>
+  </div><!-- /tab-batch-history -->
 
 </div><!-- /container -->
 
@@ -5034,18 +5135,178 @@ function showLogin() {
 /* ════════════════════════════════════════════════════════════════════
    MAIN TAB NAV
    ════════════════════════════════════════════════════════════════════ */
+const batchHistoryState = {
+  loaded: false,
+  loading: false,
+  rows: [],
+};
+
+function bhFmtDate(ts) {
+  if (!ts) return '';
+  try { return new Date(ts).toLocaleString('ko-KR', { hour12: false }); } catch { return String(ts); }
+}
+function bhNormalizePlatform(raw) {
+  const v = String(raw || '').toLowerCase();
+  if (v.includes('joom')) return 'joom';
+  if (v.includes('qoo10')) return 'qoo10';
+  return 'shopee';
+}
+function bhActionToScope(action) {
+  const a = String(action || '').toLowerCase();
+  if (a.includes('price')) return 'price';
+  if (a.includes('sku')) return 'sku';
+  if (a.includes('dts') || a.includes('days_to_ship') || a.includes('pre_order')) return 'dts';
+  return a || 'unknown';
+}
+function bhOperationStatus(items) {
+  const total = items.length;
+  const success = items.filter(i => String(i.status || '').toLowerCase() === 'ok').length;
+  const failed = items.filter(i => ['error', 'failed'].includes(String(i.status || '').toLowerCase())).length;
+  const running = items.some(i => ['running', 'preparing', 'committing'].includes(String(i.status || '').toLowerCase()));
+  if (running) return { status: 'running', total, success, failed };
+  if (failed > 0 && success > 0) return { status: 'partial_failed', total, success, failed };
+  if (failed > 0 && success === 0) return { status: 'failed', total, success, failed };
+  return { status: 'success', total, success, failed };
+}
+function bhExtractSkuTokens(payload) {
+  const out = [];
+  if (!payload || typeof payload !== 'object') return out;
+  const push = (v) => { if (typeof v === 'string' && v.trim()) out.push(v.trim()); };
+  push(payload.item_sku); push(payload.global_item_sku);
+  (payload.model || []).forEach(m => push(m?.model_sku));
+  (payload.global_model || []).forEach(m => push(m?.global_model_sku));
+  return [...new Set(out)];
+}
+function bhBuildBatches(rows) {
+  const groups = new Map();
+  for (const r of rows || []) {
+    const key = String(r.run_id || r.request_id || r.id);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  const out = [];
+  for (const [batchId, items] of groups.entries()) {
+    const sorted = items.slice().sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const first = sorted[0] || {};
+    const last = sorted[sorted.length - 1] || {};
+    const platform = bhNormalizePlatform((first.request_payload && first.request_payload.platform) || first.actor || first.action);
+    const scopeSet = [...new Set(sorted.map(i => bhActionToScope(i.action)))];
+    const op = bhOperationStatus(sorted);
+    const requestIds = [...new Set(sorted.map(i => i.request_id).filter(Boolean))];
+    const skus = [...new Set(sorted.flatMap(i => bhExtractSkuTokens(i.request_payload)).filter(Boolean))];
+    out.push({ batch_id: batchId, created_at: first.created_at, updated_at: last.created_at, platform, scope: scopeSet.join(','), total: op.total, success: op.success, failed: op.failed, status: op.status, request_ids: requestIds, skus, items: sorted });
+  }
+  return out.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+}
+function bhReadFilters() {
+  return {
+    from: document.getElementById('bh-from')?.value || '',
+    to: document.getElementById('bh-to')?.value || '',
+    platform: document.getElementById('bh-platform')?.value || 'all',
+    status: document.getElementById('bh-status')?.value || 'all',
+    keyword: (document.getElementById('bh-keyword')?.value || '').trim().toLowerCase(),
+  };
+}
+function bhMatchFilters(batch, filters) {
+  if (filters.platform !== 'all' && batch.platform !== filters.platform) return false;
+  if (filters.status !== 'all' && batch.status !== filters.status) return false;
+  if (filters.keyword) {
+    const hay = [batch.batch_id, batch.scope, batch.platform, batch.request_ids.join(' '), batch.skus.join(' '), ...batch.items.map(i => `${i.action || ''} ${i.error_msg || ''} ${i.request_id || ''}`)].join(' ').toLowerCase();
+    if (!hay.includes(filters.keyword)) return false;
+  }
+  return true;
+}
+function bhRenderDetail(batch) {
+  const panel = document.getElementById('bh-detail');
+  const title = document.getElementById('bh-detail-title');
+  const meta = document.getElementById('bh-detail-meta');
+  const errors = document.getElementById('bh-detail-errors');
+  if (!panel || !title || !meta || !errors) return;
+  if (!batch) { panel.style.display = 'none'; return; }
+  const failed = batch.items.filter(i => ['error', 'failed'].includes(String(i.status || '').toLowerCase()));
+  title.textContent = `batch ${batch.batch_id}`;
+  meta.textContent = `${bhFmtDate(batch.created_at)} · ${batch.platform} · ${batch.scope} · total ${batch.total} / fail ${batch.failed}`;
+  errors.textContent = failed.length ? failed.map((r, idx) => {
+    const skuTokens = bhExtractSkuTokens(r.request_payload).join(',');
+    return `${idx + 1}. action=${r.action || ''} region=${r.region || ''} request_id=${r.request_id || ''}\n   target_gid=${r.target_global_item_id || ''} target_mid=${r.target_global_model_id || ''} target_item=${r.target_shop_item_id || ''}\n   sku=${skuTokens || '-'}\n   error=${r.error_msg || (r.response && r.response.message) || 'unknown'}`;
+  }).join('\n\n') : 'No failed items.';
+  panel.style.display = '';
+}
+function bhRenderRows(batches, filters) {
+  const tbody = document.getElementById('bh-tbody');
+  const countEl = document.getElementById('batch-history-count');
+  const summary = document.getElementById('bh-summary');
+  if (!tbody) return;
+  const filtered = batches.filter(b => bhMatchFilters(b, filters));
+  if (countEl) countEl.textContent = `${filtered.length} BATCHES`;
+  if (summary) summary.textContent = `filters: ${filters.platform}/${filters.status} · results ${filtered.length}`;
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="empty-state">조건에 맞는 배치 이력이 없습니다.</td></tr>';
+    bhRenderDetail(null);
+    return;
+  }
+  tbody.innerHTML = filtered.map(b => `<tr class="row bh-row" data-batch-id="${String(b.batch_id).replace(/"/g, '&quot;')}"><td>${bhFmtDate(b.created_at)}</td><td>${b.platform}</td><td>${b.scope}</td><td class="numeric">${b.total}</td><td class="numeric" style="color:var(--green)">${b.success}</td><td class="numeric" style="color:${b.failed > 0 ? '#d62754' : 'var(--text-dim)'}">${b.failed}</td><td>${b.status}</td><td style="font-size:11px;white-space:nowrap;max-width:360px;overflow:hidden;text-overflow:ellipsis;">${(b.request_ids[0] || b.batch_id)}</td></tr>`).join('');
+  tbody.querySelectorAll('.bh-row').forEach(tr => {
+    tr.addEventListener('click', () => {
+      const batch = filtered.find(x => String(x.batch_id) === String(tr.dataset.batchId));
+      bhRenderDetail(batch || null);
+    });
+  });
+}
+async function loadBatchHistory() {
+  if (batchHistoryState.loading) return;
+  const summary = document.getElementById('bh-summary');
+  const tbody = document.getElementById('bh-tbody');
+  const filters = bhReadFilters();
+  batchHistoryState.loading = true;
+  if (summary) summary.textContent = '이력 로딩 중...';
+  if (tbody) tbody.innerHTML = '<tr><td colspan="8" class="empty-state">로딩 중...</td></tr>';
+  try {
+    let q = db.from('shopee_mutation_log')
+      .select('id,created_at,run_id,actor,action,region,status,error_msg,request_id,target_global_item_id,target_global_model_id,target_shop_item_id,request_payload,response')
+      .order('created_at', { ascending: false }).limit(1200);
+    if (filters.from) q = q.gte('created_at', `${filters.from}T00:00:00`);
+    if (filters.to) q = q.lte('created_at', `${filters.to}T23:59:59`);
+    const { data, error } = await q;
+    if (error) throw error;
+    batchHistoryState.rows = bhBuildBatches(Array.isArray(data) ? data : []);
+    batchHistoryState.loaded = true;
+    bhRenderRows(batchHistoryState.rows, filters);
+  } catch (e) {
+    if (summary) summary.textContent = '배치 이력 로드 실패';
+    if (tbody) tbody.innerHTML = `<tr><td colspan="8" class="empty-state">오류: ${String(e.message || e)}</td></tr>`;
+  } finally {
+    batchHistoryState.loading = false;
+  }
+}
+function initBatchHistoryUi() {
+  const refreshBtn = document.getElementById('bh-refresh');
+  const inputs = ['bh-from', 'bh-to', 'bh-platform', 'bh-status', 'bh-keyword'].map(id => document.getElementById(id)).filter(Boolean);
+  refreshBtn?.addEventListener('click', loadBatchHistory);
+  inputs.forEach(el => {
+    const ev = el.id === 'bh-keyword' ? 'input' : 'change';
+    el.addEventListener(ev, () => {
+      if (!batchHistoryState.loaded) return;
+      bhRenderRows(batchHistoryState.rows, bhReadFilters());
+    });
+  });
+}
+
 function switchMainTab(tab) {
   document.querySelectorAll('.main-tab').forEach(btn => {
     btn.classList.toggle('active', btn.dataset.tab === tab);
   });
   document.getElementById('tab-price').style.display    = tab === 'price'    ? '' : 'none';
   document.getElementById('tab-register').style.display = tab === 'register' ? '' : 'none';
+  document.getElementById('tab-batch-history').style.display = tab === 'batch-history' ? '' : 'none';
   if (tab === 'register') renderRegisterTab();
+  if (tab === 'batch-history') loadBatchHistory();
 }
 
 document.querySelectorAll('.main-tab').forEach(btn => {
   btn.addEventListener('click', () => switchMainTab(btn.dataset.tab));
 });
+initBatchHistoryUi();
 
 function toggleSection(key) {
   const body = document.getElementById('body-' + key);
@@ -5990,6 +6251,7 @@ const _gkpExpanded = new Set();
 // or refreshing the page doesn't re-fetch the entire global catalog.
 // v2 schema: enriched items now include tier_variation (added 2026-05-16 for option_name auto-fill)
 const GKP_CACHE_KEY = 'gkp_enriched_cache_v2';
+const GKP_CACHE_SCHEMA_VERSION = 2;
 const GKP_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 const GKP_PREFETCH_DELAY_MS = 5000; // wait 5s after dashboard load before prefetching
 
@@ -5998,7 +6260,7 @@ function _gkpLoadPersistedCache() {
     const raw = localStorage.getItem(GKP_CACHE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    if (!parsed || !Array.isArray(parsed.items) || parsed.schemaVersion !== 1) return null;
+    if (!parsed || !Array.isArray(parsed.items) || parsed.schemaVersion !== GKP_CACHE_SCHEMA_VERSION) return null;
     return parsed;
   } catch (e) {
     console.warn('[gkp] cache load failed:', e);
@@ -6017,7 +6279,7 @@ function _gkpSavePersistedCache(items, fallbackMode, fetchedAt) {
         if (existing && Number(existing.fetchedAt) >= ts) return;
       } catch (_) { /* corrupted, overwrite */ }
     }
-    const payload = { schemaVersion: 1, items, fetchedAt: ts, fallbackMode };
+    const payload = { schemaVersion: GKP_CACHE_SCHEMA_VERSION, items, fetchedAt: ts, fallbackMode };
     localStorage.setItem(GKP_CACHE_KEY, JSON.stringify(payload));
   } catch (e) {
     console.warn('[gkp] cache save failed:', e);
@@ -6125,6 +6387,7 @@ async function _gkpFetchShopItemsFallback(statusEl) {
     item_name: it.item_name || '',
     item_sku: it.item_sku || it.base_sku || '',
     price: it.original_price ?? it.current_price ?? '',
+    weight_kg: _gkpReadWeightKg(it),
     models: [],
   }));
 }
@@ -6150,13 +6413,14 @@ async function _gkpEnrichItems(items, statusEl) {
         const hasModel = it.has_model ?? false;
         if (!hasModel) {
           const priceInfo = it.price_info?.[0] || {};
-          enriched.push({ type: 'item', global_item_id: item.global_item_id, item_name: it.item_name || item.item_name || '', item_sku: it.item_sku || item.item_sku || '', price: priceInfo.original_price ?? '', models: [] });
+          enriched.push({ type: 'item', global_item_id: item.global_item_id, item_name: it.item_name || item.item_name || '', item_sku: it.item_sku || item.item_sku || '', price: priceInfo.original_price ?? '', weight_kg: _gkpReadWeightKg(it), models: [] });
         } else {
           const mres = await fetch(`${SHOPEE_BRIDGE}/global_model_list?region=SG&global_item_id=${item.global_item_id}`, { headers: _bh })
             .then(x => x.json()).catch(() => null);
           // Bridge response: { ok, result: { response: { global_model: [...] } } }
-          const models = (mres && mres.ok) ? (mres.result?.response?.global_model || []) : [];
-          enriched.push({ type: 'model_header', global_item_id: item.global_item_id, item_name: it.item_name || item.item_name || '', item_sku: it.item_sku || item.item_sku || '', price: '', models });
+          const resp = (mres && mres.ok) ? (mres.result?.response || {}) : {};
+          const models = resp.global_model || resp.global_model_list || [];
+          enriched.push({ type: 'model_header', global_item_id: item.global_item_id, item_name: it.item_name || item.item_name || '', item_sku: it.item_sku || item.item_sku || '', price: '', weight_kg: _gkpReadWeightKg(it), tier_variation: Array.isArray(resp.tier_variation) ? resp.tier_variation : [], models });
         }
       } catch (_) {
         enriched.push({ type: 'item', global_item_id: item.global_item_id, item_name: item.item_name || String(item.global_item_id), item_sku: '', price: '', models: [] });
@@ -6196,6 +6460,7 @@ async function _gkpEnrichItemsComplete(items, statusEl) {
         item_name: itemName,
         item_sku: itemSku,
         price: hasModel ? '' : (priceInfo.original_price ?? ''),
+        weight_kg: _gkpReadWeightKg(it),
         models: [],
       });
     }
@@ -6208,7 +6473,9 @@ async function _gkpEnrichItemsComplete(items, statusEl) {
 
 async function _gkpEnsureModelsForItems(items, statusEl) {
   const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
-  const modelItems = items.filter(it => it.type === 'model_header' && !it._modelsLoaded);
+  const modelItems = items.filter(it =>
+    it.type === 'model_header' && (!it._modelsLoaded || !Array.isArray(it.tier_variation))
+  );
   const concurrency = 6;
   let done = 0;
   for (let i = 0; i < modelItems.length; i += concurrency) {
@@ -6252,10 +6519,10 @@ function _gkpBuildRows(filteredItems) {
   const rows = [];
   for (const it of filteredItems) {
     if (it.type === 'item') {
-      rows.push({ rowType: 'item', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, price: it.price, global_model_id: null });
+      rows.push({ rowType: 'item', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, price: it.price, weight_kg: it.weight_kg, global_model_id: null });
     } else {
       // model_header row
-      rows.push({ rowType: 'model_header', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, modelCount: it.models.length, models: it.models || [] });
+      rows.push({ rowType: 'model_header', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, weight_kg: it.weight_kg, tier_variation: it.tier_variation || [], modelCount: it.models.length, models: it.models || [] });
       if (_gkpExpanded.has(String(it.global_item_id))) {
         for (const m of it.models) {
           const priceInfo = m.price_info || {};
@@ -6274,6 +6541,17 @@ function _gkpCleanSku(value) {
 
 function _gkpModelSku(model) {
   return _gkpCleanSku(model?.global_model_sku || model?.model_sku || model?.item_sku);
+}
+
+function _gkpReadWeightKg(source, fallback = null) {
+  const raw = source?.weight ?? source?.global_weight ?? source?.weight_kg ?? fallback;
+  const weight = Number(raw);
+  return Number.isFinite(weight) && weight > 0 ? weight : null;
+}
+
+function _gkpWeightKgToGrams(weightKg) {
+  const weight = Number(weightKg);
+  return Number.isFinite(weight) && weight > 0 ? Math.round(weight * 1000) : null;
 }
 
 function _gkpModelProductName(parentName, model) {
@@ -6314,6 +6592,7 @@ function _gkpRowsForSelection(row) {
         const optionName = _gkpResolveOptionName(tierVariation, model?.tier_index)
           || String(model?.model_name || model?.global_model_name || '').trim()
           || null;
+        const weightG = _gkpWeightKgToGrams(_gkpReadWeightKg(model, row.weight_kg));
         // Global SKU price → cost_krw (Shopee CBSC global price for KRSC seller is in KRW per
          // get_global_model_list.price_info verification). Plan: user request 2026-05-16.
         const globalPriceKrw = (() => {
@@ -6329,6 +6608,7 @@ function _gkpRowsForSelection(row) {
           shopee_item_id: globalItemId,
           global_model_id: model?.global_model_id != null ? Number(model.global_model_id) : null,
           cost_krw: globalPriceKrw,
+          weight_g: weightG,
         };
       })
       .filter(Boolean);
@@ -6340,7 +6620,8 @@ function _gkpRowsForSelection(row) {
   let costKrw = null;
   const pRaw = Number(row.price);
   if (Number.isFinite(pRaw) && pRaw > 0) costKrw = Math.round(pRaw);
-  return [{ sku, product_name: row.item_name || null, shopee_item_id: globalItemId, cost_krw: costKrw }];
+  const weightG = _gkpWeightKgToGrams(_gkpReadWeightKg(row));
+  return [{ sku, product_name: row.item_name || null, shopee_item_id: globalItemId, cost_krw: costKrw, weight_g: weightG }];
 }
 
 function _gkpSkuSummary(row) {
@@ -6403,6 +6684,24 @@ function _gkpUpdateCheckedCount() {
   if (applyBtn) applyBtn.disabled = checked === 0;
 }
 
+function _gkpMergeProductsIntoState(dbRows) {
+  if (!Array.isArray(dbRows) || !dbRows.length) return;
+  const byId = new Map(state.rows.map(row => [String(row.id), row]));
+  for (const dbRow of dbRows) {
+    const next = dbRowToProduct(dbRow);
+    const current = byId.get(String(next.id));
+    if (current) {
+      next.shopeeListings = current.shopeeListings || {};
+      Object.assign(current, next);
+    } else {
+      state.rows.push(next);
+      byId.set(String(next.id), next);
+    }
+  }
+  renderTableBody();
+  renderVerify();
+}
+
 async function _gkpApply() {
   const checked = Array.from(document.querySelectorAll('.gkp-row-chk:checked'));
   if (!checked.length) return;
@@ -6432,7 +6731,7 @@ async function _gkpApply() {
   try {
     // Avoid ON CONFLICT dependency: fetch existing SKUs, then insert only missing rows.
     const skuList = uniqueRows.map(r => r.sku);
-    const { data: existingRows, error: existingErr } = await db.from('products').select('id,sku,shopee_item_id,option_name,global_model_id,cost_krw').in('sku', skuList);
+    const { data: existingRows, error: existingErr } = await db.from('products').select('id,sku,shopee_item_id,option_name,global_model_id,cost_krw,weight_g').in('sku', skuList);
     if (existingErr) throw existingErr;
 
     const existingBySku = new Map((existingRows || []).map(r => [r.sku, r]));
@@ -6454,6 +6753,10 @@ async function _gkpApply() {
     const costKrwUpdates = uniqueRows
       .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
       .filter(x => x.prev && (!x.prev.cost_krw || Number(x.prev.cost_krw) <= 0) && Number(x.next.cost_krw) > 0);
+    // Fill weight_g from Global Product weight only when the Product Master row has no weight yet.
+    const weightUpdates = uniqueRows
+      .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
+      .filter(x => x.prev && (!x.prev.weight_g || Number(x.prev.weight_g) <= 0) && Number(x.next.weight_g) > 0);
 
     if (missingRows.length > 0) {
       const { error: insertErr } = await db.from('products').insert(missingRows);
@@ -6483,13 +6786,22 @@ async function _gkpApply() {
         await db.from('products').update({ cost_krw: next.cost_krw }).eq('id', prev.id);
       }));
     }
+    if (weightUpdates.length > 0) {
+      await Promise.all(weightUpdates.map(async ({ prev, next }) => {
+        await db.from('products').update({ weight_g: next.weight_g }).eq('id', prev.id);
+      }));
+    }
+
+    const { data: refreshedProducts, error: refreshedErr } = await db.from('products').select('*').in('sku', skuList);
+    if (!refreshedErr) _gkpMergeProductsIntoState(refreshedProducts || []);
 
     const inserted = missingRows.length;
     const updated = updates.length;
     const optionFilled = optionNameUpdates.length;
     const costFilled = costKrwUpdates.length;
+    const weightFilled = weightUpdates.length;
     const skipped = uniqueRows.length - inserted - updated;
-    logEl.textContent = `✅ ${inserted}건 추가 / ${updated}건 Item ID 업데이트 / ${optionFilled}건 옵션명 채움 / ${costFilled}건 정산가 채움 / ${skipped}건 기존 유지. 매핑 중…`;
+    logEl.textContent = `✅ ${inserted}건 추가 / ${updated}건 Item ID 업데이트 / ${optionFilled}건 옵션명 채움 / ${costFilled}건 정산가 채움 / ${weightFilled}건 무게 채움 / ${skipped}건 기존 유지. 매핑 중…`;
 
     // === Auto shop-mapping (per plan gkp-auto-shop-mapping-plan.md) ===
     const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };

@@ -846,6 +846,7 @@
       <button class="btn" id="ready-stock-bulk" disabled title="선택된 상품의 모든 region DTS 를 1일로 일괄 변경 (Shopee Global Product API)">📦 Ready Stock 처리 (<span id="ready-stock-count">0</span>)</button>
       <button class="btn" id="sheets-push" title="DB → Google Sheets 내보내기 (모든 row 덮어쓰기)">📤 Sheet 내보내기</button>
       <button class="btn" id="sheets-pull" title="Google Sheets 에서 변경된 셀을 DB 에 적용 (먼저 미리보기 → 확인 → 적용)">📥 Sheet → DB</button>
+      <button class="btn" id="global-backfill-master" title="기존 Product Master 행의 옵션명/무게를 Shopee Global Product 메타데이터로 채움">🛠 옵션·무게 백필</button>
       <button class="btn" id="bulk-clear-mapping" disabled title="선택된 상품의 Shopee region 매핑만 삭제 (상품은 유지)">🧹 매핑 삭제 (<span id="bulk-clear-count">0</span>)</button>
       <button class="btn danger" id="bulk-complete-remove" disabled title="선택된 상품을 완료 처리하고 상품 마스터에서 삭제">✅ 완료 처리 (<span id="bulk-complete-count">0</span>)</button>
     </div>
@@ -3993,12 +3994,15 @@ async function _sheetsPull() {
   const init = () => {
     const clearBtn = document.getElementById('bulk-clear-mapping');
     const completeBtn = document.getElementById('bulk-complete-remove');
-    if (!clearBtn || !completeBtn) { document.addEventListener('DOMContentLoaded', init); return; }
+    const backfillBtn = document.getElementById('global-backfill-master');
+    if (!clearBtn || !completeBtn || !backfillBtn) { document.addEventListener('DOMContentLoaded', init); return; }
     if (clearBtn.dataset.bound) return;
     clearBtn.dataset.bound = '1';
     completeBtn.dataset.bound = '1';
+    backfillBtn.dataset.bound = '1';
     clearBtn.addEventListener('click', _bulkClearShopeeMappings);
     completeBtn.addEventListener('click', _bulkCompleteRemove);
+    backfillBtn.addEventListener('click', _bulkBackfillGlobalMeta);
   };
   init();
 })();
@@ -5279,6 +5283,142 @@ async function loadBatchHistory() {
     batchHistoryState.loading = false;
   }
 }
+
+function _normalizeGlobalId(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? String(n) : '';
+}
+
+async function _fetchGlobalItemMeta(globalItemId, headers) {
+  const gid = _normalizeGlobalId(globalItemId);
+  if (!gid) throw new Error('invalid_global_item_id');
+  const [itemRes, modelRes] = await Promise.all([
+    fetch(`${SHOPEE_BRIDGE}/global_item_info?region=SG&global_item_id=${encodeURIComponent(gid)}`, { headers }).then(r => r.json()).catch(() => null),
+    fetch(`${SHOPEE_BRIDGE}/global_model_list?region=SG&global_item_id=${encodeURIComponent(gid)}`, { headers }).then(r => r.json()).catch(() => null),
+  ]);
+  if (!itemRes?.ok) {
+    const msg = itemRes?.result?.error || itemRes?.error || 'global_item_info_failed';
+    throw new Error(`gid=${gid}: ${msg}`);
+  }
+  if (!modelRes?.ok) {
+    const msg = modelRes?.result?.error || modelRes?.error || 'global_model_list_failed';
+    throw new Error(`gid=${gid}: ${msg}`);
+  }
+  const item = itemRes.result?.response?.global_item_list?.[0] || {};
+  const resp = modelRes.result?.response || {};
+  const models = resp.global_model || resp.global_model_list || [];
+  const tierVariation = Array.isArray(resp.tier_variation) ? resp.tier_variation : [];
+  return { gid, item, models, tierVariation };
+}
+
+function _resolveModelMetaForRow(row, meta) {
+  const byId = new Map(meta.models.map(m => [String(m.global_model_id), m]));
+  const bySku = new Map();
+  for (const m of meta.models) {
+    const skuKey = _normalizeSku(m.global_model_sku || m.model_sku || '');
+    if (skuKey && !bySku.has(skuKey)) bySku.set(skuKey, m);
+  }
+  const modelIdKey = String(row.globalModelId || '').trim();
+  if (modelIdKey && byId.has(modelIdKey)) return byId.get(modelIdKey);
+  const rowSkuKey = _normalizeSku(row.sku || '');
+  if (rowSkuKey && bySku.has(rowSkuKey)) return bySku.get(rowSkuKey);
+  return null;
+}
+
+async function _bulkBackfillGlobalMeta() {
+  const selected = _getSelectedMasterRows();
+  const baseRows = selected.length ? selected : state.rows;
+  const targets = baseRows.filter(row => _normalizeGlobalId(row.itemId));
+  if (!targets.length) {
+    alert('Shopee Global Item ID 가 있는 대상 row가 없습니다.');
+    return;
+  }
+  const scopeLabel = selected.length ? `선택 ${targets.length}건` : `전체 ${targets.length}건`;
+  if (!confirm(`${scopeLabel}의 옵션명/무게를 Global Product 메타데이터로 백필할까요?\n무게는 기존 값이 있을 때 절대 덮어쓰지 않습니다.`)) return;
+
+  const btn = document.getElementById('global-backfill-master');
+  const original = btn ? btn.innerHTML : null;
+  if (btn) { btn.disabled = true; btn.textContent = '백필 중...'; }
+
+  const statusEl = document.getElementById('save-status');
+  const headers = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
+  const gids = [...new Set(targets.map(r => _normalizeGlobalId(r.itemId)).filter(Boolean))];
+  const metaByGid = new Map();
+  let fetchFailed = 0;
+
+  try {
+    const CHUNK = 8;
+    for (let i = 0; i < gids.length; i += CHUNK) {
+      const chunk = gids.slice(i, i + CHUNK);
+      if (statusEl) {
+        statusEl.textContent = `백필 메타 조회 중... ${Math.min(i + CHUNK, gids.length)}/${gids.length}`;
+        statusEl.style.color = '#5a5a66';
+      }
+      const results = await Promise.allSettled(chunk.map(gid => _fetchGlobalItemMeta(gid, headers)));
+      for (const res of results) {
+        if (res.status === 'fulfilled') {
+          metaByGid.set(res.value.gid, res.value);
+        } else {
+          fetchFailed++;
+        }
+      }
+    }
+
+    let updated = 0;
+    let skipped = 0;
+    let failed = 0;
+
+    for (const row of targets) {
+      const gid = _normalizeGlobalId(row.itemId);
+      const meta = metaByGid.get(gid);
+      if (!meta) { failed++; continue; }
+
+      const model = _resolveModelMetaForRow(row, meta);
+      const optionCandidate = model
+        ? (_gkpResolveOptionName(meta.tierVariation, model.tier_index)
+          || String(model.model_name || model.global_model_name || '').trim()
+          || '')
+        : '';
+      const modelWeightG = _gkpWeightKgToGrams(_gkpReadWeightKg(model));
+      const itemWeightG = _gkpWeightKgToGrams(_gkpReadWeightKg(meta.item));
+      const weightCandidate = modelWeightG || itemWeightG || 0;
+
+      let changed = false;
+      if (!String(row.option || '').trim() && optionCandidate) {
+        row.option = optionCandidate;
+        changed = true;
+      }
+      if (!(Number(row.weight) > 0) && weightCandidate > 0) {
+        row.weight = weightCandidate;
+        changed = true;
+      }
+
+      if (!changed) {
+        skipped++;
+        continue;
+      }
+
+      try {
+        await Storage.updateProduct(row.id, row);
+        updated++;
+      } catch (_) {
+        failed++;
+      }
+    }
+
+    renderTableBody();
+    renderVerify();
+    if (statusEl) {
+      statusEl.textContent = `백필 완료: updated ${updated} / skipped ${skipped} / failed ${failed} (meta_fail ${fetchFailed})`;
+      statusEl.style.color = failed || fetchFailed ? '#d62754' : '#15803d';
+      setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 12000);
+    }
+    alert(`백필 완료\nupdated: ${updated}\nskipped: ${skipped}\nfailed: ${failed}\nmeta_fail: ${fetchFailed}`);
+  } finally {
+    if (btn) { btn.disabled = false; if (original) btn.innerHTML = original; }
+  }
+}
+
 function initBatchHistoryUi() {
   const refreshBtn = document.getElementById('bh-refresh');
   const inputs = ['bh-from', 'bh-to', 'bh-platform', 'bh-status', 'bh-keyword'].map(id => document.getElementById(id)).filter(Boolean);

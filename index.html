@@ -780,57 +780,57 @@
 </head>
 <body>
 
-<!-- ?먥븧?먥븧?먥븧?먥븧 濡쒓렇???ㅻ쾭?덉씠 ?먥븧?먥븧?먥븧?먥븧 -->
+<!-- 로그인 오버레이 -->
 <div id="login-overlay" style="position:fixed;inset:0;background:#ffffff;z-index:9999;display:flex;align-items:center;justify-content:center;font-family:'IBM Plex Mono','JetBrains Mono',monospace;">
   <div style="background:#fafafc;border:1px solid #d8d8e0;box-shadow:0 4px 24px rgba(0,0,0,0.08);border-radius:8px;padding:40px;width:380px;max-width:90vw;">
-    <h1 style="margin:0 0 8px;font-family:'Fraunces',serif;font-weight:300;font-size:28px;color:#0a0a0c;">Shopee <em style="color:#d62754;font-style:italic;">??쒕낫??/em></h1>
-    <p style="margin:0 0 28px;color:#5a5a66;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;">濡쒓렇?몄씠 ?꾩슂?⑸땲??/p>
+    <h1 style="margin:0 0 8px;font-family:'Fraunces',serif;font-weight:300;font-size:28px;color:#0a0a0c;">Shopee <em style="color:#d62754;font-style:italic;">대시보드</em></h1>
+    <p style="margin:0 0 28px;color:#5a5a66;font-size:11px;letter-spacing:0.15em;text-transform:uppercase;">로그인이 필요합니다</p>
 
     <form id="login-form">
       <div style="margin-bottom:16px;">
-        <label style="display:block;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#5a5a66;margin-bottom:8px;">?대찓??/label>
+        <label style="display:block;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#5a5a66;margin-bottom:8px;">이메일</label>
         <input id="login-email" type="email" required autocomplete="username"
           style="width:100%;background:transparent;border:none;border-bottom:1px solid #d8d8e0;color:#0a0a0c;font-family:inherit;font-size:14px;padding:8px 0;outline:none;"
           onfocus="this.style.borderBottomColor='#d62754'" onblur="this.style.borderBottomColor='#d8d8e0'">
       </div>
       <div style="margin-bottom:24px;">
-        <label style="display:block;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#5a5a66;margin-bottom:8px;">鍮꾨?踰덊샇</label>
+        <label style="display:block;font-size:10px;letter-spacing:0.18em;text-transform:uppercase;color:#5a5a66;margin-bottom:8px;">비밀번호</label>
         <input id="login-password" type="password" required autocomplete="current-password"
           style="width:100%;background:transparent;border:none;border-bottom:1px solid #d8d8e0;color:#0a0a0c;font-family:inherit;font-size:14px;padding:8px 0;outline:none;"
           onfocus="this.style.borderBottomColor='#d62754'" onblur="this.style.borderBottomColor='#d8d8e0'">
       </div>
       <button type="submit" style="width:100%;padding:12px;background:#d62754;color:white;border:none;border-radius:4px;font-family:inherit;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;cursor:pointer;">
-        濡쒓렇??
+        로그인
       </button>
       <div id="login-error" style="margin-top:12px;color:#d62754;font-size:11px;text-align:center;display:none;"></div>
     </form>
   </div>
 </div>
 
-<!-- ?먥븧?먥븧?먥븧?먥븧 濡쒓렇?꾩썐 踰꾪듉 (?ㅻ뜑 ?곗긽?? ?먥븧?먥븧?먥븧?먥븧 -->
+<!-- 로그인 후 버튼 (헤더 우상단) -->
 <div id="user-info" style="position:fixed;top:16px;right:24px;z-index:100;display:none;align-items:center;gap:12px;font-family:'IBM Plex Mono','JetBrains Mono',monospace;font-size:11px;color:#5a5a66;">
   <span id="user-email"></span>
-  <button id="logout-btn" style="background:transparent;border:1px solid #d8d8e0;color:#5a5a66;font-family:inherit;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;padding:6px 12px;border-radius:2px;cursor:pointer;">濡쒓렇?꾩썐</button>
+  <button id="logout-btn" style="background:transparent;border:1px solid #d8d8e0;color:#5a5a66;font-family:inherit;font-size:10px;letter-spacing:0.15em;text-transform:uppercase;padding:6px 12px;border-radius:2px;cursor:pointer;">로그아웃</button>
 </div>
 
 <div class="container">
 
   <header>
     <div>
-      <h1 class="title">?먮ℓ 愿由?<em>??쒕낫??/em></h1>
-      <div class="subtitle">媛寃??섏젙 쨌 ?곹뭹 ?깅줉</div>
+      <h1 class="title">판매 관리 <em>대시보드</em></h1>
+      <div class="subtitle">가격 설정 및 상품 등록</div>
     </div>
     <div class="meta">
-      <div class="live">?ㅼ떆媛?怨꾩궛 쨌 ?먮룞 ???/div>
-      <div id="last-updated" style="margin-top:6px;">??/div>
+      <div class="live">실시간 계산 및 자동 저장</div>
+      <div id="last-updated" style="margin-top:6px;">-</div>
     </div>
   </header>
 
   <!-- Main Tab Nav -->
   <div class="main-nav">
-    <button class="main-tab active" data-tab="price">?뮥 媛寃??섏젙</button>
-    <button class="main-tab" data-tab="register">?벀 ?곹뭹 ?깅줉</button>
-    <button class="main-tab" data-tab="batch-history">?뱶 Batch History</button>
+    <button class="main-tab active" data-tab="price">가격 설정</button>
+    <button class="main-tab" data-tab="register">상품 등록</button>
+    <button class="main-tab" data-tab="batch-history">Batch History</button>
   </div>
 
   <!-- ?? 媛寃??섏젙 ?⑤꼸 ?? -->
@@ -839,22 +839,22 @@
   <!-- Toolbar -->
   <div class="toolbar">
     <div class="toolbar-left" style="display:flex;gap:6px;flex-wrap:nowrap;align-items:center;overflow-x:auto">
-      <button class="btn" id="keyword-price-open" title="Shopee Global SKU ?곹뭹 寃?????곹뭹 留덉뒪?곗뿉 異붽?">?뵇 ?곹뭹 寃??/button>
-      <button class="btn" id="shopee-sync-mapping" title="Shopee 6媛?region?먯꽌 ?곹뭹 紐⑸줉??媛?몄? SKU 留ㅽ븨 ?먮룞 梨꾩?">?뵕 Shopee 留ㅽ븨 ?숆린??/button>
-      <button class="btn" id="shopee-bulk-sync" disabled title="?좏깮???됱쓽 Shopee 媛寃⑹쓣 ?쇨큵 ?낅뜲?댄듃">??Shopee ?숆린??(<span id="bulk-sync-count">0</span>)</button>
-      <button class="btn" id="joom-bulk-sync" disabled title="?좏깮???됱쓽 Joom SKU 瑜?lookup ?섍퀬 媛寃⑹쓣 ?숆린??(lookup ??DB ?????update-price)">?뙋 Joom ?숆린??(<span id="joom-sync-count">0</span>)</button>
-      <button class="btn" id="ready-stock-bulk" disabled title="?좏깮???곹뭹??紐⑤뱺 region DTS 瑜?1?쇰줈 ?쇨큵 蹂寃?(Shopee Global Product API)">?벀 Ready Stock 泥섎━ (<span id="ready-stock-count">0</span>)</button>
-      <button class="btn" id="sheets-push" title="DB ??Google Sheets ?대낫?닿린 (紐⑤뱺 row ??뼱?곌린)">?뱾 Sheet ?대낫?닿린</button>
+      <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품 검색 후 상품 마스터에 추가">상품 검색</button>
+      <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">Shopee 매핑 동기화</button>
+      <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
+      <button class="btn" id="joom-bulk-sync" disabled title="선택된 행의 Joom SKU lookup 후 가격 동기화">Joom 동기화 (<span id="joom-sync-count">0</span>)</button>
+      <button class="btn" id="ready-stock-bulk" disabled title="선택된 상품의 모든 region DTS를 1일로 일괄 변경 (Shopee Global Product API)">Ready Stock 처리 (<span id="ready-stock-count">0</span>)</button>
+      <button class="btn" id="sheets-push" title="DB를 Google Sheets로 내보내기 (전체 행 덮어쓰기)">Sheet 내보내기</button>
             <button class="btn" id="global-backfill-master" title="기존 Product Master 행의 옵션명/무게를 Shopee Global Product 메타데이터로 채움">🛠 옵션·무게 백필</button>
-      <button class="btn" id="bulk-clear-mapping" disabled title="?좏깮???곹뭹??Shopee region 留ㅽ븨留???젣 (?곹뭹? ?좎?)">?㏏ 留ㅽ븨 ??젣 (<span id="bulk-clear-count">0</span>)</button>
-      <button class="btn danger" id="bulk-complete-remove" disabled title="?좏깮???곹뭹???꾨즺 泥섎━?섍퀬 ?곹뭹 留덉뒪?곗뿉????젣">???꾨즺 泥섎━ (<span id="bulk-complete-count">0</span>)</button>
+      <button class="btn" id="bulk-clear-mapping" disabled title="선택된 상품의 Shopee region 매핑만 제거 (상품은 유지)">매핑 해제 (<span id="bulk-clear-count">0</span>)</button>
+      <button class="btn danger" id="bulk-complete-remove" disabled title="선택된 상품을 완료 처리하고 상품 마스터에서 제거">완료 처리 (<span id="bulk-complete-count">0</span>)</button>
     </div>
   </div>
 
   <!-- Master Table -->
   <div class="section-head">
     <span class="num">01</span>
-    <h2>?곹뭹 留덉뒪??/h2>
+    <h2>상품 마스터</h2>
     <div class="rule"></div>
     <span class="count" id="row-count">0 ITEMS</span>
   </div>

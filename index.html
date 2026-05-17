@@ -1345,6 +1345,7 @@
         <input id="gkp-keyword" type="text" placeholder="예: ENHYPEN, BOYNEXTDOOR" style="width:240px;padding:6px 8px;border:1px solid #d0d0dd;border-radius:4px;font-size:12px;">
       </div>
       <button class="btn primary" id="gkp-search" style="height:32px;">검색</button>
+      <button class="btn" id="gkp-refresh" style="height:32px;" title="캐시(최대 24h)를 비우고 Shopee 에서 신상품까지 다시 가져옵니다. 방금 등록한 Global SKU 가 안 보일 때 사용.">🔄 새로고침</button>
     </div>
     <div id="gkp-status" style="font-size:11px;color:#5a5a66;min-height:16px;margin-bottom:8px;"></div>
     <div id="gkp-results-wrap" style="display:none;">
@@ -7148,6 +7149,19 @@ async function _gkpApply() {
     });
 
     cancelBtn.addEventListener('click', () => modal.classList.remove('show'));
+
+    // Force-refresh button: invalidate cache + re-run search so newly registered
+    // Shopee Global SKUs show up immediately (without waiting 24h TTL).
+    const refreshBtn = document.getElementById('gkp-refresh');
+    if (refreshBtn) {
+      refreshBtn.addEventListener('click', async () => {
+        const statusEl = document.getElementById('gkp-status');
+        statusEl.textContent = '캐시 비우는 중…';
+        _gkpEnrichedCache = { items: [], fetchedAt: 0, fallbackMode: false };
+        try { localStorage.removeItem(GKP_CACHE_KEY); } catch {}
+        searchBtn.click();
+      });
+    }
 
     searchBtn.addEventListener('click', async () => {
       searchBtn.disabled = true;

@@ -6905,6 +6905,14 @@ async function _gkpApply() {
       .filter(x => x.prev && (!x.prev.weight_g || Number(x.prev.weight_g) <= 0) && Number(x.next.weight_g) > 0);
 
     if (missingRows.length > 0) {
+      // Ensure newly-added products always appear at the very TOP of the
+      // product master list. Sort order is `position ASC, created_at ASC`,
+      // so we assign each new row a negative position derived from now() —
+      // later inserts get a smaller (more negative) value, so the freshest
+      // batch always sorts above prior batches. Offset within the batch
+      // preserves the user's pick order.
+      const baseTs = -Date.now();
+      missingRows.forEach((r, i) => { r.position = baseTs - i; });
       const { error: insertErr } = await db.from('products').insert(missingRows);
       if (insertErr) throw insertErr;
     }

@@ -840,6 +840,7 @@
   <div class="toolbar">
     <div class="toolbar-left" style="display:flex;gap:6px;flex-wrap:nowrap;align-items:center;overflow-x:auto">
       <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품 검색 후 상품 마스터에 추가">🔍 상품 검색</button>
+      <button class="btn" id="eng-sync-open" title="Global Product 의 영문 상품명/옵션명을 5개 활성 매장(SG/TW/TH/MY/PH)에 일괄 sync 정책 설정">🌐 매장 영문 sync</button>
       <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
       <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
       <button class="btn" id="joom-bulk-sync" disabled title="선택된 행의 Joom SKU 를 lookup 하고 가격을 동기화 (lookup → DB 저장 → update-price)">🌐 Joom 동기화 (<span id="joom-sync-count">0</span>)</button>
@@ -1374,6 +1375,64 @@
     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
       <button class="btn" id="gkp-cancel">닫기</button>
       <button class="btn primary" id="gkp-apply" disabled>확인 (<span id="gkp-apply-count">0</span>건 추가)</button>
+    </div>
+  </div>
+</div>
+
+<!-- English sync bulk modal — sets Global→shop sync policy for 5 active regions -->
+<div class="modal-overlay" id="eng-sync-modal">
+  <div class="modal" style="max-width:600px;">
+    <h3>🌐 Global → 매장 sync 정책 일괄 설정</h3>
+    <p style="color:#5a5a66;font-size:11px;margin-bottom:12px;line-height:1.6;">
+      SG/TW/TH/MY/PH 5개 활성 매장의 Global Product sync 정책을 아래 선택한 flag 로 일괄 설정합니다.
+      Shopee API 에 <code>get_sync_field</code> 가 없어 현재 정책을 읽을 수 없으므로, 실행 시 모든 flag 를 명시적으로 set 합니다.
+      <strong>상품명/옵션명 ON</strong> 시 매장 내 해당 항목이 Global 영문명으로 통일됩니다 (매장별 커스터마이즈 덮어씀).
+    </p>
+    <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;padding:12px;background:#f8f8fc;border:1px solid #e0e0ea;border-radius:6px;">
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="es-flag-name" checked>
+        <span><strong>상품명</strong> <code style="font-size:10px;">name_and_description</code></span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="es-flag-option" checked>
+        <span><strong>옵션명</strong> <code style="font-size:10px;">tier_variation_name_and_option</code></span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="es-flag-media">
+        <span><strong>이미지/미디어</strong> <code style="font-size:10px;">media_information</code></span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="es-flag-price">
+        <span><strong>가격</strong> <code style="font-size:10px;">price</code>
+          <span style="color:#c0392b;font-size:10px;">⚠ ON 하면 Global 가격이 다음 sync 시 매장별 가격을 덮어씁니다</span>
+        </span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12px;cursor:pointer;">
+        <input type="checkbox" id="es-flag-dts">
+        <span><strong>발송 기한</strong> <code style="font-size:10px;">days_to_ship</code></span>
+      </label>
+    </div>
+    <!-- Per-shop result table — shown after submit -->
+    <div id="es-result-wrap" style="display:none;margin-bottom:14px;">
+      <table style="width:100%;border-collapse:collapse;font-size:11px;">
+        <thead>
+          <tr style="background:#f3f3f8;text-align:left;">
+            <th style="padding:5px 8px;border-bottom:1px solid #d8d8e0;">Region</th>
+            <th style="padding:5px 8px;border-bottom:1px solid #d8d8e0;">Shop ID</th>
+            <th style="padding:5px 8px;border-bottom:1px solid #d8d8e0;">Status</th>
+            <th style="padding:5px 8px;border-bottom:1px solid #d8d8e0;">Detail</th>
+            <th style="padding:5px 8px;border-bottom:1px solid #d8d8e0;">재시도</th>
+          </tr>
+        </thead>
+        <tbody id="es-result-body"></tbody>
+      </table>
+    </div>
+    <p style="font-size:10px;color:#888;margin-bottom:14px;line-height:1.5;border-top:1px solid #e8e8f0;padding-top:10px;">
+      ⚠ <strong>롤백 주의:</strong> 롤백은 sync 정책만 다시 OFF 합니다. 이미 매장에 sync 된 이름은 복원되지 않습니다. 매장별 수동 편집 또는 global item 재푸시 필요.
+    </p>
+    <div style="display:flex;justify-content:flex-end;gap:8px;">
+      <button class="btn" id="es-cancel">취소</button>
+      <button class="btn primary" id="es-submit">실행</button>
     </div>
   </div>
 </div>
@@ -7324,6 +7383,224 @@ async function _gkpApply() {
     } else {
       setTimeout(() => _gkpBackgroundPrefetch(), GKP_PREFETCH_DELAY_MS);
     }
+  };
+  init();
+})();
+
+/* ════════════════════════════════════════════════════════════════════
+   ENG-SYNC MODAL — bulk set Global→shop sync policy for 5 active regions
+   Uses bridge action set_dts_sync (wraps Shopee set_sync_field per-shop).
+   ════════════════════════════════════════════════════════════════════ */
+(function bindEngSyncModal() {
+  const EXPECTED_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH'];
+
+  // Build a result table row for one shop; returns the <tr> element
+  function _esCreateRow(region, shopId) {
+    const tr = document.createElement('tr');
+    tr.id = 'es-row-' + region;
+    tr.innerHTML = [
+      `<td style="padding:5px 8px;font-weight:600;font-family:monospace;">${region}</td>`,
+      `<td style="padding:5px 8px;font-family:monospace;">${shopId}</td>`,
+      `<td id="es-status-${region}" style="padding:5px 8px;">⏳</td>`,
+      `<td id="es-detail-${region}" style="padding:5px 8px;color:#5a5a66;">대기 중</td>`,
+      `<td id="es-retry-${region}" style="padding:5px 8px;"></td>`,
+    ].join('');
+    return tr;
+  }
+
+  // Collect flag values from checkboxes
+  function _esReadFlags() {
+    return {
+      name_and_description: document.getElementById('es-flag-name').checked,
+      tier_variation_name_and_option: document.getElementById('es-flag-option').checked,
+      media_information: document.getElementById('es-flag-media').checked,
+      price: document.getElementById('es-flag-price').checked,
+      days_to_ship: document.getElementById('es-flag-dts').checked,
+    };
+  }
+
+  // Call set_dts_sync for a single shop; returns {ok, detail}
+  async function _esCallOneShop(shop, flags, authHeaders) {
+    const body = {
+      shops: [{
+        shop_id: shop.shop_id,
+        shop_region: shop.region,
+        name_and_description: flags.name_and_description,
+        media_information: flags.media_information,
+        tier_variation_name_and_option: flags.tier_variation_name_and_option,
+        price: flags.price,
+        days_to_ship: flags.days_to_ship,
+      }],
+    };
+    let resp, json;
+    try {
+      resp = await fetch(`${SHOPEE_BRIDGE}/set_dts_sync?region=${shop.region}`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify(body),
+      });
+      json = await resp.json().catch(() => ({}));
+    } catch (networkErr) {
+      return { ok: false, detail: '네트워크 오류: ' + (networkErr.message || networkErr) };
+    }
+    if (!resp.ok) {
+      // HTTP-level error (4xx/5xx)
+      const msg = json?.error || json?.message || `HTTP ${resp.status}`;
+      return { ok: false, detail: msg };
+    }
+    // Failure surfaces in 3 shapes on HTTP 200:
+    //   (a) bridge `{ ok: false, error/message }`
+    //   (b) Shopee passed-through `result: { error: '...', message: '...' }` (bridge may forget to set ok=false)
+    //   (c) bridge omits `ok` entirely — be strict: only `ok === true` counts as success
+    const shopeeErr = json?.result?.error;
+    if (json.ok === false || shopeeErr) {
+      const msg = json.error || json.message || shopeeErr || json?.result?.message || 'bridge/Shopee 오류';
+      return { ok: false, detail: msg };
+    }
+    if (json.ok !== true) {
+      return { ok: false, detail: '응답에 ok=true 가 없음 (예상치 못한 응답 형식)' };
+    }
+    const requestId = json.request_id || json.result?.request_id || '';
+    return { ok: true, detail: requestId ? `request_id: ${requestId}` : '성공' };
+  }
+
+  // Update one result-table row
+  function _esSetRowResult(region, ok, detail, onRetry) {
+    const statusEl = document.getElementById(`es-status-${region}`);
+    const detailEl = document.getElementById(`es-detail-${region}`);
+    const retryEl  = document.getElementById(`es-retry-${region}`);
+    if (!statusEl) return;
+    statusEl.textContent = ok ? '✅' : '❌';
+    detailEl.textContent = detail;
+    if (!ok && onRetry) {
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.style.cssText = 'font-size:10px;padding:2px 8px;';
+      btn.textContent = '재시도';
+      btn.addEventListener('click', onRetry);
+      retryEl.innerHTML = '';
+      retryEl.appendChild(btn);
+    } else {
+      retryEl.innerHTML = '';
+    }
+  }
+
+  // Execute sync for a single shop and update its row
+  async function _esRunOneShop(shop, flags, authHeaders) {
+    const { ok, detail } = await _esCallOneShop(shop, flags, authHeaders);
+    // Build retry handler — captures shop/flags/headers by reference
+    const retryHandler = async () => {
+      document.getElementById(`es-status-${shop.region}`).textContent = '⏳';
+      document.getElementById(`es-detail-${shop.region}`).textContent = '재시도 중…';
+      document.getElementById(`es-retry-${shop.region}`).innerHTML = '';
+      const res = await _esCallOneShop(shop, flags, authHeaders);
+      _esSetRowResult(shop.region, res.ok, res.detail, res.ok ? null : retryHandler);
+    };
+    _esSetRowResult(shop.region, ok, detail, ok ? null : retryHandler);
+    return ok;
+  }
+
+  async function _esSubmit() {
+    const submitBtn = document.getElementById('es-submit');
+    const resultWrap = document.getElementById('es-result-wrap');
+    const resultBody = document.getElementById('es-result-body');
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = '조회 중…';
+
+    // Wrap the whole body in try/finally so any unexpected throw (network
+    // failure, auth helper error, DOM exception, etc.) still re-enables the
+    // submit button instead of leaving the user stuck.
+    try {
+      // 1. Fetch shop list from DB — fresh, not hardcoded
+      let shops;
+      try {
+        const { data, error } = await db
+          .from('shopee_tokens')
+          .select('region, shop_id')
+          .not('region', 'eq', '_MERCHANT')
+          .in('region', EXPECTED_REGIONS);
+        if (error) throw new Error('DB 오류: ' + (error.message || error));
+        shops = (data || []).map(r => ({ region: r.region, shop_id: Number(r.shop_id) }));
+      } catch (e) {
+        alert('매장 목록 조회 실패: ' + (e.message || e));
+        return;
+      }
+
+      // 2. Fail-fast validation — must be exactly EXPECTED_REGIONS, no duplicates
+      const regionsSeen = shops.map(s => s.region);
+      const uniqueRegions = [...new Set(regionsSeen)];
+      const unexpectedRegions = uniqueRegions.filter(r => !EXPECTED_REGIONS.includes(r));
+      const hasDuplicates = regionsSeen.length !== uniqueRegions.length;
+      const missingRegions = EXPECTED_REGIONS.filter(r => !uniqueRegions.includes(r));
+
+      if (shops.length === 0 || unexpectedRegions.length || hasDuplicates || missingRegions.length) {
+        const reasons = [];
+        if (shops.length === 0) reasons.push('매장 0개 조회됨');
+        if (missingRegions.length) reasons.push('누락 region: ' + missingRegions.join(','));
+        if (unexpectedRegions.length) reasons.push('예상 외 region: ' + unexpectedRegions.join(','));
+        if (hasDuplicates) reasons.push('중복 region 존재');
+        alert('매장 목록 검증 실패 — 실행 중단:\n' + reasons.join('\n'));
+        console.error('[eng-sync] validation failed', { shops, reasons });
+        return;
+      }
+
+      // 3. Build result table rows before starting calls
+      const flags = _esReadFlags();
+      resultBody.innerHTML = '';
+      shops.forEach(s => resultBody.appendChild(_esCreateRow(s.region, s.shop_id)));
+      resultWrap.style.display = '';
+
+      submitBtn.textContent = '실행 중…';
+
+      // 4. Auth headers (reuse _joomAuthHeaders which is the shared helper for all bridges)
+      const authHeaders = await _joomAuthHeaders();
+
+      // 5. Sequential per-shop calls — a rate-limit on one shop won't cascade
+      let successCount = 0;
+      for (const shop of shops) {
+        document.getElementById(`es-status-${shop.region}`).textContent = '⏳';
+        document.getElementById(`es-detail-${shop.region}`).textContent = '호출 중…';
+        const ok = await _esRunOneShop(shop, flags, authHeaders);
+        if (ok) successCount++;
+      }
+
+      // 6. Summary
+      const total = shops.length;
+      const failCount = total - successCount;
+      const summary = failCount === 0
+        ? `✅ ${successCount}/${total} 매장 적용 완료`
+        : `⚠ ${successCount}/${total} 완료, ${failCount}개 실패 (표에서 재시도 가능)`;
+      alert(summary);
+    } catch (e) {
+      console.error('[eng-sync] unexpected error', e);
+      alert('예상치 못한 오류: ' + (e?.message || e));
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = '실행';
+    }
+  }
+
+  const init = () => {
+    const openBtn   = document.getElementById('eng-sync-open');
+    const modal     = document.getElementById('eng-sync-modal');
+    const cancelBtn = document.getElementById('es-cancel');
+    const submitBtn = document.getElementById('es-submit');
+    if (!openBtn || !modal) { document.addEventListener('DOMContentLoaded', init); return; }
+    if (openBtn.dataset.bound) return;
+    openBtn.dataset.bound = '1';
+
+    openBtn.addEventListener('click', () => {
+      // Reset result area on each open
+      document.getElementById('es-result-wrap').style.display = 'none';
+      document.getElementById('es-result-body').innerHTML = '';
+      document.getElementById('es-submit').disabled = false;
+      document.getElementById('es-submit').textContent = '실행';
+      modal.classList.add('show');
+    });
+
+    cancelBtn.addEventListener('click', () => modal.classList.remove('show'));
+    submitBtn.addEventListener('click', _esSubmit);
   };
   init();
 })();

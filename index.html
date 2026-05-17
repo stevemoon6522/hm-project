@@ -1345,7 +1345,7 @@
         <input id="gkp-keyword" type="text" placeholder="예: ENHYPEN, BOYNEXTDOOR" style="width:240px;padding:6px 8px;border:1px solid #d0d0dd;border-radius:4px;font-size:12px;">
       </div>
       <button class="btn primary" id="gkp-search" style="height:32px;">검색</button>
-      <button class="btn" id="gkp-refresh" style="height:32px;" title="캐시(최대 24h)를 비우고 Shopee 에서 신상품까지 다시 가져옵니다. 방금 등록한 Global SKU 가 안 보일 때 사용.">🔄 새로고침</button>
+      <button class="btn" id="gkp-refresh" style="height:32px;" title="Delta 갱신: 캐시 fetchedAt 이후 추가/변경된 Global SKU 만 가져와 캐시에 병합 (보통 3~5초).&#10;Shift+클릭: 전체 재구축 (캐시 비우고 1600+개 전부 다시 fetch, 30~60초).">🔄 새로고침</button>
     </div>
     <div id="gkp-status" style="font-size:11px;color:#5a5a66;min-height:16px;margin-bottom:8px;"></div>
     <div id="gkp-results-wrap" style="display:none;">
@@ -6476,14 +6476,20 @@ async function _gkpBackgroundPrefetch({ force = false } = {}) {
   return _gkpPrefetchPromise;
 }
 
-async function _gkpFetchAllGlobalItems(statusEl) {
+async function _gkpFetchAllGlobalItems(statusEl, opts = {}) {
   const _bh = { 'Authorization': 'Bearer ' + SUPABASE_ANON_KEY, 'apikey': SUPABASE_ANON_KEY };
   const pageSize = 50;
   let offset = '', allItems = [], hasMore = true;
   const seenOffsets = new Set();
+  // Optional update_time_from filter (unix seconds) — used by delta refresh
+  // to fetch only items added/edited since the previous cache snapshot.
+  const sinceTs = Number(opts.updateTimeFromSec) || null;
+  const sinceSuffix = sinceTs ? `&update_time_from=${sinceTs}` : '';
   while (hasMore) {
-    statusEl.textContent = `Global 상품 목록 로딩 중… (${allItems.length}건)`;
-    const url = `${SHOPEE_BRIDGE}/global_items?region=SG&page_size=${pageSize}` + (offset ? `&offset=${encodeURIComponent(offset)}` : '');
+    statusEl.textContent = sinceTs
+      ? `신규/변경 상품만 로딩 중… (${allItems.length}건)`
+      : `Global 상품 목록 로딩 중… (${allItems.length}건)`;
+    const url = `${SHOPEE_BRIDGE}/global_items?region=SG&page_size=${pageSize}${sinceSuffix}` + (offset ? `&offset=${encodeURIComponent(offset)}` : '');
     const res = await fetch(url, { headers: _bh })
       .then(x => x.json()).catch(e => ({ ok: false, _fetchErr: e.message }));
     if (!res.ok) {
@@ -7158,16 +7164,65 @@ async function _gkpApply() {
 
     cancelBtn.addEventListener('click', () => modal.classList.remove('show'));
 
-    // Force-refresh button: invalidate cache + re-run search so newly registered
-    // Shopee Global SKUs show up immediately (without waiting 24h TTL).
+    // Refresh button:
+    //  - Default click: DELTA refresh — keep existing cache, pull only items
+    //    updated since cache.fetchedAt via Shopee's update_time_from filter,
+    //    enrich just those, merge into cache. Fast (~3-5s) for the common
+    //    "I just added 1-5 products" case.
+    //  - Shift+click: FULL rebuild — invalidate everything and re-fetch all
+    //    1,600+ items (slow, ~30-60s). Use when cache looks corrupted.
     const refreshBtn = document.getElementById('gkp-refresh');
     if (refreshBtn) {
-      refreshBtn.addEventListener('click', async () => {
+      refreshBtn.addEventListener('click', async (ev) => {
         const statusEl = document.getElementById('gkp-status');
-        statusEl.textContent = '캐시 비우는 중…';
-        _gkpEnrichedCache = { items: [], fetchedAt: 0, fallbackMode: false };
-        try { localStorage.removeItem(GKP_CACHE_KEY); } catch {}
-        searchBtn.click();
+        const fullRebuild = !!ev?.shiftKey;
+        if (fullRebuild) {
+          statusEl.textContent = '전체 캐시 비우는 중 (Shift+클릭 감지)…';
+          _gkpEnrichedCache = { items: [], fetchedAt: 0, fallbackMode: false };
+          try { localStorage.removeItem(GKP_CACHE_KEY); } catch {}
+          searchBtn.click();
+          return;
+        }
+        // Delta refresh path
+        refreshBtn.disabled = true;
+        const origText = refreshBtn.textContent;
+        refreshBtn.textContent = '신규/변경만 가져오는 중…';
+        try {
+          const startedAt = Date.now();
+          const cache = _gkpEnrichedCache;
+          if (!cache || !cache.fetchedAt || !cache.items.length) {
+            // Nothing to delta-against — fall back to full search
+            statusEl.textContent = '기존 캐시 없음 — 전체 fetch 로 전환';
+            _gkpEnrichedCache = { items: [], fetchedAt: 0, fallbackMode: false };
+            try { localStorage.removeItem(GKP_CACHE_KEY); } catch {}
+            searchBtn.click();
+            return;
+          }
+          // Subtract a 5-min buffer so we don't miss items registered right at the cache instant.
+          const sinceSec = Math.max(0, Math.floor(cache.fetchedAt / 1000) - 300);
+          const newOrChanged = await _gkpFetchAllGlobalItems(statusEl, { updateTimeFromSec: sinceSec });
+          if (newOrChanged.length === 0) {
+            statusEl.textContent = '신규/변경 상품 없음 (캐시 그대로 사용)';
+            searchBtn.click();
+            return;
+          }
+          statusEl.textContent = `신규/변경 ${newOrChanged.length}건 발견 — 상세 로딩…`;
+          const enrichedNew = await _gkpEnrichItemsComplete(newOrChanged, statusEl);
+          // Merge: drop old entries with same global_item_id, append the fresh ones
+          const newIds = new Set(enrichedNew.map(x => String(x.global_item_id)));
+          const kept = cache.items.filter(x => !newIds.has(String(x.global_item_id)));
+          const merged = [...enrichedNew, ...kept];
+          _gkpEnrichedCache = { items: merged, fetchedAt: startedAt, fallbackMode: cache.fallbackMode };
+          _gkpSavePersistedCache(merged, cache.fallbackMode, startedAt);
+          statusEl.textContent = `Delta 갱신 완료 — 신규/변경 ${enrichedNew.length}건 반영, 총 ${merged.length}건`;
+          searchBtn.click();
+        } catch (e) {
+          console.error('[gkp] delta refresh failed', e);
+          statusEl.textContent = `Delta 갱신 실패: ${e.message || e} — Shift+클릭으로 전체 재구축 시도하세요`;
+        } finally {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = origText;
+        }
       });
     }
 

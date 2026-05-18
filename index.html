@@ -840,7 +840,7 @@
   <div class="toolbar">
     <div class="toolbar-left" style="display:flex;gap:6px;flex-wrap:nowrap;align-items:center;overflow-x:auto">
       <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품 검색 후 상품 마스터에 추가">🔍 상품 검색</button>
-      <button class="btn" id="eng-sync-open" title="Global Product 의 영문 상품명/옵션명을 5개 활성 매장(SG/TW/TH/MY/PH)에 일괄 sync 정책 설정">🌐 매장 영문 sync</button>
+      <button class="btn" id="eng-sync-open" title="Global Product 의 영문 상품명/옵션명을 6개 활성 매장(SG/TW/TH/MY/PH/BR)에 일괄 sync 정책 설정">🌐 매장 영문 sync</button>
       <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
       <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
       <button class="btn" id="joom-bulk-sync" disabled title="선택된 행의 Joom SKU 를 lookup 하고 가격을 동기화 (lookup → DB 저장 → update-price)">🌐 Joom 동기화 (<span id="joom-sync-count">0</span>)</button>
@@ -1384,7 +1384,7 @@
   <div class="modal" style="max-width:600px;">
     <h3>🌐 Global → 매장 sync 정책 일괄 설정</h3>
     <p style="color:#5a5a66;font-size:11px;margin-bottom:12px;line-height:1.6;">
-      SG/TW/TH/MY/PH 5개 활성 매장의 Global Product sync 정책을 아래 선택한 flag 로 일괄 설정합니다.
+      SG/TW/TH/MY/PH/BR 6개 활성 매장의 Global Product sync 정책을 아래 선택한 flag 로 일괄 설정합니다.
       Shopee API 에 <code>get_sync_field</code> 가 없어 현재 정책을 읽을 수 없으므로, 실행 시 모든 flag 를 명시적으로 set 합니다.
       <strong>상품명/옵션명 ON</strong> 시 매장 내 해당 항목이 Global 영문명으로 통일됩니다 (매장별 커스터마이즈 덮어씀).
     </p>
@@ -7388,11 +7388,11 @@ async function _gkpApply() {
 })();
 
 /* ════════════════════════════════════════════════════════════════════
-   ENG-SYNC MODAL — bulk set Global→shop sync policy for 5 active regions
+   ENG-SYNC MODAL — bulk set Global→shop sync policy for 6 active regions
    Uses bridge action set_dts_sync (wraps Shopee set_sync_field per-shop).
    ════════════════════════════════════════════════════════════════════ */
 (function bindEngSyncModal() {
-  const EXPECTED_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH'];
+  const EXPECTED_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
 
   // Build a result table row for one shop; returns the <tr> element
   function _esCreateRow(region, shopId) {
@@ -7512,16 +7512,22 @@ async function _gkpApply() {
     // failure, auth helper error, DOM exception, etc.) still re-enables the
     // submit button instead of leaving the user stuck.
     try {
-      // 1. Fetch shop list from DB — fresh, not hardcoded
+      // 1. Fetch shop list via shopee-bridge/tokens — service-role key bypasses
+      //    the no_anon_st / no_auth_st RLS policies that block direct anon SELECT
+      //    on shopee_tokens (tokens contain access/refresh secrets — anon must
+      //    not read them, but {region, shop_id} only is safe via the bridge).
       let shops;
       try {
-        const { data, error } = await db
-          .from('shopee_tokens')
-          .select('region, shop_id')
-          .not('region', 'eq', '_MERCHANT')
-          .in('region', EXPECTED_REGIONS);
-        if (error) throw new Error('DB 오류: ' + (error.message || error));
-        shops = (data || []).map(r => ({ region: r.region, shop_id: Number(r.shop_id) }));
+        const authHeaders = await _joomAuthHeaders();
+        const resp = await fetch(`${SHOPEE_BRIDGE}/tokens`, { method: 'GET', headers: authHeaders });
+        const payload = await resp.json().catch(() => ({}));
+        if (!resp.ok || payload?.ok !== true) {
+          throw new Error(payload?.error || payload?.message || `HTTP ${resp.status}`);
+        }
+        const all = Array.isArray(payload.tokens) ? payload.tokens : [];
+        shops = all
+          .filter(t => t && t.region && EXPECTED_REGIONS.includes(t.region))
+          .map(t => ({ region: t.region, shop_id: Number(t.shop_id) }));
       } catch (e) {
         alert('매장 목록 조회 실패: ' + (e.message || e));
         return;

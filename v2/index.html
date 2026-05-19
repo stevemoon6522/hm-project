@@ -1153,10 +1153,54 @@
 
         <div class="section-sep">Sales Information</div>
 
+        <div class="section-sep">Bundle pricing</div>
+        <div class="wrow">
+          <div class="wfield">
+            <label for="w-retail-price">retail_price KRW
+              <span class="hint">formula input</span>
+            </label>
+            <input type="text" id="w-retail-price" inputmode="numeric" placeholder="21200">
+          </div>
+          <div class="wfield">
+            <label for="w-purchase-cost">purchase_cost KRW
+              <span class="hint">manual, never overwritten by bundle</span>
+            </label>
+            <input type="text" id="w-purchase-cost" inputmode="numeric" placeholder="5000">
+          </div>
+          <div class="wfield">
+            <label for="w-member-count">member_count
+              <span class="hint">multiplier base</span>
+            </label>
+            <input type="text" id="w-member-count" inputmode="numeric" placeholder="5">
+          </div>
+        </div>
+        <div class="wrow">
+          <div class="wfield">
+            <label for="w-bundle-albums">bundle_albums
+              <span class="hint">optional; default ratio 1</span>
+            </label>
+            <input type="text" id="w-bundle-albums" inputmode="numeric" placeholder="4">
+          </div>
+          <div class="wfield">
+            <label for="w-bundle-cards">bundle_cards
+              <span class="hint">optional; default ratio 1</span>
+            </label>
+            <input type="text" id="w-bundle-cards" inputmode="numeric" placeholder="5">
+          </div>
+          <div class="wfield">
+            <label>Calculated set_price KRW</label>
+            <div id="w-bundle-set-price" class="payload-pre" style="min-height:34px;display:flex;align-items:center;font-weight:700;">-</div>
+          </div>
+        </div>
+        <div id="w-bundle-pricing-note" style="font-size:11px;color:var(--muted);margin:-4px 0 12px;">
+          set_price = round((retail_price - purchase_cost) * member_count * (bundle_albums / bundle_cards)).
+          Empty bundle ratio is treated as 1.
+        </div>
+
         <div class="wrow">
           <div class="wfield">
             <label for="w-original-price">original_price <span class="req">*</span>
-              <span class="hint">float — add_global_item required</span>
+              <span class="hint">auto-filled from Bundle pricing when complete</span>
             </label>
             <input type="number" id="w-original-price" placeholder="예: 9.99" step="0.01" min="0.01">
             <div class="werr" id="werr-original-price">original_price는 필수 (0 초과).</div>
@@ -2022,6 +2066,33 @@
           <div class="error-text" data-error-for="field-price"></div>
         </div>
         <div class="field span-3">
+          <label for="field-retail-price">retail_price KRW</label>
+          <input id="field-retail-price" type="text" inputmode="numeric" placeholder="21200">
+        </div>
+        <div class="field span-3">
+          <label for="field-purchase-cost">purchase_cost KRW</label>
+          <input id="field-purchase-cost" type="text" inputmode="numeric" placeholder="5000">
+        </div>
+        <div class="field span-3">
+          <label for="field-member-count">member_count</label>
+          <input id="field-member-count" type="text" inputmode="numeric" placeholder="5">
+        </div>
+        <div class="field span-3">
+          <label for="field-bundle-albums">bundle_albums</label>
+          <input id="field-bundle-albums" type="text" inputmode="numeric" placeholder="4">
+        </div>
+        <div class="field span-3">
+          <label for="field-bundle-cards">bundle_cards</label>
+          <input id="field-bundle-cards" type="text" inputmode="numeric" placeholder="5">
+        </div>
+        <div class="field span-6">
+          <label>Calculated set_price KRW</label>
+          <div id="field-bundle-set-price" class="payload-pre" style="min-height:38px;display:flex;align-items:center;font-weight:700;">-</div>
+          <div id="field-bundle-note" class="muted" style="font-size:11px;margin-top:4px;">
+            set_price = round((retail_price - purchase_cost) * member_count * (bundle_albums / bundle_cards)); ratio defaults to 1.
+          </div>
+        </div>
+        <div class="field span-3">
           <label for="field-stock" class="required">Stock</label>
           <input id="field-stock" type="number" min="0" step="1" value="0">
           <div class="error-text" data-error-for="field-stock"></div>
@@ -2290,6 +2361,90 @@
     if (value === '' || value == null) return null;
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
+  }
+
+  function parseRegisterBundleNumber(value) {
+    if (value === '' || value == null) return null;
+    const normalized = String(value).replace(/,/g, '').trim();
+    if (!normalized) return null;
+    const n = Number(normalized);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function calculateRegisterBundleSetPrice(retailPrice, purchaseCost, memberCount, bundleAlbums, bundleCards) {
+    const retail = parseRegisterBundleNumber(retailPrice);
+    const cost = parseRegisterBundleNumber(purchaseCost);
+    const members = parseRegisterBundleNumber(memberCount);
+    if (retail == null || cost == null || members == null) return null;
+    const albums = parseRegisterBundleNumber(bundleAlbums);
+    const cards = parseRegisterBundleNumber(bundleCards);
+    const ratio = (albums != null && cards != null && albums > 0 && cards > 0) ? (albums / cards) : 1;
+    return Math.round((retail - cost) * members * ratio);
+  }
+
+  function readRegisterBundlePricing() {
+    const retailPrice = parseRegisterBundleNumber(g('w-retail-price').value);
+    const purchaseCost = parseRegisterBundleNumber(g('w-purchase-cost').value);
+    const memberCount = parseRegisterBundleNumber(g('w-member-count').value);
+    const bundleAlbums = parseRegisterBundleNumber(g('w-bundle-albums').value);
+    const bundleCards = parseRegisterBundleNumber(g('w-bundle-cards').value);
+    const hasBundle = bundleAlbums != null && bundleCards != null && bundleAlbums > 0 && bundleCards > 0;
+    const ratio = hasBundle ? (bundleAlbums / bundleCards) : 1;
+    const setPrice = calculateRegisterBundleSetPrice(retailPrice, purchaseCost, memberCount, bundleAlbums, bundleCards);
+    return { retailPrice, purchaseCost, memberCount, bundleAlbums, bundleCards, hasBundle, ratio, setPrice };
+  }
+
+  function syncRegisterBundlePricing() {
+    const pricing = readRegisterBundlePricing();
+    const resultEl = g('w-bundle-set-price');
+    const noteEl = g('w-bundle-pricing-note');
+    if (pricing.setPrice == null) {
+      if (resultEl) resultEl.textContent = '-';
+      if (noteEl) noteEl.textContent = 'Enter retail_price, purchase_cost, and member_count to calculate set_price. Empty bundle ratio is treated as 1.';
+      return pricing;
+    }
+
+    // GO parity: purchase_cost is operator-owned. Bundle changes only the multiplier.
+    // Example A: 21200, 5000, 5, 4/5 => 64800. Example B: 19800, 6000, 5, 3/4 => 51750.
+    const setPriceText = String(pricing.setPrice);
+    if (resultEl) resultEl.textContent = 'KRW ' + pricing.setPrice.toLocaleString();
+    if (noteEl) {
+      const ratioLabel = pricing.hasBundle
+        ? `${pricing.bundleAlbums}/${pricing.bundleCards} = ${pricing.ratio.toFixed(3)}`
+        : '1 (default)';
+      noteEl.textContent = `set_price = round((retail_price - purchase_cost) * member_count * ratio), ratio ${ratioLabel}.`;
+    }
+    const priceField = g('w-original-price');
+    if (priceField) {
+      priceField.value = setPriceText;
+      priceField.dataset.bundleAutoPrice = setPriceText;
+    }
+    document.querySelectorAll('#w-vrows-container input[id^="wv-price-"]').forEach((input) => {
+      const previousAuto = input.dataset.bundleAutoPrice || '';
+      if (!input.value || input.dataset.bundleAuto === '1' || input.value === previousAuto) {
+        input.value = setPriceText;
+        input.dataset.bundleAuto = '1';
+        input.dataset.bundleAutoPrice = setPriceText;
+      }
+    });
+    return pricing;
+  }
+
+  function registerCurrentSetPrice() {
+    const calculated = readRegisterBundlePricing().setPrice;
+    return calculated != null ? calculated : numberOrNull(g('w-original-price').value);
+  }
+
+  function bindRegisterBundlePricing() {
+    const ids = ['w-retail-price', 'w-purchase-cost', 'w-member-count', 'w-bundle-albums', 'w-bundle-cards'];
+    ids.forEach((id) => {
+      const input = g(id);
+      if (!input || input.dataset.bundleBound) return;
+      input.dataset.bundleBound = '1';
+      input.addEventListener('input', syncRegisterBundlePricing);
+      input.addEventListener('change', syncRegisterBundlePricing);
+    });
+    syncRegisterBundlePricing();
   }
 
   function setStatus(message, kind = '') {
@@ -2841,6 +2996,64 @@
     ].join('\n');
   }
 
+  function calculateModalBundleSetPrice(retailPrice, purchaseCost, memberCount, bundleAlbums, bundleCards) {
+    return calculateRegisterBundleSetPrice(retailPrice, purchaseCost, memberCount, bundleAlbums, bundleCards);
+  }
+
+  function readModalBundlePricing() {
+    const retailPrice = parseRegisterBundleNumber(field('field-retail-price')?.value);
+    const purchaseCost = parseRegisterBundleNumber(field('field-purchase-cost')?.value);
+    const memberCount = parseRegisterBundleNumber(field('field-member-count')?.value);
+    const bundleAlbums = parseRegisterBundleNumber(field('field-bundle-albums')?.value);
+    const bundleCards = parseRegisterBundleNumber(field('field-bundle-cards')?.value);
+    const hasBundle = bundleAlbums != null && bundleCards != null && bundleAlbums > 0 && bundleCards > 0;
+    const ratio = hasBundle ? (bundleAlbums / bundleCards) : 1;
+    const setPrice = calculateModalBundleSetPrice(retailPrice, purchaseCost, memberCount, bundleAlbums, bundleCards);
+    return { retailPrice, purchaseCost, memberCount, bundleAlbums, bundleCards, hasBundle, ratio, setPrice };
+  }
+
+  function syncModalBundlePricing() {
+    const pricing = readModalBundlePricing();
+    const resultEl = field('field-bundle-set-price');
+    const noteEl = field('field-bundle-note');
+    if (pricing.setPrice == null) {
+      if (resultEl) resultEl.textContent = '-';
+      if (noteEl) noteEl.textContent = 'Enter retail_price, purchase_cost, and member_count to calculate set_price. ratio defaults to 1.';
+      return pricing;
+    }
+    const setPriceText = String(pricing.setPrice);
+    if (resultEl) resultEl.textContent = 'KRW ' + pricing.setPrice.toLocaleString();
+    if (noteEl) {
+      const ratioLabel = pricing.hasBundle ? `${pricing.bundleAlbums}/${pricing.bundleCards} = ${pricing.ratio.toFixed(3)}` : '1 (default)';
+      noteEl.textContent = `purchase_cost remains manual; bundle changes only multiplier. ratio ${ratioLabel}.`;
+    }
+    const priceField = field('field-price');
+    if (priceField) {
+      priceField.value = setPriceText;
+      priceField.dataset.bundleAutoPrice = setPriceText;
+    }
+    document.querySelectorAll('#variant-body input[data-v-field="globalPrice"]').forEach((input) => {
+      const previousAuto = input.dataset.bundleAutoPrice || '';
+      if (!input.value || input.dataset.bundleAuto === '1' || input.value === previousAuto) {
+        input.value = setPriceText;
+        input.dataset.bundleAuto = '1';
+        input.dataset.bundleAutoPrice = setPriceText;
+      }
+    });
+    return pricing;
+  }
+
+  function bindLegacyModalBundlePricing() {
+    const ids = ['field-retail-price', 'field-purchase-cost', 'field-member-count', 'field-bundle-albums', 'field-bundle-cards'];
+    ids.forEach((id) => {
+      const input = field(id);
+      if (!input || input.dataset.bundleBound) return;
+      input.dataset.bundleBound = '1';
+      input.addEventListener('input', syncModalBundlePricing);
+      input.addEventListener('change', syncModalBundlePricing);
+    });
+  }
+
   function openModal(productId) {
     const product = state.products.find((p) => String(p.id) === String(productId));
     if (!product) return;
@@ -2851,6 +3064,13 @@
     field('field-sku').value = product.sku || '';
     field('field-category').value = '101390';
     field('field-price').value = Number(product.cost_krw || 0) > 0 ? String(Math.round(Number(product.cost_krw))) : '';
+    field('field-retail-price').value = '';
+    field('field-purchase-cost').value = Number(product.cost_krw || 0) > 0 ? String(Math.round(Number(product.cost_krw))) : '';
+    field('field-member-count').value = '';
+    field('field-bundle-albums').value = '';
+    field('field-bundle-cards').value = '';
+    field('field-bundle-set-price').textContent = '-';
+    field('field-bundle-note').textContent = 'Enter retail_price, purchase_cost, and member_count to calculate set_price. ratio defaults to 1.';
     field('field-stock').value = '0';
     field('field-weight').value = Number(product.weight_g || 0) > 0 ? (Number(product.weight_g) / 1000).toFixed(2) : '0.10';
     field('field-image-id').value = '';
@@ -2865,6 +3085,7 @@
     field('variant-values').value = '';
     renderRegionFields();
     renderVariantRows();
+    syncModalBundlePricing();
     clearErrors();
     showSummary('', '');
     els.resultSection.style.display = 'none';
@@ -2947,12 +3168,17 @@
       <tr data-index="${index}" data-option="${text(row.option)}">
         <td>${text(row.option)}</td>
         <td><input data-v-field="sku" value="${text(row.sku)}"></td>
-        <td><input data-v-field="globalPrice" type="number" min="1" step="1" value="${text(row.globalPrice)}"></td>
+        <td><input data-v-field="globalPrice" type="number" min="1" step="1" value="${text(row.globalPrice)}" data-bundle-auto="1" data-bundle-auto-price="${text(row.globalPrice)}"></td>
         <td><input data-v-field="stock" type="number" min="0" step="1" value="${text(row.stock)}"></td>
         <td><input data-v-field="weightKg" type="number" min="0.01" step="0.01" value="${text(row.weightKg)}"></td>
         <td class="row-error" data-variant-error="${index}"></td>
       </tr>
     `).join('');
+    els.variantBody.querySelectorAll('input[data-v-field="globalPrice"]').forEach((input) => {
+      input.addEventListener('input', (event) => {
+        event.currentTarget.dataset.bundleAuto = '0';
+      });
+    });
   }
 
   function validateForm() {
@@ -3323,6 +3549,7 @@
     }
   });
   els.variantBuild.addEventListener('click', buildVariantRowsFromInputs);
+  bindLegacyModalBundlePricing();
 
   pingBridge();
   initRswListeners();
@@ -3954,6 +4181,7 @@
 
   bindRegisterDirtyTracking();
   bindRegisterStaronemallImage();
+  bindRegisterBundlePricing();
   setRegisterFlowState('draft');
 
   // ════════════════════════════════════════════════════════════════
@@ -3985,6 +4213,7 @@
     const idx = _variantCount;
     const container = document.getElementById('w-vrows-container');
     if (!container) return;
+    const defaultPrice = registerCurrentSetPrice();
     const row = document.createElement('div');
     row.className = 'vrow';
     row.id = `wvrow-${idx}`;
@@ -3998,12 +4227,15 @@
       <span class="vlabel">옵션 ${idx}</span>
       <input type="text" placeholder="옵션명* (예: A ver.)" id="wv-name-${idx}" style="flex:2;" title="tier_variation option name — required for display">
       <input type="text" placeholder="SKU (선택)" id="wv-sku-${idx}" style="flex:1.5;" title="global_model[].global_model_sku — optional">
-      <input type="number" placeholder="가격*" id="wv-price-${idx}" step="0.01" min="0.01" style="flex:1;" title="global_model[].original_price — required">
+      <input type="number" placeholder="가격*" id="wv-price-${idx}" step="0.01" min="0.01" value="${defaultPrice != null ? defaultPrice : ''}" data-bundle-auto="${defaultPrice != null ? '1' : '0'}" data-bundle-auto-price="${defaultPrice != null ? defaultPrice : ''}" style="flex:1;" title="global_model[].original_price — required">
       <input type="number" placeholder="재고*" id="wv-stock-${idx}" step="1" min="0" style="flex:1;" title="global_model[].seller_stock[].stock — required">
       <input type="number" placeholder="무게(KG)" id="wv-weight-${idx}" step="0.001" min="0" style="flex:1;" title="weight — top-level KG override (optional, applies to all models in call)">
       <button onclick="removeVariantRow(${idx})">✕</button>
     `;
     container.appendChild(row);
+    row.querySelector(`#wv-price-${idx}`)?.addEventListener('input', (event) => {
+      event.currentTarget.dataset.bundleAuto = '0';
+    });
   };
 
   window.removeVariantRow = function(idx) {
@@ -4043,6 +4275,7 @@
     const brandId = parseInt(g('w-brand-id').value) || 0;
     const brandName = (g('w-brand-name').value || '').trim();
     const stock = parseInt(g('w-stock').value) || 0;
+    const originalPrice = registerCurrentSetPrice();
 
     // add_global_item body_params — authoritative
     // Source: v2.global_product.add_global_item.json request.body_params
@@ -4055,7 +4288,7 @@
       global_item_name: itemName,                               // string, required
       description: (g('w-description').value || '').trim(),      // string, required
       image: { image_id_list: imageIdList },                    // image.image_id_list required
-      original_price: parseFloat(g('w-original-price').value),  // float, required
+      original_price: originalPrice,                            // float, required; Bundle calculator wins when complete
       seller_stock: [{ stock }],                                // seller_stock[].stock required
       weight: parseFloat(g('w-weight').value),                  // float, KG, required
       dimension: {
@@ -4198,6 +4431,7 @@
     const baseSku = registerMasterSkuBase(addItemPayload);
     const variants = g('w-has-variants').checked ? collectVariants() : [];
     const baseWeightG = Math.round(Number(addItemPayload.weight || 0) * 1000);
+    const baseCostKrw = Math.round(Number(addItemPayload.original_price || 0));
     const sourceUrlRaw = (g('w-staronemall-url').value || '').trim();
     const sourceUrl = sourceUrlRaw && isValidStaronemallUrl(sourceUrlRaw) ? normalizeStaronemallInput(sourceUrlRaw) : null;
 
@@ -4206,6 +4440,7 @@
         sku: variant.globalModelSku || `${baseSku}-${String(index + 1).padStart(2, '0')}`,
         product_name: addItemPayload.global_item_name,
         option_name: variant.optionName || `Option ${index + 1}`,
+        cost_krw: Math.round(Number(variant.originalPrice || addItemPayload.original_price || 0)),
         weight_g: Math.round(Number(variant.weight || addItemPayload.weight || 0) * 1000),
         staronemall_url: sourceUrl,
       }));
@@ -4215,6 +4450,7 @@
       sku: baseSku,
       product_name: addItemPayload.global_item_name,
       option_name: '',
+      cost_krw: baseCostKrw,
       weight_g: baseWeightG,
       staronemall_url: sourceUrl,
     }];
@@ -4225,11 +4461,11 @@
       sku: row.sku,
       product_name: row.product_name,
       option_name: row.option_name || null,
+      cost_krw: Math.round(Number(row.cost_krw || 0)),
       weight_g: row.weight_g || 0,
       staronemall_url: row.staronemall_url || null,
     };
     if (mode === 'insert') {
-      payload.cost_krw = 0;
       payload.position = 0;
       payload.shopee_item_id = null;
     }
@@ -4312,6 +4548,7 @@
         payload_hash: payloadHash,
         request_payload: {
           master_rows: uniqueRows,
+          bundle_pricing: readRegisterBundlePricing(),
           add_global_item: payloads.addItemPayload,
           add_global_model: payloads.addModelPayload,
         },

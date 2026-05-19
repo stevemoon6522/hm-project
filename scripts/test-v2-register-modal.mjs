@@ -36,4 +36,20 @@ for (const id of requiredIds) {
   assert(html.includes(`data-error-for="${id}"`), `${id} validation message is missing`);
 }
 
+for (const id of [
+  'field-retail-price',
+  'field-purchase-cost',
+  'field-member-count',
+  'field-bundle-albums',
+  'field-bundle-cards',
+  'field-bundle-set-price',
+]) {
+  assert(html.includes(`id="${id}"`), `${id} bundle field is missing`);
+}
+
+assert(html.includes('calculateModalBundleSetPrice'), 'register modal must provide bundle pricing helper');
+assert(html.includes('syncModalBundlePricing'), 'register modal must sync bundle pricing in real time');
+assert(html.includes('bindLegacyModalBundlePricing'), 'register modal bundle inputs must be bound');
+assert(html.includes('purchase_cost remains manual; bundle changes only multiplier'), 'bundle note must state purchase_cost is fixed manual input');
+
 console.log('v2 register modal static checks passed');

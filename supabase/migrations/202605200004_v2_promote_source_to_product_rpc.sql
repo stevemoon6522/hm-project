@@ -59,9 +59,11 @@ begin
   -- flipping source_records.status='published', a naive retry hits the SKU
   -- unique constraint and dead-ends. Look up by SKU first so the retry can
   -- safely adopt the existing products row and complete the status flip.
+  -- products.sku must be qualified — bare `sku` collides with the RETURNS
+  -- TABLE column of the same name (ambiguous column reference, raised 2026-05-20).
   select id into v_existing_id
   from public.products
-  where sku = btrim(p_sku);
+  where public.products.sku = btrim(p_sku);
   if v_existing_id is not null then
     update public.source_records
     set status = 'published',

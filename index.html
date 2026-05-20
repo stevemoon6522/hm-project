@@ -6807,6 +6807,11 @@ function _gkpCleanSku(value) {
   return String(value || '').trim();
 }
 
+function _gkpIdString(value) {
+  const id = String(value ?? '').trim();
+  return /^[0-9]+$/.test(id) && id !== '0' ? id : '';
+}
+
 function _gkpModelSku(model) {
   return _gkpCleanSku(model?.global_model_sku || model?.model_sku || model?.item_sku);
 }
@@ -6849,7 +6854,7 @@ function _gkpResolveOptionName(tierVariation, tierIndex) {
 
 function _gkpRowsForSelection(row) {
   if (!row) return [];
-  const globalItemId = row.global_item_id != null ? String(row.global_item_id) : null;
+  const globalItemId = _gkpIdString(row.global_item_id) || null;
   if (row.rowType === 'model_header') {
     const parentName = row.item_name || null;
     const tierVariation = row.tier_variation || [];
@@ -6874,7 +6879,7 @@ function _gkpRowsForSelection(row) {
           product_name: _gkpModelProductName(parentName, model),
           option_name: optionName,
           shopee_item_id: globalItemId,
-          global_model_id: model?.global_model_id != null ? Number(model.global_model_id) : null,
+          global_model_id: _gkpIdString(model?.global_model_id) || null,
           cost_krw: globalPriceKrw,
           weight_g: weightG,
         };
@@ -7108,11 +7113,11 @@ async function _gkpApply() {
 
     // 2. Load active shops
     const { data: shopsData, error: shopsErr } = await db.from('shopee_shops').select('region, shop_id, status').eq('status', 'active');
-    const shops = (shopsData || []).map(s => ({ region: s.region, shop_id: Number(s.shop_id) }));
+    const shops = (shopsData || []).map(s => ({ region: s.region, shop_id: _gkpIdString(s.shop_id) }));
     const activeShopIdSet = new Set(shops.map(s => s.shop_id));
 
     // 3. Per unique global_item_id: published_list + (variant only) per-region shop_model_list
-    const globalItemIds = [...new Set(uniqueRows.map(r => Number(r.shopee_item_id)).filter(Boolean))];
+    const globalItemIds = [...new Set(uniqueRows.map(r => _gkpIdString(r.shopee_item_id)).filter(Boolean))];
     const mappingErrors = [];
     const listingRows = [];
     let processed = 0;
@@ -7121,7 +7126,7 @@ async function _gkpApply() {
     for (let chunkStart = 0; chunkStart < globalItemIds.length; chunkStart += PARALLELISM) {
       const chunk = globalItemIds.slice(chunkStart, chunkStart + PARALLELISM);
       await Promise.all(chunk.map(async (gid) => {
-        const picksForThisGid = uniqueRows.filter(r => Number(r.shopee_item_id) === gid);
+        const picksForThisGid = uniqueRows.filter(r => _gkpIdString(r.shopee_item_id) === gid);
         const enriched = _gkpFindEnrichedItem(gid);
         if (!enriched) {
           // Cache lost between search and apply (rare). We can't tell variant vs single safely.
@@ -7142,7 +7147,7 @@ async function _gkpApply() {
           return;
         }
 
-        const usable = publishedItems.filter(p => activeShopIdSet.has(Number(p.shop_id)));
+        const usable = publishedItems.filter(p => activeShopIdSet.has(_gkpIdString(p.shop_id)));
         for (const p of usable) {
           const status = Number(p.item_status);
           if (![1, 8].includes(status)) {
@@ -7154,9 +7159,14 @@ async function _gkpApply() {
 
           let shopModelMap = null; // Map<model_sku_string, model_id>
           let shopModelPriceMap = null; // Map<model_sku_string, original_price> — for last_synced_price init
+          const shopItemId = _gkpIdString(p.item_id);
+          if (!shopItemId) {
+            mappingErrors.push(`${p.shop_region}/gid=${gid}: invalid item_id ${p.item_id || ''}`);
+            continue;
+          }
           if (isVariant) {
             try {
-              const mr = await fetch(`${SHOPEE_BRIDGE}/shop_model_list?region=${encodeURIComponent(p.shop_region)}&item_id=${p.item_id}`, { headers: _bh });
+              const mr = await fetch(`${SHOPEE_BRIDGE}/shop_model_list?region=${encodeURIComponent(p.shop_region)}&item_id=${encodeURIComponent(shopItemId)}`, { headers: _bh });
               const mj = await mr.json();
               if (!mj.ok) { mappingErrors.push(`${p.shop_region}/gid=${gid} model_list: ${mj.error || mj.result?.error || 'unknown'}`); continue; }
               const models = mj.result?.response?.model || [];
@@ -7165,7 +7175,7 @@ async function _gkpApply() {
               for (const m of models) {
                 if (!m.model_sku) continue;
                 const skuKey = String(m.model_sku);
-                shopModelMap.set(skuKey, Number(m.model_id));
+                shopModelMap.set(skuKey, _gkpIdString(m.model_id));
                 const priceInfo = Array.isArray(m.price_info) ? m.price_info[0] : null;
                 const op = priceInfo ? Number(priceInfo.original_price) : null;
                 if (Number.isFinite(op) && op > 0) shopModelPriceMap.set(skuKey, op);
@@ -7210,7 +7220,7 @@ async function _gkpApply() {
               product_id,
               region: p.shop_region,
               global_item_id: gid,
-              shop_item_id: Number(p.item_id),
+              shop_item_id: shopItemId,
               shop_model_id,
               status: row_status,
               last_error,

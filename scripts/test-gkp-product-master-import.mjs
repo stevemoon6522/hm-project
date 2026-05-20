@@ -3,7 +3,9 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import vm from 'node:vm';
 
-const html = readFileSync(join(process.cwd(), 'index.html'), 'utf8');
+const root = process.cwd();
+const html = readFileSync(join(root, 'index.html'), 'utf8');
+const bigintMigration = readFileSync(join(root, 'supabase/migrations/202605200012_bigint_shopee_ids.sql'), 'utf8');
 
 function sliceBetween(source, start, end) {
   const s = source.indexOf(start);
@@ -37,6 +39,7 @@ vm.runInNewContext(
     _gkpBuildRows,
     _gkpRowsForSelection,
     _gkpResolveOptionName,
+    _gkpIdString,
     _gkpReadWeightKg,
     _gkpWeightKgToGrams,
     _gkpFilter,
@@ -46,6 +49,11 @@ vm.runInNewContext(
 );
 
 const api = context.api;
+
+assert.equal(api._gkpIdString('10008350820'), '10008350820');
+assert.equal(api._gkpIdString(10008350820), '10008350820');
+assert.equal(api._gkpIdString('0'), '');
+assert.equal(api._gkpIdString('abc'), '');
 
 const rows = api._gkpBuildRows([
   {
@@ -94,8 +102,8 @@ assert.deepEqual(
     weight_g: row.weight_g,
   })),
   [
-    { sku: 'SKU-A', option_name: 'A ver', global_model_id: 9001, cost_krw: 12345, weight_g: 80 },
-    { sku: 'SKU-B', option_name: 'B ver', global_model_id: 9002, cost_krw: 23456, weight_g: 120 },
+    { sku: 'SKU-A', option_name: 'A ver', global_model_id: '9001', cost_krw: 12345, weight_g: 80 },
+    { sku: 'SKU-B', option_name: 'B ver', global_model_id: '9002', cost_krw: 23456, weight_g: 120 },
   ]
 );
 
@@ -164,9 +172,22 @@ assert.deepEqual(JSON.parse(JSON.stringify(api._gkpRowsForSelection(singleRows[0
 for (const token of [
   "select('id,sku,shopee_item_id,option_name,global_model_id,cost_krw,weight_g')",
   '_gkpMergeProductsIntoState(refreshedProducts || [])',
+  '_gkpIdString(r.shopee_item_id)',
   'const GKP_CACHE_SCHEMA_VERSION = 2',
 ]) {
   assert(html.includes(token), `missing Product Master import token: ${token}`);
+}
+
+assert(!html.includes('uniqueRows.map(r => Number(r.shopee_item_id))'), 'GKP import must not coerce global_item_id through Number()');
+
+for (const token of [
+  "('products', 'shopee_item_id')",
+  "('products', 'global_model_id')",
+  "('product_shopee_listings', 'global_item_id')",
+  "type bigint",
+  "nullif(%I::text, '''')::bigint",
+]) {
+  assert(bigintMigration.includes(token), `missing bigint migration token: ${token}`);
 }
 
 console.log('gkp product master import regression checks passed');

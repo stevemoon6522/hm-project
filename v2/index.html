@@ -8657,6 +8657,25 @@
           actions.appendChild(jumpBtn);
         }
         if (row.status !== 'done' && row.status !== 'crawling' && row.status !== 'promoting') {
+          // 행 복제: same source_record + same crawl, blank member.
+          // Lets one URL spawn N products with different SKUs (one per member).
+          if (row.source_record_id) {
+            const dupBtn = el('button', { type: 'button', style: 'font-size:11px;padding:5px 10px;' }, '+ 멤버용 행 복제');
+            dupBtn.addEventListener('click', () => {
+              const clone = {
+                ...row,
+                member: '',
+                status: 'preview',
+                error: null,
+                product_id: undefined
+              };
+              const idx2 = MR_PREV.indexOf(row);
+              if (idx2 >= 0) MR_PREV.splice(idx2 + 1, 0, clone);
+              else MR_PREV.push(clone);
+              mrRenderPreviewCards();
+            });
+            actions.appendChild(dupBtn);
+          }
           const skipBtn = el('button', { type: 'button', style: 'font-size:11px;padding:5px 10px;' }, '이 행 제외');
           skipBtn.addEventListener('click', () => {
             MR_PREV = MR_PREV.filter(x => x !== row);

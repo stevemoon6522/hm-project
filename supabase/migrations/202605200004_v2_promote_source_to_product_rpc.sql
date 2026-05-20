@@ -44,13 +44,10 @@ begin
   if not found then
     raise exception 'source_record_not_found' using errcode = 'P0001';
   end if;
-  if v_source.status = 'published' and v_source.linked_master_product_id is not null then
-    select id, products.sku into v_product_id, p_sku
-    from public.products
-    where products.id = v_source.linked_master_product_id;
-    return query select v_product_id, p_sku;
-    return;
-  end if;
+  -- 2026-05-20 (operator screenshot msg #481): removed the
+  -- `status='published' → return linked product` early-return so a single
+  -- source_record can spawn N products with different SKUs (one per K-pop
+  -- member). Dedupe now happens purely on SKU below.
 
   v_observed := v_source.observed_values;
 
@@ -108,7 +105,9 @@ begin
     case when v_source.source_type = 'staronemall' then v_source.source_url else null end,
     p_lifecycle_state,
     0,
-    'master_register'
+    -- 2026-05-20 (operator screenshot msg #481): products_purpose_check
+    -- only allows ('price_edit','registration'); 'master_register' violated it.
+    'registration'
   )
   returning id into v_product_id;
 

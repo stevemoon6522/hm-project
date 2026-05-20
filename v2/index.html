@@ -8401,26 +8401,26 @@
       return /[가-힯㄰-㆏ᄀ-ᇿ぀-ゟ゠-ヿ一-鿿]/.test(s || '');
     }
     function mrDeriveFromTitle(title) {
-      // English-only extraction (operator requirement 2026-05-20):
+      // Operator-supplied extraction rule (2026-05-20 msg #483):
       //   "CORTIS (코르티스) The 2nd EP [GREENGREEN] (CORTIS Ball ver.)"
-      //   → artist=CORTIS, album=The 2nd EP, version=GREENGREEN.
+      //   → artist=CORTIS, album=GREENGREEN, version=CORTIS Ball, member=''
+      //
       // Step 1: strip Korean/CJK + collapse empty parens/brackets.
       // Step 2: artist = leading uppercase token block before any paren/bracket.
-      // Step 3: version = first [...] content.
-      // Step 4: album = rest minus artist, parens, brackets.
+      // Step 3: album = text inside the first [...].
+      // Step 4: version = text inside (...) immediately before 'ver.' (case-insensitive).
+      // Step 5: member = '' (operator fills in).
       const out = { artist: '', album: '', version: '', member: '' };
       if (!title) return out;
       const eng = mrStripNonAscii(title);
       if (!eng) return out;
       const am = eng.match(/^([A-Z][A-Z0-9&]*(?:\s+[A-Z0-9&]+)*)/);
       if (am) out.artist = am[1].trim();
-      const vm = eng.match(/\[([^\]]+)\]/);
-      if (vm) out.version = vm[1].trim();
-      let album = eng;
-      if (out.artist) album = album.replace(out.artist, '');
-      album = album.replace(/\[[^\]]*\]/g, '').replace(/\([^)]*\)/g, '');
-      album = album.replace(/\s+/g, ' ').trim();
-      out.album = album;
+      const albumM = eng.match(/\[([^\]]+)\]/);
+      if (albumM) out.album = albumM[1].trim();
+      // Version: anything inside parens that ends with 'ver' or 'ver.' (case-insensitive)
+      const verM = eng.match(/\(([^)]+?)\s+[Vv][Ee][Rr]\.?\s*\)/);
+      if (verM) out.version = verM[1].trim();
       return out;
     }
 

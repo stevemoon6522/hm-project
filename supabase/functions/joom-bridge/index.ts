@@ -9,6 +9,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 import { requireAuthenticatedUser } from "../_shared/auth.ts";
+import { uploadTileToCloudinary } from "../_shared/cloudinary.ts";
 
 // Read-only routes that genuinely do not need a signed-in user. Everything
 // else is treated as a Joom write (publish, price update, delete, etc.) and
@@ -180,55 +181,6 @@ function buildDescription(opts: { artist?: string; album?: string; contents?: st
     "- These are not considered defects and are not grounds for return or refund.",
     "- Please purchase only if you agree to the above conditions.",
   ].join("\n");
-}
-
-// ---------------------------------------------------------------------------
-// Cloudinary upload helper (for split image tiles)
-// ---------------------------------------------------------------------------
-
-async function sha1Hex(message: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(message);
-  // @ts-ignore
-  const hashBuffer = await crypto.subtle.digest("SHA-1", data);
-  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
-}
-
-async function uploadTileToCloudinary(imageData: Uint8Array): Promise<string | null> {
-  // @ts-ignore
-  const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
-  // @ts-ignore
-  const apiKey = Deno.env.get("CLOUDINARY_API_KEY") || "";
-  // @ts-ignore
-  const apiSecret = Deno.env.get("CLOUDINARY_API_SECRET") || "";
-  if (!cloudName || !apiKey || !apiSecret) return null;
-
-  const folder = "joom-tiles";
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const uniqueId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  const publicId = `${folder}/${uniqueId}`;
-  const paramsToSign = `folder=${folder}&public_id=${publicId}&timestamp=${timestamp}${apiSecret}`;
-  const signature = await sha1Hex(paramsToSign);
-
-  const formData = new FormData();
-  formData.append("file", new Blob([imageData], { type: "image/jpeg" }), "tile.jpg");
-  formData.append("api_key", apiKey);
-  formData.append("timestamp", timestamp);
-  formData.append("signature", signature);
-  formData.append("public_id", publicId);
-  formData.append("folder", folder);
-
-  try {
-    const r = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
-      method: "POST",
-      body: formData,
-    });
-    if (!r.ok) return null;
-    const j = await r.json();
-    return (j.secure_url as string) || null;
-  } catch {
-    return null;
-  }
 }
 
 // ---------------------------------------------------------------------------

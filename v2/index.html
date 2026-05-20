@@ -913,6 +913,7 @@
       <button class="nav-tab" onclick="showView('view-price-sync')">💰 가격 동기화</button>
       <button class="nav-tab" onclick="showView('view-daily-close')">🌙 일일 마감</button>
       <button class="nav-tab" onclick="showView('view-probe')">🔬 Probe</button>
+      <button class="nav-tab" onclick="showView('view-ingest')">📥 수집 검토</button>
       <button class="nav-tab" onclick="showView('view-history')">📜 변경 이력</button>
       <button id="logout" type="button" class="nav-tab" style="margin-left:auto;">Sign out</button>
     </div>
@@ -1988,6 +1989,77 @@
       </div>
 
     </div><!-- /view-history -->
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: 수집 검토 — Step 1a read-only ingest queue (plan v2.2 §E.2)
+         Lists source_records WHERE status='pending_review' for operator review.
+         Approve/Reject buttons land in Step 1c (this is intentionally read-only
+         for Step 1a — no master products are created here yet).
+         ═══════════════════════════════════════════════ -->
+    <div id="view-ingest" class="view">
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin-bottom:12px;font-size:12px;">
+        <span><strong id="ingest-total">—</strong> 검토 대기</span>
+        <span>오늘 수집 <strong id="ingest-today">—</strong></span>
+        <span style="color:var(--muted);">승인/거부는 1c 단계에서 활성화 — 지금은 읽기 전용</span>
+        <button type="button" id="ingest-refresh" style="margin-left:auto;font-size:11px;padding:3px 8px;">🔄 새로고침</button>
+      </div>
+
+      <div class="toolbar" style="margin-bottom:10px;gap:6px;">
+        <select id="ingest-f-source" style="font-size:12px;padding:5px 8px;">
+          <option value="">source: 전체</option>
+          <option value="yes24">yes24</option>
+          <option value="weverse">weverse</option>
+          <option value="staronemall">staronemall</option>
+          <option value="manual">manual</option>
+          <option value="csv_import">csv_import</option>
+        </select>
+        <select id="ingest-f-status" style="font-size:12px;padding:5px 8px;">
+          <option value="pending_review">status: pending_review (기본)</option>
+          <option value="">전체</option>
+          <option value="approved">approved</option>
+          <option value="rejected">rejected</option>
+          <option value="published">published</option>
+          <option value="superseded">superseded</option>
+        </select>
+        <input type="search" id="ingest-search" placeholder="title / artist / url 검색" style="font-size:12px;padding:5px 8px;flex:1;min-width:200px;">
+      </div>
+
+      <div id="ingest-banner" style="display:none;margin-bottom:10px;" class="notice"></div>
+      <div id="ingest-loading" style="display:none;font-size:12px;color:var(--muted);margin-bottom:8px;">로드 중…</div>
+
+      <div class="panel" style="overflow:auto;">
+        <table id="ingest-table" style="table-layout:auto;min-width:1000px;">
+          <thead>
+            <tr>
+              <th style="width:140px;">fetched_at</th>
+              <th style="width:80px;">source</th>
+              <th style="width:90px;">external_id</th>
+              <th>title (observed)</th>
+              <th style="width:100px;">artist</th>
+              <th style="width:80px;">price_krw</th>
+              <th style="width:60px;">img</th>
+              <th style="width:60px;">conf</th>
+              <th style="width:60px;">tier</th>
+              <th style="width:80px;">status</th>
+            </tr>
+          </thead>
+          <tbody id="ingest-body">
+            <tr><td colspan="10" class="empty">로드 중…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div id="ingest-detail-panel" style="display:none;margin-top:12px;" class="panel">
+        <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
+          <strong style="font-size:13px;">source_record 상세</strong>
+          <button type="button" id="ingest-detail-close" style="font-size:11px;padding:3px 8px;">닫기</button>
+        </div>
+        <div style="padding:12px 14px;display:grid;gap:10px;">
+          <div><div class="call-note">observed_values (정규화)</div><pre class="payload-pre" id="ingest-detail-observed">—</pre></div>
+          <div><div class="call-note">raw_payload (원본)</div><pre class="payload-pre" id="ingest-detail-raw">—</pre></div>
+        </div>
+      </div>
+    </div><!-- /view-ingest -->
 
   </div><!-- /app-shell -->
 </main>
@@ -7273,6 +7345,7 @@
       if (viewId === 'view-daily-close') renderDailyClose(false);
       if (viewId === 'view-probe')   renderProbeView();
       if (viewId === 'view-history') renderHistoryView(false);
+      if (viewId === 'view-ingest')  renderIngestView(false);
     };
   }());
 
@@ -7955,6 +8028,151 @@
       document.querySelectorAll('#hist-body tr.hist-expanded').forEach(function(t) {
         t.classList.remove('hist-expanded');
       });
+    });
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // INGEST VIEW (plan v2.2 §E.2 / Step 1a-4) — read-only
+  // ════════════════════════════════════════════════════════════════
+  // Lists source_records WHERE status='pending_review' for operator review.
+  // Approve/Reject actions land in Step 1c (intentionally read-only here).
+
+  const ingestState = {
+    rows: [],
+    expandedRowId: null,
+    initialized: false,
+  };
+
+  async function renderIngestView(forceRefresh) {
+    if (!ingestState.initialized) {
+      initIngestListeners();
+      ingestState.initialized = true;
+    }
+    if (forceRefresh || !ingestState.rows.length) {
+      await ingestFetch();
+    }
+  }
+
+  async function ingestFetch() {
+    const loading = document.getElementById('ingest-loading');
+    const banner = document.getElementById('ingest-banner');
+    if (loading) loading.style.display = 'block';
+    if (banner) banner.style.display = 'none';
+
+    const source = document.getElementById('ingest-f-source')?.value || '';
+    const status = document.getElementById('ingest-f-status')?.value || 'pending_review';
+
+    // Filtered REST query directly to Supabase PostgREST (RLS allows SELECT
+    // for authenticated role — operator must be signed in).
+    let url = `${SUPABASE_URL}/rest/v1/source_records?select=id,source_type,source_external_id,source_url,fetched_at,parser_version,observed_values,confidence,tier,status&order=fetched_at.desc&limit=200`;
+    if (source) url += `&source_type=eq.${encodeURIComponent(source)}`;
+    if (status) url += `&status=eq.${encodeURIComponent(status)}`;
+
+    try {
+      const res = await fetch(url, { headers: AUTH_HEADERS });
+      if (!res.ok) throw new Error(`source_records query failed: HTTP ${res.status}`);
+      const rows = await res.json();
+      ingestState.rows = Array.isArray(rows) ? rows : [];
+      ingestRender();
+      ingestUpdateStats();
+    } catch (e) {
+      if (banner) {
+        banner.style.display = 'block';
+        banner.className = 'notice error';
+        banner.textContent = `로드 실패: ${e.message || e}`;
+      }
+      ingestState.rows = [];
+      ingestRender();
+    } finally {
+      if (loading) loading.style.display = 'none';
+    }
+  }
+
+  function ingestRender() {
+    const body = document.getElementById('ingest-body');
+    if (!body) return;
+    const search = (document.getElementById('ingest-search')?.value || '').trim().toLowerCase();
+    const filtered = ingestState.rows.filter((r) => {
+      if (!search) return true;
+      const ov = r.observed_values || {};
+      const hay = `${ov.title || ''} ${ov.artist || ''} ${r.source_url || ''}`.toLowerCase();
+      return hay.includes(search);
+    });
+
+    if (filtered.length === 0) {
+      body.innerHTML = '<tr><td colspan="10" class="empty">검토 대기 중인 source_records 가 없습니다.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = filtered.map((r) => {
+      const ov = r.observed_values || {};
+      const fetched = r.fetched_at ? r.fetched_at.replace('T', ' ').slice(0, 19) : '';
+      const title = text((ov.title || '').slice(0, 80));
+      const artist = text((ov.artist || ov.artist_name || '').slice(0, 30));
+      const price = ov.price_krw ? Number(ov.price_krw).toLocaleString() : '';
+      const imgCount = (ov.main_image_urls || []).length + (ov.detail_image_urls || []).length;
+      return `
+        <tr data-row-id="${text(r.id)}" style="cursor:pointer;">
+          <td class="mono" style="font-size:11px;">${text(fetched)}</td>
+          <td><span class="badge">${text(r.source_type)}</span></td>
+          <td class="mono" style="font-size:11px;">${text(r.source_external_id || '—')}</td>
+          <td>${title}</td>
+          <td>${artist}</td>
+          <td class="mono">${text(price)}</td>
+          <td class="mono">${imgCount}</td>
+          <td class="mono">${text(r.confidence)}</td>
+          <td class="mono">T${text(r.tier)}</td>
+          <td><span class="badge">${text(r.status)}</span></td>
+        </tr>
+      `;
+    }).join('');
+
+    body.querySelectorAll('tr[data-row-id]').forEach((tr) => {
+      tr.addEventListener('click', () => {
+        const id = tr.getAttribute('data-row-id');
+        const row = ingestState.rows.find((r) => r.id === id);
+        if (!row) return;
+        ingestShowDetail(row);
+      });
+    });
+  }
+
+  function ingestShowDetail(row) {
+    const panel = document.getElementById('ingest-detail-panel');
+    const obs = document.getElementById('ingest-detail-observed');
+    const raw = document.getElementById('ingest-detail-raw');
+    if (!panel || !obs || !raw) return;
+    obs.textContent = JSON.stringify(row.observed_values || {}, null, 2);
+    // raw_payload may be heavy — fetch separately on demand
+    raw.textContent = '로드 중...';
+    panel.style.display = 'block';
+    fetch(`${SUPABASE_URL}/rest/v1/source_records?select=raw_payload&id=eq.${encodeURIComponent(row.id)}`, { headers: AUTH_HEADERS })
+      .then((r) => r.json())
+      .then((arr) => {
+        const rp = (arr || [])[0]?.raw_payload || {};
+        raw.textContent = JSON.stringify(rp, null, 2);
+      })
+      .catch((e) => { raw.textContent = `raw_payload 로드 실패: ${e.message || e}`; });
+  }
+
+  function ingestUpdateStats() {
+    const total = ingestState.rows.length;
+    const today = new Date().toISOString().slice(0, 10);
+    const todayCount = ingestState.rows.filter((r) => (r.fetched_at || '').startsWith(today)).length;
+    const totalEl = document.getElementById('ingest-total');
+    const todayEl = document.getElementById('ingest-today');
+    if (totalEl) totalEl.textContent = String(total);
+    if (todayEl) todayEl.textContent = String(todayCount);
+  }
+
+  function initIngestListeners() {
+    document.getElementById('ingest-refresh')?.addEventListener('click', () => ingestFetch());
+    document.getElementById('ingest-f-source')?.addEventListener('change', () => ingestFetch());
+    document.getElementById('ingest-f-status')?.addEventListener('change', () => ingestFetch());
+    document.getElementById('ingest-search')?.addEventListener('input', () => ingestRender());
+    document.getElementById('ingest-detail-close')?.addEventListener('click', () => {
+      const panel = document.getElementById('ingest-detail-panel');
+      if (panel) panel.style.display = 'none';
     });
   }
 

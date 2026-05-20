@@ -15,12 +15,20 @@ function sliceBetween(source, start, end) {
 
 const gkpPureHelpers = sliceBetween(
   html,
-  'function _gkpBuildRows(filteredItems)',
-  'function _gkpSkuSummary(row)'
+  'function _gkpNormalize(s)',
+  'function _gkpRenderResults()'
 );
 
 const context = {
   _gkpExpanded: new Set(['1001']),
+  _gkpEnrichedFiltered: [],
+  _gkpEnrichedCache: { items: [] },
+  esc: value => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;'),
 };
 
 vm.runInNewContext(
@@ -31,6 +39,8 @@ vm.runInNewContext(
     _gkpResolveOptionName,
     _gkpReadWeightKg,
     _gkpWeightKgToGrams,
+    _gkpFilter,
+    _gkpSkuSummary,
   };`,
   context
 );
@@ -67,6 +77,7 @@ const rows = api._gkpBuildRows([
 
 const headerRow = rows[0];
 assert.equal(headerRow.rowType, 'model_header');
+assert.equal(api._gkpSkuSummary(headerRow), '옵션 SKU 2개');
 assert.deepEqual(headerRow.tier_variation, [
   { name: 'Version', option_list: [{ option: 'A ver' }, { option: 'B ver' }] },
 ]);
@@ -87,6 +98,47 @@ assert.deepEqual(
     { sku: 'SKU-B', option_name: 'B ver', global_model_id: 9002, cost_krw: 23456, weight_g: 120 },
   ]
 );
+
+const modelSkuFallbackRows = api._gkpBuildRows([
+  {
+    type: 'model_header',
+    global_item_id: 1002,
+    item_name: 'Dance Album',
+    item_sku: 'PARENT-SKU',
+    weight_kg: 0.1,
+    tier_variation: [],
+    models: [
+      {
+        global_model_id: 9010,
+        model_sku: 'CHOOM-OPTION-SKU',
+        global_model_name: 'CHOOM ver',
+        price_info: { original_price: 11111 },
+      },
+    ],
+  },
+]);
+assert.equal(api._gkpRowsForSelection(modelSkuFallbackRows[0])[0].sku, 'CHOOM-OPTION-SKU');
+assert.equal(api._gkpSkuSummary(modelSkuFallbackRows[0]), '옵션 SKU 1개');
+
+const parentOnlyHeader = {
+  rowType: 'model_header',
+  item_name: 'Parent only',
+  item_sku: 'PARENT-ONLY-SKU',
+  models: [],
+};
+assert.match(api._gkpSkuSummary(parentOnlyHeader), /옵션 SKU 확인 필요/);
+assert.deepEqual(api._gkpRowsForSelection(parentOnlyHeader), []);
+
+const filteredByModelSku = api._gkpFilter([
+  {
+    type: 'model_header',
+    global_item_id: 1003,
+    item_name: 'No keyword here',
+    item_sku: '',
+    models: [{ model_sku: 'CHOOM-MODEL-SKU' }],
+  },
+], 'choom');
+assert.equal(filteredByModelSku.length, 1);
 
 const singleRows = api._gkpBuildRows([
   {

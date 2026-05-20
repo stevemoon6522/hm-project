@@ -6694,16 +6694,73 @@ async function _gkpEnsureModelsForItems(items, statusEl) {
     statusEl.textContent = `모델 상세 로딩 중 (${Math.min(done + batch.length, modelItems.length)}/${modelItems.length})`;
     await Promise.all(batch.map(async item => {
       const mres = await fetch(`${SHOPEE_BRIDGE}/global_model_list?region=SG&global_item_id=${encodeURIComponent(item.global_item_id)}`, { headers: _bh })
-        .then(x => x.json()).catch(() => null);
+        .then(x => x.json()).catch(e => ({ ok: false, error: e?.message || 'fetch_failed' }));
+      if (!mres || !mres.ok) {
+        item._modelsLoaded = false;
+        item._modelsLoadError = mres?.result?.error || mres?.error || 'global_model_list_failed';
+        done += 1;
+        return;
+      }
       const resp = (mres && mres.ok) ? (mres.result?.response || {}) : {};
-      item.models = resp.global_model || resp.global_model_list || [];
+      const models = resp.global_model || resp.global_model_list || [];
+      item.models = Array.isArray(models) ? models : [];
       // Capture tier_variation so option_name can be resolved per model via tier_index.
       // Shape: [{ name: "tier name", option_list: [{ option: "..." }] }]
       item.tier_variation = Array.isArray(resp.tier_variation) ? resp.tier_variation : [];
       item._modelsLoaded = true;
+      item._modelsLoadError = '';
       done += 1;
     }));
   }
+}
+
+function _gkpFindEnrichedItem(globalItemId) {
+  const key = String(globalItemId ?? '');
+  if (!key) return null;
+  return (_gkpEnrichedFiltered || []).find(it => String(it.global_item_id) === key)
+    || (_gkpEnrichedCache.items || []).find(it => String(it.global_item_id) === key)
+    || null;
+}
+
+async function _gkpEnsureSelectionModels(rows, statusEl) {
+  const headers = rows.filter(row => row?.rowType === 'model_header');
+  if (!headers.length) return [];
+
+  const loadTargets = [];
+  for (const row of headers) {
+    const enriched = _gkpFindEnrichedItem(row.global_item_id);
+    if (enriched) {
+      row.models = enriched.models || row.models || [];
+      row.tier_variation = enriched.tier_variation || row.tier_variation || [];
+      row._modelsLoaded = enriched._modelsLoaded;
+      row._modelsLoadError = enriched._modelsLoadError || '';
+    }
+    if (!(row.models || []).some(model => _gkpModelSku(model)) && enriched && !enriched._modelsLoaded) {
+      loadTargets.push(enriched);
+    }
+  }
+
+  if (loadTargets.length) {
+    await _gkpEnsureModelsForItems(loadTargets, statusEl);
+  }
+
+  const errors = [];
+  for (const row of headers) {
+    const enriched = _gkpFindEnrichedItem(row.global_item_id);
+    if (enriched) {
+      row.models = enriched.models || [];
+      row.tier_variation = enriched.tier_variation || [];
+      row._modelsLoaded = enriched._modelsLoaded;
+      row._modelsLoadError = enriched._modelsLoadError || '';
+    }
+    const skuCount = (row.models || []).filter(model => _gkpModelSku(model)).length;
+    if (row._modelsLoadError) {
+      errors.push(`${row.item_name || row.global_item_id}: ${row._modelsLoadError}`);
+    } else if (skuCount === 0) {
+      errors.push(`${row.item_name || row.global_item_id}: option SKU not found`);
+    }
+  }
+  return errors;
 }
 
 function _gkpNormalize(s) {
@@ -6720,8 +6777,8 @@ function _gkpFilter(enrichedItems, keyword) {
     _gkpNormalize(it.item_name).includes(kw) ||
     _gkpNormalize(it.item_sku).includes(kw) ||
     (it.models && it.models.some(m =>
-      _gkpNormalize(m.global_model_sku || '').includes(kw) ||
-      _gkpNormalize(m.model_name || '').includes(kw)
+      _gkpNormalize(_gkpModelSku(m)).includes(kw) ||
+      _gkpNormalize(m.model_name || m.global_model_name || '').includes(kw)
     ))
   );
 }
@@ -6837,6 +6894,13 @@ function _gkpRowsForSelection(row) {
 
 function _gkpSkuSummary(row) {
   const itemSku = _gkpCleanSku(row.item_sku);
+  if (row.rowType === 'model_header') {
+    const optionSkuCount = (row.models || []).filter(model => _gkpModelSku(model)).length;
+    if (optionSkuCount) return `옵션 SKU ${optionSkuCount}개`;
+    if (row._modelsLoadError) return `<span style="color:#b45309;" title="${esc(row._modelsLoadError)}">옵션 SKU 로딩 실패</span>`;
+    if (itemSku) return `<span style="color:#888;" title="Global/Item SKU: ${esc(itemSku)}">옵션 SKU 확인 필요</span>`;
+    return '';
+  }
   if (itemSku) return esc(itemSku);
   const optionSkuCount = (row.models || []).filter(model => _gkpModelSku(model)).length;
   return optionSkuCount ? `옵션 SKU ${optionSkuCount}개` : '';
@@ -6917,10 +6981,17 @@ async function _gkpApply() {
   const checked = Array.from(document.querySelectorAll('.gkp-row-chk:checked'));
   if (!checked.length) return;
 
-  const picked = checked.flatMap(chk => {
-    const row = _gkpRows[Number(chk.dataset.idx)];
-    return _gkpRowsForSelection(row);
-  });
+  const selectedRows = checked.map(chk => _gkpRows[Number(chk.dataset.idx)]).filter(Boolean);
+  const modelErrors = await _gkpEnsureSelectionModels(selectedRows, document.getElementById('gkp-status'));
+  if (modelErrors.length) {
+    alert('선택한 옵션 상품의 옵션 SKU를 확인할 수 없습니다.\n'
+      + '옵션 상품은 Shopee global_model_sku/model_sku가 필요합니다.\n\n'
+      + modelErrors.slice(0, 8).join('\n')
+      + (modelErrors.length > 8 ? `\n... ${modelErrors.length - 8}건 더 있음` : ''));
+    return;
+  }
+
+  const picked = selectedRows.flatMap(row => _gkpRowsForSelection(row));
 
   if (!picked.length) {
     alert('옵션 상품은 옵션 SKU가 1개 이상 필요하고, 단일 상품은 Global/Item SKU가 필요합니다.');
@@ -7050,13 +7121,15 @@ async function _gkpApply() {
     for (let chunkStart = 0; chunkStart < globalItemIds.length; chunkStart += PARALLELISM) {
       const chunk = globalItemIds.slice(chunkStart, chunkStart + PARALLELISM);
       await Promise.all(chunk.map(async (gid) => {
-        const enriched = _gkpEnrichedCache.items.find(it => Number(it.global_item_id) === gid);
+        const picksForThisGid = uniqueRows.filter(r => Number(r.shopee_item_id) === gid);
+        const enriched = _gkpFindEnrichedItem(gid);
         if (!enriched) {
           // Cache lost between search and apply (rare). We can't tell variant vs single safely.
           mappingErrors.push(`gid=${gid}: enrich 데이터 누락 — 모달 다시 열고 재시도 필요 (skip)`);
           return;
         }
-        const isVariant = Array.isArray(enriched.models) && enriched.models.length > 0;
+        const isVariant = picksForThisGid.some(r => r.global_model_id)
+          || (Array.isArray(enriched.models) && enriched.models.length > 0);
 
         let publishedItems = [];
         try {
@@ -7103,7 +7176,6 @@ async function _gkpApply() {
             }
           }
 
-          const picksForThisGid = uniqueRows.filter(r => Number(r.shopee_item_id) === gid);
           for (const pickedRow of picksForThisGid) {
             const product_id = productIdBySku.get(pickedRow.sku);
             if (!product_id) {

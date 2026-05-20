@@ -1476,6 +1476,7 @@
       <div class="toolbar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <input id="search" type="search" placeholder="SKU or product name">
         <button id="refresh">Refresh</button>
+        <button id="pl-select-empty-sku" type="button" style="font-size:12px;padding:6px 10px;" title="SKU가 비어있는 모든 행을 선택">∅ 빈 SKU 선택</button>
         <span style="margin-left:auto;font-size:12px;color:var(--muted);" id="pl-selected-count">선택 0건</span>
         <button id="pl-bulk-delete" type="button" style="font-size:12px;padding:6px 12px;background:#fee2e2;color:#991b1b;" disabled>🗑 선택 삭제</button>
       </div>
@@ -2842,7 +2843,14 @@
       const { data, error } = await db.rpc('delete_master_product', { p_product_id: productId });
       if (error) throw error;
       const result = Array.isArray(data) ? data[0] : data;
-      if (typeof window.loadData === 'function') await window.loadData();
+      // Drop from state + DOM immediately so a fast double-click can't resend.
+      const stateIdx = state.products.findIndex((p) => String(p.id) === String(productId));
+      if (stateIdx >= 0) state.products.splice(stateIdx, 1);
+      const tr = btn.closest('tr');
+      if (tr) tr.remove();
+      if (typeof window.loadData === 'function') {
+        try { await window.loadData(); } catch (e) { /* DOM already cleaned */ }
+      }
       if (result && result.reset_source_record_count > 0) {
         alert(`삭제 완료. ${result.reset_source_record_count}건의 source_record 가 pending_review 로 되돌아갔습니다.`);
       }
@@ -2878,27 +2886,51 @@
   async function bulkDeleteSelectedProducts() {
     const ids = selectedProductIds();
     if (ids.length === 0) return;
-    const list = ids.map((x) => `- ${x.sku}`).join('\n');
-    if (!confirm(`${ids.length}건의 상품을 삭제하시겠습니까?\n\n${list}\n\n각 행마다 product_shopee_listings 가 CASCADE 삭제되고, 연결된 source_record 는 pending_review 로 되돌아갑니다.`)) return;
+    const previewList = ids.slice(0, 10).map((x) => `- ${x.sku || '(빈 SKU)'}`).join('\n');
+    const more = ids.length > 10 ? `\n... 외 ${ids.length - 10}건` : '';
+    if (!confirm(`${ids.length}건의 상품을 삭제하시겠습니까?\n\n${previewList}${more}\n\n각 행마다 product_shopee_listings 가 CASCADE 삭제되고, 연결된 source_record 는 pending_review 로 되돌아갑니다.`)) return;
     const btn = document.getElementById('pl-bulk-delete');
-    if (btn) { btn.disabled = true; btn.textContent = '삭제 중...'; }
+    const total = ids.length;
+    if (btn) { btn.disabled = true; btn.textContent = `삭제 중... (0/${total})`; }
     let okCount = 0;
     const failed = [];
-    for (const { id, sku } of ids) {
+    const succeededIds = new Set();
+    for (let i = 0; i < ids.length; i++) {
+      const { id, sku } = ids[i];
       try {
         const { error } = await db.rpc('delete_master_product', { p_product_id: id });
         if (error) throw error;
         okCount += 1;
+        succeededIds.add(id);
+        // Drop from in-memory state immediately so stale UI can't resend.
+        const stateIdx = state.products.findIndex((p) => String(p.id) === String(id));
+        if (stateIdx >= 0) state.products.splice(stateIdx, 1);
+        // Drop from DOM so the checkbox can't be reused on a 2nd click.
+        const tr = document.querySelector(`tr[data-product-id="${id}"]`);
+        if (tr) tr.remove();
       } catch (e) {
-        failed.push(`${sku}: ${(e?.message || e?.details || String(e))}`);
+        failed.push(`${sku || '(빈 SKU)'}: ${(e?.message || e?.details || String(e))}`);
       }
+      if (btn) btn.textContent = `삭제 중... (${i + 1}/${total})`;
     }
-    if (typeof window.loadData === 'function') await window.loadData();
+    if (typeof window.loadData === 'function') {
+      try { await window.loadData(); } catch (e) { /* swallow — DOM is already cleaned */ }
+    }
     if (failed.length > 0) {
       alert(`완료. 성공 ${okCount}건, 실패 ${failed.length}건.\n\n실패 목록:\n${failed.join('\n')}`);
     }
     if (btn) { btn.textContent = '🗑 선택 삭제'; }
     updateBulkDeleteUi();
+  }
+
+  function selectEmptySkuRows() {
+    let n = 0;
+    document.querySelectorAll('.pl-row-check').forEach((cb) => {
+      const sku = (cb.dataset.sku || '').trim();
+      if (!sku) { cb.checked = true; n += 1; }
+    });
+    updateBulkDeleteUi();
+    if (n === 0) alert('빈 SKU 행이 없습니다.');
   }
 
   function productListings(productId) {
@@ -3863,6 +3895,7 @@
     updateBulkDeleteUi();
   });
   document.getElementById('pl-bulk-delete')?.addEventListener('click', bulkDeleteSelectedProducts);
+  document.getElementById('pl-select-empty-sku')?.addEventListener('click', selectEmptySkuRows);
   // Step 0 (plan v2.2): real Supabase auth gate. Replaces the prior anon-JWT
   // bypass — every Edge Function mutating route now requires a signed-in
   // session JWT. The signIn/signOut helpers already exist (search above).

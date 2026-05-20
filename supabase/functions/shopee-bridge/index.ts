@@ -13,6 +13,39 @@
 // v19: /list_items expands has_model items via get_model_list, returning per-model rows.
 // Also: /update_price accepts model_id in price_list, /update_stock supports model-level stock.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { requireAuthenticatedUser } from "../_shared/auth.ts";
+
+// Read-only actions that genuinely do not need a signed-in user.
+// Everything not in this set is treated as a mutating route and MUST pass
+// requireAuthenticatedUser before running.
+//
+// Notable EXCLUSIONS (intentionally gated):
+//   - token_health / token-health: accepts run_refresh=1 → mutates tokens
+//   - v2_failed_mutations: returns private mutation payloads / responses
+//   - try_refresh_variants: explicit token refresh
+//   - raw_call: forwards arbitrary Shopee API calls
+const PUBLIC_ACTIONS: ReadonlySet<string> = new Set([
+  "health",
+  "tokens",
+  "token_probe",
+  "shop_info",
+  "categories",
+  "attributes",
+  "brands",
+  "channels",
+  "global_categories",
+  "global_brands",
+  "global_attributes",
+  "item_info",
+  "list_items",
+  "published_list",
+  "shop_model_list",
+  "global_items",
+  "global_item_info",
+  "global_model_list",
+  "proxy_image",
+  "publish_task_result",
+]);
 
 const SANDBOX_HOST = 'openplatform.sandbox.test-stable.shopee.sg';
 const LIVE_HOST = 'partner.shopeemobile.com';
@@ -1612,6 +1645,18 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const action = url.pathname.split('/').filter(Boolean).pop() || '';
   const region = url.searchParams.get('region') || 'SG';
+
+  // Step 0 auth gate (plan v2.2): every mutating route requires a real signed-in
+  // user. Read-only PUBLIC_ACTIONS skip the check so dashboards/probes that have
+  // been working with the anon key keep working. anon JWT or no JWT → 401.
+  if (!PUBLIC_ACTIONS.has(action)) {
+    const authResult = await requireAuthenticatedUser(req);
+    if (authResult.response) {
+      audit('auth_rejected', { action, reason: 'requireAuthenticatedUser_failed' });
+      return authResult.response;
+    }
+    audit('auth_ok', { action, user_id: authResult.user.id, email: authResult.user.email });
+  }
 
   try {
     if (action === 'health') {

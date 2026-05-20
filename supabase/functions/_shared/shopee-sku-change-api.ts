@@ -13,6 +13,7 @@ import {
   summarizeStatuses,
   validateSkuMappings,
 } from "./sku-change-logic.ts";
+import { requireAuthenticatedUser } from "./auth.ts";
 
 export const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -554,6 +555,9 @@ export async function handlePrepare(req) {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (req.method !== "POST") return jsonResp({ ok: false, error: "method_not_allowed" }, 405);
 
+  const authResult = await requireAuthenticatedUser(req);
+  if (authResult.response) return authResult.response;
+
   try {
     const body = await req.json();
     const mappingRows = extractMappingRows(body);
@@ -657,6 +661,9 @@ export async function handlePrepare(req) {
 export async function handleCommit(req) {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (req.method !== "POST") return jsonResp({ ok: false, error: "method_not_allowed" }, 405);
+
+  const authResult = await requireAuthenticatedUser(req);
+  if (authResult.response) return authResult.response;
 
   try {
     const body = await req.json();
@@ -785,6 +792,9 @@ export async function handleCommit(req) {
 export async function handleVerify(req) {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   if (req.method !== "POST") return jsonResp({ ok: false, error: "method_not_allowed" }, 405);
+
+  const authResult = await requireAuthenticatedUser(req);
+  if (authResult.response) return authResult.response;
 
   try {
     const body = await req.json();

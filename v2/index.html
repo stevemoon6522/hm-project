@@ -2212,6 +2212,12 @@
   const SUPABASE_URL = 'https://bpdafetvjyvvwbksvowu.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwZGFmZXR2anl2dndia3N2b3d1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxODM4MjYsImV4cCI6MjA5Mjc1OTgyNn0.p9hYSOhVyLUUO8UyRJ7Av56pLgkPUAi1XCMtc6r-AZA';
   const SHOPEE_BRIDGE = `${SUPABASE_URL}/functions/v1/shopee-bridge`;
+  // AUTH_HEADERS.Authorization starts at the anon JWT so the Supabase platform
+  // JWT verification (verify_jwt=true on all our Edge Functions) lets requests
+  // reach the handler at all. The inner auth gate (requireAuthenticatedUser)
+  // rejects anon role for any mutating route, so this is NOT a bypass —
+  // mutating routes still 401 until applySession() installs a real session
+  // JWT. See _shared/auth.ts and Step 0 review notes (Codex #4 partial fix).
   const AUTH_HEADERS = {
     Authorization: `Bearer ${SUPABASE_ANON}`,
     apikey: SUPABASE_ANON,
@@ -2524,8 +2530,8 @@
       const password = els.loginPassword.value;
       const { error } = await db.auth.signInWithPassword({ email, password });
       if (error) throw error;
-      showApp();
-      await loadData();
+      // Post-auth bootstrap is centralized in onAuthStateChange (Step 0 fix).
+      // signInWithPassword fires SIGNED_IN → that handler runs showApp + loadData.
     } catch (e) {
       els.loginError.textContent = e.message || String(e);
     } finally {
@@ -3525,16 +3531,26 @@
     try { await loadData(); }
     catch (e) { els.productBody.innerHTML = `<tr><td colspan="6" class="empty">${text(e.message || e)}</td></tr>`; }
   });
-  // Auth listeners disabled — auth gate bypassed (see init block below).
-  // login-submit / logout DOM elements are kept hidden via the auth-panel
-  // container so existing CSS selectors stay valid until we redo the shell.
+  // Step 0 (plan v2.2): real Supabase auth gate. Replaces the prior anon-JWT
+  // bypass — every Edge Function mutating route now requires a signed-in
+  // session JWT. The signIn/signOut helpers already exist (search above).
   if (els.loginSubmit) {
-    els.loginSubmit.addEventListener('click', () => {
-      els.loginError.textContent = 'Auth gate disabled in v2 skeleton — bypass active.';
+    els.loginSubmit.addEventListener('click', signIn);
+  }
+  if (els.loginPassword) {
+    // Allow Enter-to-submit on the password field for keyboard ergonomics.
+    els.loginPassword.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        signIn();
+      }
     });
   }
   if (els.logout) {
-    els.logout.addEventListener('click', (e) => { e.preventDefault(); });
+    els.logout.addEventListener('click', (e) => {
+      e.preventDefault();
+      signOut().catch((err) => console.warn('[v2] signOut error:', err));
+    });
   }
   els.close.addEventListener('click', closeModal);
   els.cancel.addEventListener('click', closeModal);
@@ -3553,14 +3569,58 @@
 
   pingBridge();
   initRswListeners();
-  // Sonnet 작업 중 임의 도입된 Supabase auth gate 우회. anon JWT 만으로 모든
-  // 작업이 가능하도록 [wms] 에서와 같은 RLS 정책이 적용되어 있고 (allow_anon
-  // policies, 2026-05-13 마이그레이션), v2 가 직원 기기에서도 작동해야 한다.
-  // 인증 흐름 자체는 plan v2-wizard-plan.md 의 비목표 영역이며 본 단계에서는
-  // 제거. 향후 Supabase auth 도입 시 다시 활성화.
-  showApp();
-  loadData().catch((e) => {
-    console.warn('[v2] initial loadData failed:', e);
+
+  // Step 0 (plan v2.2): replace the previous anon-bypass with a real session
+  // gate. AUTH_HEADERS.Authorization is mutated as the session changes so that
+  // every existing `fetch(..., { headers: AUTH_HEADERS })` site automatically
+  // picks up the new bearer token without per-site changes.
+  //
+  // Note on the anon fallback: when no session is active we keep the anon JWT
+  // in AUTH_HEADERS.Authorization because every shopee/joom/sku Edge Function
+  // is deployed with verify_jwt=true — the Supabase platform itself rejects
+  // requests that have no bearer at all, before our handler can return a
+  // structured JSON 401. The inner gate (requireAuthenticatedUser) still
+  // rejects anon role for any mutating route, so this is NOT a security
+  // bypass — mutating routes still 401 (auth_anon_rejected) until a real
+  // session JWT is installed.
+  function applySession(session) {
+    const token = session?.access_token || SUPABASE_ANON;
+    AUTH_HEADERS.Authorization = `Bearer ${token}`;
+  }
+
+  // Filter onAuthStateChange events: only SIGNED_IN / SIGNED_OUT / INITIAL_SESSION
+  // should re-bootstrap the app. TOKEN_REFRESHED fires every hour while the user
+  // is active — we just update the bearer token, no full reload needed.
+  db.auth.onAuthStateChange((event, session) => {
+    applySession(session);
+    if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+      if (session) {
+        showApp();
+        loadData().catch((e) => console.warn('[v2] loadData (auth change) failed:', e));
+      } else {
+        showAuth('Please sign in to continue.');
+      }
+    } else if (event === 'SIGNED_OUT') {
+      showAuth('Signed out. Please sign in to continue.');
+    }
+    // TOKEN_REFRESHED, USER_UPDATED, PASSWORD_RECOVERY → noop (applySession
+    // already updated the bearer); no full reload.
+  });
+
+  (async () => {
+    const { data } = await db.auth.getSession();
+    if (data?.session) {
+      applySession(data.session);
+      showApp();
+      loadData().catch((e) => console.warn('[v2] initial loadData failed:', e));
+    } else {
+      applySession(null);
+      showAuth('Please sign in to continue.');
+    }
+  })().catch((e) => {
+    console.warn('[v2] auth bootstrap failed:', e);
+    applySession(null);
+    showAuth('Authentication could not be initialized.');
   });
 
   // ════════════════════════════════════════════════════════════════

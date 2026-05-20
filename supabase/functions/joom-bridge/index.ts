@@ -8,6 +8,16 @@
 //   - Fix: include product SKU and categoryId in /products/create payload
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { requireAuthenticatedUser } from "../_shared/auth.ts";
+
+// Read-only routes that genuinely do not need a signed-in user. Everything
+// else is treated as a Joom write (publish, price update, delete, etc.) and
+// must pass requireAuthenticatedUser before any side effect.
+const PUBLIC_JOOM_ACTIONS: ReadonlySet<string> = new Set([
+  "health",
+  "categories",
+  "lookup-sku",
+]);
 
 const JOOM_V2 = "https://api-merchant.joom.com/api/v2";
 const JOOM_V3 = "https://api-merchant.joom.com/api/v3";
@@ -365,6 +375,17 @@ async function handleRequest(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   const url = new URL(req.url);
   const action = url.pathname.split("/").filter(Boolean).pop() || "";
+
+  // Step 0 auth gate (plan v2.2): mutating Joom routes require a real signed-in
+  // Supabase user. Public read-only routes (health/categories/lookup-sku) skip.
+  if (!PUBLIC_JOOM_ACTIONS.has(action)) {
+    const authResult = await requireAuthenticatedUser(req);
+    if (authResult.response) {
+      console.log(JSON.stringify({ service: "joom-bridge", event: "auth_rejected", action, ts: new Date().toISOString() }));
+      return authResult.response;
+    }
+    console.log(JSON.stringify({ service: "joom-bridge", event: "auth_ok", action, user_id: authResult.user.id, ts: new Date().toISOString() }));
+  }
 
   try {
     if (action === "health" && req.method === "GET") {

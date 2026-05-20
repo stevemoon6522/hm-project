@@ -18,9 +18,21 @@
 //   - Alert dispatch conditional on ALERT_BOT_URL env (§A.3 step 3, Codex P0 #1).
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
-import { requireAuthenticatedUser, AUTH_CORS } from '../_shared/auth.ts';
-import type { AdapterCapability, AdapterErrorCode } from './_shared/contract.ts';
+import { requireAuthenticatedUser, AUTH_CORS, extractBearerToken } from '../_shared/auth.ts';
+import type { AdapterCapability, AdapterErrorCode, PlatformAdapter } from './_shared/contract.ts';
 import { stubAdapter } from './adapters/stub.ts';
+import { shopeeAdapter } from './adapters/shopee.ts';
+
+// ---------------------------------------------------------------------------
+// Adapter registry (D2: Shopee wired; all others still stub)
+// ---------------------------------------------------------------------------
+const ADAPTERS: Record<string, PlatformAdapter> = {
+  shopee: shopeeAdapter,
+  // joom, qoo10, ebay, alibaba — still stub until D3-D6
+};
+function pickAdapter(platform: string): PlatformAdapter {
+  return ADAPTERS[platform] ?? stubAdapter;
+}
 
 // ---------------------------------------------------------------------------
 // Env
@@ -475,9 +487,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // =========================================================================
   // GATE 8: Adapter dispatch (plan §A.2 step 8)
-  // D0: all platforms use stubAdapter. Per-platform adapters land in D2-D6.
+  // D2: Shopee routes to shopeeAdapter; others still use stubAdapter.
+  // pickAdapter() returns shopeeAdapter for platform='shopee', stubAdapter
+  // for everything else.
   // =========================================================================
-  const adapter = stubAdapter; // D0: same stub for all 5 platforms
+  const adapter = pickAdapter(platform);
+
+  // Extract the user's raw Bearer token so we can forward it to shopee-bridge.
+  // shopee-bridge requires role='authenticated' JWT for mutating actions
+  // (bridge index.ts:1652-1658). The service-role key would fail that check.
+  // We inject it as ctx.userAuthToken; the Shopee adapter reads it.
+  const userAuthToken = extractBearerToken(req) || '';
 
   let adapterResult;
   if (!adapter.supports.has(capability)) {
@@ -486,7 +506,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       ok: false,
       listingStatus: 'not_listed' as const,
       errorCode: 'CAPABILITY_UNSUPPORTED' as const,
-      errorMsg: 'D0: adapter not wired yet',
+      errorMsg: `${platform} adapter does not support capability='${capability}'`,
     };
   } else {
     try {
@@ -498,7 +518,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
         dryRun: dry_run,
         publishRequestId: publish_request_id,
         platformItemId: existingListing?.platform_item_id as string | undefined,
-      });
+        // Extra: user JWT forwarded for shopee-bridge auth (D2).
+        // Not in the frozen AdapterContext type but passed via object spread;
+        // the Shopee adapter casts ctx to ShopeeAdapterContext to read it.
+        userAuthToken,
+      } as any);
     } catch (e) {
       adapterResult = {
         ok: false,

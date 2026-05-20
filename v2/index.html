@@ -1473,15 +1473,18 @@
          VIEW: 상품 목록 (existing product table)
          ═══════════════════════════════════════════════ -->
     <div id="view-products" class="view">
-      <div class="toolbar">
+      <div class="toolbar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <input id="search" type="search" placeholder="SKU or product name">
         <button id="refresh">Refresh</button>
+        <span style="margin-left:auto;font-size:12px;color:var(--muted);" id="pl-selected-count">선택 0건</span>
+        <button id="pl-bulk-delete" type="button" style="font-size:12px;padding:6px 12px;background:#fee2e2;color:#991b1b;" disabled>🗑 선택 삭제</button>
       </div>
       <div class="panel">
-        <table>
+        <table style="white-space:nowrap;">
           <thead>
             <tr>
-              <th style="width:160px;">SKU</th>
+              <th style="width:34px;"><input type="checkbox" id="pl-check-all"></th>
+              <th style="width:220px;">SKU</th>
               <th>Product</th>
               <th style="width:110px;">Cost KRW</th>
               <th style="width:110px;">Weight g</th>
@@ -1490,7 +1493,7 @@
             </tr>
           </thead>
           <tbody id="product-body">
-            <tr><td colspan="6" class="empty">Loading products...</td></tr>
+            <tr><td colspan="7" class="empty">Loading products...</td></tr>
           </tbody>
         </table>
       </div>
@@ -2700,20 +2703,22 @@
       return `${p.sku || ''} ${p.product_name || ''} ${p.option_name || ''}`.toLowerCase().includes(q);
     });
     if (!rows.length) {
-      els.productBody.innerHTML = '<tr><td colspan="6" class="empty">No products found.</td></tr>';
+      els.productBody.innerHTML = '<tr><td colspan="7" class="empty">No products found.</td></tr>';
+      updateBulkDeleteUi();
       return;
     }
     els.productBody.innerHTML = rows.map((p) => `
       <tr>
-        <td class="mono">${text(p.sku || '')}</td>
-        <td>
+        <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}"></td>
+        <td class="mono" style="white-space:nowrap;">${text(p.sku || '')}</td>
+        <td style="white-space:normal;">
           <div>${text(p.product_name || '')}</div>
           <div class="muted">${text(p.option_name || '')}</div>
         </td>
         <td class="mono">${Number(p.cost_krw || 0).toLocaleString()}</td>
         <td class="mono">${Number(p.weight_g || 0).toLocaleString()}</td>
-        <td>${listingBadges(p.id)}</td>
-        <td style="display:flex;gap:4px;">
+        <td style="white-space:normal;">${listingBadges(p.id)}</td>
+        <td style="white-space:nowrap;">
           <button type="button" data-open="${text(p.id)}" class="primary" style="font-size:11px;padding:4px 8px;">Register</button>
           <button type="button" data-delete="${text(p.id)}" data-sku="${text(p.sku || '')}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">🗑</button>
         </td>
@@ -2723,27 +2728,81 @@
       btn.addEventListener('click', () => openModal(btn.dataset.open));
     });
     els.productBody.querySelectorAll('[data-delete]').forEach((btn) => {
-      btn.addEventListener('click', async () => {
-        const productId = btn.dataset.delete;
-        const sku = btn.dataset.sku || '(no sku)';
-        if (!confirm(`상품 [${sku}] 을 삭제하시겠습니까?\n\n- products 행이 영구 삭제됩니다.\n- 연결된 product_shopee_listings 도 함께 삭제됩니다 (FK CASCADE).\n- 연결된 source_record 는 pending_review 로 되돌아가 다시 등록 가능합니다.`)) return;
-        btn.disabled = true;
-        btn.textContent = '...';
-        try {
-          const { data, error } = await db.rpc('delete_master_product', { p_product_id: productId });
-          if (error) throw error;
-          const result = Array.isArray(data) ? data[0] : data;
-          if (typeof window.loadData === 'function') await window.loadData();
-          if (result && result.reset_source_record_count > 0) {
-            alert(`삭제 완료. ${result.reset_source_record_count}건의 source_record 가 pending_review 로 되돌아갔습니다.`);
-          }
-        } catch (e) {
-          alert('삭제 실패: ' + (e?.message || e?.details || String(e)));
-          btn.disabled = false;
-          btn.textContent = '🗑';
-        }
-      });
+      btn.addEventListener('click', () => deleteOneMasterProduct(btn));
     });
+    els.productBody.querySelectorAll('.pl-row-check').forEach((cb) => {
+      cb.addEventListener('change', updateBulkDeleteUi);
+    });
+    updateBulkDeleteUi();
+  }
+
+  async function deleteOneMasterProduct(btn) {
+    const productId = btn.dataset.delete;
+    const sku = btn.dataset.sku || '(no sku)';
+    if (!confirm(`상품 [${sku}] 을 삭제하시겠습니까?\n\n- products 행이 영구 삭제됩니다.\n- 연결된 product_shopee_listings 도 함께 삭제됩니다 (FK CASCADE).\n- 연결된 source_record 는 pending_review 로 되돌아가 다시 등록 가능합니다.`)) return;
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      const { data, error } = await db.rpc('delete_master_product', { p_product_id: productId });
+      if (error) throw error;
+      const result = Array.isArray(data) ? data[0] : data;
+      if (typeof window.loadData === 'function') await window.loadData();
+      if (result && result.reset_source_record_count > 0) {
+        alert(`삭제 완료. ${result.reset_source_record_count}건의 source_record 가 pending_review 로 되돌아갔습니다.`);
+      }
+    } catch (e) {
+      alert('삭제 실패: ' + (e?.message || e?.details || String(e)));
+      btn.disabled = false;
+      btn.textContent = '🗑';
+    }
+  }
+
+  function selectedProductIds() {
+    const ids = [];
+    document.querySelectorAll('.pl-row-check:checked').forEach((cb) => {
+      ids.push({ id: cb.dataset.id, sku: cb.dataset.sku || '(no sku)' });
+    });
+    return ids;
+  }
+
+  function updateBulkDeleteUi() {
+    const ids = selectedProductIds();
+    const countEl = document.getElementById('pl-selected-count');
+    if (countEl) countEl.textContent = `선택 ${ids.length}건`;
+    const btn = document.getElementById('pl-bulk-delete');
+    if (btn) btn.disabled = ids.length === 0;
+    const allCb = document.getElementById('pl-check-all');
+    if (allCb) {
+      const total = document.querySelectorAll('.pl-row-check').length;
+      allCb.checked = total > 0 && ids.length === total;
+      allCb.indeterminate = ids.length > 0 && ids.length < total;
+    }
+  }
+
+  async function bulkDeleteSelectedProducts() {
+    const ids = selectedProductIds();
+    if (ids.length === 0) return;
+    const list = ids.map((x) => `- ${x.sku}`).join('\n');
+    if (!confirm(`${ids.length}건의 상품을 삭제하시겠습니까?\n\n${list}\n\n각 행마다 product_shopee_listings 가 CASCADE 삭제되고, 연결된 source_record 는 pending_review 로 되돌아갑니다.`)) return;
+    const btn = document.getElementById('pl-bulk-delete');
+    if (btn) { btn.disabled = true; btn.textContent = '삭제 중...'; }
+    let okCount = 0;
+    const failed = [];
+    for (const { id, sku } of ids) {
+      try {
+        const { error } = await db.rpc('delete_master_product', { p_product_id: id });
+        if (error) throw error;
+        okCount += 1;
+      } catch (e) {
+        failed.push(`${sku}: ${(e?.message || e?.details || String(e))}`);
+      }
+    }
+    if (typeof window.loadData === 'function') await window.loadData();
+    if (failed.length > 0) {
+      alert(`완료. 성공 ${okCount}건, 실패 ${failed.length}건.\n\n실패 목록:\n${failed.join('\n')}`);
+    }
+    if (btn) { btn.textContent = '🗑 선택 삭제'; }
+    updateBulkDeleteUi();
   }
 
   function productListings(productId) {
@@ -3701,8 +3760,13 @@
   els.search.addEventListener('input', renderProducts);
   els.refresh.addEventListener('click', async () => {
     try { await loadData(); }
-    catch (e) { els.productBody.innerHTML = `<tr><td colspan="6" class="empty">${text(e.message || e)}</td></tr>`; }
+    catch (e) { els.productBody.innerHTML = `<tr><td colspan="7" class="empty">${text(e.message || e)}</td></tr>`; }
   });
+  document.getElementById('pl-check-all')?.addEventListener('change', (e) => {
+    document.querySelectorAll('.pl-row-check').forEach((cb) => { cb.checked = e.target.checked; });
+    updateBulkDeleteUi();
+  });
+  document.getElementById('pl-bulk-delete')?.addEventListener('click', bulkDeleteSelectedProducts);
   // Step 0 (plan v2.2): real Supabase auth gate. Replaces the prior anon-JWT
   // bypass — every Edge Function mutating route now requires a signed-in
   // session JWT. The signIn/signOut helpers already exist (search above).

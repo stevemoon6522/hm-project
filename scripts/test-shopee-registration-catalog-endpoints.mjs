@@ -14,6 +14,7 @@ for (const token of [
   "SHOPEE_MERCHANT + '/global_brands?category_id='",
   "catRefresh?.addEventListener('click'",
   "await _shopeeLoadCategories(true)",
+  "{ code: 'BR', currency: 'BRL' }",
 ]) {
   assert(html.includes(token), `missing catalog loader token: ${token}`);
 }

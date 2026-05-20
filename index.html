@@ -2442,7 +2442,7 @@ async function _joomDeleteRow(row) {
    SHOPEE — multi-region (KRSC) — bridge URL + cell + modal
    ════════════════════════════════════════════════════════════════════ */
 const SHOPEE_BRIDGE = SUPABASE_URL + '/functions/v1/shopee-bridge';
-const SHOPEE_MERCHANT = SUPABASE_URL + '/functions/v1/shopee-merchant';
+const SHOPEE_MERCHANT = SHOPEE_BRIDGE;  // global catalog actions are served by shopee-bridge
 const SHOPEE_OAUTH_HELPER = SUPABASE_URL + '/functions/v1/shopee-oauth-helper';
 const SHOPEE_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
 let _shopeeTokens = null;  // 캐시

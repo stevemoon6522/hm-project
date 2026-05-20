@@ -1487,14 +1487,18 @@
               <th style="width:34px;"><input type="checkbox" id="pl-check-all"></th>
               <th style="width:220px;">SKU</th>
               <th>Product</th>
-              <th style="width:110px;">Cost KRW</th>
-              <th style="width:110px;">Weight g</th>
-              <th style="width:210px;">Existing mapping</th>
+              <th style="width:90px;">Cost</th>
+              <th style="width:60px;">Wt g</th>
+              <th style="width:62px;text-align:center;" title="Shopee SG/TW/TH/MY/PH/BR">Shopee</th>
+              <th style="width:48px;text-align:center;">Joom</th>
+              <th style="width:48px;text-align:center;">Qoo10</th>
+              <th style="width:48px;text-align:center;">eBay</th>
+              <th style="width:54px;text-align:center;">Alibaba</th>
               <th style="width:120px;"></th>
             </tr>
           </thead>
           <tbody id="product-body">
-            <tr><td colspan="7" class="empty">Loading products...</td></tr>
+            <tr><td colspan="11" class="empty">Loading products...</td></tr>
           </tbody>
         </table>
       </div>
@@ -2654,12 +2658,13 @@
     // 2026-05-20 (operator msg #501): newest products at the top. Position
     // is still respected for legacy ordering, but created_at flips to DESC
     // so the bulk-register flow's latest rows always show up first.
-    let [productsRes, listingsRes] = await Promise.all([
+    let [productsRes, listingsRes, rollupsRes] = await Promise.all([
       db.from('products')
         .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at')
         .order('position', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false }),
       db.from('product_shopee_listings').select('*'),
+      db.from('platform_listing_rollups').select('master_product_id, platform, listed_count, pending_count, error_count, total_count, per_shop_detail'),
     ]);
     if (productsRes.error && /lifecycle_state|weight_measured_at|schema cache|column/i.test(`${productsRes.error.message || ''} ${productsRes.error.details || ''}`)) {
       productsRes = await db.from('products')
@@ -2671,6 +2676,7 @@
     if (listingsRes.error) throw listingsRes.error;
     state.products = productsRes.data || [];
     state.listings = listingsRes.data || [];
+    state.rollups = (rollupsRes && !rollupsRes.error) ? (rollupsRes.data || []) : [];
     renderProducts();
     renderPreOrderList();
     renderReadyTransition();
@@ -2707,7 +2713,7 @@
       return `${p.sku || ''} ${p.product_name || ''} ${p.option_name || ''}`.toLowerCase().includes(q);
     });
     if (!rows.length) {
-      els.productBody.innerHTML = '<tr><td colspan="7" class="empty">No products found.</td></tr>';
+      els.productBody.innerHTML = '<tr><td colspan="11" class="empty">No products found.</td></tr>';
       updateBulkDeleteUi();
       return;
     }
@@ -2721,7 +2727,11 @@
         </td>
         <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.cost_krw || 0).toLocaleString()}</td>
         <td class="mono pl-edit" data-field="weight_g" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.weight_g || 0).toLocaleString()}</td>
-        <td style="white-space:normal;">${listingBadges(p.id)}</td>
+        <td style="text-align:center;">${platformLedCell(p.id, 'shopee')}</td>
+        <td style="text-align:center;">${platformLedCell(p.id, 'joom')}</td>
+        <td style="text-align:center;">${platformLedCell(p.id, 'qoo10')}</td>
+        <td style="text-align:center;">${platformLedCell(p.id, 'ebay')}</td>
+        <td style="text-align:center;">${platformLedCell(p.id, 'alibaba')}</td>
         <td style="white-space:nowrap;">
           <button type="button" data-open="${text(p.id)}" class="primary" style="font-size:11px;padding:4px 8px;">Register</button>
           <button type="button" data-delete="${text(p.id)}" data-sku="${text(p.sku || '')}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">🗑</button>
@@ -2739,6 +2749,9 @@
     });
     els.productBody.querySelectorAll('.pl-edit').forEach((cell) => {
       cell.addEventListener('dblclick', () => beginEditCell(cell));
+    });
+    els.productBody.querySelectorAll('.pl-led').forEach((btn) => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); showLedPopover(btn); });
     });
     updateBulkDeleteUi();
   }
@@ -2938,6 +2951,128 @@
 
   function productListings(productId) {
     return state.listings.filter((l) => String(l.product_id) === String(productId));
+  }
+
+  // Step 1c (plan v2.2 §E.1): 5-platform LED + popover.
+  // Rollup row shape: { master_product_id, platform, listed_count,
+  // pending_count, error_count, total_count, per_shop_detail }.
+  const SHOPEE_BANNED_SHOP_IDS = new Set(['1002269093']);
+
+  function rollupFor(productId, platform) {
+    return (state.rollups || []).find((r) =>
+      String(r.master_product_id) === String(productId) && r.platform === platform);
+  }
+
+  function ledState(rollup, platform) {
+    if (!rollup || !rollup.total_count) return { glyph: '○', color: '#94a3b8', label: '미등록' };
+    const listed = Number(rollup.listed_count || 0);
+    const pending = Number(rollup.pending_count || 0);
+    const errored = Number(rollup.error_count || 0);
+    const total = Number(rollup.total_count || 0);
+    if (errored > 0) return { glyph: '■', color: '#dc2626', label: `오류 ${errored}/${total}` };
+    if (listed === total && total > 0) return { glyph: '●', color: '#16a34a', label: `전체 등록 (${listed}/${total})` };
+    if (listed > 0) return { glyph: '◐', color: '#f59e0b', label: `부분 등록 (${listed}/${total})` };
+    if (pending > 0) return { glyph: '▲', color: '#f59e0b', label: `진행 중 (${pending})` };
+    return { glyph: '○', color: '#94a3b8', label: '미등록' };
+  }
+
+  function platformLedCell(productId, platform) {
+    const rollup = rollupFor(productId, platform);
+    const st = ledState(rollup, platform);
+    // Detect Shopee-only banned shop indicator (legacy BR 1002269093 not in
+    // shopee_tokens but kept as defensive guard).
+    let bannedHit = false;
+    if (platform === 'shopee' && rollup && rollup.per_shop_detail) {
+      for (const k of Object.keys(rollup.per_shop_detail)) {
+        const detail = rollup.per_shop_detail[k];
+        const sid = detail && (detail.shop_id || detail.shopId);
+        if (sid && SHOPEE_BANNED_SHOP_IDS.has(String(sid))) bannedHit = true;
+      }
+    }
+    const safeLabel = String(st.label).replace(/"/g, '&quot;');
+    const baseTitle = bannedHit ? `${safeLabel} · ⚠ 차단 매장 포함` : safeLabel;
+    return `<button type="button" class="pl-led" data-product-id="${text(productId)}" data-platform="${platform}" title="${baseTitle} (클릭: 상세)" style="border:none;background:transparent;cursor:pointer;font-size:18px;line-height:1;color:${st.color};padding:2px 4px;position:relative;">${st.glyph}${bannedHit ? '<span style="position:absolute;top:-4px;right:-2px;font-size:10px;color:#000;">✕</span>' : ''}</button>`;
+  }
+
+  function buildLedPopover(productId, platform) {
+    const rollup = rollupFor(productId, platform);
+    const product = state.products.find((p) => String(p.id) === String(productId));
+    const sku = product?.sku || '(no sku)';
+    const platformLabel = { shopee: 'Shopee', joom: 'Joom', qoo10: 'Qoo10', ebay: 'eBay', alibaba: 'Alibaba' }[platform] || platform;
+    const detail = rollup?.per_shop_detail || {};
+    const orderedRegions = platform === 'shopee'
+      ? ['SG', 'TW', 'TH', 'MY', 'PH', 'BR']
+      : Object.keys(detail).sort();
+
+    const rowsHtml = orderedRegions.map((region) => {
+      const d = detail[region];
+      if (!d) {
+        return `<tr><td>${text(region)}</td><td style="color:#94a3b8;">미등록</td><td></td><td></td></tr>`;
+      }
+      const sid = d.shop_id || d.shopId || '';
+      const banned = SHOPEE_BANNED_SHOP_IDS.has(String(sid));
+      const itemId = d.shop_item_id || d.platform_item_id || '';
+      const statusBadge = banned
+        ? '<span style="color:#000;font-weight:600;">✕ 차단됨</span>'
+        : (d.status === 'listed' || d.status === 'mapped')
+        ? '<span style="color:#16a34a;">● 등록</span>'
+        : d.status === 'error' || d.status === 'rejected'
+        ? '<span style="color:#dc2626;">■ 오류</span>'
+        : d.status === 'pending' || d.status === 'draft'
+        ? '<span style="color:#f59e0b;">▲ ' + text(d.status) + '</span>'
+        : `<span style="color:#94a3b8;">${text(d.status || '?')}</span>`;
+      return `<tr>
+        <td>${text(region)}</td>
+        <td>${statusBadge}</td>
+        <td class="mono">${text(itemId)}</td>
+        <td style="color:#dc2626;font-size:11px;">${text(d.last_error || '')}</td>
+      </tr>`;
+    }).join('');
+
+    return `
+      <div style="font-weight:600;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span>${platformLabel} · ${text(sku)}</span>
+        <button type="button" id="pl-led-popover-close" style="font-size:12px;padding:2px 8px;">닫기</button>
+      </div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse;">
+        <thead><tr style="background:#f4f4f5;">
+          <th style="text-align:left;padding:4px 6px;">지역/Shop</th>
+          <th style="text-align:left;padding:4px 6px;">상태</th>
+          <th style="text-align:left;padding:4px 6px;">item_id</th>
+          <th style="text-align:left;padding:4px 6px;">오류</th>
+        </tr></thead>
+        <tbody>${rowsHtml || '<tr><td colspan="4" style="color:#94a3b8;padding:6px;">데이터 없음</td></tr>'}</tbody>
+      </table>`;
+  }
+
+  function ensurePopoverEl() {
+    let pop = document.getElementById('pl-led-popover');
+    if (pop) return pop;
+    pop = document.createElement('div');
+    pop.id = 'pl-led-popover';
+    pop.style.cssText = 'position:absolute;z-index:1000;background:white;border:1px solid #cbd5e1;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,0.12);padding:10px;min-width:340px;max-width:480px;display:none;';
+    document.body.appendChild(pop);
+    document.addEventListener('click', (e) => {
+      if (!pop.contains(e.target) && !e.target.classList.contains('pl-led')) {
+        pop.style.display = 'none';
+      }
+    });
+    return pop;
+  }
+
+  function showLedPopover(btn) {
+    const productId = btn.dataset.productId;
+    const platform = btn.dataset.platform;
+    const pop = ensurePopoverEl();
+    pop.innerHTML = buildLedPopover(productId, platform);
+    pop.style.display = 'block';
+    const rect = btn.getBoundingClientRect();
+    const popW = 400;
+    let left = rect.left + window.scrollX;
+    if (left + popW > window.innerWidth) left = window.innerWidth - popW - 10;
+    pop.style.left = Math.max(8, left) + 'px';
+    pop.style.top = (rect.bottom + window.scrollY + 4) + 'px';
+    document.getElementById('pl-led-popover-close')?.addEventListener('click', () => { pop.style.display = 'none'; });
   }
 
   function primaryListing(product) {

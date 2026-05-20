@@ -1,0 +1,607 @@
+// @ts-nocheck
+// starone-crawl — StarOneMall product crawler in Deno.
+//
+// Step 1b (plan v2.2 §C.1): port of iau crawler_staronemall.py to a Supabase
+// Edge Function running in the Seoul region. Why: StarOneMall geo-blocks
+// non-Korean IPs. Railway / Vercel can't reach the site at all; only a
+// KR-region serverless runtime (or proxy) can fetch HTML reliably.
+//
+// Input  (POST /starone-crawl):
+//   {
+//     urls: [string, ...],         // one or many product detail URLs
+//     crawl_run_id?: uuid,         // groups multiple URLs from one operator
+//                                  // click into the same source_records.crawl_run_id
+//     write_to_source_records?: bool   // default true (writes one row per url
+//                                      // for the operator preview path).
+//   }
+//
+// Output: { ok, crawl_run_id, results: [
+//   {
+//     url, ok, source_record_id?, observed_values, raw_payload, error?, deduped?
+//   }, ...
+// ] }
+//
+// Auth: requires a real Supabase user session (Step 0 auth gate). Operators
+// triggering bulk preview must be signed in.
+
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
+import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
+import { requireAuthenticatedUser } from "../_shared/auth.ts";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+
+const PARSER_VERSION = "staronemall@2026-05-20";
+const STARONEMALL_BASE = "https://www.staronemall.com";
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers":
+    "Content-Type, Authorization, apikey, x-client-info",
+  "Access-Control-Max-Age": "3600",
+};
+
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+function jsonResp(status, body) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS, "Content-Type": "application/json" },
+  });
+}
+
+function audit(event, payload = {}) {
+  console.log(JSON.stringify({
+    service: "starone-crawl", event, ts: new Date().toISOString(), ...payload,
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// HTML fetch
+// ---------------------------------------------------------------------------
+async function fetchHtml(url: string): Promise<{ ok: boolean; html?: string; error?: string }> {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const r = await fetch(url, {
+        headers: {
+          "User-Agent": USER_AGENT,
+          "Accept":
+            "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+          "Accept-Language": "ko-KR,ko;q=0.9,en-US;q=0.8",
+          "Accept-Encoding": "gzip, deflate, br",
+          Referer: "https://www.staronemall.com",
+        },
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!r.ok) {
+        if (attempt < 3) {
+          await new Promise((res) => setTimeout(res, 1000 * attempt));
+          continue;
+        }
+        return { ok: false, error: `http_${r.status}` };
+      }
+      // staronemall may return EUC-KR or UTF-8. Try UTF-8 first; if Korean
+      // looks garbled, retry with explicit decode.
+      const buf = await r.arrayBuffer();
+      let text = new TextDecoder("utf-8").decode(buf);
+      // Heuristic: if too many replacement chars OR Korean chars are <10%
+      // when a Korean page is expected, retry with euc-kr.
+      const replacementRatio = (text.match(/�/g) || []).length / Math.max(text.length, 1);
+      if (replacementRatio > 0.01) {
+        try {
+          text = new TextDecoder("euc-kr").decode(buf);
+        } catch {
+          // stay with utf-8
+        }
+      }
+      return { ok: true, html: text };
+    } catch (e) {
+      if (attempt >= 3) {
+        return {
+          ok: false,
+          error: e instanceof Error ? e.message : String(e),
+        };
+      }
+      await new Promise((res) => setTimeout(res, 1000 * attempt));
+    }
+  }
+  return { ok: false, error: "fetch_exhausted_retries" };
+}
+
+// ---------------------------------------------------------------------------
+// Extraction helpers (mirror crawler_staronemall.py)
+// ---------------------------------------------------------------------------
+
+function normalizeImageUrl(url: string): string {
+  const u = (url || "").trim();
+  if (!u) return "";
+  if (u.startsWith("//")) return "https:" + u;
+  if (u.startsWith("http")) return u;
+  if (u.startsWith("/")) return STARONEMALL_BASE + u;
+  return u;
+}
+
+function getImgSrc(img: Element): string {
+  for (const attr of ["data-src", "data-original", "data-lazy-src", "src"]) {
+    const v = (img.getAttribute(attr) || "").trim();
+    if (v) return normalizeImageUrl(v);
+  }
+  return "";
+}
+
+function isJpg(url: string): boolean {
+  try {
+    const p = new URL(url).pathname.toLowerCase();
+    return p.endsWith(".jpg") || p.endsWith(".jpeg");
+  } catch {
+    return false;
+  }
+}
+
+function dedupArr<T>(arr: T[]): T[] {
+  const seen = new Set<T>();
+  const out: T[] = [];
+  for (const v of arr) {
+    if (!seen.has(v)) {
+      seen.add(v);
+      out.push(v);
+    }
+  }
+  return out;
+}
+
+function extractTitle(doc): string {
+  // First h3/h2/h1 with text length > 5 (skip "검색결과", "관련상품")
+  for (const tag of ["h3", "h2", "h1"]) {
+    const els = doc.querySelectorAll(tag);
+    for (const h of els) {
+      const text = (h.textContent || "").trim();
+      if (
+        text &&
+        text.length > 5 &&
+        !text.includes("검색결과") &&
+        !text.includes("관련상품")
+      ) {
+        return text;
+      }
+    }
+  }
+  const og = doc.querySelector('meta[property="og:title"]');
+  if (og) {
+    let content = (og.getAttribute("content") || "").trim();
+    if (content) {
+      // strip "[ALBUM] " style prefix
+      content = content.replace(/^\[[^\]]+\]\s*/, "");
+      return content;
+    }
+  }
+  return "";
+}
+
+function extractArtist(title: string): string {
+  if (!title) return "";
+  // Korean in parens: "IVE (아이브) ..."  → "아이브"
+  const koreanInParens = title.match(/\(([가-힣ㄱ-ㅎㅏ-ㅣ]+)\)/);
+  if (koreanInParens) return koreanInParens[1].trim();
+  // "Artist - Title" pattern
+  const dashMatch = title.match(/^([^\-\[]+?)\s*[\-\[]/);
+  if (dashMatch) {
+    const candidate = dashMatch[1].trim();
+    if (candidate.length > 1 && candidate.length < 30) return candidate;
+  }
+  return "";
+}
+
+function parsePriceNumber(text: string): number {
+  if (!text) return 0;
+  // Find the largest number with thousands separators
+  const m = text.match(/[\d,]{3,}/g) || [];
+  let best = 0;
+  for (const tok of m) {
+    const n = Number(tok.replace(/,/g, ""));
+    if (Number.isFinite(n) && n >= 100 && n <= 10_000_000 && n > best) {
+      best = n;
+    }
+  }
+  return best;
+}
+
+function extractPrice(doc): number {
+  const priceDiv = doc.querySelector("div.price");
+  if (priceDiv) {
+    // priority: sell > consumer > retail
+    for (const cls of ["sell", "consumer", "retail"]) {
+      const el = priceDiv.querySelector(`.${cls}`);
+      if (el) {
+        const v = parsePriceNumber(el.textContent || "");
+        if (v >= 100) return v;
+      }
+    }
+  }
+  // Fallback to page-wide text patterns
+  const text = doc.body?.textContent || "";
+  const membersOnly = text.match(/Members?\s*Only\s*Price[^\d]{0,30}([\d,]{3,})\s*원/i);
+  if (membersOnly) {
+    const v = Number(membersOnly[1].replace(/,/g, ""));
+    if (Number.isFinite(v) && v >= 100) return v;
+  }
+  const retail = text.match(/Retail\s*price\s*([\d,]+)\s*원/i);
+  if (retail) {
+    const v = Number(retail[1].replace(/,/g, ""));
+    if (Number.isFinite(v) && v >= 100) return v;
+  }
+  return 0;
+}
+
+function extractReleaseDate(doc): string {
+  const text = doc.body?.textContent || "";
+  const en = text.match(/Release\s*Date[^\d]*(\d{4}[-./]\d{1,2}[-./]\d{1,2})/i);
+  if (en) return normalizeDate(en[1]);
+  const ko = text.match(/발매일[^\d]*(\d{4}[-./]\d{1,2}[-./]\d{1,2})/);
+  if (ko) return normalizeDate(ko[1]);
+  return "";
+}
+
+function normalizeDate(raw: string): string {
+  // YYYY[-./]MM[-./]DD → YYYY-MM-DD
+  const m = raw.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  if (!m) return raw;
+  const yyyy = m[1];
+  const mm = String(m[2]).padStart(2, "0");
+  const dd = String(m[3]).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function extractDescription(doc): string {
+  for (const keyword of ["상품정보", "Product information", "Product introduction"]) {
+    const walker = doc.createTreeWalker
+      ? null
+      : null;
+    // deno-dom doesn't have createTreeWalker; do a manual scan
+    const allElements = doc.querySelectorAll("*");
+    for (const el of allElements) {
+      const t = (el.textContent || "").trim();
+      if (!t) continue;
+      // Only check headings / leaf-ish elements
+      if (!t.includes(keyword)) continue;
+      // Find the closest div/section ancestor (could be self)
+      let container = el;
+      while (container && !["DIV", "SECTION"].includes(container.tagName)) {
+        container = container.parentElement;
+      }
+      if (!container) continue;
+      // Pull text chunks from p/div/li
+      const chunks: string[] = [];
+      for (const tag of ["p", "div", "li"]) {
+        const subs = container.querySelectorAll(tag);
+        for (const sub of subs) {
+          const txt = (sub.textContent || "").trim();
+          if (txt && txt.length > 1) chunks.push(txt);
+          if (chunks.length >= 50) break;
+        }
+        if (chunks.length >= 50) break;
+      }
+      if (chunks.length > 0) {
+        return chunks.slice(0, 50).join("<br>").slice(0, 5000);
+      }
+    }
+  }
+  return "";
+}
+
+function extractMainImages(doc, maxN = 5): string[] {
+  const urls: string[] = [];
+  const mainImg = doc.querySelector('img[id="mainImg"]');
+  if (mainImg) {
+    const src = (mainImg.getAttribute("src") || "").trim();
+    if (src) urls.push(normalizeImageUrl(src));
+    for (let i = 1; i <= 10; i++) {
+      const up = (mainImg.getAttribute(`upfile${i}`) || "").trim();
+      if (up) urls.push(normalizeImageUrl(up));
+    }
+  }
+  if (urls.length === 0) {
+    const imgs = doc.querySelectorAll("img");
+    for (const img of imgs) {
+      const src = getImgSrc(img);
+      if (src && src.includes("wisacdn.com") && src.includes("/product/")) {
+        urls.push(src);
+        if (urls.length >= maxN * 2) break;
+      }
+    }
+  }
+  if (urls.length === 0) {
+    const og = doc.querySelector('meta[property="og:image"]');
+    if (og) {
+      const c = (og.getAttribute("content") || "").trim();
+      if (c) urls.push(c);
+    }
+  }
+  return dedupArr(urls).slice(0, maxN);
+}
+
+function extractDetailImages(doc, maxN = 20): string[] {
+  const urls: string[] = [];
+  // class="img_obj_*"
+  const imgObjList = doc.querySelectorAll('img[class^="img_obj_"]');
+  for (const img of imgObjList) {
+    const src = getImgSrc(img);
+    if (src && isJpg(src)) urls.push(src);
+  }
+  if (urls.length === 0) {
+    const imgs = doc.querySelectorAll("img");
+    for (const img of imgs) {
+      const src = getImgSrc(img);
+      if (
+        src &&
+        src.includes("wisacdn.com") &&
+        src.includes("/attach/") &&
+        isJpg(src)
+      ) {
+        urls.push(src);
+      }
+    }
+  }
+  return dedupArr(urls).slice(0, maxN);
+}
+
+function extractPno(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const pno = u.searchParams.get("pno");
+    return pno || null;
+  } catch {
+    return null;
+  }
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const buf = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(input),
+  );
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+// ---------------------------------------------------------------------------
+// Main per-URL crawl
+// ---------------------------------------------------------------------------
+async function crawlOne(url: string) {
+  const fetched = await fetchHtml(url);
+  if (!fetched.ok) {
+    return {
+      url,
+      ok: false,
+      error: fetched.error || "fetch_failed",
+    };
+  }
+  let doc;
+  try {
+    doc = new DOMParser().parseFromString(fetched.html || "", "text/html");
+  } catch (e) {
+    return {
+      url,
+      ok: false,
+      error: `parse_failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+  if (!doc) return { url, ok: false, error: "dom_parse_returned_null" };
+
+  const title = extractTitle(doc);
+  const artist = extractArtist(title);
+  const price_krw = extractPrice(doc);
+  const release_date = extractReleaseDate(doc);
+  const description_html = extractDescription(doc);
+  const main_image_urls = extractMainImages(doc, 5);
+  const detail_image_urls = extractDetailImages(doc, 20);
+  const pno = extractPno(url);
+
+  const observed_values = {
+    title,
+    artist_name: artist,
+    price_krw,
+    release_date,
+    description_html: description_html.slice(0, 5000),
+    main_image_urls,
+    detail_image_urls,
+    pno,
+  };
+  // raw_payload is what we'd save for parser_version replay; keep it small.
+  const raw_payload = {
+    url,
+    title,
+    artist,
+    price_krw,
+    release_date,
+    main_image_count: main_image_urls.length,
+    detail_image_count: detail_image_urls.length,
+    description_length: description_html.length,
+    pno,
+  };
+  return {
+    url,
+    ok: true,
+    pno,
+    observed_values,
+    raw_payload,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Main Edge Function handler
+// ---------------------------------------------------------------------------
+Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response(null, { status: 204, headers: CORS });
+  }
+  if (req.method !== "POST") {
+    return jsonResp(405, { ok: false, error: "method_not_allowed" });
+  }
+
+  // Auth gate (Step 0): only signed-in operators can trigger a crawl.
+  const authResult = await requireAuthenticatedUser(req);
+  if (authResult.response) {
+    audit("auth_rejected");
+    return authResult.response;
+  }
+  const userEmail = authResult.user.email || "unknown";
+
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+    return jsonResp(500, { ok: false, error: "starone_crawl_misconfigured" });
+  }
+
+  let body;
+  try {
+    body = await req.json();
+  } catch (e) {
+    return jsonResp(400, {
+      ok: false,
+      error: "invalid_json",
+      message: e instanceof Error ? e.message : String(e),
+    });
+  }
+  const urls: string[] = Array.isArray(body.urls) ? body.urls : [];
+  if (urls.length === 0) {
+    return jsonResp(400, { ok: false, error: "urls_required" });
+  }
+  if (urls.length > 50) {
+    return jsonResp(400, {
+      ok: false,
+      error: "too_many_urls",
+      message: "Maximum 50 URLs per call",
+    });
+  }
+  const crawl_run_id =
+    typeof body.crawl_run_id === "string" &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      body.crawl_run_id,
+    )
+      ? body.crawl_run_id
+      : crypto.randomUUID();
+  const writeToSourceRecords = body.write_to_source_records !== false;
+
+  audit("crawl_started", { crawl_run_id, url_count: urls.length, actor: userEmail });
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+
+  // Sequentially crawl (StarOneMall is forgiving of moderate traffic but
+  // bursts can trigger temporary blocks).
+  const results = [];
+  for (const url of urls) {
+    let trimmed = (url || "").trim();
+    if (!trimmed) {
+      results.push({ url, ok: false, error: "empty_url" });
+      continue;
+    }
+    if (!trimmed.startsWith("http")) trimmed = "https://" + trimmed;
+    if (!/staronemall\.com/i.test(trimmed)) {
+      results.push({ url: trimmed, ok: false, error: "not_a_staronemall_url" });
+      continue;
+    }
+
+    const result = await crawlOne(trimmed);
+    if (!result.ok) {
+      results.push(result);
+      continue;
+    }
+
+    let source_record_id: string | null = null;
+    let deduped = false;
+
+    if (writeToSourceRecords) {
+      const raw_payload_hash = await sha256Hex(JSON.stringify(result.raw_payload));
+      const insertPayload = {
+        source_type: "staronemall",
+        source_external_id: result.pno,
+        source_url: trimmed,
+        crawl_run_id,
+        parser_version: PARSER_VERSION,
+        raw_payload: result.raw_payload,
+        raw_payload_hash,
+        observed_values: result.observed_values,
+        confidence: 60,
+        tier: 2,
+        status: "pending_review",
+      };
+      const { data, error } = await supabase
+        .from("source_records")
+        .insert(insertPayload)
+        .select("id")
+        .single();
+
+      if (error) {
+        // Dedupe by (source_type, source_external_id, parser_version)
+        if (
+          /duplicate key|source_records_external_uniq/i.test(error.message || "")
+        ) {
+          const { data: existing } = await supabase
+            .from("source_records")
+            .select("id")
+            .eq("source_type", "staronemall")
+            .eq("source_external_id", result.pno)
+            .eq("parser_version", PARSER_VERSION)
+            .maybeSingle();
+          source_record_id = existing?.id || null;
+          deduped = true;
+          if (source_record_id) {
+            await supabase.from("audit_log").insert({
+              entity_type: "source_record",
+              entity_uuid: source_record_id,
+              source_record_id,
+              actor: `user:${userEmail}`,
+              action: "sync",
+              reason: "dedupe_hit_replay",
+              batch_id: crawl_run_id,
+            });
+          }
+        } else {
+          results.push({ url: trimmed, ok: false, error: `insert_failed: ${error.message}` });
+          continue;
+        }
+      } else {
+        source_record_id = data?.id || null;
+        if (source_record_id) {
+          await supabase.from("audit_log").insert({
+            entity_type: "source_record",
+            entity_uuid: source_record_id,
+            source_record_id,
+            actor: `user:${userEmail}`,
+            action: "create",
+            after_json: {
+              source_type: "staronemall",
+              source_external_id: result.pno,
+              parser_version: PARSER_VERSION,
+              crawl_run_id,
+            },
+            batch_id: crawl_run_id,
+          });
+        }
+      }
+    }
+
+    results.push({
+      url: trimmed,
+      ok: true,
+      source_record_id,
+      deduped,
+      observed_values: result.observed_values,
+    });
+  }
+
+  const okCount = results.filter((r) => r.ok).length;
+  const failCount = results.length - okCount;
+  audit("crawl_done", { crawl_run_id, ok: okCount, fail: failCount });
+
+  return jsonResp(200, {
+    ok: true,
+    crawl_run_id,
+    results,
+    summary: { total: results.length, ok: okCount, fail: failCount },
+  });
+});

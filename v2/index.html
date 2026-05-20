@@ -919,11 +919,79 @@
     </div>
 
     <!-- ═══════════════════════════════════════════════
-         VIEW: 상품 등록 — 5-section Seller Centre flow (plan §5-1-A)
-         Phase A0 + A1: add_global_item → add_global_model → create_publish_task
-         All fields mirror docs_ai JSON body_params exactly.
+         VIEW: 상품 등록 — 2-stage bulk URL+weight master register
+         Replaces the previous 5-step Shopee wizard per operator decision
+         2026-05-20 msg #476. Operator pastes many product URLs + per-row
+         weight, clicks 크롤 미리보기, reviews extracted fields + auto-built
+         SKU, clicks 전체 등록 → products rows auto-created via
+         promote_source_to_product RPC.
          ═══════════════════════════════════════════════ -->
     <div id="view-register" class="view active">
+
+      <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px;">
+        <h2 style="font-size:18px;margin:0;">상품 등록 (마스터 데이터 일괄 생성)</h2>
+        <span style="font-size:12px;color:var(--muted);">URL + 무게 입력 → 자동 크롤 → 마스터 등록</span>
+      </div>
+
+      <!-- Stage 1: URL+weight bulk input -->
+      <div id="mr-stage1" class="register-stage">
+
+        <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;font-size:12px;flex-wrap:wrap;">
+          <label><input type="radio" name="mr-lifecycle" value="pre_order" checked> PRE ORDER (위치=PO)</label>
+          <label><input type="radio" name="mr-lifecycle" value="ready_stock"> READY STOCK</label>
+          <input type="text" id="mr-location" placeholder="위치 코드 (READY STOCK 시 필수, 예: B1)" style="font-size:12px;padding:5px 8px;width:240px;" disabled>
+          <span style="color:var(--muted);font-size:11px;margin-left:auto;">대상 사이트: StarOneMall (Yes24/Weverse 추후)</span>
+        </div>
+
+        <div style="display:flex;gap:8px;margin-bottom:8px;font-size:12px;align-items:center;flex-wrap:wrap;">
+          <label>일괄 무게(g): <input type="number" id="mr-bulk-weight" placeholder="예: 200" style="width:90px;font-size:12px;padding:4px 6px;" min="0" step="1"></label>
+          <button type="button" id="mr-apply-bulk-weight" style="font-size:12px;padding:5px 10px;">전체 행에 적용</button>
+          <button type="button" id="mr-csv-import" style="font-size:12px;padding:5px 10px;">📁 CSV 가져오기</button>
+          <input type="file" id="mr-csv-file" accept=".csv,.txt" style="display:none;">
+          <span style="color:var(--muted);font-size:11px;">CSV: 첫 컬럼=URL, 둘째 컬럼=무게(g) · 또는 텍스트 영역에 드래그 드롭</span>
+        </div>
+
+        <div class="panel" style="margin-bottom:10px;padding:0;">
+          <table id="mr-input-table" style="table-layout:fixed;width:100%;margin:0;">
+            <thead>
+              <tr>
+                <th style="width:46px;">#</th>
+                <th>URL</th>
+                <th style="width:110px;">무게 (g)</th>
+                <th style="width:90px;">상태</th>
+                <th style="width:46px;"></th>
+              </tr>
+            </thead>
+            <tbody id="mr-input-body"></tbody>
+          </table>
+        </div>
+
+        <div style="display:flex;gap:8px;align-items:center;font-size:12px;flex-wrap:wrap;">
+          <button type="button" id="mr-add-row" style="font-size:12px;padding:5px 12px;">+ 행 추가</button>
+          <button type="button" id="mr-clear-rows" style="font-size:12px;padding:5px 12px;">행 비우기</button>
+          <span id="mr-stage1-summary" style="color:var(--muted);"></span>
+          <button type="button" id="mr-preview-btn" class="primary" style="font-size:13px;padding:6px 14px;margin-left:auto;">크롤 미리보기 →</button>
+        </div>
+
+        <div id="mr-stage1-error" class="notice" style="display:none;margin-top:10px;"></div>
+      </div>
+
+      <!-- Stage 2: crawl preview + SKU edit + final register -->
+      <div id="mr-stage2" class="register-stage" style="display:none;">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+          <button type="button" id="mr-back-btn" style="font-size:12px;padding:5px 12px;">← 입력으로 돌아가기</button>
+          <span style="font-size:12px;color:var(--muted);" id="mr-stage2-summary"></span>
+          <button type="button" id="mr-retry-failed-btn" style="font-size:12px;padding:5px 12px;margin-left:auto;display:none;">↻ 크롤 실패 재크롤</button>
+          <button type="button" id="mr-promote-btn" class="primary" style="font-size:13px;padding:6px 14px;">전체 등록 → 상품 목록</button>
+        </div>
+
+        <div id="mr-preview-cards" style="display:flex;flex-direction:column;gap:12px;"></div>
+
+        <div id="mr-stage2-error" class="notice" style="display:none;margin-top:10px;"></div>
+      </div>
+    </div>
+
+    <div id="view-register-legacy" class="view" style="display:none;">
 
       <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:18px;">
         <h2 style="font-size:18px;margin:0;">신규 상품 등록</h2>
@@ -8268,6 +8336,452 @@
       if (panel) panel.style.display = 'none';
     });
   }
+
+  // ════════════════════════════════════════════════════════════════
+  // MASTER REGISTER (view-register, 2-stage bulk URL+weight)
+  // Plan v2.2 Step 1b/1c hybrid (operator decision 2026-05-20 msg #476).
+  // Pipeline: stage1 URL+weight rows → starone-crawl → stage2 SKU edit
+  //          → promote_source_to_product RPC (one call per row) → products.
+  // ════════════════════════════════════════════════════════════════
+  (function () {
+    const STAR_CRAWL_URL = `${SUPABASE_URL}/functions/v1/starone-crawl`;
+    let MR_STAGE = 1;
+    let MR_ROWS = [];   // input rows: {tempId, url, weight_g}
+    let MR_PREV = [];   // preview rows: {tempId, url, weight_g, status, source_record_id, observed, artist, album, version, member, sku, error, product_id, deduped}
+    let MR_NEXT_ID = 1;
+
+    function $(id) { return document.getElementById(id); }
+    function el(tag, attrs, ...children) {
+      const node = document.createElement(tag);
+      if (attrs) {
+        for (const k in attrs) {
+          if (k === 'style') node.setAttribute('style', attrs[k]);
+          else if (k.startsWith('on') && typeof attrs[k] === 'function') node.addEventListener(k.slice(2), attrs[k]);
+          else if (k === 'class') node.className = attrs[k];
+          else if (k === 'dataset') Object.assign(node.dataset, attrs[k]);
+          else node.setAttribute(k, attrs[k]);
+        }
+      }
+      for (const c of children) {
+        if (c == null) continue;
+        node.appendChild(typeof c === 'string' || typeof c === 'number' ? document.createTextNode(String(c)) : c);
+      }
+      return node;
+    }
+    function mrSlug(s, n) { return (s || '').replace(/\s+/g, '').slice(0, n).toUpperCase(); }
+    function mrLifecycle() {
+      const r = document.querySelector('input[name="mr-lifecycle"]:checked');
+      return r ? r.value : 'pre_order';
+    }
+    function mrLocation() {
+      if (mrLifecycle() === 'pre_order') return 'PO';
+      return ($('mr-location').value || '').trim().toUpperCase();
+    }
+    function mrComputeSku(row) {
+      const loc = mrLocation() || 'PO';
+      return [
+        loc,
+        mrSlug(row.artist, 3),
+        mrSlug(row.album, 5),
+        mrSlug(row.version, 3),
+        (row.member || '').trim()
+      ].join('-');
+    }
+    function mrDeriveFromTitle(title) {
+      // Best-effort split for "(아티스트) 앨범명 [버전]" style; operator can edit in stage2.
+      const out = { artist: '', album: '', version: '', member: '' };
+      if (!title) return out;
+      const m = title.match(/\(([^)]+)\)/);
+      if (m) out.artist = m[1].trim();
+      const after = title.replace(/\([^)]+\)/g, '').trim();
+      const v = after.match(/\[([^\]]+)\]/);
+      if (v) out.version = v[1].trim();
+      out.album = after.replace(/\[[^\]]+\]/g, '').trim();
+      return out;
+    }
+
+    function mrUpdateStage1Summary() {
+      const rows = mrCollectStage1Rows();
+      const withW = rows.filter(r => r.weight_g != null && r.weight_g > 0).length;
+      $('mr-stage1-summary').textContent = `${rows.length} URL · 무게 입력 ${withW}건`;
+    }
+
+    function mrRenderInputRow(row) {
+      const tbody = $('mr-input-body');
+      const tr = el('tr', { dataset: { tempId: String(row.tempId) } });
+      tr.appendChild(el('td', null, String(row.tempId)));
+      const urlTd = el('td');
+      const urlInput = el('input', { type: 'text', placeholder: 'https://www.staronemall.com/product/...', style: 'width:100%;font-size:12px;padding:5px 7px;', value: row.url || '' });
+      urlInput.addEventListener('input', (e) => { row.url = e.target.value.trim(); mrUpdateStage1Summary(); });
+      urlTd.appendChild(urlInput);
+      tr.appendChild(urlTd);
+      const wTd = el('td');
+      const wInput = el('input', { type: 'number', min: '0', step: '1', placeholder: '예: 200', style: 'width:100%;font-size:12px;padding:5px 7px;text-align:right;', value: row.weight_g != null ? String(row.weight_g) : '' });
+      wInput.addEventListener('input', (e) => {
+        const v = e.target.value;
+        row.weight_g = v === '' ? null : Number(v);
+        mrUpdateStage1Summary();
+      });
+      wTd.appendChild(wInput);
+      tr.appendChild(wTd);
+      tr.appendChild(el('td', { style: 'color:var(--muted);font-size:11px;' }, '대기'));
+      const xTd = el('td');
+      const xBtn = el('button', { type: 'button', style: 'font-size:11px;padding:3px 8px;' }, '✕');
+      xBtn.addEventListener('click', () => {
+        MR_ROWS = MR_ROWS.filter(r => r.tempId !== row.tempId);
+        tr.remove();
+        mrUpdateStage1Summary();
+      });
+      xTd.appendChild(xBtn);
+      tr.appendChild(xTd);
+      tbody.appendChild(tr);
+    }
+
+    function mrAddRow(prefill) {
+      const row = { tempId: MR_NEXT_ID++, url: (prefill && prefill.url) || '', weight_g: (prefill && prefill.weight_g != null) ? prefill.weight_g : null };
+      MR_ROWS.push(row);
+      mrRenderInputRow(row);
+      mrUpdateStage1Summary();
+      return row;
+    }
+
+    function mrCollectStage1Rows() {
+      return MR_ROWS.filter(r => (r.url || '').trim().length > 0);
+    }
+
+    function mrParseCsv(text) {
+      // Tolerant CSV: split on newlines, then by comma/tab. First col = url, second = weight.
+      const out = [];
+      for (const line of text.split(/\r?\n/)) {
+        const t = line.trim();
+        if (!t) continue;
+        const parts = t.split(/[,\t]/).map(s => s.trim().replace(/^"|"$/g, ''));
+        if (!parts[0] || !/^https?:\/\//i.test(parts[0])) continue;
+        const w = parts[1] ? Number(parts[1]) : null;
+        out.push({ url: parts[0], weight_g: (w != null && !Number.isNaN(w)) ? w : null });
+      }
+      return out;
+    }
+
+    async function mrPreviewClick() {
+      const err = $('mr-stage1-error');
+      err.style.display = 'none';
+      const rows = mrCollectStage1Rows();
+      if (rows.length === 0) { err.textContent = 'URL을 한 개 이상 입력해주세요.'; err.style.display = 'block'; return; }
+      const lifecycle = mrLifecycle();
+      if (lifecycle === 'ready_stock' && !mrLocation()) {
+        err.textContent = 'READY STOCK은 위치 코드를 먼저 입력해야 합니다.'; err.style.display = 'block'; return;
+      }
+      // Codex P1: weight must be > 0. Zero leaves weight_measured_at NULL and breaks shipping calcs.
+      const missingW = rows.filter(r => r.weight_g == null || !(r.weight_g > 0));
+      if (missingW.length > 0) {
+        err.textContent = `무게가 없거나 0g인 행이 ${missingW.length}개 있습니다. 1g 이상으로 입력해주세요.`;
+        err.style.display = 'block';
+        return;
+      }
+      const session = (await db.auth.getSession()).data.session;
+      if (!session) { err.textContent = '로그인이 만료되었습니다. 다시 로그인해주세요.'; err.style.display = 'block'; return; }
+
+      MR_PREV = rows.map(r => ({ ...r, status: 'crawling', error: null }));
+      MR_STAGE = 2;
+      $('mr-stage1').style.display = 'none';
+      $('mr-stage2').style.display = '';
+      mrRenderPreviewCards();
+
+      const urls = MR_PREV.map(r => r.url);
+      try {
+        const resp = await fetch(STAR_CRAWL_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+          body: JSON.stringify({ urls, write_to_source_records: true })
+        });
+        const text = await resp.text();
+        let body;
+        try { body = JSON.parse(text); } catch { body = { ok: false, error: text }; }
+        if (!resp.ok || !body || body.ok === false) {
+          const msg = body && body.error ? body.error : `크롤 응답 오류 (HTTP ${resp.status})`;
+          MR_PREV.forEach(r => { r.status = 'failed'; r.error = msg; });
+          mrRenderPreviewCards();
+          return;
+        }
+        const results = Array.isArray(body.results) ? body.results : [];
+        const byUrl = new Map(results.map(x => [x.url, x]));
+        for (const r of MR_PREV) {
+          const hit = byUrl.get(r.url);
+          if (!hit) { r.status = 'failed'; r.error = '응답에 해당 URL이 없습니다.'; continue; }
+          if (hit.ok === false) { r.status = 'failed'; r.error = hit.error || '크롤 실패'; continue; }
+          r.source_record_id = hit.source_record_id;
+          r.observed = hit.observed_values || {};
+          r.deduped = !!hit.deduped;
+          const derived = mrDeriveFromTitle(r.observed.title || '');
+          r.artist = derived.artist;
+          r.album = derived.album;
+          r.version = derived.version;
+          r.member = '';
+          r.status = 'preview';
+        }
+        mrRenderPreviewCards();
+      } catch (e) {
+        MR_PREV.forEach(r => { r.status = 'failed'; r.error = String(e.message || e); });
+        mrRenderPreviewCards();
+      }
+    }
+
+    function mrStatusLabel(s) {
+      if (s === 'crawling') return { text: '크롤 중...', color: 'var(--muted)' };
+      if (s === 'preview') return { text: '준비됨', color: '#16a34a' };
+      if (s === 'promoting') return { text: '등록 중...', color: '#0284c7' };
+      if (s === 'done') return { text: '등록 완료', color: '#16a34a' };
+      if (s === 'failed') return { text: '실패', color: '#dc2626' };
+      return { text: s, color: 'var(--muted)' };
+    }
+
+    function mrRenderPreviewCards() {
+      const wrap = $('mr-preview-cards');
+      wrap.innerHTML = '';
+      const okCount = MR_PREV.filter(r => r.status === 'preview' || r.status === 'done').length;
+      const failCount = MR_PREV.filter(r => r.status === 'failed').length;
+      const doneCount = MR_PREV.filter(r => r.status === 'done').length;
+      $('mr-stage2-summary').textContent = `전체 ${MR_PREV.length}건 · 준비 ${okCount} · 등록 완료 ${doneCount} · 실패 ${failCount}`;
+      $('mr-retry-failed-btn').style.display = failCount > 0 ? '' : 'none';
+      $('mr-promote-btn').disabled = okCount === 0;
+
+      MR_PREV.forEach((row, idx) => {
+        const card = el('div', { class: 'panel', style: 'padding:12px;display:grid;grid-template-columns:120px 1fr 160px;gap:12px;align-items:start;' });
+        const main = (row.observed && Array.isArray(row.observed.main_image_urls)) ? row.observed.main_image_urls[0] : null;
+        const thumb = el('div', { style: 'width:120px;height:120px;background:#f4f4f5;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);' });
+        if (main) {
+          const img = el('img', { src: main, style: 'width:100%;height:100%;object-fit:cover;' });
+          thumb.appendChild(img);
+        } else {
+          thumb.textContent = '이미지 없음';
+        }
+        card.appendChild(thumb);
+
+        const body = el('div', { style: 'display:flex;flex-direction:column;gap:6px;font-size:12px;min-width:0;' });
+        const top = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;' });
+        top.appendChild(el('span', { style: 'font-weight:600;' }, `#${idx + 1}`));
+        const lab = mrStatusLabel(row.status);
+        top.appendChild(el('span', { style: `color:${lab.color};font-weight:600;` }, lab.text));
+        if (row.deduped) top.appendChild(el('span', { style: 'color:var(--muted);' }, '· 중복(기존 source_record 재사용)'));
+        if (row.product_id) top.appendChild(el('span', { style: 'color:#16a34a;' }, '· products 생성됨'));
+        const urlA = el('a', { href: row.url, target: '_blank', rel: 'noopener', style: 'color:var(--muted);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px;' }, row.url);
+        top.appendChild(urlA);
+        body.appendChild(top);
+
+        if (row.status === 'failed') {
+          body.appendChild(el('div', { style: 'color:#dc2626;font-size:12px;' }, row.error || '알 수 없는 오류'));
+        }
+
+        const title = (row.observed && row.observed.title) || '';
+        const priceKrw = (row.observed && row.observed.price_krw) || null;
+        body.appendChild(el('div', { style: 'font-weight:600;font-size:13px;' }, title || '(제목 없음)'));
+        body.appendChild(el('div', { style: 'color:var(--muted);font-size:11px;' }, priceKrw != null ? `매입가(크롤): ${Number(priceKrw).toLocaleString('ko-KR')} KRW` : '매입가 미확인'));
+
+        const grid = el('div', { style: 'display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;' });
+        function mkField(label, key, width3 = false) {
+          const wrap2 = el('div', { style: 'display:flex;flex-direction:column;gap:2px;' });
+          wrap2.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, label));
+          const inp = el('input', { type: 'text', style: 'font-size:12px;padding:4px 6px;', value: row[key] || '' });
+          inp.addEventListener('input', (e) => {
+            row[key] = e.target.value;
+            const skuEl = card.querySelector('[data-sku-display]');
+            if (skuEl) skuEl.textContent = mrComputeSku(row);
+          });
+          wrap2.appendChild(inp);
+          return wrap2;
+        }
+        grid.appendChild(mkField('Artist (SKU 3자)', 'artist'));
+        grid.appendChild(mkField('Album (SKU 5자)', 'album'));
+        grid.appendChild(mkField('Version (SKU 3자)', 'version'));
+        grid.appendChild(mkField('Member (SKU 그대로)', 'member'));
+        body.appendChild(grid);
+
+        const skuLine = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:12px;' });
+        skuLine.appendChild(el('span', { style: 'color:var(--muted);' }, 'SKU:'));
+        skuLine.appendChild(el('code', { style: 'font-size:12px;background:#f4f4f5;padding:2px 6px;border-radius:4px;', dataset: { skuDisplay: '1' } }, mrComputeSku(row)));
+        skuLine.appendChild(el('span', { style: 'color:var(--muted);margin-left:auto;' }, `무게: ${row.weight_g} g`));
+        body.appendChild(skuLine);
+
+        card.appendChild(body);
+
+        const actions = el('div', { style: 'display:flex;flex-direction:column;gap:6px;' });
+        if (row.product_id) {
+          const jumpBtn = el('button', { type: 'button', style: 'font-size:11px;padding:5px 10px;' }, '상품 목록으로');
+          jumpBtn.addEventListener('click', () => {
+            if (typeof window.showView === 'function') window.showView('view-ready-stock');
+          });
+          actions.appendChild(jumpBtn);
+        }
+        if (row.status !== 'done' && row.status !== 'crawling' && row.status !== 'promoting') {
+          const skipBtn = el('button', { type: 'button', style: 'font-size:11px;padding:5px 10px;' }, '이 행 제외');
+          skipBtn.addEventListener('click', () => {
+            MR_PREV = MR_PREV.filter(x => x !== row);
+            mrRenderPreviewCards();
+          });
+          actions.appendChild(skipBtn);
+        }
+        card.appendChild(actions);
+        wrap.appendChild(card);
+      });
+    }
+
+    async function mrPromoteAll() {
+      const err = $('mr-stage2-error');
+      err.style.display = 'none';
+      const lifecycle = mrLifecycle();
+      // Codex P1: include 'failed' rows that have source_record_id (e.g. RPC failed
+      // after successful crawl). Without this, RPC-failed rows have no retry path
+      // because the 실패만 재시도 button only handles failed-without-source_record_id.
+      const targets = MR_PREV.filter(r => r.source_record_id && (r.status === 'preview' || r.status === 'failed'));
+      if (targets.length === 0) { err.textContent = '등록할 행이 없습니다.'; err.style.display = 'block'; return; }
+      for (const row of targets) {
+        const sku = mrComputeSku(row);
+        // Codex P1: validate each SKU component, not just total segment count
+        // (mrComputeSku always returns 5 segments — empty tokens were silently passing).
+        const tokenErr =
+          !mrLocation() ? 'LOC가 비어있습니다.'
+          : !(row.artist || '').trim() ? 'Artist가 비어있습니다.'
+          : !(row.album || '').trim() ? 'Album이 비어있습니다.'
+          : !(row.version || '').trim() ? 'Version이 비어있습니다.'
+          : null;
+        if (tokenErr) {
+          row.status = 'failed';
+          row.error = `SKU 구성요소 누락 — ${tokenErr}`;
+          continue;
+        }
+        row.status = 'promoting';
+        mrRenderPreviewCards();
+        try {
+          const { data, error } = await db.rpc('promote_source_to_product', {
+            p_source_record_id: row.source_record_id,
+            p_sku: sku,
+            p_weight_g: row.weight_g,
+            p_lifecycle_state: lifecycle,
+            p_option_name: null
+          });
+          if (error) throw error;
+          const result = Array.isArray(data) ? data[0] : data;
+          row.product_id = result && result.product_id;
+          row.status = 'done';
+        } catch (e) {
+          row.status = 'failed';
+          row.error = (e && (e.message || e.details)) ? (e.message || e.details) : String(e);
+        }
+        mrRenderPreviewCards();
+      }
+      // refresh master products list in background so 상품 목록 reflects new rows
+      if (typeof window.loadData === 'function') {
+        window.loadData().catch(() => {});
+      }
+    }
+
+    function mrInit() {
+      if (!$('view-register') || $('view-register').dataset.mrInited === '1') return;
+      $('view-register').dataset.mrInited = '1';
+
+      // start with 3 empty rows for typing
+      for (let i = 0; i < 3; i++) mrAddRow();
+
+      // lifecycle radio → toggle location field
+      document.querySelectorAll('input[name="mr-lifecycle"]').forEach(r => {
+        r.addEventListener('change', () => {
+          $('mr-location').disabled = mrLifecycle() === 'pre_order';
+        });
+      });
+
+      $('mr-add-row').addEventListener('click', () => mrAddRow());
+      $('mr-clear-rows').addEventListener('click', () => {
+        MR_ROWS = [];
+        $('mr-input-body').innerHTML = '';
+        mrUpdateStage1Summary();
+        mrAddRow();
+      });
+
+      $('mr-apply-bulk-weight').addEventListener('click', () => {
+        const v = Number($('mr-bulk-weight').value);
+        if (Number.isNaN(v) || v <= 0) {
+          const e = $('mr-stage1-error');
+          e.textContent = '일괄 무게에 1 이상의 숫자를 입력해주세요.';
+          e.style.display = 'block';
+          return;
+        }
+        MR_ROWS.forEach(r => { r.weight_g = v; });
+        // rebuild rows to reflect values
+        $('mr-input-body').innerHTML = '';
+        MR_ROWS.forEach(r => mrRenderInputRow(r));
+        mrUpdateStage1Summary();
+      });
+
+      $('mr-csv-import').addEventListener('click', () => $('mr-csv-file').click());
+      $('mr-csv-file').addEventListener('change', async (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const text = await file.text();
+        const parsed = mrParseCsv(text);
+        if (parsed.length === 0) {
+          const er = $('mr-stage1-error');
+          er.textContent = 'CSV에서 유효한 URL을 찾지 못했습니다. 첫 컬럼이 http(s)로 시작해야 합니다.';
+          er.style.display = 'block';
+          e.target.value = '';
+          return;
+        }
+        // empty existing empty rows, append parsed
+        MR_ROWS = MR_ROWS.filter(r => (r.url || '').trim().length > 0);
+        $('mr-input-body').innerHTML = '';
+        MR_ROWS.forEach(r => mrRenderInputRow(r));
+        for (const p of parsed) mrAddRow(p);
+        e.target.value = '';
+      });
+
+      $('mr-preview-btn').addEventListener('click', mrPreviewClick);
+      $('mr-back-btn').addEventListener('click', () => {
+        MR_STAGE = 1;
+        $('mr-stage2').style.display = 'none';
+        $('mr-stage1').style.display = '';
+      });
+      $('mr-promote-btn').addEventListener('click', mrPromoteAll);
+      $('mr-retry-failed-btn').addEventListener('click', async () => {
+        const failed = MR_PREV.filter(r => r.status === 'failed' && !r.source_record_id);
+        if (failed.length === 0) return;
+        const session = (await db.auth.getSession()).data.session;
+        if (!session) { const er = $('mr-stage2-error'); er.textContent = '로그인이 만료되었습니다.'; er.style.display = 'block'; return; }
+        failed.forEach(r => { r.status = 'crawling'; r.error = null; });
+        mrRenderPreviewCards();
+        try {
+          const resp = await fetch(STAR_CRAWL_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+            body: JSON.stringify({ urls: failed.map(r => r.url), write_to_source_records: true })
+          });
+          const body = await resp.json().catch(() => ({ ok: false }));
+          const byUrl = new Map((body.results || []).map(x => [x.url, x]));
+          for (const r of failed) {
+            const hit = byUrl.get(r.url);
+            if (!hit || hit.ok === false) { r.status = 'failed'; r.error = (hit && hit.error) || '재시도 실패'; continue; }
+            r.source_record_id = hit.source_record_id;
+            r.observed = hit.observed_values || {};
+            r.deduped = !!hit.deduped;
+            const derived = mrDeriveFromTitle(r.observed.title || '');
+            r.artist = derived.artist; r.album = derived.album; r.version = derived.version; r.member = '';
+            r.status = 'preview';
+          }
+        } catch (e) {
+          failed.forEach(r => { r.status = 'failed'; r.error = String(e.message || e); });
+        }
+        mrRenderPreviewCards();
+      });
+
+      mrUpdateStage1Summary();
+    }
+
+    // Initialize after DOM is ready and auth has settled.
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', mrInit);
+    } else {
+      mrInit();
+    }
+  })();
 
 </script>
 </body>

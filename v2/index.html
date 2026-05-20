@@ -2049,6 +2049,13 @@
         </table>
       </div>
 
+      <!-- Server-side pagination (Codex P1 #5 fix) -->
+      <div style="margin-top:10px;display:flex;gap:8px;align-items:center;font-size:12px;">
+        <button type="button" id="ingest-prev-page" style="font-size:12px;padding:4px 10px;" disabled>← 이전</button>
+        <button type="button" id="ingest-next-page" style="font-size:12px;padding:4px 10px;" disabled>다음 →</button>
+        <span style="color:var(--muted);">한 페이지에 50건씩 — 검색은 서버측 ILIKE 적용</span>
+      </div>
+
       <div id="ingest-detail-panel" style="display:none;margin-top:12px;" class="panel">
         <div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;">
           <strong style="font-size:13px;">source_record 상세</strong>
@@ -8037,10 +8044,18 @@
   // Lists source_records WHERE status='pending_review' for operator review.
   // Approve/Reject actions land in Step 1c (intentionally read-only here).
 
+  // Codex P1 #5 fix: server-side filter + pagination via PostgREST Range header.
+  // Previously fetched limit=200 and filtered client-side, which silently hid
+  // rows past the 200th — operators reviewing a backlog would think they were
+  // empty. Now we page (50/page) and let the server do the text filter.
+  const INGEST_PAGE_SIZE = 50;
   const ingestState = {
     rows: [],
     expandedRowId: null,
     initialized: false,
+    page: 0,           // 0-based
+    totalCount: null,  // from PostgREST Content-Range total (null = unknown)
+    searchTimer: null,
   };
 
   async function renderIngestView(forceRefresh) {
@@ -8049,6 +8064,7 @@
       ingestState.initialized = true;
     }
     if (forceRefresh || !ingestState.rows.length) {
+      ingestState.page = 0;
       await ingestFetch();
     }
   }
@@ -8061,18 +8077,55 @@
 
     const source = document.getElementById('ingest-f-source')?.value || '';
     const status = document.getElementById('ingest-f-status')?.value || 'pending_review';
+    const search = (document.getElementById('ingest-search')?.value || '').trim();
 
-    // Filtered REST query directly to Supabase PostgREST (RLS allows SELECT
-    // for authenticated role — operator must be signed in).
-    let url = `${SUPABASE_URL}/rest/v1/source_records?select=id,source_type,source_external_id,source_url,fetched_at,parser_version,observed_values,confidence,tier,status&order=fetched_at.desc&limit=200`;
-    if (source) url += `&source_type=eq.${encodeURIComponent(source)}`;
-    if (status) url += `&status=eq.${encodeURIComponent(status)}`;
+    // PostgREST query. RLS allows SELECT for authenticated role — operator
+    // must be signed in. We use Range header for pagination + count=exact.
+    const params = new URLSearchParams();
+    params.set(
+      'select',
+      'id,source_type,source_external_id,source_url,fetched_at,parser_version,observed_values,confidence,tier,status',
+    );
+    params.set('order', 'fetched_at.desc');
+    if (source) params.set('source_type', `eq.${source}`);
+    if (status) params.set('status', `eq.${status}`);
+    // Server-side ILIKE search across source_url + observed_values JSON text.
+    // PostgREST `or=(field.ilike.*pattern*, ...)` plus jsonb cast for title/artist.
+    if (search) {
+      const escaped = search.replace(/([%_])/g, '\\$1');
+      const pat = `*${escaped}*`;
+      const orFilter = [
+        `source_url.ilike.${pat}`,
+        `source_external_id.ilike.${pat}`,
+        `observed_values->>title.ilike.${pat}`,
+        `observed_values->>artist.ilike.${pat}`,
+        `observed_values->>artist_name.ilike.${pat}`,
+      ].join(',');
+      params.set('or', `(${orFilter})`);
+    }
+    const url = `${SUPABASE_URL}/rest/v1/source_records?${params.toString()}`;
+
+    const rangeStart = ingestState.page * INGEST_PAGE_SIZE;
+    const rangeEnd = rangeStart + INGEST_PAGE_SIZE - 1;
+    const headers = Object.assign({}, AUTH_HEADERS, {
+      Range: `${rangeStart}-${rangeEnd}`,
+      'Range-Unit': 'items',
+      Prefer: 'count=exact',
+    });
 
     try {
-      const res = await fetch(url, { headers: AUTH_HEADERS });
-      if (!res.ok) throw new Error(`source_records query failed: HTTP ${res.status}`);
+      const res = await fetch(url, { headers });
+      if (!res.ok && res.status !== 206) {
+        throw new Error(`source_records query failed: HTTP ${res.status}`);
+      }
       const rows = await res.json();
       ingestState.rows = Array.isArray(rows) ? rows : [];
+
+      // Parse Content-Range header for total count, e.g. "0-49/237"
+      const cr = res.headers.get('Content-Range') || '';
+      const m = cr.match(/\/(\d+|\*)$/);
+      ingestState.totalCount = m && m[1] !== '*' ? Number(m[1]) : null;
+
       ingestRender();
       ingestUpdateStats();
     } catch (e) {
@@ -8091,13 +8144,8 @@
   function ingestRender() {
     const body = document.getElementById('ingest-body');
     if (!body) return;
-    const search = (document.getElementById('ingest-search')?.value || '').trim().toLowerCase();
-    const filtered = ingestState.rows.filter((r) => {
-      if (!search) return true;
-      const ov = r.observed_values || {};
-      const hay = `${ov.title || ''} ${ov.artist || ''} ${r.source_url || ''}`.toLowerCase();
-      return hay.includes(search);
-    });
+    // Server-side filtering already applied — no client-side filter now.
+    const filtered = ingestState.rows;
 
     if (filtered.length === 0) {
       body.innerHTML = '<tr><td colspan="10" class="empty">검토 대기 중인 source_records 가 없습니다.</td></tr>';
@@ -8156,20 +8204,65 @@
   }
 
   function ingestUpdateStats() {
-    const total = ingestState.rows.length;
+    // total reflects the server-reported Content-Range total (so 200+ row
+    // backlogs are visible — Codex P1 #5). today count is best-effort on
+    // the current page only.
+    const total = ingestState.totalCount != null ? ingestState.totalCount : ingestState.rows.length;
     const today = new Date().toISOString().slice(0, 10);
     const todayCount = ingestState.rows.filter((r) => (r.fetched_at || '').startsWith(today)).length;
     const totalEl = document.getElementById('ingest-total');
     const todayEl = document.getElementById('ingest-today');
-    if (totalEl) totalEl.textContent = String(total);
-    if (todayEl) todayEl.textContent = String(todayCount);
+    if (totalEl) {
+      const rangeStart = ingestState.page * INGEST_PAGE_SIZE + 1;
+      const rangeEnd = rangeStart + ingestState.rows.length - 1;
+      totalEl.textContent = ingestState.rows.length > 0
+        ? `${rangeStart}-${rangeEnd} / ${total}`
+        : `0 / ${total}`;
+    }
+    if (todayEl) todayEl.textContent = `≥${todayCount} (이 페이지)`;
+    // Update pagination buttons.
+    const prev = document.getElementById('ingest-prev-page');
+    const next = document.getElementById('ingest-next-page');
+    if (prev) prev.disabled = ingestState.page <= 0;
+    if (next) {
+      const maxPage = ingestState.totalCount != null
+        ? Math.ceil(ingestState.totalCount / INGEST_PAGE_SIZE) - 1
+        : (ingestState.rows.length < INGEST_PAGE_SIZE ? ingestState.page : ingestState.page + 1);
+      next.disabled = ingestState.page >= maxPage;
+    }
   }
 
   function initIngestListeners() {
-    document.getElementById('ingest-refresh')?.addEventListener('click', () => ingestFetch());
-    document.getElementById('ingest-f-source')?.addEventListener('change', () => ingestFetch());
-    document.getElementById('ingest-f-status')?.addEventListener('change', () => ingestFetch());
-    document.getElementById('ingest-search')?.addEventListener('input', () => ingestRender());
+    document.getElementById('ingest-refresh')?.addEventListener('click', () => {
+      ingestState.page = 0;
+      ingestFetch();
+    });
+    document.getElementById('ingest-f-source')?.addEventListener('change', () => {
+      ingestState.page = 0;
+      ingestFetch();
+    });
+    document.getElementById('ingest-f-status')?.addEventListener('change', () => {
+      ingestState.page = 0;
+      ingestFetch();
+    });
+    // Debounced server-side search (Codex P1 #5).
+    document.getElementById('ingest-search')?.addEventListener('input', () => {
+      if (ingestState.searchTimer) clearTimeout(ingestState.searchTimer);
+      ingestState.searchTimer = setTimeout(() => {
+        ingestState.page = 0;
+        ingestFetch();
+      }, 300);
+    });
+    document.getElementById('ingest-prev-page')?.addEventListener('click', () => {
+      if (ingestState.page > 0) {
+        ingestState.page -= 1;
+        ingestFetch();
+      }
+    });
+    document.getElementById('ingest-next-page')?.addEventListener('click', () => {
+      ingestState.page += 1;
+      ingestFetch();
+    });
     document.getElementById('ingest-detail-close')?.addEventListener('click', () => {
       const panel = document.getElementById('ingest-detail-panel');
       if (panel) panel.style.display = 'none';

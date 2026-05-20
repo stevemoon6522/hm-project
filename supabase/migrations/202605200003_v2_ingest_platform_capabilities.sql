@@ -54,9 +54,13 @@ values
   ('shopee', 'update_listing', true,
     'marketplaces/shopee/docs_ai/apis/global_product/v2.global_product.update_global_item.json',
     'update_global_item / update_global_model'),
-  ('shopee', 'update_price', true,
-    'marketplaces/shopee/docs_ai/apis/global_product/v2.global_product.update_price.json',
-    'KRSC global_product/update_price (region batch)'),
+  -- Codex P0 #1 (2026-05-20 review): no v2.global_product.update_price.json
+  -- captured locally yet. Re-enable after capture. Shop-level
+  -- v2.product.update_price is BLOCKED for KRSC sellers per
+  -- project_shopee_krsc_facts memory.
+  ('shopee', 'update_price', false,
+    null,
+    'No v2.global_product.update_price.json captured locally. Capture from open.shopee.com before re-enabling.'),
   ('shopee', 'image_rules', true,
     'marketplaces/shopee/docs_ai/apis/global_product/v2.global_product.add_global_item.json',
     'image_id_list — upload handled by shopee-bridge /upload_image'),

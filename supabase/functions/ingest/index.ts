@@ -65,6 +65,16 @@ const ALLOWED_SOURCE_TYPES = new Set([
 // so the request originates from a Seoul-region (Korean) IP.
 const REJECTED_SOURCE_TYPES = new Set(["staronemall"]);
 
+// Codex P1 #3: sources that MUST carry a non-null source_external_id so the
+// (source_type, source_external_id, parser_version) unique index actually
+// catches replays. manual / csv_import may have null because they're
+// operator-driven and dedupe is not expected.
+const SOURCES_REQUIRING_EXTERNAL_ID = new Set(["yes24", "weverse"]);
+
+// Codex P1 #2: hard cap on body bytes to prevent memory exhaustion. 2 MiB
+// is way more than any legitimate crawl payload (typical: 5-50 KB).
+const MAX_BODY_BYTES = 2 * 1024 * 1024;
+
 function jsonResp(status, body) {
   return new Response(JSON.stringify(body), {
     status,
@@ -156,6 +166,20 @@ Deno.serve(async (req) => {
     });
   }
 
+  // Codex P1 #2: enforce body size limit BEFORE buffering everything in memory.
+  // Check Content-Length first (fast path); if missing or untrusted, still
+  // enforce after read.
+  const contentLengthHeader = req.headers.get("Content-Length");
+  const declaredLength = contentLengthHeader ? Number(contentLengthHeader) : NaN;
+  if (Number.isFinite(declaredLength) && declaredLength > MAX_BODY_BYTES) {
+    audit("payload_too_large_declared", { declared_length: declaredLength });
+    return jsonResp(413, {
+      ok: false,
+      error: "payload_too_large",
+      message: `body exceeds ${MAX_BODY_BYTES} bytes (declared ${declaredLength})`,
+    });
+  }
+
   // Read the raw body so we can HMAC-verify it BEFORE parsing.
   let rawBody;
   try {
@@ -169,6 +193,18 @@ Deno.serve(async (req) => {
   }
   if (!rawBody) {
     return jsonResp(400, { ok: false, error: "body_empty" });
+  }
+  // Recheck size after read (Content-Length can be absent or spoofed).
+  // The TextEncoder gives byte length of the UTF-8 encoding, which is what
+  // HMAC operates on.
+  const actualBytes = new TextEncoder().encode(rawBody).byteLength;
+  if (actualBytes > MAX_BODY_BYTES) {
+    audit("payload_too_large_actual", { bytes: actualBytes });
+    return jsonResp(413, {
+      ok: false,
+      error: "payload_too_large",
+      message: `body exceeds ${MAX_BODY_BYTES} bytes (actual ${actualBytes})`,
+    });
   }
 
   // HMAC verification.
@@ -267,6 +303,19 @@ Deno.serve(async (req) => {
     body.source_external_id != null
       ? String(body.source_external_id).trim() || null
       : null;
+  // Codex P1 #3: dedupe relies on (source_type, source_external_id,
+  // parser_version) — if any required source comes without an external_id,
+  // we'd insert duplicates forever. Reject upfront with a clear error.
+  if (
+    SOURCES_REQUIRING_EXTERNAL_ID.has(source_type) &&
+    !source_external_id
+  ) {
+    return jsonResp(400, {
+      ok: false,
+      error: "missing_source_external_id",
+      message: `source_type='${source_type}' requires source_external_id (yes24 goodsNo, weverse product id, etc.) for replay dedupe.`,
+    });
+  }
   const crawl_run_id = isUuidLike(body.crawl_run_id)
     ? body.crawl_run_id
     : crypto.randomUUID();
@@ -325,6 +374,19 @@ Deno.serve(async (req) => {
         .maybeSingle();
       if (existing) {
         audit("dedupe_returned_existing", { id: existing.id, source_type });
+        // Codex P1 #4: record dedupe hit in audit_log so operators can see
+        // replay traffic at the DB level (not just function logs).
+        await supabase.from("audit_log").insert({
+          entity_type: "source_record",
+          entity_uuid: existing.id,
+          source_record_id: existing.id,
+          actor: "system:ingest",
+          action: "sync",
+          reason: "dedupe_hit_replay",
+          batch_id: crawl_run_id,
+        }).then(({ error: auditErr }) => {
+          if (auditErr) audit("audit_insert_failed_dedupe", { error: auditErr.message });
+        });
         return jsonResp(200, {
           ok: true,
           id: existing.id,
@@ -348,6 +410,26 @@ Deno.serve(async (req) => {
     source_type,
     source_external_id,
     parser_version,
+  });
+
+  // Codex P1 #4: write audit_log row for the create event. Non-blocking —
+  // a failed audit insert should NOT fail the ingest itself, so we await
+  // but only log the error.
+  await supabase.from("audit_log").insert({
+    entity_type: "source_record",
+    entity_uuid: data.id,
+    source_record_id: data.id,
+    actor: "system:ingest",
+    action: "create",
+    after_json: {
+      source_type,
+      source_external_id,
+      parser_version,
+      crawl_run_id,
+    },
+    batch_id: crawl_run_id,
+  }).then(({ error: auditErr }) => {
+    if (auditErr) audit("audit_insert_failed_create", { error: auditErr.message });
   });
 
   return jsonResp(200, {

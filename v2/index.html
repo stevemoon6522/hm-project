@@ -2708,15 +2708,15 @@
       return;
     }
     els.productBody.innerHTML = rows.map((p) => `
-      <tr>
+      <tr data-product-id="${text(p.id)}">
         <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}"></td>
-        <td class="mono" style="white-space:nowrap;">${text(p.sku || '')}</td>
+        <td class="mono pl-edit" data-field="sku" data-id="${text(p.id)}" title="더블클릭하여 편집" style="white-space:nowrap;cursor:text;">${text(p.sku || '')}</td>
         <td style="white-space:normal;">
-          <div>${text(p.product_name || '')}</div>
-          <div class="muted">${text(p.option_name || '')}</div>
+          <div class="pl-edit" data-field="product_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;">${text(p.product_name || '')}</div>
+          <div class="muted pl-edit" data-field="option_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;font-size:11px;">${text(p.option_name || '') || '<i style="color:#cbd5e1;">(no option)</i>'}</div>
         </td>
-        <td class="mono">${Number(p.cost_krw || 0).toLocaleString()}</td>
-        <td class="mono">${Number(p.weight_g || 0).toLocaleString()}</td>
+        <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.cost_krw || 0).toLocaleString()}</td>
+        <td class="mono pl-edit" data-field="weight_g" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.weight_g || 0).toLocaleString()}</td>
         <td style="white-space:normal;">${listingBadges(p.id)}</td>
         <td style="white-space:nowrap;">
           <button type="button" data-open="${text(p.id)}" class="primary" style="font-size:11px;padding:4px 8px;">Register</button>
@@ -2733,7 +2733,95 @@
     els.productBody.querySelectorAll('.pl-row-check').forEach((cb) => {
       cb.addEventListener('change', updateBulkDeleteUi);
     });
+    els.productBody.querySelectorAll('.pl-edit').forEach((cell) => {
+      cell.addEventListener('dblclick', () => beginEditCell(cell));
+    });
     updateBulkDeleteUi();
+  }
+
+  function beginEditCell(cell) {
+    if (cell.dataset.editing === '1') return;
+    cell.dataset.editing = '1';
+    const original = cell.textContent;
+    const isNumeric = cell.dataset.numeric === '1';
+    const field = cell.dataset.field;
+    const productId = cell.dataset.id;
+    const raw = isNumeric ? String(Number(original.replace(/,/g, '')) || 0) : (original === '(no option)' ? '' : original);
+    cell.innerHTML = '';
+    const input = document.createElement('input');
+    input.type = isNumeric ? 'number' : 'text';
+    if (isNumeric) { input.min = field === 'weight_g' ? '1' : '0'; input.step = '1'; }
+    input.value = raw;
+    input.style.cssText = 'width:100%;font-size:12px;padding:3px 5px;box-sizing:border-box;';
+    cell.appendChild(input);
+    input.focus();
+    input.select();
+
+    let done = false;
+    const finish = async (commit) => {
+      if (done) return;
+      done = true;
+      cell.dataset.editing = '0';
+      if (!commit) {
+        cell.textContent = original;
+        return;
+      }
+      let newVal = input.value;
+      if (isNumeric) {
+        const n = Number(newVal);
+        if (!Number.isFinite(n)) { cell.textContent = original; return; }
+        if (field === 'weight_g' && n <= 0) { alert('무게는 1g 이상이어야 합니다.'); cell.textContent = original; return; }
+        if (field === 'cost_krw' && n < 0) { alert('매입가는 0 이상이어야 합니다.'); cell.textContent = original; return; }
+        newVal = n;
+      } else {
+        newVal = String(newVal).trim();
+        if (field === 'sku') {
+          if (!newVal) { alert('SKU는 비울 수 없습니다.'); cell.textContent = original; return; }
+          if (/[가-힯㄰-㆏ᄀ-ᇿ぀-ゟ゠-ヿ一-鿿]/.test(newVal)) {
+            alert('SKU는 영문/숫자만 허용됩니다.');
+            cell.textContent = original;
+            return;
+          }
+        }
+      }
+      const oldText = original;
+      cell.textContent = '...';
+      try {
+        const patch = { [field]: newVal };
+        if (field === 'weight_g') patch.weight_measured_at = new Date().toISOString();
+        if (field === 'cost_krw') patch.cost_updated_at = new Date().toISOString();
+        const session = (await db.auth.getSession()).data.session;
+        const token = session?.access_token || SUPABASE_ANON;
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/products?id=eq.${encodeURIComponent(productId)}`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPABASE_ANON,
+            'Authorization': `Bearer ${token}`,
+            'Prefer': 'return=representation'
+          },
+          body: JSON.stringify(patch)
+        });
+        if (!res.ok) {
+          const body = await res.text();
+          throw new Error(`HTTP ${res.status}: ${body}`);
+        }
+        // Update state.products in memory so renderProducts stays consistent
+        const idx = state.products.findIndex((p) => String(p.id) === String(productId));
+        if (idx >= 0) state.products[idx][field] = newVal;
+        if (isNumeric) cell.textContent = Number(newVal).toLocaleString();
+        else cell.textContent = newVal || (field === 'option_name' ? '(no option)' : '');
+      } catch (e) {
+        alert('저장 실패: ' + (e?.message || String(e)));
+        cell.textContent = oldText;
+      }
+    };
+
+    input.addEventListener('blur', () => finish(true));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
   }
 
   async function deleteOneMasterProduct(btn) {
@@ -8435,9 +8523,11 @@
   (function () {
     const STAR_CRAWL_URL = `${SUPABASE_URL}/functions/v1/starone-crawl`;
     let MR_STAGE = 1;
-    let MR_ROWS = [];   // input rows: {tempId, url, weight_g}
-    let MR_PREV = [];   // preview rows: {tempId, url, weight_g, status, source_record_id, observed, artist, album, version, member, sku, error, product_id, deduped}
+    let MR_ROWS = [];   // input rows: {tempId, url, weight_g, duplicateOfSourceId}
+    let MR_PREV = [];   // preview rows: {tempId, url, weight_g, cost_krw, status, source_record_id, observed, artist, album, version, member, sku, error, product_id, deduped, collisionMode}
     let MR_NEXT_ID = 1;
+    let MR_EXISTING_SKUS = new Set();    // products.sku set, fetched at stage 2 start
+    let MR_EXISTING_URL_MAP = new Map(); // source_url → {source_record_id, status}, refreshed on stage 1 url input
 
     function $(id) { return document.getElementById(id); }
     function el(tag, attrs, ...children) {
@@ -8525,7 +8615,21 @@
       tr.appendChild(el('td', null, String(row.tempId)));
       const urlTd = el('td');
       const urlInput = el('input', { type: 'text', placeholder: 'https://www.staronemall.com/product/...', style: 'width:100%;font-size:12px;padding:5px 7px;', value: row.url || '' });
-      urlInput.addEventListener('input', (e) => { row.url = e.target.value.trim(); mrUpdateStage1Summary(); });
+      const statusCell = el('td', { style: 'color:var(--muted);font-size:11px;' }, '대기');
+      let dupTimer = null;
+      urlInput.addEventListener('input', (e) => {
+        row.url = e.target.value.trim();
+        mrUpdateStage1Summary();
+        clearTimeout(dupTimer);
+        if (/^https?:\/\/.+/i.test(row.url)) {
+          dupTimer = setTimeout(() => mrCheckDuplicateUrl(row.url, row, statusCell), 500);
+        } else {
+          statusCell.textContent = '대기';
+          statusCell.style.color = 'var(--muted)';
+          statusCell.title = '';
+          row.duplicateOfSourceId = null;
+        }
+      });
       urlTd.appendChild(urlInput);
       tr.appendChild(urlTd);
       const wTd = el('td');
@@ -8537,7 +8641,7 @@
       });
       wTd.appendChild(wInput);
       tr.appendChild(wTd);
-      tr.appendChild(el('td', { style: 'color:var(--muted);font-size:11px;' }, '대기'));
+      tr.appendChild(statusCell);
       const xTd = el('td');
       const xBtn = el('button', { type: 'button', style: 'font-size:11px;padding:3px 8px;' }, '✕');
       xBtn.addEventListener('click', () => {
@@ -8626,13 +8730,17 @@
           r.source_record_id = hit.source_record_id;
           r.observed = hit.observed_values || {};
           r.deduped = !!hit.deduped;
+          r.cost_krw = (r.observed && Number.isFinite(Number(r.observed.price_krw))) ? Number(r.observed.price_krw) : 0;
           const derived = mrDeriveFromTitle(r.observed.title || '');
           r.artist = derived.artist;
           r.album = derived.album;
           r.version = derived.version;
           r.member = '';
+          r.collisionMode = 'reuse';
           r.status = 'preview';
         }
+        // Fetch existing products.sku set (collision detection, #2).
+        await mrLoadExistingSkus();
         mrRenderPreviewCards();
       } catch (e) {
         MR_PREV.forEach(r => { r.status = 'failed'; r.error = String(e.message || e); });
@@ -8649,6 +8757,40 @@
       return { text: s, color: 'var(--muted)' };
     }
 
+    function mrRefreshSkuChip(card, row) {
+      const skuEl = card.querySelector('[data-sku-display]');
+      if (!skuEl) return;
+      const newSku = mrComputeSku(row);
+      skuEl.textContent = newSku;
+      const bad = mrHasNonAscii(newSku);
+      if (bad) {
+        skuEl.style.background = '#fee2e2';
+        skuEl.style.color = '#991b1b';
+        skuEl.title = 'SKU는 영문/숫자만 허용됩니다. 한글/CJK 문자가 포함되어 있어 등록이 차단됩니다.';
+      } else {
+        skuEl.style.background = '#f4f4f5';
+        skuEl.style.color = '';
+        skuEl.title = '';
+      }
+      // also refresh the collision badge against MR_EXISTING_SKUS
+      mrRefreshCollisionUi(card, row);
+    }
+
+    function mrRefreshCollisionUi(card, row) {
+      const newSku = mrComputeSku(row);
+      const colliding = MR_EXISTING_SKUS.has(newSku);
+      const collisionBlock = card.querySelector('[data-collision-block]');
+      if (!collisionBlock) return;
+      if (colliding) {
+        collisionBlock.style.display = '';
+        const colSkuEl = collisionBlock.querySelector('[data-collision-sku]');
+        if (colSkuEl) colSkuEl.textContent = newSku;
+      } else {
+        collisionBlock.style.display = 'none';
+        row.collisionMode = null;
+      }
+    }
+
     function mrRenderPreviewCards() {
       const wrap = $('mr-preview-cards');
       wrap.innerHTML = '';
@@ -8661,22 +8803,32 @@
 
       MR_PREV.forEach((row, idx) => {
         const card = el('div', { class: 'panel', style: 'padding:12px;display:grid;grid-template-columns:120px 1fr 160px;gap:12px;align-items:start;' });
+
+        // Thumbnail (#5: broken-image red placeholder)
         const main = (row.observed && Array.isArray(row.observed.main_image_urls)) ? row.observed.main_image_urls[0] : null;
-        const thumb = el('div', { style: 'width:120px;height:120px;background:#f4f4f5;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);' });
+        const thumb = el('div', { style: 'width:120px;height:120px;background:#f4f4f5;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);text-align:center;' });
         if (main) {
           const img = el('img', { src: main, style: 'width:100%;height:100%;object-fit:cover;' });
+          img.addEventListener('error', () => {
+            thumb.style.background = '#fee2e2';
+            thumb.style.color = '#991b1b';
+            thumb.innerHTML = '';
+            thumb.textContent = '이미지 깨짐';
+          });
           thumb.appendChild(img);
         } else {
+          thumb.style.background = '#fee2e2';
+          thumb.style.color = '#991b1b';
           thumb.textContent = '이미지 없음';
         }
         card.appendChild(thumb);
 
         const body = el('div', { style: 'display:flex;flex-direction:column;gap:6px;font-size:12px;min-width:0;' });
-        const top = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;' });
+        const top = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
         top.appendChild(el('span', { style: 'font-weight:600;' }, `#${idx + 1}`));
         const lab = mrStatusLabel(row.status);
         top.appendChild(el('span', { style: `color:${lab.color};font-weight:600;` }, lab.text));
-        if (row.deduped) top.appendChild(el('span', { style: 'color:var(--muted);' }, '· 중복(기존 source_record 재사용)'));
+        if (row.deduped) top.appendChild(el('span', { style: 'color:var(--muted);' }, '· 중복 source_record 재사용'));
         if (row.product_id) top.appendChild(el('span', { style: 'color:#16a34a;' }, '· products 생성됨'));
         const urlA = el('a', { href: row.url, target: '_blank', rel: 'noopener', style: 'color:var(--muted);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px;' }, row.url);
         top.appendChild(urlA);
@@ -8687,31 +8839,62 @@
         }
 
         const title = (row.observed && row.observed.title) || '';
-        const priceKrw = (row.observed && row.observed.price_krw) || null;
         body.appendChild(el('div', { style: 'font-weight:600;font-size:13px;' }, title || '(제목 없음)'));
-        body.appendChild(el('div', { style: 'color:var(--muted);font-size:11px;' }, priceKrw != null ? `매입가(크롤): ${Number(priceKrw).toLocaleString('ko-KR')} KRW` : '매입가 미확인'));
+
+        // Cost + weight inline editors (#1)
+        if (row.cost_krw == null) {
+          // initialize from crawl on first render
+          row.cost_krw = (row.observed && Number.isFinite(Number(row.observed.price_krw))) ? Number(row.observed.price_krw) : 0;
+        }
+        const costRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
+        const costLab = el('label', { style: 'display:flex;gap:4px;align-items:center;' });
+        costLab.appendChild(el('span', { style: 'color:var(--muted);' }, '매입가(KRW):'));
+        const costInp = el('input', {
+          type: 'number', min: '0', step: '1',
+          style: `font-size:12px;padding:3px 6px;width:110px;text-align:right;${row.cost_krw > 0 ? '' : 'background:#fee2e2;color:#991b1b;'}`,
+          value: String(row.cost_krw || 0)
+        });
+        costInp.addEventListener('input', (e) => {
+          const v = Number(e.target.value);
+          row.cost_krw = Number.isFinite(v) && v >= 0 ? v : 0;
+          if (row.cost_krw > 0) {
+            e.target.style.background = '';
+            e.target.style.color = '';
+          } else {
+            e.target.style.background = '#fee2e2';
+            e.target.style.color = '#991b1b';
+          }
+        });
+        costLab.appendChild(costInp);
+        costRow.appendChild(costLab);
+
+        const wLab = el('label', { style: 'display:flex;gap:4px;align-items:center;' });
+        wLab.appendChild(el('span', { style: 'color:var(--muted);' }, '무게(g):'));
+        const wInp = el('input', {
+          type: 'number', min: '1', step: '1',
+          style: 'font-size:12px;padding:3px 6px;width:80px;text-align:right;',
+          value: String(row.weight_g || '')
+        });
+        wInp.addEventListener('input', (e) => {
+          const v = Number(e.target.value);
+          row.weight_g = Number.isFinite(v) && v > 0 ? v : 0;
+        });
+        wLab.appendChild(wInp);
+        costRow.appendChild(wLab);
+
+        if ((row.cost_krw || 0) === 0) {
+          costRow.appendChild(el('span', { style: 'color:#dc2626;font-size:11px;' }, '⚠ 매입가 0 — 등록 차단됨'));
+        }
+        body.appendChild(costRow);
 
         const grid = el('div', { style: 'display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;' });
-        function mkField(label, key, width3 = false) {
+        function mkField(label, key) {
           const wrap2 = el('div', { style: 'display:flex;flex-direction:column;gap:2px;' });
           wrap2.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, label));
           const inp = el('input', { type: 'text', style: 'font-size:12px;padding:4px 6px;', value: row[key] || '' });
           inp.addEventListener('input', (e) => {
             row[key] = e.target.value;
-            const skuEl = card.querySelector('[data-sku-display]');
-            if (skuEl) {
-              const newSku = mrComputeSku(row);
-              skuEl.textContent = newSku;
-              if (mrHasNonAscii(newSku)) {
-                skuEl.style.background = '#fee2e2';
-                skuEl.style.color = '#991b1b';
-                skuEl.title = 'SKU는 영문/숫자만 허용됩니다. 한글/CJK 문자가 포함되어 있어 등록이 차단됩니다.';
-              } else {
-                skuEl.style.background = '#f4f4f5';
-                skuEl.style.color = '';
-                skuEl.title = '';
-              }
-            }
+            mrRefreshSkuChip(card, row);
           });
           wrap2.appendChild(inp);
           return wrap2;
@@ -8730,10 +8913,41 @@
           style: `font-size:12px;background:${skuBad ? '#fee2e2' : '#f4f4f5'};color:${skuBad ? '#991b1b' : ''};padding:2px 6px;border-radius:4px;`,
           dataset: { skuDisplay: '1' }
         }, initialSku);
-        if (skuBad) skuChip.title = 'SKU는 영문/숫자만 허용됩니다. 한글/CJK 문자가 포함되어 있어 등록이 차단됩니다.';
+        if (skuBad) skuChip.title = 'SKU는 영문/숫자만 허용됩니다.';
         skuLine.appendChild(skuChip);
-        skuLine.appendChild(el('span', { style: 'color:var(--muted);margin-left:auto;' }, `무게: ${row.weight_g} g`));
         body.appendChild(skuLine);
+
+        // SKU collision block (#2) — initially hidden, shown by mrRefreshCollisionUi
+        const collisionBlock = el('div', {
+          style: 'display:none;background:#fef3c7;border:1px solid #fcd34d;padding:6px 8px;border-radius:6px;font-size:11px;',
+          dataset: { collisionBlock: '1' }
+        });
+        const colHeader = el('div', { style: 'color:#92400e;font-weight:600;margin-bottom:4px;' });
+        colHeader.appendChild(document.createTextNode('⚠ 동일 SKU('));
+        colHeader.appendChild(el('code', { style: 'background:#fde68a;padding:1px 4px;border-radius:3px;', dataset: { collisionSku: '1' } }, initialSku));
+        colHeader.appendChild(document.createTextNode(') 가 이미 products에 있습니다.'));
+        collisionBlock.appendChild(colHeader);
+        const reuseId = `mr-col-${row.tempId || idx}-reuse`;
+        const overId = `mr-col-${row.tempId || idx}-overwrite`;
+        const colRadios = el('div', { style: 'display:flex;gap:12px;' });
+        const reuseLab = el('label', { style: 'display:flex;gap:4px;align-items:center;' });
+        const reuseRadio = el('input', { type: 'radio', name: `mr-col-${row.tempId || idx}`, value: 'reuse', id: reuseId });
+        if (!row.collisionMode || row.collisionMode === 'reuse') reuseRadio.checked = true;
+        reuseRadio.addEventListener('change', () => { row.collisionMode = 'reuse'; });
+        reuseLab.appendChild(reuseRadio);
+        reuseLab.appendChild(el('span', null, '기존 그대로 사용'));
+        colRadios.appendChild(reuseLab);
+        const overLab = el('label', { style: 'display:flex;gap:4px;align-items:center;' });
+        const overRadio = el('input', { type: 'radio', name: `mr-col-${row.tempId || idx}`, value: 'overwrite', id: overId });
+        if (row.collisionMode === 'overwrite') overRadio.checked = true;
+        overRadio.addEventListener('change', () => { row.collisionMode = 'overwrite'; });
+        overLab.appendChild(overRadio);
+        overLab.appendChild(el('span', null, '새 값으로 덮어쓰기 (매입가/무게/이미지/제목)'));
+        colRadios.appendChild(overLab);
+        collisionBlock.appendChild(colRadios);
+        body.appendChild(collisionBlock);
+        // initial visibility
+        mrRefreshCollisionUi(card, row);
 
         card.appendChild(body);
 
@@ -8777,6 +8991,42 @@
       });
     }
 
+    async function mrLoadExistingSkus() {
+      try {
+        const { data, error } = await db.from('products').select('sku');
+        if (error) throw error;
+        MR_EXISTING_SKUS = new Set((data || []).map(r => r.sku).filter(Boolean));
+      } catch (e) {
+        console.warn('[mr] failed to load existing SKUs', e);
+        MR_EXISTING_SKUS = new Set();
+      }
+    }
+
+    async function mrCheckDuplicateUrl(url, row, statusCell) {
+      try {
+        const { data, error } = await db
+          .from('source_records')
+          .select('id,status')
+          .eq('source_url', url)
+          .neq('status', 'rejected')
+          .limit(1);
+        if (error) return;
+        if (data && data.length > 0) {
+          row.duplicateOfSourceId = data[0].id;
+          statusCell.style.color = '#92400e';
+          statusCell.textContent = '🔁 기존 재사용';
+          statusCell.title = `이미 source_record (${data[0].status}) 가 있습니다. 재크롤 없이 기존 데이터로 미리보기됩니다.`;
+        } else {
+          row.duplicateOfSourceId = null;
+          statusCell.style.color = 'var(--muted)';
+          statusCell.textContent = '대기';
+          statusCell.title = '';
+        }
+      } catch (e) {
+        // silent
+      }
+    }
+
     async function mrPromoteAll() {
       const err = $('mr-stage2-error');
       err.style.display = 'none';
@@ -8802,8 +9052,6 @@
           continue;
         }
         // Operator requirement 2026-05-20: SKU must be English/ASCII only.
-        // Korean/CJK in any field would survive into products.sku and break
-        // downstream tooling that assumes ASCII SKUs.
         const krFieldErr =
           mrHasNonAscii(mrLocation()) ? 'LOC에 한글/CJK 문자가 있습니다.'
           : mrHasNonAscii(row.artist) ? 'Artist에 한글/CJK 문자가 있습니다.'
@@ -8816,6 +9064,17 @@
           row.error = `SKU는 영문/숫자만 허용 — ${krFieldErr}`;
           continue;
         }
+        if (!(row.cost_krw > 0)) {
+          row.status = 'failed';
+          row.error = '매입가가 0 입니다. 직접 입력해주세요.';
+          continue;
+        }
+        if (!(row.weight_g > 0)) {
+          row.status = 'failed';
+          row.error = '무게가 0 입니다. 직접 입력해주세요.';
+          continue;
+        }
+        const overwrite = MR_EXISTING_SKUS.has(sku) && row.collisionMode === 'overwrite';
         row.status = 'promoting';
         mrRenderPreviewCards();
         try {
@@ -8824,7 +9083,9 @@
             p_sku: sku,
             p_weight_g: row.weight_g,
             p_lifecycle_state: lifecycle,
-            p_option_name: null
+            p_option_name: null,
+            p_cost_krw_override: row.cost_krw,
+            p_overwrite: overwrite
           });
           if (error) throw error;
           const result = Array.isArray(data) ? data[0] : data;

@@ -8387,16 +8387,40 @@
         (row.member || '').trim()
       ].join('-');
     }
+    function mrStripNonAscii(s) {
+      // Remove Hangul + Hiragana/Katakana + CJK Han + Hangul Jamo + zero-width.
+      return (s || '')
+        .replace(/[가-힯㄰-㆏ᄀ-ᇿ぀-ゟ゠-ヿ一-鿿​-‏﻿]+/g, '')
+        .replace(/\(\s*\)/g, '')
+        .replace(/\[\s*\]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+    function mrHasNonAscii(s) {
+      // Detects Hangul/Hiragana/Katakana/CJK in operator-edited fields.
+      return /[가-힯㄰-㆏ᄀ-ᇿ぀-ゟ゠-ヿ一-鿿]/.test(s || '');
+    }
     function mrDeriveFromTitle(title) {
-      // Best-effort split for "(아티스트) 앨범명 [버전]" style; operator can edit in stage2.
+      // English-only extraction (operator requirement 2026-05-20):
+      //   "CORTIS (코르티스) The 2nd EP [GREENGREEN] (CORTIS Ball ver.)"
+      //   → artist=CORTIS, album=The 2nd EP, version=GREENGREEN.
+      // Step 1: strip Korean/CJK + collapse empty parens/brackets.
+      // Step 2: artist = leading uppercase token block before any paren/bracket.
+      // Step 3: version = first [...] content.
+      // Step 4: album = rest minus artist, parens, brackets.
       const out = { artist: '', album: '', version: '', member: '' };
       if (!title) return out;
-      const m = title.match(/\(([^)]+)\)/);
-      if (m) out.artist = m[1].trim();
-      const after = title.replace(/\([^)]+\)/g, '').trim();
-      const v = after.match(/\[([^\]]+)\]/);
-      if (v) out.version = v[1].trim();
-      out.album = after.replace(/\[[^\]]+\]/g, '').trim();
+      const eng = mrStripNonAscii(title);
+      if (!eng) return out;
+      const am = eng.match(/^([A-Z][A-Z0-9&]*(?:\s+[A-Z0-9&]+)*)/);
+      if (am) out.artist = am[1].trim();
+      const vm = eng.match(/\[([^\]]+)\]/);
+      if (vm) out.version = vm[1].trim();
+      let album = eng;
+      if (out.artist) album = album.replace(out.artist, '');
+      album = album.replace(/\[[^\]]*\]/g, '').replace(/\([^)]*\)/g, '');
+      album = album.replace(/\s+/g, ' ').trim();
+      out.album = album;
       return out;
     }
 
@@ -8586,7 +8610,19 @@
           inp.addEventListener('input', (e) => {
             row[key] = e.target.value;
             const skuEl = card.querySelector('[data-sku-display]');
-            if (skuEl) skuEl.textContent = mrComputeSku(row);
+            if (skuEl) {
+              const newSku = mrComputeSku(row);
+              skuEl.textContent = newSku;
+              if (mrHasNonAscii(newSku)) {
+                skuEl.style.background = '#fee2e2';
+                skuEl.style.color = '#991b1b';
+                skuEl.title = 'SKU는 영문/숫자만 허용됩니다. 한글/CJK 문자가 포함되어 있어 등록이 차단됩니다.';
+              } else {
+                skuEl.style.background = '#f4f4f5';
+                skuEl.style.color = '';
+                skuEl.title = '';
+              }
+            }
           });
           wrap2.appendChild(inp);
           return wrap2;
@@ -8599,7 +8635,14 @@
 
         const skuLine = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:12px;' });
         skuLine.appendChild(el('span', { style: 'color:var(--muted);' }, 'SKU:'));
-        skuLine.appendChild(el('code', { style: 'font-size:12px;background:#f4f4f5;padding:2px 6px;border-radius:4px;', dataset: { skuDisplay: '1' } }, mrComputeSku(row)));
+        const initialSku = mrComputeSku(row);
+        const skuBad = mrHasNonAscii(initialSku);
+        const skuChip = el('code', {
+          style: `font-size:12px;background:${skuBad ? '#fee2e2' : '#f4f4f5'};color:${skuBad ? '#991b1b' : ''};padding:2px 6px;border-radius:4px;`,
+          dataset: { skuDisplay: '1' }
+        }, initialSku);
+        if (skuBad) skuChip.title = 'SKU는 영문/숫자만 허용됩니다. 한글/CJK 문자가 포함되어 있어 등록이 차단됩니다.';
+        skuLine.appendChild(skuChip);
         skuLine.appendChild(el('span', { style: 'color:var(--muted);margin-left:auto;' }, `무게: ${row.weight_g} g`));
         body.appendChild(skuLine);
 
@@ -8648,6 +8691,21 @@
         if (tokenErr) {
           row.status = 'failed';
           row.error = `SKU 구성요소 누락 — ${tokenErr}`;
+          continue;
+        }
+        // Operator requirement 2026-05-20: SKU must be English/ASCII only.
+        // Korean/CJK in any field would survive into products.sku and break
+        // downstream tooling that assumes ASCII SKUs.
+        const krFieldErr =
+          mrHasNonAscii(mrLocation()) ? 'LOC에 한글/CJK 문자가 있습니다.'
+          : mrHasNonAscii(row.artist) ? 'Artist에 한글/CJK 문자가 있습니다.'
+          : mrHasNonAscii(row.album) ? 'Album에 한글/CJK 문자가 있습니다.'
+          : mrHasNonAscii(row.version) ? 'Version에 한글/CJK 문자가 있습니다.'
+          : mrHasNonAscii(row.member) ? 'Member에 한글/CJK 문자가 있습니다.'
+          : null;
+        if (krFieldErr) {
+          row.status = 'failed';
+          row.error = `SKU는 영문/숫자만 허용 — ${krFieldErr}`;
           continue;
         }
         row.status = 'promoting';

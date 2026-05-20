@@ -2651,18 +2651,21 @@
   async function loadData() {
     showApp();
     els.productBody.innerHTML = '<tr><td colspan="6" class="empty">Loading products...</td></tr>';
+    // 2026-05-20 (operator msg #501): newest products at the top. Position
+    // is still respected for legacy ordering, but created_at flips to DESC
+    // so the bulk-register flow's latest rows always show up first.
     let [productsRes, listingsRes] = await Promise.all([
       db.from('products')
         .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at')
-        .order('position', { ascending: true })
-        .order('created_at', { ascending: true }),
+        .order('position', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: false }),
       db.from('product_shopee_listings').select('*'),
     ]);
     if (productsRes.error && /lifecycle_state|weight_measured_at|schema cache|column/i.test(`${productsRes.error.message || ''} ${productsRes.error.details || ''}`)) {
       productsRes = await db.from('products')
         .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, position, created_at')
-        .order('position', { ascending: true })
-        .order('created_at', { ascending: true });
+        .order('position', { ascending: true, nullsFirst: false })
+        .order('created_at', { ascending: false });
     }
     if (productsRes.error) throw productsRes.error;
     if (listingsRes.error) throw listingsRes.error;
@@ -7639,6 +7642,12 @@
       if (viewId === 'view-probe')   renderProbeView();
       if (viewId === 'view-history') renderHistoryView(false);
       if (viewId === 'view-ingest')  renderIngestView(false);
+      // 2026-05-20 (operator msg #501): refresh products list automatically
+      // when the tab is entered, so newly registered masters are visible
+      // without needing the Refresh button.
+      if (viewId === 'view-products' && typeof loadData === 'function') {
+        loadData().catch(() => {});
+      }
     };
   }());
 
@@ -9138,9 +9147,16 @@
         }
         mrRenderPreviewCards();
       }
-      // refresh master products list in background so 상품 목록 reflects new rows
+      // refresh master products list so 상품 목록 reflects new rows
+      const anySuccess = MR_PREV.some(r => r.status === 'done');
       if (typeof window.loadData === 'function') {
-        window.loadData().catch(() => {});
+        try { await window.loadData(); } catch (e) { /* keep flow alive */ }
+      }
+      // 2026-05-20 (operator msg #501): auto-navigate to 상품 목록 when at
+      // least one row landed successfully, so the operator immediately sees
+      // the freshly created masters at the top without a manual click.
+      if (anySuccess && typeof window.showView === 'function') {
+        window.showView('view-products');
       }
     }
 

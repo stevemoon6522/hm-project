@@ -31,7 +31,7 @@ import { requireAuthenticatedUser } from "../_shared/auth.ts";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
-const PARSER_VERSION = "staronemall@2026-05-20.3";
+const PARSER_VERSION = "staronemall@2026-05-20.4";
 const STARONEMALL_BASE = "https://www.staronemall.com";
 
 const CORS = {
@@ -223,29 +223,38 @@ function isUnderStrikethrough(elNode): boolean {
   return false;
 }
 
-function extractPrice(doc): number {
-  // StarOneMall layouts seen so far:
-  //   <div class="price">
-  //     Retail price <s>17,800원</s>
-  //     <strong>12,960원</strong> (VAT EXCLUDED)
-  //   </div>
+function extractPrice(doc, html: string): number {
+  // StarOneMall renders the members-only / VAT-excluded price via JS and
+  // never bakes it into the visible HTML; only the retail (strikethrough)
+  // price shows up as text. The actual cost-to-pay (wholesale × 1.1) is
+  // however present in hidden form inputs that the cart page consumes:
   //
-  // The visible-red price (the operator's wholesale buy price) is the
-  // <strong> that is NOT inside <s>/<del>/<strike>. Operator multiplies
-  // wholesale × 1.1 to get the real cost they pay (operator msg #485, #495).
+  //   <input type="hidden" name="total_prc"     value="14256">
+  //   <input type="hidden" name="pay_prc"       value="14256">
+  //   <input type="hidden" name="new_total_prc" value="14256">
   //
-  // Detection order (each filtered by `isUnderStrikethrough`):
-  //   1. <strong> inside div.price whose surrounding text contains "VAT"
-  //      (cheapest signal that we picked the actual sell price).
-  //   2. Any <strong> inside div.price not under strikethrough.
-  //   3. Legacy .sell/.consumer/.retail class fallback.
-  //   4. Page-wide regex for "Members Only Price" or naked KRW patterns.
+  // These values are ALREADY 12,960 × 1.1 — no additional multiplier
+  // required (operator screenshot msg #499).
+  //
+  // Primary path: read total_prc / pay_prc / new_total_prc directly.
+  // Fallbacks (legacy and other pages): retain the <strong>-based + ×1.1
+  // logic from msg #485 so older layouts still work.
   const WHOLESALE_MULTIPLIER = 1.1;
+
+  for (const name of ["total_prc", "pay_prc", "new_total_prc"]) {
+    const m = html.match(
+      new RegExp(`<input[^>]*name=["']${name}["'][^>]*value=["']([0-9,]+)["']`, "i"),
+    );
+    if (m) {
+      const v = Number(m[1].replace(/,/g, ""));
+      if (Number.isFinite(v) && v > 0) return Math.round(v);
+    }
+  }
+
   const priceDiv = doc.querySelector("div.price");
   if (priceDiv) {
     const strongs = Array.from(priceDiv.querySelectorAll("strong"))
       .filter((s) => !isUnderStrikethrough(s));
-    // First pass: prefer <strong> whose parent paragraph mentions VAT.
     for (const s of strongs) {
       const parentText = (s.parentElement?.textContent || "").toUpperCase();
       if (parentText.includes("VAT")) {
@@ -253,12 +262,10 @@ function extractPrice(doc): number {
         if (v >= 100) return Math.round(v * WHOLESALE_MULTIPLIER);
       }
     }
-    // Second pass: any non-strikethrough <strong>.
     for (const s of strongs) {
       const v = parsePriceNumber(s.textContent || "");
       if (v >= 100) return Math.round(v * WHOLESALE_MULTIPLIER);
     }
-    // Legacy: explicit class-based selectors.
     for (const cls of ["sell", "consumer"]) {
       const el = priceDiv.querySelector(`.${cls}`);
       if (el && !isUnderStrikethrough(el)) {
@@ -267,14 +274,12 @@ function extractPrice(doc): number {
       }
     }
   }
-  // Page-wide text fallback: explicit "Members Only Price"
   const text = doc.body?.textContent || "";
   const membersOnly = text.match(/Members?\s*Only\s*Price[^\d]{0,30}([\d,]{3,})\s*원/i);
   if (membersOnly) {
     const v = Number(membersOnly[1].replace(/,/g, ""));
     if (Number.isFinite(v) && v >= 100) return Math.round(v * WHOLESALE_MULTIPLIER);
   }
-  // Last-ditch: any standalone "X,XXX원 (VAT EXCLUDED)" anywhere on the page.
   const vatExcluded = text.match(/([\d,]{3,})\s*원[^A-Za-z]{0,8}\(?\s*VAT/i);
   if (vatExcluded) {
     const v = Number(vatExcluded[1].replace(/,/g, ""));
@@ -427,9 +432,10 @@ async function crawlOne(url: string) {
       error: fetched.error || "fetch_failed",
     };
   }
+  const html = fetched.html || "";
   let doc;
   try {
-    doc = new DOMParser().parseFromString(fetched.html || "", "text/html");
+    doc = new DOMParser().parseFromString(html, "text/html");
   } catch (e) {
     return {
       url,
@@ -441,7 +447,7 @@ async function crawlOne(url: string) {
 
   const title = extractTitle(doc);
   const artist = extractArtist(title);
-  const price_krw = extractPrice(doc);
+  const price_krw = extractPrice(doc, html);
   const release_date = extractReleaseDate(doc);
   const description_html = extractDescription(doc);
   const main_image_urls = extractMainImages(doc, 5);

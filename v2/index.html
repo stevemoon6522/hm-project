@@ -2806,6 +2806,14 @@
           const body = await res.text();
           throw new Error(`HTTP ${res.status}: ${body}`);
         }
+        // Codex P1 (review 2026-05-20): PostgREST returns 200 + [] when RLS
+        // silently rejects the UPDATE. With Prefer: return=representation we
+        // get the updated row; an empty array means "no row matched the RLS
+        // gate" — treat that as a hard failure so the operator sees it.
+        const updated = await res.json().catch(() => []);
+        if (!Array.isArray(updated) || updated.length === 0) {
+          throw new Error('업데이트 권한 없음 또는 대상 행 없음 (로그인 만료일 수 있습니다)');
+        }
         // Update state.products in memory so renderProducts stays consistent
         const idx = state.products.findIndex((p) => String(p.id) === String(productId));
         if (idx >= 0) state.products[idx][field] = newVal;

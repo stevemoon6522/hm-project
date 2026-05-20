@@ -2676,7 +2676,15 @@
     if (listingsRes.error) throw listingsRes.error;
     state.products = productsRes.data || [];
     state.listings = listingsRes.data || [];
-    state.rollups = (rollupsRes && !rollupsRes.error) ? (rollupsRes.data || []) : [];
+    // Codex P1 #7 (review 2026-05-20): surface rollup fetch failures instead
+    // of falling through to all-grey LEDs which look like "nothing listed".
+    if (rollupsRes && rollupsRes.error) {
+      console.warn('[v2] platform_listing_rollups fetch failed:', rollupsRes.error);
+      setStatus(`LED 데이터 로드 실패: ${rollupsRes.error.message || rollupsRes.error}`, 'err');
+      state.rollups = [];
+    } else {
+      state.rollups = (rollupsRes && rollupsRes.data) || [];
+    }
     renderProducts();
     renderPreOrderList();
     renderReadyTransition();
@@ -2973,7 +2981,9 @@
     if (listed === total && total > 0) return { glyph: '●', color: '#16a34a', label: `전체 등록 (${listed}/${total})` };
     if (listed > 0) return { glyph: '◐', color: '#f59e0b', label: `부분 등록 (${listed}/${total})` };
     if (pending > 0) return { glyph: '▲', color: '#f59e0b', label: `진행 중 (${pending})` };
-    return { glyph: '○', color: '#94a3b8', label: '미등록' };
+    // Codex P1 #5: total_count > 0 but no positive states (all not_listed/paused).
+    // Distinguish from "no row at all" with a darker grey + count.
+    return { glyph: '○', color: '#64748b', label: `비활성 (${total}건)` };
   }
 
   function platformLedCell(productId, platform) {
@@ -3067,7 +3077,8 @@
     pop.innerHTML = buildLedPopover(productId, platform);
     pop.style.display = 'block';
     const rect = btn.getBoundingClientRect();
-    const popW = 400;
+    // Codex P1 #6: use actual rendered width, not a stale hardcoded 400.
+    const popW = pop.offsetWidth || 480;
     let left = rect.left + window.scrollX;
     if (left + popW > window.innerWidth) left = window.innerWidth - popW - 10;
     pop.style.left = Math.max(8, left) + 'px';

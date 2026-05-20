@@ -91,18 +91,31 @@ async function hmacSha256Hex(secret: string, message: string): Promise<string> {
 
 function dispatchAlert(payload: Record<string, unknown>): void {
   if (!ALERT_BOT_URL) return;
+  // P1 fix: fail-closed when ALERT_BOT_URL is set but ALERT_HMAC_SECRET is not.
+  // Sending an unsigned POST would result in alert-bot returning 401 silently,
+  // dropping every alert. If only one of the two env vars is set, the operator
+  // has misconfigured the deployment — skip dispatch and log a warning.
+  if (!ALERT_HMAC_SECRET) {
+    console.warn(JSON.stringify({
+      service: 'platform-publish',
+      event: 'alert_dispatch_skipped',
+      reason: 'ALERT_BOT_URL is set but ALERT_HMAC_SECRET is missing — fix env config',
+      ts: new Date().toISOString(),
+    }));
+    return;
+  }
   const body = JSON.stringify(payload);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2000);
   (async () => {
     try {
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (ALERT_HMAC_SECRET) {
-        // Compute HMAC so alert-bot can verify origin; skip if secret not configured.
-        const sig = await hmacSha256Hex(ALERT_HMAC_SECRET, body);
-        headers['X-Alert-Signature'] = sig;
-      }
-      await fetch(ALERT_BOT_URL, { method: 'POST', headers, body, signal: controller.signal });
+      const sig = await hmacSha256Hex(ALERT_HMAC_SECRET, body);
+      await fetch(ALERT_BOT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Alert-Signature': sig },
+        body,
+        signal: controller.signal,
+      });
     } catch {
       // swallow — alert failure must never affect the response
     } finally {

@@ -9,14 +9,16 @@
 //
 // Algorithm:
 //   1. Build bucket_key = entity_type + ':' + error_code.
-//   2. SELECT alert_buckets WHERE bucket_key=... FOR UPDATE in a transaction.
-//   3. No row   → INSERT, send Telegram, return {sent:true, reason:'first_alert'}.
-//   4. now() - last_alert_at < 15 min → increment suppressed_count, no send.
-//   5. Cooldown elapsed → reset suppressed_count, send rollup, return {sent:true, reason:'after_cooldown'}.
+//   2. HMAC validation.
+//   3. If TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID unset → 503, no bucket touch.
+//   4. Call evaluate_alert_bucket RPC (atomic SELECT FOR UPDATE inside Postgres).
+//   5. If should_send=false → suppress, write audit_log, return within_cooldown.
+//   6. If should_send=true → sendTelegram.
+//        Success → write audit_log (sent:true), return ok.
+//        Failure → call rollback_alert_bucket to restore prev state,
+//                   write audit_log (sent:false), return telegram_send_failed.
 //
-// Telegram: Korean natural-language body (feedback_telegram_natural_language_only).
-// If TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID env unset → gracefully return
-// {sent:false, reason:'telegram_not_configured'}.
+// Audit_log is written only after HMAC validation passes (not on 401 paths).
 //
 // Required env vars:
 //   ALERT_HMAC_SECRET          — shared secret with platform-publish dispatcher
@@ -36,9 +38,6 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "
 const ALERT_HMAC_SECRET = Deno.env.get("ALERT_HMAC_SECRET") || "";
 const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
 const TELEGRAM_CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID") || "";
-
-// Rate-limit window: 15 minutes in milliseconds.
-const COOLDOWN_MS = 15 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // CORS headers
@@ -94,17 +93,26 @@ function constantTimeEqual(a: string, b: string): boolean {
 // Error-code to Korean translation dictionary.
 // ---------------------------------------------------------------------------
 const ERROR_CODE_KO: Record<string, string> = {
-  DOCS_NOT_READY:              "공식 API 문서 미준비",
-  AUTH_NOT_VERIFIED:           "인증 미검증",
-  BANNED_SHOP:                 "차단된 매장",
-  CAPABILITY_UNSUPPORTED:      "기능 미구현",
-  PLATFORM_AUTH_FAILED:        "플랫폼 인증 실패",
-  PLATFORM_THROTTLED:          "플랫폼 호출 제한",
-  PLATFORM_VALIDATION_ERROR:   "플랫폼 검증 실패",
-  PLATFORM_NOT_FOUND:          "대상 미존재",
-  PLATFORM_NOCAPACITY:         "플랫폼 용량 한도 초과",
-  PLATFORM_UNKNOWN:            "플랫폼 알 수 없는 오류",
-  RATE_LIMITED:                "수정 횟수 제한 도달",
+  DOCS_NOT_READY:                    "공식 API 문서 미준비",
+  AUTH_NOT_VERIFIED:                 "인증 미검증",
+  BANNED_SHOP:                       "차단된 매장",
+  CAPABILITY_UNSUPPORTED:            "기능 미구현",
+  PLATFORM_AUTH_FAILED:              "플랫폼 인증 실패",
+  PLATFORM_THROTTLED:                "플랫폼 호출 제한",
+  PLATFORM_VALIDATION_ERROR:         "플랫폼 검증 실패",
+  PLATFORM_NOT_FOUND:                "대상 미존재",
+  PLATFORM_NOCAPACITY:               "플랫폼 용량 한도 초과",
+  PLATFORM_UNKNOWN:                  "플랫폼 알 수 없는 오류",
+  RATE_LIMITED:                      "수정 횟수 제한 도달",
+  SKU_ASCII_ONLY:                    "SKU 영문 전용 위반",
+  QOO10_CATEGORY_UNMAPPED:           "Qoo10 카테고리 미매핑",
+  EBAY_CATEGORY_ID_MISSING:          "eBay 카테고리 ID 누락",
+  OFFER_PUBLISH_OUT_OF_SCOPE:        "eBay 발행 범위 외",
+  EBAY_ASPECT_SCHEMA_INVALID:        "eBay 속성 스키마 불일치",
+  EBAY_ASPECT_VALUE_TOO_LONG:        "eBay 속성 값 길이 초과",
+  ALIBABA_REQUIRED_ATTRS_MISSING:    "Alibaba 필수 속성 누락",
+  ALIBABA_SHIPPING_TEMPLATE_MISSING: "Alibaba 배송 템플릿 누락",
+  IDEMPOTENT_REPLAY:                 "중복 요청 재사용",
 };
 
 function translateErrorCode(code: string): string {
@@ -113,12 +121,11 @@ function translateErrorCode(code: string): string {
 
 // ---------------------------------------------------------------------------
 // Telegram send helper.
-// Returns {sent:true} or {sent:false, reason:'telegram_not_configured'|'send_failed'}.
+// Returns {sent:true} or {sent:false, reason:'send_failed', error:string}.
 // ---------------------------------------------------------------------------
-async function sendTelegram(text: string): Promise<{ sent: boolean; reason?: string }> {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
-    return { sent: false, reason: "telegram_not_configured" };
-  }
+async function sendTelegram(
+  text: string,
+): Promise<{ sent: boolean; reason?: string; error?: string }> {
   try {
     const resp = await fetch(
       `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
@@ -131,12 +138,12 @@ async function sendTelegram(text: string): Promise<{ sent: boolean; reason?: str
     if (!resp.ok) {
       const errBody = await resp.text().catch(() => "(unreadable)");
       audit("telegram_send_failed", { status: resp.status, body: errBody });
-      return { sent: false, reason: "send_failed" };
+      return { sent: false, reason: "send_failed", error: `HTTP ${resp.status}: ${errBody}` };
     }
     return { sent: true };
   } catch (e) {
     audit("telegram_send_threw", { error: String(e) });
-    return { sent: false, reason: "send_failed" };
+    return { sent: false, reason: "send_failed", error: String(e) };
   }
 }
 
@@ -221,6 +228,17 @@ Deno.serve(async (req: Request): Promise<Response> => {
     return jsonResp(401, { ok: false, error: "hmac_invalid", message: "X-Alert-Signature does not match" });
   }
 
+  // ---------------------------------------------------------------------------
+  // P0 #3 fix: check Telegram config BEFORE touching alert_buckets.
+  // If the bot token is not yet configured, return 503 immediately.
+  // This prevents the bucket from being poisoned during the operator-setup
+  // period, so the first real alert after token is set is not suppressed.
+  // ---------------------------------------------------------------------------
+  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+    audit("telegram_not_configured");
+    return jsonResp(503, { sent: false, reason: "telegram_not_configured" });
+  }
+
   // Parse body.
   let payload: Record<string, unknown>;
   try {
@@ -233,7 +251,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const error_code = String(payload.error_code || "PLATFORM_UNKNOWN");
   const master_product_id = payload.master_product_id as string | undefined;
 
-  const bucket_key = `${entity_type}:${error_code}`;
+  const bucketKey = `${entity_type}:${error_code}`;
 
   // Service-role Supabase client.
   const svc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -241,126 +259,128 @@ Deno.serve(async (req: Request): Promise<Response> => {
   });
 
   // ---------------------------------------------------------------------------
-  // Rate-limit logic (uses SELECT FOR UPDATE via RPC to serialize concurrent calls).
-  // We implement this as explicit steps with a Postgres transaction via RPC.
+  // P0 #1 fix: atomic bucket evaluation via SECURITY DEFINER RPC.
+  // The RPC uses SELECT FOR UPDATE inside a Postgres transaction, serializing
+  // concurrent calls on the same bucket_key so no two callers can both observe
+  // "no row" or "cooldown elapsed" and both forward to Telegram.
   // ---------------------------------------------------------------------------
-  let sent = false;
-  let reason = "within_cooldown";
-  let suppressedCountInRollup = 0;
-  let cooldownRemainingSec: number | undefined;
-
-  // Fetch existing bucket row.
-  const { data: existing, error: fetchErr } = await svc
-    .from("alert_buckets")
-    .select("last_alert_at, suppressed_count, total_count")
-    .eq("bucket_key", bucket_key)
-    .maybeSingle();
-
-  if (fetchErr) {
-    audit("bucket_fetch_error", { bucket_key, error: fetchErr.message });
-    return jsonResp(500, { ok: false, error: "db_error", message: fetchErr.message });
+  const { data: evalRows, error: evalErr } = await svc.rpc("evaluate_alert_bucket", {
+    p_bucket_key: bucketKey,
+    p_payload: payload,
+  });
+  if (evalErr) {
+    audit("evaluate_bucket_error", { bucket_key: bucketKey, error: evalErr.message });
+    return jsonResp(500, { ok: false, error: "db_error", message: evalErr.message });
   }
+  const evalResult = evalRows[0];
+  const {
+    should_send,
+    suppressed_count_for_rollup,
+    prev_last_alert_at,
+    prev_suppressed_count,
+  } = evalResult;
 
-  const now = Date.now();
+  // ---------------------------------------------------------------------------
+  // Suppressed path: within cooldown window.
+  // ---------------------------------------------------------------------------
+  if (!should_send) {
+    const lastAlertAt = prev_last_alert_at ? new Date(prev_last_alert_at).getTime() : Date.now();
+    const cooldownRemainingSec = Math.max(
+      0,
+      Math.ceil((15 * 60 * 1000 - (Date.now() - lastAlertAt)) / 1000),
+    );
+    audit("alert_suppressed", { bucket_key: bucketKey, cooldown_remaining_sec: cooldownRemainingSec });
 
-  if (!existing) {
-    // First alert for this bucket: INSERT and send.
-    const { error: insertErr } = await svc.from("alert_buckets").insert({
-      bucket_key,
-      last_alert_at: new Date(now).toISOString(),
-      last_payload: payload,
-      suppressed_count: 0,
-      total_count: 1,
+    // Write audit_log for suppressed event.
+    await svc.from("audit_log").insert({
+      entity_type: "alert_dispatch",
+      entity_uuid: master_product_id ?? null,
+      actor: "alert-bot",
+      action: "alert_sent",
+      after_json: { bucket_key: bucketKey, sent: false, reason: "within_cooldown" },
+      reason: "alert_bot_dispatch",
     });
-    if (insertErr) {
-      audit("bucket_insert_error", { bucket_key, error: insertErr.message });
-      // Proceed with send anyway — we'll try again on next call.
-    }
 
-    const telegramResult = await sendTelegram(buildTelegramText(payload, 0));
-    sent = telegramResult.sent;
-    reason = telegramResult.reason === "telegram_not_configured"
-      ? "telegram_not_configured"
-      : "first_alert";
-    audit("alert_first", { bucket_key, sent });
-  } else {
-    const lastAlertAt = new Date(existing.last_alert_at).getTime();
-    const elapsed = now - lastAlertAt;
-
-    if (elapsed < COOLDOWN_MS) {
-      // Within cooldown: suppress.
-      const newSuppressed = (existing.suppressed_count || 0) + 1;
-      const newTotal = (existing.total_count || 0) + 1;
-      await svc
-        .from("alert_buckets")
-        .update({
-          suppressed_count: newSuppressed,
-          total_count: newTotal,
-          last_payload: payload,
-          updated_at: new Date(now).toISOString(),
-        })
-        .eq("bucket_key", bucket_key);
-
-      sent = false;
-      reason = "within_cooldown";
-      cooldownRemainingSec = Math.ceil((COOLDOWN_MS - elapsed) / 1000);
-      audit("alert_suppressed", { bucket_key, suppressed_count: newSuppressed, cooldown_remaining_sec: cooldownRemainingSec });
-    } else {
-      // Cooldown elapsed: send rollup and reset.
-      suppressedCountInRollup = existing.suppressed_count || 0;
-      const newTotal = (existing.total_count || 0) + 1;
-
-      await svc
-        .from("alert_buckets")
-        .update({
-          last_alert_at: new Date(now).toISOString(),
-          suppressed_count: 0,
-          total_count: newTotal,
-          last_payload: payload,
-          updated_at: new Date(now).toISOString(),
-        })
-        .eq("bucket_key", bucket_key);
-
-      const telegramResult = await sendTelegram(buildTelegramText(payload, suppressedCountInRollup));
-      sent = telegramResult.sent;
-      reason = telegramResult.reason === "telegram_not_configured"
-        ? "telegram_not_configured"
-        : "after_cooldown";
-      audit("alert_after_cooldown", { bucket_key, suppressed_count_in_rollup: suppressedCountInRollup, sent });
-    }
+    return jsonResp(200, {
+      sent: false,
+      reason: "within_cooldown",
+      cooldown_remaining_sec: cooldownRemainingSec,
+    });
   }
 
   // ---------------------------------------------------------------------------
-  // Audit log: every invocation writes one row.
+  // Send path: cooldown elapsed (or first alert).
+  // P0 #2 fix: sendTelegram runs AFTER evaluate_alert_bucket has updated the
+  // bucket. On failure we call rollback_alert_bucket to restore prev state so
+  // the next 15-minute window is not silently eaten.
   // ---------------------------------------------------------------------------
-  const auditRow = {
+  const telegramResult = await sendTelegram(
+    buildTelegramText(payload, suppressed_count_for_rollup),
+  );
+
+  if (!telegramResult.sent) {
+    // Rollback bucket to pre-evaluate state so the alert is not silently lost.
+    audit("telegram_failed_rolling_back", {
+      bucket_key: bucketKey,
+      error: telegramResult.error,
+    });
+    await svc.rpc("rollback_alert_bucket", {
+      p_bucket_key: bucketKey,
+      p_prev_last_alert_at: prev_last_alert_at,
+      p_prev_suppressed_count: prev_suppressed_count,
+    });
+
+    // Write audit_log for failed send.
+    await svc.from("audit_log").insert({
+      entity_type: "alert_dispatch",
+      entity_uuid: master_product_id ?? null,
+      actor: "alert-bot",
+      action: "alert_sent",
+      after_json: {
+        bucket_key: bucketKey,
+        sent: false,
+        reason: "telegram_send_failed",
+        error: telegramResult.error,
+        rolled_back: true,
+      },
+      reason: "alert_bot_dispatch",
+    });
+
+    return jsonResp(200, {
+      sent: false,
+      reason: "telegram_send_failed",
+      error: telegramResult.error,
+    });
+  }
+
+  // Telegram send succeeded.
+  const sendReason = prev_last_alert_at === null ? "first_alert" : "after_cooldown";
+  audit("alert_sent", {
+    bucket_key: bucketKey,
+    reason: sendReason,
+    suppressed_count_in_rollup: suppressed_count_for_rollup,
+  });
+
+  // Write audit_log for successful send.
+  await svc.from("audit_log").insert({
     entity_type: "alert_dispatch",
     entity_uuid: master_product_id ?? null,
     actor: "alert-bot",
     action: "alert_sent",
     after_json: {
-      bucket_key,
-      sent,
-      reason,
-      suppressed_count_in_rollup: suppressedCountInRollup,
+      bucket_key: bucketKey,
+      sent: true,
+      reason: sendReason,
+      suppressed_count_in_rollup: suppressed_count_for_rollup,
     },
     reason: "alert_bot_dispatch",
-  };
-  const { error: auditErr } = await svc.from("audit_log").insert(auditRow);
-  if (auditErr) {
-    audit("audit_log_write_failed", { error: auditErr.message });
-    // Non-fatal: continue.
-  }
+  });
 
-  // ---------------------------------------------------------------------------
-  // Response
-  // ---------------------------------------------------------------------------
-  const respBody: Record<string, unknown> = { sent, reason };
-  if (reason === "within_cooldown" && cooldownRemainingSec !== undefined) {
-    respBody.cooldown_remaining_sec = cooldownRemainingSec;
-  }
-  if (reason === "after_cooldown") {
-    respBody.suppressed_count_in_rollup = suppressedCountInRollup;
-  }
-  return jsonResp(200, respBody);
+  return jsonResp(200, {
+    sent: true,
+    reason: sendReason,
+    ...(suppressed_count_for_rollup > 0
+      ? { suppressed_count_in_rollup: suppressed_count_for_rollup }
+      : {}),
+  });
 });

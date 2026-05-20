@@ -13,6 +13,39 @@
 // v19: /list_items expands has_model items via get_model_list, returning per-model rows.
 // Also: /update_price accepts model_id in price_list, /update_stock supports model-level stock.
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { requireAuthenticatedUser } from "../_shared/auth.ts";
+
+// Read-only actions that genuinely do not need a signed-in user.
+// Everything not in this set is treated as a mutating route and MUST pass
+// requireAuthenticatedUser before running.
+//
+// Notable EXCLUSIONS (intentionally gated):
+//   - token_health / token-health: accepts run_refresh=1 → mutates tokens
+//   - v2_failed_mutations: returns private mutation payloads / responses
+//   - try_refresh_variants: explicit token refresh
+//   - raw_call: forwards arbitrary Shopee API calls
+const PUBLIC_ACTIONS: ReadonlySet<string> = new Set([
+  "health",
+  "tokens",
+  "token_probe",
+  "shop_info",
+  "categories",
+  "attributes",
+  "brands",
+  "channels",
+  "global_categories",
+  "global_brands",
+  "global_attributes",
+  "item_info",
+  "list_items",
+  "published_list",
+  "shop_model_list",
+  "global_items",
+  "global_item_info",
+  "global_model_list",
+  "proxy_image",
+  "publish_task_result",
+]);
 
 const SANDBOX_HOST = 'openplatform.sandbox.test-stable.shopee.sg';
 const LIVE_HOST = 'partner.shopeemobile.com';
@@ -1613,6 +1646,18 @@ Deno.serve(async (req) => {
   const action = url.pathname.split('/').filter(Boolean).pop() || '';
   const region = url.searchParams.get('region') || 'SG';
 
+  // Step 0 auth gate (plan v2.2): every mutating route requires a real signed-in
+  // user. Read-only PUBLIC_ACTIONS skip the check so dashboards/probes that have
+  // been working with the anon key keep working. anon JWT or no JWT → 401.
+  if (!PUBLIC_ACTIONS.has(action)) {
+    const authResult = await requireAuthenticatedUser(req);
+    if (authResult.response) {
+      audit('auth_rejected', { action, reason: 'requireAuthenticatedUser_failed' });
+      return authResult.response;
+    }
+    audit('auth_ok', { action, user_id: authResult.user.id, email: authResult.user.email });
+  }
+
   try {
     if (action === 'health') {
       const app = await getApp();
@@ -2216,7 +2261,8 @@ Deno.serve(async (req) => {
       if (!item_id) return jsonResp({ ok: false, error: 'item_id required' }, 400);
       if (!Array.isArray(price_list) || !price_list.length) return jsonResp({ ok: false, error: 'price_list required' }, 400);
       const result = await shopApiCall(r, '/api/v2/product/update_price', { method: 'POST', body: { item_id, price_list } });
-      return jsonResp({ ok: !result.error, region: r, item_id, sent_price_list: price_list, result });
+      const failureList = Array.isArray(result?.response?.failure_list) ? result.response.failure_list : [];
+      return jsonResp({ ok: !result.error && failureList.length === 0, region: r, item_id, sent_price_list: price_list, failure_list: failureList, result });
     }
     if (action === 'update_item_sku' && req.method === 'POST') {
       const body = await req.json();
@@ -2275,6 +2321,8 @@ Deno.serve(async (req) => {
       return jsonResp({ ok: !result.error, region, global_item_id, days_to_ship, is_pre_order, result });
     }
     if (action === 'update_shop_item_dts' && req.method === 'POST') {
+      // Shop-level DTS update — tries shopApiCall (KRSC may block; we'll see the error).
+      // Body: { region, item_id, days_to_ship, is_pre_order }
       const body = await req.json();
       const r = String(body.region || region || '').toUpperCase();
       const item_id = parseInt(body.item_id);
@@ -2299,6 +2347,7 @@ Deno.serve(async (req) => {
       const body = await req.json();
       const shops = Array.isArray(body.shops) ? body.shops : [];
       if (!shops.length) return jsonResp({ ok: false, error: 'shops[] required' }, 400);
+      // Default: turn ON days_to_ship sync, leave other flags as the caller specified (default true).
       const shop_sync_list = shops.map((s: any) => ({
         shop_id: Number(s.shop_id),
         shop_region: String(s.shop_region || '').toUpperCase(),
@@ -2306,7 +2355,7 @@ Deno.serve(async (req) => {
         media_information: s.media_information !== false,
         tier_variation_name_and_option: s.tier_variation_name_and_option !== false,
         price: s.price !== false,
-        days_to_ship: s.days_to_ship !== false,
+        days_to_ship: s.days_to_ship !== false, // default true
       }));
       const result = await merchantApiCall(region, '/api/v2/global_product/set_sync_field', {
         method: 'POST',

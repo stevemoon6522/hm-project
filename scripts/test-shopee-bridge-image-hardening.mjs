@@ -79,6 +79,15 @@ for (const token of [
   assert(uploadBlock.includes(token), `upload_image missing guard/cache behavior: ${token}`);
 }
 
+const updatePriceBlock = sliceBetween(edge, "if (action === 'update_price' && req.method === 'POST')", "if (action === 'update_item_sku' && req.method === 'POST')");
+for (const token of [
+  "result?.response?.failure_list",
+  "failureList.length === 0",
+  "failure_list: failureList",
+]) {
+  assert(updatePriceBlock.includes(token), `update_price missing failure_list handling: ${token}`);
+}
+
 for (const token of [
   'function parsePngDimensions',
   'function parseJpegDimensions',

@@ -2261,7 +2261,8 @@ Deno.serve(async (req) => {
       if (!item_id) return jsonResp({ ok: false, error: 'item_id required' }, 400);
       if (!Array.isArray(price_list) || !price_list.length) return jsonResp({ ok: false, error: 'price_list required' }, 400);
       const result = await shopApiCall(r, '/api/v2/product/update_price', { method: 'POST', body: { item_id, price_list } });
-      return jsonResp({ ok: !result.error, region: r, item_id, sent_price_list: price_list, result });
+      const failureList = Array.isArray(result?.response?.failure_list) ? result.response.failure_list : [];
+      return jsonResp({ ok: !result.error && failureList.length === 0, region: r, item_id, sent_price_list: price_list, failure_list: failureList, result });
     }
     if (action === 'update_item_sku' && req.method === 'POST') {
       const body = await req.json();

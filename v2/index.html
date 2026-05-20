@@ -162,6 +162,7 @@
       gap: 12px;
     }
     .auth-panel h2 { margin: 0; font-size: 16px; }
+    .auth-panel form { display: grid; gap: 12px; }
     .auth-panel .actions { display: flex; justify-content: flex-end; }
     #app-shell[hidden], #auth-panel[hidden] { display: none !important; }
 
@@ -888,18 +889,20 @@
   <div id="auth-panel" class="auth-panel" hidden>
     <h2>Sign in</h2>
     <div class="subhead">Supabase session is required to load products and save mappings.</div>
-    <div class="field">
-      <label for="login-email">Email</label>
-      <input id="login-email" type="email" autocomplete="username">
-    </div>
-    <div class="field">
-      <label for="login-password">Password</label>
-      <input id="login-password" type="password" autocomplete="current-password">
-    </div>
-    <div id="login-error" class="error-text"></div>
-    <div class="actions">
-      <button id="login-submit" type="button" class="primary">Sign in</button>
-    </div>
+    <form id="login-form">
+      <div class="field">
+        <label for="login-email">Email</label>
+        <input id="login-email" type="email" autocomplete="username">
+      </div>
+      <div class="field">
+        <label for="login-password">Password</label>
+        <input id="login-password" type="password" autocomplete="current-password">
+      </div>
+      <div id="login-error" class="error-text"></div>
+      <div class="actions">
+        <button id="login-submit" type="submit" class="primary">Sign in</button>
+      </div>
+    </form>
   </div>
 
   <div id="app-shell" hidden>
@@ -2393,6 +2396,7 @@
     status: document.getElementById('conn-status'),
     authPanel: document.getElementById('auth-panel'),
     appShell: document.getElementById('app-shell'),
+    loginForm: document.getElementById('login-form'),
     loginEmail: document.getElementById('login-email'),
     loginPassword: document.getElementById('login-password'),
     loginSubmit: document.getElementById('login-submit'),
@@ -4048,11 +4052,16 @@
   // Step 0 (plan v2.2): real Supabase auth gate. Replaces the prior anon-JWT
   // bypass — every Edge Function mutating route now requires a signed-in
   // session JWT. The signIn/signOut helpers already exist (search above).
-  if (els.loginSubmit) {
+  if (els.loginForm) {
+    els.loginForm.addEventListener('submit', (e) => {
+      e.preventDefault();
+      signIn();
+    });
+  } else if (els.loginSubmit) {
     els.loginSubmit.addEventListener('click', signIn);
   }
-  if (els.loginPassword) {
-    // Allow Enter-to-submit on the password field for keyboard ergonomics.
+  if (!els.loginForm && els.loginPassword) {
+    // Fallback for legacy markup without a form element.
     els.loginPassword.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') {
         e.preventDefault();
@@ -7004,7 +7013,7 @@
     let countrySettings = [];
     try {
       const csRes = await fetch(
-        SUPABASE_URL + '/rest/v1/country_settings?select=region,margin_formula',
+        SUPABASE_URL + '/rest/v1/country_settings?select=*',
         { headers: AUTH_HEADERS }
       );
       if (csRes.ok) {
@@ -7016,8 +7025,9 @@
     // Build margin formula map
     _catMarginFormulas = {};
     countrySettings.forEach(function(cs) {
-      if (cs.region && cs.margin_formula) {
-        _catMarginFormulas[String(cs.region)] = cs.margin_formula;
+      const code = String(cs.region || cs.country_code || '').toUpperCase();
+      if (code && cs.margin_formula) {
+        _catMarginFormulas[code] = cs.margin_formula;
       }
     });
 

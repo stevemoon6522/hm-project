@@ -31,7 +31,7 @@ import { requireAuthenticatedUser } from "../_shared/auth.ts";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
-const PARSER_VERSION = "staronemall@2026-05-20";
+const PARSER_VERSION = "staronemall@2026-05-20.2";
 const STARONEMALL_BASE = "https://www.staronemall.com";
 
 const CORS = {
@@ -209,28 +209,37 @@ function parsePriceNumber(text: string): number {
 }
 
 function extractPrice(doc): number {
+  // 2026-05-20 (operator msg #485): the displayed `<strong>` value inside the
+  // price area is StarOneMall's wholesale price. Multiply by 1.1 to land at
+  // the cost figure the operator actually pays.
+  const WHOLESALE_MULTIPLIER = 1.1;
   const priceDiv = doc.querySelector("div.price");
   if (priceDiv) {
-    // priority: sell > consumer > retail
+    const strongs = priceDiv.querySelectorAll("strong");
+    for (const s of strongs) {
+      const raw = parsePriceNumber(s.textContent || "");
+      if (raw >= 100) return Math.round(raw * WHOLESALE_MULTIPLIER);
+    }
+    // priority: sell > consumer > retail (legacy fallback)
     for (const cls of ["sell", "consumer", "retail"]) {
       const el = priceDiv.querySelector(`.${cls}`);
       if (el) {
         const v = parsePriceNumber(el.textContent || "");
-        if (v >= 100) return v;
+        if (v >= 100) return Math.round(v * WHOLESALE_MULTIPLIER);
       }
     }
   }
-  // Fallback to page-wide text patterns
+  // Fallback to page-wide text patterns (also wholesale → ×1.1)
   const text = doc.body?.textContent || "";
   const membersOnly = text.match(/Members?\s*Only\s*Price[^\d]{0,30}([\d,]{3,})\s*원/i);
   if (membersOnly) {
     const v = Number(membersOnly[1].replace(/,/g, ""));
-    if (Number.isFinite(v) && v >= 100) return v;
+    if (Number.isFinite(v) && v >= 100) return Math.round(v * WHOLESALE_MULTIPLIER);
   }
   const retail = text.match(/Retail\s*price\s*([\d,]+)\s*원/i);
   if (retail) {
     const v = Number(retail[1].replace(/,/g, ""));
-    if (Number.isFinite(v) && v >= 100) return v;
+    if (Number.isFinite(v) && v >= 100) return Math.round(v * WHOLESALE_MULTIPLIER);
   }
   return 0;
 }

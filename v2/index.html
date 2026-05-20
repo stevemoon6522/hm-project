@@ -2713,11 +2713,36 @@
         <td class="mono">${Number(p.cost_krw || 0).toLocaleString()}</td>
         <td class="mono">${Number(p.weight_g || 0).toLocaleString()}</td>
         <td>${listingBadges(p.id)}</td>
-        <td><button type="button" data-open="${text(p.id)}" class="primary">Register</button></td>
+        <td style="display:flex;gap:4px;">
+          <button type="button" data-open="${text(p.id)}" class="primary" style="font-size:11px;padding:4px 8px;">Register</button>
+          <button type="button" data-delete="${text(p.id)}" data-sku="${text(p.sku || '')}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">🗑</button>
+        </td>
       </tr>
     `).join('');
     els.productBody.querySelectorAll('[data-open]').forEach((btn) => {
       btn.addEventListener('click', () => openModal(btn.dataset.open));
+    });
+    els.productBody.querySelectorAll('[data-delete]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const productId = btn.dataset.delete;
+        const sku = btn.dataset.sku || '(no sku)';
+        if (!confirm(`상품 [${sku}] 을 삭제하시겠습니까?\n\n- products 행이 영구 삭제됩니다.\n- 연결된 product_shopee_listings 도 함께 삭제됩니다 (FK CASCADE).\n- 연결된 source_record 는 pending_review 로 되돌아가 다시 등록 가능합니다.`)) return;
+        btn.disabled = true;
+        btn.textContent = '...';
+        try {
+          const { data, error } = await db.rpc('delete_master_product', { p_product_id: productId });
+          if (error) throw error;
+          const result = Array.isArray(data) ? data[0] : data;
+          if (typeof window.loadData === 'function') await window.loadData();
+          if (result && result.reset_source_record_count > 0) {
+            alert(`삭제 완료. ${result.reset_source_record_count}건의 source_record 가 pending_review 로 되돌아갔습니다.`);
+          }
+        } catch (e) {
+          alert('삭제 실패: ' + (e?.message || e?.details || String(e)));
+          btn.disabled = false;
+          btn.textContent = '🗑';
+        }
+      });
     });
   }
 

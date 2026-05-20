@@ -31,7 +31,7 @@ import { requireAuthenticatedUser } from "../_shared/auth.ts";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
-const PARSER_VERSION = "staronemall@2026-05-20.2";
+const PARSER_VERSION = "staronemall@2026-05-20.3";
 const STARONEMALL_BASE = "https://www.staronemall.com";
 
 const CORS = {
@@ -208,37 +208,76 @@ function parsePriceNumber(text: string): number {
   return best;
 }
 
+function isUnderStrikethrough(elNode): boolean {
+  // Walk up parents looking for <s>, <del>, <strike> — those wrap the
+  // strikethrough "Retail price" that we must NOT use as cost.
+  let cur = elNode?.parentElement;
+  while (cur) {
+    const tag = String(cur.tagName || "").toUpperCase();
+    if (tag === "S" || tag === "DEL" || tag === "STRIKE") return true;
+    const cls = String(cur.getAttribute?.("class") || "").toLowerCase();
+    if (cls && /\b(retail|original|strike|line[-_]?through)\b/.test(cls)) return true;
+    if (cur.tagName === "BODY" || cur.tagName === "HTML") break;
+    cur = cur.parentElement;
+  }
+  return false;
+}
+
 function extractPrice(doc): number {
-  // 2026-05-20 (operator msg #485): the displayed `<strong>` value inside the
-  // price area is StarOneMall's wholesale price. Multiply by 1.1 to land at
-  // the cost figure the operator actually pays.
+  // StarOneMall layouts seen so far:
+  //   <div class="price">
+  //     Retail price <s>17,800원</s>
+  //     <strong>12,960원</strong> (VAT EXCLUDED)
+  //   </div>
+  //
+  // The visible-red price (the operator's wholesale buy price) is the
+  // <strong> that is NOT inside <s>/<del>/<strike>. Operator multiplies
+  // wholesale × 1.1 to get the real cost they pay (operator msg #485, #495).
+  //
+  // Detection order (each filtered by `isUnderStrikethrough`):
+  //   1. <strong> inside div.price whose surrounding text contains "VAT"
+  //      (cheapest signal that we picked the actual sell price).
+  //   2. Any <strong> inside div.price not under strikethrough.
+  //   3. Legacy .sell/.consumer/.retail class fallback.
+  //   4. Page-wide regex for "Members Only Price" or naked KRW patterns.
   const WHOLESALE_MULTIPLIER = 1.1;
   const priceDiv = doc.querySelector("div.price");
   if (priceDiv) {
-    const strongs = priceDiv.querySelectorAll("strong");
+    const strongs = Array.from(priceDiv.querySelectorAll("strong"))
+      .filter((s) => !isUnderStrikethrough(s));
+    // First pass: prefer <strong> whose parent paragraph mentions VAT.
     for (const s of strongs) {
-      const raw = parsePriceNumber(s.textContent || "");
-      if (raw >= 100) return Math.round(raw * WHOLESALE_MULTIPLIER);
+      const parentText = (s.parentElement?.textContent || "").toUpperCase();
+      if (parentText.includes("VAT")) {
+        const v = parsePriceNumber(s.textContent || "");
+        if (v >= 100) return Math.round(v * WHOLESALE_MULTIPLIER);
+      }
     }
-    // priority: sell > consumer > retail (legacy fallback)
-    for (const cls of ["sell", "consumer", "retail"]) {
+    // Second pass: any non-strikethrough <strong>.
+    for (const s of strongs) {
+      const v = parsePriceNumber(s.textContent || "");
+      if (v >= 100) return Math.round(v * WHOLESALE_MULTIPLIER);
+    }
+    // Legacy: explicit class-based selectors.
+    for (const cls of ["sell", "consumer"]) {
       const el = priceDiv.querySelector(`.${cls}`);
-      if (el) {
+      if (el && !isUnderStrikethrough(el)) {
         const v = parsePriceNumber(el.textContent || "");
         if (v >= 100) return Math.round(v * WHOLESALE_MULTIPLIER);
       }
     }
   }
-  // Fallback to page-wide text patterns (also wholesale → ×1.1)
+  // Page-wide text fallback: explicit "Members Only Price"
   const text = doc.body?.textContent || "";
   const membersOnly = text.match(/Members?\s*Only\s*Price[^\d]{0,30}([\d,]{3,})\s*원/i);
   if (membersOnly) {
     const v = Number(membersOnly[1].replace(/,/g, ""));
     if (Number.isFinite(v) && v >= 100) return Math.round(v * WHOLESALE_MULTIPLIER);
   }
-  const retail = text.match(/Retail\s*price\s*([\d,]+)\s*원/i);
-  if (retail) {
-    const v = Number(retail[1].replace(/,/g, ""));
+  // Last-ditch: any standalone "X,XXX원 (VAT EXCLUDED)" anywhere on the page.
+  const vatExcluded = text.match(/([\d,]{3,})\s*원[^A-Za-z]{0,8}\(?\s*VAT/i);
+  if (vatExcluded) {
+    const v = Number(vatExcluded[1].replace(/,/g, ""));
     if (Number.isFinite(v) && v >= 100) return Math.round(v * WHOLESALE_MULTIPLIER);
   }
   return 0;

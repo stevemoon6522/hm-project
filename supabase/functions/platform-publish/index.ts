@@ -28,6 +28,7 @@ import { stubAdapter } from './adapters/stub.ts';
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const ALERT_BOT_URL = Deno.env.get('ALERT_BOT_URL') || ''; // optional; absent in D0
+const ALERT_HMAC_SECRET = Deno.env.get('ALERT_HMAC_SECRET') || ''; // optional; absent in D0
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -72,19 +73,42 @@ function audit(event: string, extra: Record<string, unknown> = {}): void {
 // Alert dispatch (§A.3 step 3, Codex P0 #1).
 // Fire-and-forget with 2s timeout; never blocks the response.
 // Only called when ALERT_BOT_URL env is set.
+// Signs the request body with HMAC-SHA256 so alert-bot can validate origin.
 // ---------------------------------------------------------------------------
+async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 function dispatchAlert(payload: Record<string, unknown>): void {
   if (!ALERT_BOT_URL) return;
+  const body = JSON.stringify(payload);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2000);
-  fetch(ALERT_BOT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-    signal: controller.signal,
-  })
-    .catch(() => {/* swallow — alert failure must never affect the response */})
-    .finally(() => clearTimeout(timer));
+  (async () => {
+    try {
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (ALERT_HMAC_SECRET) {
+        // Compute HMAC so alert-bot can verify origin; skip if secret not configured.
+        const sig = await hmacSha256Hex(ALERT_HMAC_SECRET, body);
+        headers['X-Alert-Signature'] = sig;
+      }
+      await fetch(ALERT_BOT_URL, { method: 'POST', headers, body, signal: controller.signal });
+    } catch {
+      // swallow — alert failure must never affect the response
+    } finally {
+      clearTimeout(timer);
+    }
+  })();
 }
 
 // ---------------------------------------------------------------------------
@@ -248,7 +272,14 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // =========================================================================
   // GATE 5: Idempotency + platform_listings row lookup (plan §A.2 step 5, §A.4)
   // The unique index uses coalesce(shop_id,'') so we match with a raw RPC.
-  // FOR UPDATE locking is done inside the upsert RPC at post-flight time.
+  //
+  // Idempotent replay check: read-only. The serialization point is the
+  // upsert RPC at post-flight time (INSERT ... ON CONFLICT atomic). Two
+  // concurrent calls with the same publish_request_id will both read the
+  // same prior row OR both reach the adapter; the second's upsert is a
+  // no-op (request_id matches existing). The adapter may run twice but
+  // idempotency on the platform side (Shopee publish_request_id, Joom
+  // PATCH semantics, etc.) keeps that safe. No FOR UPDATE here.
   // =========================================================================
   // Fetch existing listing using coalesce-aware SQL so null shop_id/country
   // matches the expression index correctly.
@@ -518,15 +549,16 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // =========================================================================
   if (!adapterResult.ok && adapterResult.errorCode !== 'IDEMPOTENT_REPLAY') {
     dispatchAlert({
-      service: 'platform-publish',
-      platform,
-      capability,
+      entity_type: 'platform_listing',
+      entity_uuid: listingId,
       error_code: adapterResult.errorCode,
       error_msg: adapterResult.errorMsg,
+      platform,
+      shop_id: shop_id ?? null,
+      country: country ?? null,
       master_product_id,
-      publish_request_id,
       actor: actorLabel,
-      ts: new Date().toISOString(),
+      publish_request_id,
     });
   }
 

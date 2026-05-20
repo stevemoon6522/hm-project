@@ -5184,7 +5184,10 @@ setInterval(tick, 1000);
 /* ════════════════════════════════════════════════════════════════════
    인증 흐름 + 초기 로드
    ════════════════════════════════════════════════════════════════════ */
+window.__sdV1HasAuthSession = false;
+
 async function showApp(session) {
+  window.__sdV1HasAuthSession = true;
   const overlay = document.getElementById('login-overlay');
   overlay.style.display = 'none';
   overlay.style.pointerEvents = 'none';
@@ -5194,9 +5197,11 @@ async function showApp(session) {
   document.getElementById('user-email').textContent = session.user.email;
   await initStorage();
   subscribeRealtime();
+  if (typeof window.__sdStartGkpPrefetch === 'function') window.__sdStartGkpPrefetch();
 }
 
 function showLogin() {
+  window.__sdV1HasAuthSession = false;
   document.getElementById('login-overlay').style.display = 'flex';
   document.getElementById('user-info').style.display = 'none';
 }
@@ -7460,11 +7465,20 @@ async function _gkpApply() {
     applyBtn.addEventListener('click', _gkpApply);
 
     // Kick off background prefetch once after page is idle — so the first modal open is instant
-    if (typeof requestIdleCallback === 'function') {
-      requestIdleCallback(() => _gkpBackgroundPrefetch(), { timeout: GKP_PREFETCH_DELAY_MS + 5000 });
-    } else {
-      setTimeout(() => _gkpBackgroundPrefetch(), GKP_PREFETCH_DELAY_MS);
-    }
+    let gkpPrefetchScheduled = false;
+    window.__sdStartGkpPrefetch = () => {
+      if (gkpPrefetchScheduled || !window.__sdV1HasAuthSession) return;
+      gkpPrefetchScheduled = true;
+      const run = () => {
+        if (window.__sdV1HasAuthSession) _gkpBackgroundPrefetch();
+      };
+      if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(run, { timeout: GKP_PREFETCH_DELAY_MS + 5000 });
+      } else {
+        setTimeout(run, GKP_PREFETCH_DELAY_MS);
+      }
+    };
+    window.__sdStartGkpPrefetch();
   };
   init();
 })();

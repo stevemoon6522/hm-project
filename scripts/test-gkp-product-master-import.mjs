@@ -174,11 +174,15 @@ for (const token of [
   '_gkpMergeProductsIntoState(refreshedProducts || [])',
   '_gkpIdString(r.shopee_item_id)',
   'const GKP_CACHE_SCHEMA_VERSION = 2',
+  'window.__sdV1HasAuthSession = false',
+  'window.__sdStartGkpPrefetch = () =>',
+  'if (gkpPrefetchScheduled || !window.__sdV1HasAuthSession) return',
 ]) {
   assert(html.includes(token), `missing Product Master import token: ${token}`);
 }
 
 assert(!html.includes('uniqueRows.map(r => Number(r.shopee_item_id))'), 'GKP import must not coerce global_item_id through Number()');
+assert(!html.includes('requestIdleCallback(() => _gkpBackgroundPrefetch()'), 'GKP prefetch must not run before auth');
 
 for (const token of [
   "('products', 'shopee_item_id')",

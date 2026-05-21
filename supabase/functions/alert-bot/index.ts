@@ -151,6 +151,33 @@ async function sendTelegram(
 // Build the Telegram message text (Korean natural language, no code/paths).
 // ---------------------------------------------------------------------------
 function buildTelegramText(payload: Record<string, unknown>, suppressedCount: number): string {
+  const entityType = String(payload.entity_type || "");
+  // Phase C — region-by-region summary for Shopee multi-region publish.
+  if (entityType === "shopee_multi_region_publish") {
+    const sku = String(payload.sku || "");
+    const regionsRequested = Number(payload.regions_requested || 0);
+    const regionsOk = Number(payload.regions_ok || 0);
+    const regionsFailed = Number(payload.regions_failed || 0);
+    const summary = Array.isArray(payload.summary) ? payload.summary as any[] : [];
+    const okList = summary
+      .filter((s) => s.status === "mapped")
+      .map((s) => `${s.region}${s.shop_item_id ? ` (${s.shop_item_id})` : ""}`);
+    const failList = summary
+      .filter((s) => s.status !== "mapped")
+      .map((s) => `${s.region}: ${s.error || "원인 미확인"}`);
+    const lines = [
+      regionsFailed === 0
+        ? `[sd] ✅ Shopee 등록 성공 ${regionsOk}/${regionsRequested}`
+        : regionsOk === 0
+          ? `[sd] 🚨 Shopee 등록 실패 ${regionsFailed}/${regionsRequested}`
+          : `[sd] ⚠️ Shopee 등록 일부 성공 ${regionsOk}/${regionsRequested}`,
+      sku ? `상품: ${sku}` : null,
+      okList.length ? `성공 지역: ${okList.join(", ")}` : null,
+      failList.length ? `실패 지역:\n- ${failList.join("\n- ")}` : null,
+    ].filter(Boolean);
+    return lines.join("\n");
+  }
+
   const platform = String(payload.platform || "알 수 없음");
   const errorCode = String(payload.error_code || "");
   const errorMsg = String(payload.error_msg || "");

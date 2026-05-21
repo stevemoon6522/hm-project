@@ -170,14 +170,22 @@ async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterRe
   // Publishing at 0 stock would silently create an unavailable listing.
   // TODO (D2.5): replace this guard with a real pricing-rule lookup
   //   (products.cost_krw → regional price via country_settings markup).
-  const price = (masterProduct as any).price ?? (masterProduct as any).global_price ?? (masterProduct as any).price_krw;
-  const stock = (masterProduct as any).stock ?? (masterProduct as any).available_stock;
-  if (price == null || stock == null) {
+  // 2026-05-21 Codex hot-fix re-review: products.cost_krw is the ACTUAL
+  // master-data field. Previous guard only checked price/global_price/price_krw,
+  // which would silently block every real master product.
+  const price = (masterProduct as any).price
+    ?? (masterProduct as any).global_price
+    ?? (masterProduct as any).price_krw
+    ?? (masterProduct as any).cost_krw;
+  const stock = (masterProduct as any).stock
+    ?? (masterProduct as any).available_stock
+    ?? (masterProduct as any).inventory;     // products.inventory is the live qty column
+  if (price == null || price <= 0 || stock == null) {
     return {
       ok: false,
       listingStatus: 'error',
       errorCode: 'PLATFORM_VALIDATION_ERROR',
-      errorMsg: 'price/stock missing on master product — set price and stock before publishing (D2.5 pricing-rule TODO)',
+      errorMsg: 'price/stock missing on master product — set cost_krw + inventory before publishing (D2.5 pricing-rule TODO)',
     };
   }
 

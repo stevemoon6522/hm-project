@@ -307,22 +307,15 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     ? (dtsMap.ready_stock || {})
     : (dtsMap.pre_order || {});
 
-  // Build brand attribute entry and merge with extra_attributes.
-  // shopee_brand_id 0 = No Brand (standard sentinel); non-zero = specific brand.
-  const brandAttr = {
-    attribute_id: 100012, // Shopee standard brand attribute_id
-    attribute_value_list: [
-      master.shopee_brand_id === 0
-        ? { original_value_name: 'No Brand' }
-        : { value_id: Number(master.shopee_brand_id), original_value_name: master.shopee_brand_name || 'No Brand' },
-    ],
-  };
+  // Brand is sent via the top-level `brand` object in add_global_item, NOT in
+  // attribute_list. Shopee returns "Chocolate Type(100012) is not mapped with the
+  // category" if brand appears in attribute_list. Strip any 100012 entry that
+  // upstream might have stored, and emit a separate brand object below.
   const extraAttrs: any[] = Array.isArray(master.shopee_extra_attributes) ? master.shopee_extra_attributes : [];
-  // Merge: brand goes first, extra_attributes follow (filter out any existing brand entry to avoid duplicates).
-  const attribute_list = [
-    brandAttr,
-    ...extraAttrs.filter((a: any) => Number(a.attribute_id) !== 100012),
-  ];
+  const attribute_list = extraAttrs.filter((a: any) => Number(a.attribute_id) !== 100012);
+  const brand_obj = master.shopee_brand_id === 0 || master.shopee_brand_id == null
+    ? { brand_id: 0, original_brand_name: 'No Brand' }
+    : { brand_id: Number(master.shopee_brand_id), original_brand_name: master.shopee_brand_name || 'No Brand' };
 
   const targets = regions.map((r: string) => ({
     region: r,
@@ -349,6 +342,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     name: master.product_name || master.sku,
     sku: master.sku,
     category_id: Number(master.shopee_category_id),
+    brand: brand_obj,
     image_id: master.shopee_image_id || undefined,
     image_url: !master.shopee_image_id ? (master.main_image || undefined) : undefined,
     weight_g: Number(master.weight_g) || 100,
@@ -425,7 +419,31 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     const regionCode: string = String(r.region || '').toUpperCase();
     const regionOk: boolean = r.ok === true;
     const shopItemId: number | undefined = r.item_id || r.shop_item_id || undefined;
-    const errorMsg: string | undefined = r.error ? (r.message || r.error) : undefined;
+    // Extract the richest possible failure reason — bridge wraps the raw publish_task
+    // response in `task`, which may carry { response: { publish_result: [...] } } or
+    // { response: { failed: { ... } } }. Surface those details so operators can act
+    // on the real Shopee error rather than just "publish failed".
+    let errorMsg: string | undefined = r.error ? (r.message || r.error) : undefined;
+    if (!regionOk) {
+      const parts: string[] = [];
+      if (r.stage) parts.push(`stage=${r.stage}`);
+      if (r.raw_create?.error) parts.push(`create_err=${r.raw_create.error}:${r.raw_create.message || ''}`);
+      const taskBody = r.raw_task?.response || r.task?.response || r.raw_task || r.task || {};
+      const failedList = Array.isArray(taskBody.publish_result)
+        ? taskBody.publish_result.filter((p: any) => p && (p.error || p.failed_reason || p.message))
+        : [];
+      const taskFailed = taskBody.failed || failedList[0];
+      const failedReason = taskFailed?.failed_reason || taskFailed?.message || taskFailed?.error;
+      if (failedReason) parts.push(`task_failed=${failedReason}`);
+      if (r.poll_attempts != null) parts.push(`polls=${r.poll_attempts}`);
+      try { parts.push(`task_raw=${JSON.stringify(taskBody).slice(0, 600)}`); } catch {}
+      if (Array.isArray(raw.publishable_shops?.response?.publishable_shop)) {
+        const eligible = raw.publishable_shops.response.publishable_shop.find((s: any) => Number(s.shop_id) === Number(r.shop_id) || String(s.shop_region || s.region || '').toUpperCase() === regionCode);
+        if (!eligible) parts.push(`shop_not_publishable_for_global_item`);
+      }
+      const composed = parts.join(' | ');
+      errorMsg = errorMsg ? `${errorMsg} | ${composed}` : (composed || 'publish failed');
+    }
 
     // Upsert product_shopee_listings (primary key: product_id + region).
     const upsertPayload: Record<string, unknown> = {

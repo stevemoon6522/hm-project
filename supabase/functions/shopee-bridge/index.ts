@@ -1462,11 +1462,23 @@ function asAttrOptions(a: any): AttrOption[] {
 
 function flattenGlobalAttributes(raw: any): GlobalAttr[] {
   const src = raw?.response || raw || {};
+  // Production get_attribute_tree (category_id_list form) wraps the tree as:
+  //   response.list[<n>].attribute_tree[]  — each item is one requested category.
+  // Older sandbox / legacy shapes used flat attribute_list / attributes at the root.
+  // Support all shapes.
+  const fromListWrapper: any[] = [];
+  if (Array.isArray(src.list)) {
+    for (const entry of src.list) {
+      if (Array.isArray(entry?.attribute_tree)) fromListWrapper.push(...entry.attribute_tree);
+      if (Array.isArray(entry?.attribute_list)) fromListWrapper.push(...entry.attribute_list);
+    }
+  }
   const roots = [
     ...(Array.isArray(src.attribute_list) ? src.attribute_list : []),
     ...(Array.isArray(src.attributes) ? src.attributes : []),
     ...(Array.isArray(src.attribute_tree) ? src.attribute_tree : []),
     ...(Array.isArray(src.children) ? src.children : []),
+    ...fromListWrapper,
   ];
   const out: GlobalAttr[] = [];
   const walk = (node: any) => {
@@ -1553,7 +1565,12 @@ async function buildCategoryAttributeList(region: string, categoryId: number, in
   const normalized = normalizeAttributeList(inputAttrs);
   const byId = new Map<number, any>();
   normalized.forEach((a) => byId.set(Number(a.attribute_id), a));
-  const attrTreeRes = await merchantApiCall(region, '/api/v2/global_product/get_attribute_tree', { query: { category_id: categoryId, language: 'en' } });
+  // Shopee Open Platform docs reference get_mtsku_attribute_tree with category_ids list
+  // (sandbox path returns 404 in production — verified 2026-05-21). On the production
+  // partner endpoint the correct path is /get_attribute_tree but the parameter must be
+  // category_id_list (CSV/array), not category_id. Single-value category_id returns
+  // an empty response{}; passing the list form fills attribute_list correctly.
+  const attrTreeRes = await merchantApiCall(region, '/api/v2/global_product/get_attribute_tree', { query: { category_id_list: String(categoryId), language: 'en' } });
   const treeAttrs = flattenGlobalAttributes(attrTreeRes);
   const missing: any[] = [];
   for (const attr of treeAttrs.filter((a) => a.is_mandatory)) {
@@ -2171,7 +2188,8 @@ Deno.serve(async (req) => {
     if (action === 'global_attributes') {
       const category_id = url.searchParams.get('category_id') || '';
       if (!category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
-      const result = await merchantApiCall(region, '/api/v2/global_product/get_attribute_tree', { query: { category_id, language: 'en' } });
+      // Production /get_attribute_tree requires category_id_list (CSV), not single category_id.
+      const result = await merchantApiCall(region, '/api/v2/global_product/get_attribute_tree', { query: { category_id_list: category_id, language: 'en' } });
       return jsonResp({ ok: !result.error, region, category_id, result });
     }
     // POST /add_global_item: create only the GlobalProduct source item. Variation/model setup is separate.
@@ -2245,6 +2263,16 @@ Deno.serve(async (req) => {
       const publish_task_id = url.searchParams.get('publish_task_id') || '';
       if (!publish_task_id) return jsonResp({ ok: false, error: 'publish_task_id required' }, 400);
       const result = await merchantApiCall(region, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id } });
+      return jsonResp({ ok: !result.error, region, result });
+    }
+    if (action === 'publishable_shop') {
+      const global_item_id = url.searchParams.get('global_item_id') || '';
+      if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
+      const result = await merchantApiCall(region, '/api/v2/global_product/get_publishable_shop', { query: { global_item_id } });
+      return jsonResp({ ok: !result.error, region, global_item_id, result });
+    }
+    if (action === 'shop_publishable_status') {
+      const result = await merchantApiCall(region, '/api/v2/global_product/get_shop_publishable_status', {});
       return jsonResp({ ok: !result.error, region, result });
     }
     // POST /register_cbsc: high-level GlobalProduct registration and region publish orchestration.
@@ -2361,6 +2389,20 @@ Deno.serve(async (req) => {
         }
       }
 
+      // Diagnostic: query KRSC publishable_shop for this global_item_id once. Result is
+      // recorded in stage_logs + returned so adapter/UI can show which region shops
+      // Shopee considers eligible (KRSC blocks publish to non-publishable shops).
+      let publishable_shops: any = null;
+      try {
+        const psRes = await merchantApiCall(r, '/api/v2/global_product/get_publishable_shop', { query: { global_item_id } });
+        publishable_shops = psRes;
+        console.log(`[register_cbsc] get_publishable_shop global_item_id=${global_item_id} response=${JSON.stringify(psRes).slice(0, 1200)}`);
+        const shopList = Array.isArray(psRes?.response?.publishable_shop) ? psRes.response.publishable_shop : [];
+        stage_logs.push(`publishable_shops: ${shopList.length} shops eligible (${shopList.map((s: any) => `${s.shop_region || s.region || '?'}:${s.shop_id}`).join(', ')})`);
+      } catch (e) {
+        stage_logs.push(`publishable_shops_lookup_failed: ${String(e)}`);
+      }
+
       const results: any[] = [];
       for (const target of targetInputs) {
         const targetRegion = String(target.region || '').toUpperCase();
@@ -2384,19 +2426,49 @@ Deno.serve(async (req) => {
             continue;
           }
           const publish_task_id = Number(publishRes.response?.publish_task_id);
+          console.log(`[register_cbsc] region=${targetRegion} shop_id=${shop_id} publish_task_id=${publish_task_id} create_publish_task_response=${JSON.stringify(publishRes).slice(0, 800)}`);
           let task: any = null;
-          for (let i = 0; i < 8; i++) {
-            await new Promise(s => setTimeout(s, 1500));
+          let pollAttempts = 0;
+          for (let i = 0; i < 30; i++) {
+            await new Promise(s => setTimeout(s, 2000));
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id } });
             task = taskRes;
+            pollAttempts = i + 1;
             if (taskRes.error || !isPublishPending(taskRes)) break;
           }
-          results.push(parsePublishOutcome(targetRegion, shop_id, publish_task_id, task));
+          console.log(`[register_cbsc] region=${targetRegion} publish_task_id=${publish_task_id} poll_attempts=${pollAttempts} final_task=${JSON.stringify(task).slice(0, 1200)}`);
+          let outcome = parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
+          outcome.raw_create = publishRes;
+          outcome.raw_task = task;
+          outcome.poll_attempts = pollAttempts;
+          // Fallback verification: if parser declared failure but the task may still be
+          // resolving async on Shopee's side, query published_list and check whether the
+          // global_item_id has actually surfaced as a shop item. If yes, override to success.
+          if (!outcome.ok) {
+            try {
+              const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
+              const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
+              const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
+              if (hit && hit.item_id) {
+                outcome = {
+                  ok: true,
+                  region: targetRegion,
+                  shop_id,
+                  publish_task_id,
+                  item_id: Number(hit.item_id),
+                  publish_status: 'verified_via_published_list',
+                  error: null,
+                  task,
+                };
+              }
+            } catch (_) { /* ignore — keep original parsePublishOutcome verdict */ }
+          }
+          results.push(outcome);
         } catch (e: any) {
           results.push({ ok: false, region: target.region || r, stage: 'publish_exception', error: String(e?.message || e) });
         }
       }
-      return jsonResp({ ok: true, region: r, global_item_id, stage_logs, results });
+      return jsonResp({ ok: true, region: r, global_item_id, stage_logs, results, publishable_shops });
       }); // end withPublishRequestId for register_cbsc
     }
     if (action === 'item_info') {

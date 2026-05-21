@@ -6896,14 +6896,40 @@ function _gkpRowsForSelection(row) {
       .filter(Boolean);
   }
   const sku = _gkpCleanSku(row.item_sku);
-  if (!sku) return [];
   // Single (no-variant) item: get price from row.price (set by _gkpEnrichItemsComplete from get_global_item_info)
   // Plan: user request 2026-05-16 — auto-fill cost_krw from Global SKU price.
   let costKrw = null;
   const pRaw = Number(row.price);
   if (Number.isFinite(pRaw) && pRaw > 0) costKrw = Math.round(pRaw);
   const weightG = _gkpWeightKgToGrams(_gkpReadWeightKg(row));
-  return [{ sku, product_name: row.item_name || null, shopee_item_id: globalItemId, cost_krw: costKrw, weight_g: weightG }];
+  return [{
+    sku,
+    product_name: row.item_name || null,
+    shopee_item_id: globalItemId,
+    global_model_id: null,
+    cost_krw: costKrw,
+    weight_g: weightG,
+  }];
+}
+
+function _gkpPickedRowKey(row) {
+  if (!row) return '';
+  const sku = _gkpCleanSku(row.sku);
+  if (sku) return `sku:${sku}`;
+  const gid = _gkpIdString(row.shopee_item_id);
+  const gmid = _gkpIdString(row.global_model_id) || '0';
+  return gid ? `gid:${gid}:gmid:${gmid}` : '';
+}
+
+function _gkpExistingRowKeys(row) {
+  const keys = [];
+  if (!row) return keys;
+  const sku = _gkpCleanSku(row.sku);
+  if (sku) keys.push(`sku:${sku}`);
+  const gid = _gkpIdString(row.shopee_item_id);
+  const gmid = _gkpIdString(row.global_model_id) || '0';
+  if (gid) keys.push(`gid:${gid}:gmid:${gmid}`);
+  return keys;
 }
 
 function _gkpSkuSummary(row) {
@@ -7012,10 +7038,12 @@ async function _gkpApply() {
     return;
   }
 
-  // Deduplicate by SKU in-memory first.
+  // Deduplicate by SKU first, but allow single items with blank SKU by falling
+  // back to global_item_id/global_model_id identity.
   const uniqueBySku = new Map();
   for (const row of picked) {
-    if (!uniqueBySku.has(row.sku)) uniqueBySku.set(row.sku, row);
+    const key = _gkpPickedRowKey(row);
+    if (key && !uniqueBySku.has(key)) uniqueBySku.set(key, row);
   }
   const uniqueRows = Array.from(uniqueBySku.values());
 
@@ -7026,33 +7054,52 @@ async function _gkpApply() {
 
   try {
     // Avoid ON CONFLICT dependency: fetch existing SKUs, then insert only missing rows.
-    const skuList = uniqueRows.map(r => r.sku);
-    const { data: existingRows, error: existingErr } = await db.from('products').select('id,sku,shopee_item_id,option_name,global_model_id,cost_krw,weight_g').in('sku', skuList);
-    if (existingErr) throw existingErr;
+    const skuList = uniqueRows.map(r => _gkpCleanSku(r.sku)).filter(Boolean);
+    const gidList = [...new Set(uniqueRows.map(r => _gkpIdString(r.shopee_item_id)).filter(Boolean))];
+    const existingRows = [];
+    if (skuList.length) {
+      const { data, error } = await db.from('products').select('id,sku,shopee_item_id,option_name,global_model_id,cost_krw,weight_g').in('sku', skuList);
+      if (error) throw error;
+      existingRows.push(...(data || []));
+    }
+    if (gidList.length) {
+      const { data, error } = await db.from('products').select('id,sku,shopee_item_id,option_name,global_model_id,cost_krw,weight_g').in('shopee_item_id', gidList);
+      if (error) throw error;
+      for (const row of (data || [])) {
+        if (!existingRows.some(it => String(it.id) === String(row.id))) existingRows.push(row);
+      }
+    }
 
-    const existingBySku = new Map((existingRows || []).map(r => [r.sku, r]));
-    const existing = new Set(existingBySku.keys());
-    const missingRows = uniqueRows.filter(r => !existing.has(r.sku));
+    const existingBySku = new Map();
+    for (const row of existingRows) {
+      for (const key of _gkpExistingRowKeys(row)) {
+        if (!existingBySku.has(key)) existingBySku.set(key, row);
+      }
+    }
+    const missingRows = uniqueRows.filter(r => !existingBySku.has(_gkpPickedRowKey(r)));
     const updates = uniqueRows
-      .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
+      .map(r => ({ next: r, prev: existingBySku.get(_gkpPickedRowKey(r)) }))
       .filter(x => x.prev && String(x.prev.shopee_item_id || '') !== String(x.next.shopee_item_id || ''));
     // Fill option_name for existing rows that are missing it (backfill / re-search case)
     const optionNameUpdates = uniqueRows
-      .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
+      .map(r => ({ next: r, prev: existingBySku.get(_gkpPickedRowKey(r)) }))
       .filter(x => x.prev && !x.prev.option_name && x.next.option_name);
     // Fill global_model_id for existing rows that are missing it (backfill for Shopee SKU sync)
     const globalModelIdUpdates = uniqueRows
-      .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
+      .map(r => ({ next: r, prev: existingBySku.get(_gkpPickedRowKey(r)) }))
       .filter(x => x.prev && !x.prev.global_model_id && x.next.global_model_id);
     // Fill cost_krw for existing rows that have no cost set (initialize from Global SKU Price).
     // Don't overwrite a manually-set cost — only fill when prev.cost_krw is null/0.
     const costKrwUpdates = uniqueRows
-      .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
+      .map(r => ({ next: r, prev: existingBySku.get(_gkpPickedRowKey(r)) }))
       .filter(x => x.prev && (!x.prev.cost_krw || Number(x.prev.cost_krw) <= 0) && Number(x.next.cost_krw) > 0);
     // Fill weight_g from Global Product weight only when the Product Master row has no weight yet.
     const weightUpdates = uniqueRows
-      .map(r => ({ next: r, prev: existingBySku.get(r.sku) }))
+      .map(r => ({ next: r, prev: existingBySku.get(_gkpPickedRowKey(r)) }))
       .filter(x => x.prev && (!x.prev.weight_g || Number(x.prev.weight_g) <= 0) && Number(x.next.weight_g) > 0);
+    const skuBackfillUpdates = uniqueRows
+      .map(r => ({ next: r, prev: existingBySku.get(_gkpPickedRowKey(r)) }))
+      .filter(x => x.prev && !_gkpCleanSku(x.prev.sku) && _gkpCleanSku(x.next.sku));
 
     if (missingRows.length > 0) {
       // Ensure newly-added products always appear at the very TOP of the
@@ -7095,8 +7142,30 @@ async function _gkpApply() {
         await db.from('products').update({ weight_g: next.weight_g }).eq('id', prev.id);
       }));
     }
+    if (skuBackfillUpdates.length > 0) {
+      await Promise.all(skuBackfillUpdates.map(async ({ prev, next }) => {
+        await db.from('products').update({ sku: next.sku }).eq('id', prev.id);
+      }));
+    }
 
-    const { data: refreshedProducts, error: refreshedErr } = await db.from('products').select('*').in('sku', skuList);
+    const refreshedSkus = [...new Set(uniqueRows.map(r => _gkpCleanSku(r.sku)).filter(Boolean))];
+    const refreshedGids = [...new Set(uniqueRows.map(r => _gkpIdString(r.shopee_item_id)).filter(Boolean))];
+    const refreshedProducts = [];
+    let refreshedErr = null;
+    if (refreshedSkus.length) {
+      const { data, error } = await db.from('products').select('*').in('sku', refreshedSkus);
+      if (error) refreshedErr = error;
+      else refreshedProducts.push(...(data || []));
+    }
+    if (!refreshedErr && refreshedGids.length) {
+      const { data, error } = await db.from('products').select('*').in('shopee_item_id', refreshedGids);
+      if (error) refreshedErr = error;
+      else {
+        for (const row of (data || [])) {
+          if (!refreshedProducts.some(it => String(it.id) === String(row.id))) refreshedProducts.push(row);
+        }
+      }
+    }
     if (!refreshedErr) _gkpMergeProductsIntoState(refreshedProducts || []);
 
     const inserted = missingRows.length;
@@ -7112,11 +7181,36 @@ async function _gkpApply() {
 
     // 1. Build productIdBySku from existing + newly inserted
     const productIdBySku = new Map();
-    for (const r of (existingRows || [])) productIdBySku.set(r.sku, r.id);
+    for (const r of existingRows) {
+      for (const key of _gkpExistingRowKeys(r)) {
+        if (!productIdBySku.has(key)) productIdBySku.set(key, r.id);
+      }
+    }
     if (missingRows.length) {
-      const { data: insertedIds, error: fetchInsertedErr } = await db.from('products').select('id, sku').in('sku', missingRows.map(r => r.sku));
+      const insertedSkuList = missingRows.map(r => _gkpCleanSku(r.sku)).filter(Boolean);
+      const insertedGidList = [...new Set(missingRows.map(r => _gkpIdString(r.shopee_item_id)).filter(Boolean))];
+      const insertedIds = [];
+      let fetchInsertedErr = null;
+      if (insertedSkuList.length) {
+        const { data, error } = await db.from('products').select('id, sku, shopee_item_id, global_model_id').in('sku', insertedSkuList);
+        if (error) fetchInsertedErr = error;
+        else insertedIds.push(...(data || []));
+      }
+      if (!fetchInsertedErr && insertedGidList.length) {
+        const { data, error } = await db.from('products').select('id, sku, shopee_item_id, global_model_id').in('shopee_item_id', insertedGidList);
+        if (error) fetchInsertedErr = error;
+        else {
+          for (const row of (data || [])) {
+            if (!insertedIds.some(it => String(it.id) === String(row.id))) insertedIds.push(row);
+          }
+        }
+      }
       if (!fetchInsertedErr) {
-        for (const r of (insertedIds || [])) productIdBySku.set(r.sku, r.id);
+        for (const r of insertedIds) {
+          for (const key of _gkpExistingRowKeys(r)) {
+            if (!productIdBySku.has(key)) productIdBySku.set(key, r.id);
+          }
+        }
       }
     }
 
@@ -7196,7 +7290,7 @@ async function _gkpApply() {
           }
 
           for (const pickedRow of picksForThisGid) {
-            const product_id = productIdBySku.get(pickedRow.sku);
+            const product_id = productIdBySku.get(_gkpPickedRowKey(pickedRow));
             if (!product_id) {
               mappingErrors.push(`${pickedRow.sku}: product_id 조회 실패 (insert 후 재조회 누락)`);
               continue;

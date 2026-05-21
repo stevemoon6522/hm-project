@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 export type AdapterCapability =
   | 'create_listing'
+  | 'create_listing_multi_region'
   | 'activate_listing'
   | 'update_metadata'
   | 'update_price_qty'
@@ -43,6 +44,12 @@ export type AdapterErrorCode =
   | 'ALIBABA_REQUIRED_ATTRS_MISSING'
   | 'ALIBABA_SHIPPING_TEMPLATE_MISSING'
   | 'OFFER_PUBLISH_OUT_OF_SCOPE'
+  | 'SHOPEE_CATEGORY_MISSING'
+  | 'SHOPEE_IMAGE_MISSING'
+  | 'SHOPEE_BRAND_MISSING'
+  | 'SHOPEE_COST_KRW_INVALID'
+  | 'SHOPEE_WEIGHT_MISSING'
+  | 'SHOPEE_LIFECYCLE_INVALID'
   | 'IDEMPOTENT_REPLAY'
   // --- Adapter-emitted (mapped from platform error responses) ---
   | 'PLATFORM_AUTH_FAILED'

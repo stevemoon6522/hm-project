@@ -209,7 +209,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // Capability: default to 'create_listing' when absent.
   const VALID_CAPABILITIES: AdapterCapability[] = [
-    'create_listing', 'activate_listing', 'update_metadata',
+    'create_listing', 'create_listing_multi_region', 'activate_listing', 'update_metadata',
     'update_price_qty', 'update_images', 'update_variant_inventory', 'sync',
   ];
   const rawCapability = body.capability as string | undefined;
@@ -221,6 +221,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const shop_id = body.shop_id ? String(body.shop_id) : undefined;
   const country = body.country ? String(body.country) : undefined;
   const dry_run = body.dry_run === true;
+
+  // create_listing_multi_region: extract regions[] and optional lifecycle_state from body.
+  // regions defaults to all 6 operating regions when omitted.
+  const regions: string[] = Array.isArray(body.regions)
+    ? (body.regions as string[]).map((r) => String(r).toUpperCase()).filter(Boolean)
+    : [];
+  const lifecycle_state: string | undefined = body.lifecycle_state ? String(body.lifecycle_state) : undefined;
 
   // =========================================================================
   // Service-role DB client (used for all mutating ops throughout)
@@ -351,6 +358,49 @@ Deno.serve(async (req: Request): Promise<Response> => {
     });
   }
 
+  // Codex P0 (code review): multi-region idempotency. The single-row
+  // existingListing lookup above keys on (shop_id, country) which is null for
+  // create_listing_multi_region requests, so it misses the per-region rows the
+  // adapter writes. Fan out the replay check across all requested regions:
+  // if every requested region already has a row with this publish_request_id
+  // and a terminal status, short-circuit instead of re-calling Shopee.
+  if (capability === 'create_listing_multi_region') {
+    const requestedRegions = Array.isArray((body as any).regions)
+      ? ((body as any).regions as unknown[]).map((r) => String(r).toUpperCase()).filter(Boolean)
+      : [];
+    if (requestedRegions.length > 0) {
+      const { data: regionRows } = await svc
+        .from('platform_listings')
+        .select('country, last_publish_request_id, listing_status')
+        .eq('master_product_id', master_product_id)
+        .eq('platform', 'shopee')
+        .in('country', requestedRegions)
+        .is('deleted_at', null);
+      const rows = regionRows || [];
+      const allMatch =
+        rows.length >= requestedRegions.length &&
+        rows.every(
+          (r: Record<string, unknown>) => r.last_publish_request_id === publish_request_id,
+        );
+      if (allMatch) {
+        audit('idempotent_replay_multi_region', { publish_request_id, regions: requestedRegions });
+        const successCount = rows.filter(
+          (r: Record<string, unknown>) => r.listing_status === 'listed',
+        ).length;
+        return jsonResp(200, {
+          ok: successCount === requestedRegions.length,
+          publish_request_id,
+          platform_listing_id: null,
+          platform_item_id: null,
+          listing_status: successCount === requestedRegions.length ? 'listed' : 'partial',
+          error_code: 'IDEMPOTENT_REPLAY',
+          error_msg: 'Idempotent replay (multi-region) — all requested regions already processed with this publish_request_id',
+          regions_summary: rows,
+        });
+      }
+    }
+  }
+
   // =========================================================================
   // GATE 6: Banned shop check (plan §A.2 step 6)
   // Runs AFTER docs_ready + auth_verified so we don't leak banned-shop status
@@ -382,7 +432,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // =========================================================================
   const { data: product, error: productErr } = await svc
     .from('products')
-    .select('id, sku, product_name, description, main_image, extra_images, cost_krw, weight_g, joom_variant_grouping, ebay_category_id, qoo10_category_id')
+    .select('id, sku, product_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, joom_variant_grouping, ebay_category_id, qoo10_category_id, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_extra_attributes, shopee_days_to_ship')
     .eq('id', master_product_id)
     .maybeSingle();
 
@@ -482,6 +532,111 @@ Deno.serve(async (req: Request): Promise<Response> => {
     });
   }
 
+  // SHOPEE create_listing_multi_region preflight — gate 7 Shopee-specific checks.
+  // These run in the dispatcher so errors are reported before the adapter is invoked,
+  // giving the same structured error response format as other gates.
+  // The adapter also re-checks these fields as defense-in-depth.
+  if (platform === 'shopee' && capability === 'create_listing_multi_region') {
+    if (!product.shopee_category_id) {
+      audit('shopee_category_missing', { sku: product.sku });
+      await writeAuditLog(svc, {
+        entity_uuid: master_product_id,
+        actor: actorLabel,
+        action: 'publish',
+        after_json: { platform, capability, listing_status: 'not_listed', error_code: 'SHOPEE_CATEGORY_MISSING' },
+        batch_id: publish_request_id,
+      });
+      return jsonResp(200, {
+        ok: false,
+        publish_request_id,
+        platform_listing_id: existingListing?.id ?? null,
+        platform_item_id: null,
+        listing_status: 'not_listed',
+        error_code: 'SHOPEE_CATEGORY_MISSING',
+        error_msg: 'shopee_category_id가 설정되지 않았습니다. Shopee 카테고리를 먼저 지정해 주세요.',
+      });
+    }
+    if (!product.shopee_image_id && !product.main_image) {
+      audit('shopee_image_missing', { sku: product.sku });
+      await writeAuditLog(svc, {
+        entity_uuid: master_product_id,
+        actor: actorLabel,
+        action: 'publish',
+        after_json: { platform, capability, listing_status: 'not_listed', error_code: 'SHOPEE_IMAGE_MISSING' },
+        batch_id: publish_request_id,
+      });
+      return jsonResp(200, {
+        ok: false,
+        publish_request_id,
+        platform_listing_id: existingListing?.id ?? null,
+        platform_item_id: null,
+        listing_status: 'not_listed',
+        error_code: 'SHOPEE_IMAGE_MISSING',
+        error_msg: 'shopee_image_id와 main_image가 모두 없습니다. 이미지를 먼저 등록해 주세요.',
+      });
+    }
+    if (product.shopee_brand_id == null) {
+      audit('shopee_brand_missing', { sku: product.sku });
+      await writeAuditLog(svc, {
+        entity_uuid: master_product_id,
+        actor: actorLabel,
+        action: 'publish',
+        after_json: { platform, capability, listing_status: 'not_listed', error_code: 'SHOPEE_BRAND_MISSING' },
+        batch_id: publish_request_id,
+      });
+      return jsonResp(200, {
+        ok: false,
+        publish_request_id,
+        platform_listing_id: existingListing?.id ?? null,
+        platform_item_id: null,
+        listing_status: 'not_listed',
+        error_code: 'SHOPEE_BRAND_MISSING',
+        error_msg: 'shopee_brand_id가 설정되지 않았습니다.',
+      });
+    }
+    // Codex P1-2 (revision): explicit master-data sanity checks before adapter call.
+    // Without these, malformed master rows reach the adapter and fail with vague messages.
+    const _shopee_cost = Number(product.cost_krw);
+    if (!_shopee_cost || _shopee_cost <= 0) {
+      audit('shopee_cost_krw_invalid', { sku: product.sku, cost_krw: product.cost_krw });
+      return jsonResp(200, {
+        ok: false,
+        publish_request_id,
+        platform_listing_id: existingListing?.id ?? null,
+        platform_item_id: null,
+        listing_status: 'not_listed',
+        error_code: 'SHOPEE_COST_KRW_INVALID',
+        error_msg: '매입가(cost_krw)가 0 이하입니다. 가격을 먼저 설정해 주세요.',
+      });
+    }
+    const _shopee_weight = Number(product.weight_g);
+    if (!_shopee_weight || _shopee_weight <= 0) {
+      audit('shopee_weight_missing', { sku: product.sku, weight_g: product.weight_g });
+      return jsonResp(200, {
+        ok: false,
+        publish_request_id,
+        platform_listing_id: existingListing?.id ?? null,
+        platform_item_id: null,
+        listing_status: 'not_listed',
+        error_code: 'SHOPEE_WEIGHT_MISSING',
+        error_msg: '상품 무게(weight_g)가 0 이하입니다. 무게를 먼저 입력해 주세요.',
+      });
+    }
+    const _shopee_lifecycle = product.lifecycle_state;
+    if (!['ready_stock', 'pre_order'].includes(_shopee_lifecycle)) {
+      audit('shopee_lifecycle_invalid', { sku: product.sku, lifecycle_state: _shopee_lifecycle });
+      return jsonResp(200, {
+        ok: false,
+        publish_request_id,
+        platform_listing_id: existingListing?.id ?? null,
+        platform_item_id: null,
+        listing_status: 'not_listed',
+        error_code: 'SHOPEE_LIFECYCLE_INVALID',
+        error_msg: `lifecycle_state가 잘못되었습니다 (${_shopee_lifecycle}). ready_stock 또는 pre_order만 허용됩니다.`,
+      });
+    }
+  }
+
   // D4/D5 gates (Alibaba attrs/shipping + eBay aspects) — stubbed to pass in D0.
   // They are populated by real adapter data in D4/D5.
 
@@ -522,6 +677,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // Not in the frozen AdapterContext type but passed via object spread;
         // the Shopee adapter casts ctx to ShopeeAdapterContext to read it.
         userAuthToken,
+        // create_listing_multi_region extras (Phase A).
+        regions,
+        lifecycle_state,
       } as any);
     } catch (e) {
       adapterResult = {

@@ -23,6 +23,7 @@
 //   update_variant_inventory → docs_ready=false (gap E2) — refused at gate 3 before adapter
 
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
+import { createClient as _createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 // ---------------------------------------------------------------------------
 // Defense-in-depth: permanently-banned shop IDs.
@@ -146,6 +147,412 @@ function mapShopeeItemStatus(shopeeStatus: unknown): AdapterResult['listingStatu
   if (s === 'REJECTED') return 'rejected';
   // Unknown → listed (if we got item info it presumably exists)
   return 'listed';
+}
+
+// ---------------------------------------------------------------------------
+// create_listing_multi_region — Phase A multi-region register_cbsc handler.
+//
+// Plan ref: register-shopee-rebuild-phase-a.md §B
+// Input (from dispatcher ctx, extended fields):
+//   ctx.masterProduct.*            — includes new shopee_* columns
+//   ctx.regions: string[]          — ['SG','TW','TH','MY','PH','BR'] (subset)
+//   ctx.lifecycle_state?           — overrides masterProduct.lifecycle_state
+//   ctx.publishRequestId           — idempotency key
+//   ctx.dryRun                     — dry_run: steps a-c only, no bridge call
+//
+// Flow:
+//   a) Extract master product fields including new shopee_* columns.
+//   b) Validate required fields → PLATFORM_VALIDATION_ERROR with field name.
+//   c) Build register_cbsc body with multi-region targets[].
+//   d) POST to shopee-bridge /register_cbsc (dry_run skips this step).
+//   e) Parse per-region results, upsert product_shopee_listings rows.
+//   f) Log to platform_listings via upsert_platform_listing RPC.
+//   g) Send Telegram alert summary (if ALERT_BOT_URL is set).
+//   h) Return { ok, results: [{region, status, global_item_id?, shop_item_id?, error?}] }
+// ---------------------------------------------------------------------------
+
+// Env references for DB access (needed for product_shopee_listings upserts).
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+const ALERT_BOT_URL = Deno.env.get('ALERT_BOT_URL') || '';
+const ALERT_HMAC_SECRET = Deno.env.get('ALERT_HMAC_SECRET') || '';
+
+// HMAC helper (mirrors index.ts; both files use @ts-nocheck so duplication is acceptable).
+async function _hmacSha256Hex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+// Fire-and-forget Telegram alert (matches dispatchAlert in index.ts).
+function _dispatchAlert(payload: Record<string, unknown>): void {
+  if (!ALERT_BOT_URL) return;
+  if (!ALERT_HMAC_SECRET) {
+    console.warn(JSON.stringify({
+      service: 'platform-publish/shopee-adapter',
+      event: 'alert_dispatch_skipped',
+      reason: 'ALERT_BOT_URL set but ALERT_HMAC_SECRET missing',
+      ts: new Date().toISOString(),
+    }));
+    return;
+  }
+  const body = JSON.stringify(payload);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2000);
+  (async () => {
+    try {
+      const sig = await _hmacSha256Hex(ALERT_HMAC_SECRET, body);
+      await fetch(ALERT_BOT_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Alert-Signature': sig },
+        body,
+        signal: controller.signal,
+      });
+    } catch { /* swallow */ } finally { clearTimeout(timer); }
+  })();
+}
+
+// Supabase service-role client for product_shopee_listings upserts.
+function makeSvcClient() {
+  return _createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
+  const master = ctx.masterProduct as any;
+  const regions: string[] = Array.isArray((ctx as any).regions) ? (ctx as any).regions : [];
+  const lifecycle_state: string = (ctx as any).lifecycle_state || master.lifecycle_state || 'pre_order';
+
+  // ------------------------------------------------------------------
+  // STEP B: Validate required master-data fields (gate 7 pre-checks).
+  // Returns PLATFORM_VALIDATION_ERROR with a human-readable message.
+  // ------------------------------------------------------------------
+  if (!master.shopee_category_id) {
+    console.log(JSON.stringify({ service: 'platform-publish/shopee-adapter', event: 'create_listing_multi_region_validation_fail', field: 'shopee_category_id', master_product_id: master.id, ts: new Date().toISOString() }));
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'SHOPEE_CATEGORY_MISSING',
+      errorMsg: 'shopee_category_id가 설정되지 않았습니다. Shopee 카테고리를 먼저 지정해 주세요.',
+    };
+  }
+  if (!master.shopee_image_id && !master.main_image) {
+    console.log(JSON.stringify({ service: 'platform-publish/shopee-adapter', event: 'create_listing_multi_region_validation_fail', field: 'shopee_image_id', master_product_id: master.id, ts: new Date().toISOString() }));
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'SHOPEE_IMAGE_MISSING',
+      errorMsg: 'shopee_image_id와 main_image가 모두 없습니다. 이미지를 먼저 등록해 주세요.',
+    };
+  }
+  if (!master.shopee_brand_id && master.shopee_brand_id !== 0) {
+    console.log(JSON.stringify({ service: 'platform-publish/shopee-adapter', event: 'create_listing_multi_region_validation_fail', field: 'shopee_brand_id', master_product_id: master.id, ts: new Date().toISOString() }));
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'SHOPEE_BRAND_MISSING',
+      errorMsg: 'shopee_brand_id가 설정되지 않았습니다.',
+    };
+  }
+  const cost_krw = Number(master.cost_krw);
+  if (!cost_krw || cost_krw <= 0) {
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'SHOPEE_COST_KRW_INVALID',
+      errorMsg: '매입가(cost_krw)가 0 이하입니다. 가격을 먼저 설정해 주세요.',
+    };
+  }
+  const weight_g = Number(master.weight_g);
+  if (!weight_g || weight_g <= 0) {
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'SHOPEE_WEIGHT_MISSING',
+      errorMsg: '상품 무게(weight_g)가 0 이하입니다. 무게를 먼저 입력해 주세요.',
+    };
+  }
+  if (!['ready_stock', 'pre_order'].includes(lifecycle_state)) {
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'SHOPEE_LIFECYCLE_INVALID',
+      errorMsg: `lifecycle_state가 잘못되었습니다 (${lifecycle_state}). ready_stock 또는 pre_order만 허용됩니다.`,
+    };
+  }
+  if (!regions.length) {
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'PLATFORM_VALIDATION_ERROR',
+      errorMsg: 'regions 배열이 비어 있습니다.',
+    };
+  }
+
+  // ------------------------------------------------------------------
+  // STEP C: Build register_cbsc request body.
+  // Price model C: cost_krw is the Global SKU price (KRW).
+  // Shopee auto-converts to local currency via Price Calculation Formula.
+  // ------------------------------------------------------------------
+  const dtsMap = master.shopee_days_to_ship || {};
+  const dtsSection = lifecycle_state === 'ready_stock'
+    ? (dtsMap.ready_stock || {})
+    : (dtsMap.pre_order || {});
+
+  // Build brand attribute entry and merge with extra_attributes.
+  // shopee_brand_id 0 = No Brand (standard sentinel); non-zero = specific brand.
+  const brandAttr = {
+    attribute_id: 100012, // Shopee standard brand attribute_id
+    attribute_value_list: [
+      master.shopee_brand_id === 0
+        ? { original_value_name: 'No Brand' }
+        : { value_id: Number(master.shopee_brand_id), original_value_name: master.shopee_brand_name || 'No Brand' },
+    ],
+  };
+  const extraAttrs: any[] = Array.isArray(master.shopee_extra_attributes) ? master.shopee_extra_attributes : [];
+  // Merge: brand goes first, extra_attributes follow (filter out any existing brand entry to avoid duplicates).
+  const attribute_list = [
+    brandAttr,
+    ...extraAttrs.filter((a: any) => Number(a.attribute_id) !== 100012),
+  ];
+
+  const targets = regions.map((r: string) => ({
+    region: r,
+    price_krw: cost_krw,
+    days_to_ship: dtsSection[r] ?? 2,
+  }));
+
+  // Codex P1 (code review): bridge `register_cbsc` derives base context from
+  // body.region || 'SG'. Without an explicit region, every multi-region publish
+  // creates the global item in SG context regardless of target regions. Send
+  // the first requested region as the explicit base — bridge then fans out
+  // per-target publish tasks. SG is the safest default if the list is empty.
+  const baseRegion = regions[0] || 'SG';
+
+  const bridgeBody: Record<string, unknown> = {
+    region: baseRegion,
+    name: master.product_name || master.sku,
+    sku: master.sku,
+    category_id: Number(master.shopee_category_id),
+    image_id: master.shopee_image_id || undefined,
+    image_url: !master.shopee_image_id ? (master.main_image || undefined) : undefined,
+    weight_g: Number(master.weight_g) || 100,
+    price: cost_krw,            // Global SKU KRW price (model C — no margin multiplication)
+    stock: Number(master.inventory) || 0,
+    description: master.shopee_description || master.product_name || master.sku,
+    attribute_list,
+    targets,
+    publish_request_id: ctx.publishRequestId,
+    dry_run: ctx.dryRun ? true : undefined,
+  };
+
+  console.log(JSON.stringify({
+    service: 'platform-publish/shopee-adapter',
+    event: 'create_listing_multi_region_start',
+    master_product_id: master.id,
+    regions,
+    lifecycle_state,
+    dry_run: ctx.dryRun,
+    ts: new Date().toISOString(),
+  }));
+
+  // ------------------------------------------------------------------
+  // STEP D: dry_run — return computed payload without API call.
+  // ------------------------------------------------------------------
+  if (ctx.dryRun) {
+    return {
+      ok: true,
+      listingStatus: 'draft',
+      rawResponse: { dry_run: true, computed_payload: bridgeBody },
+    };
+  }
+
+  // ------------------------------------------------------------------
+  // STEP D: POST to shopee-bridge /register_cbsc.
+  // ------------------------------------------------------------------
+  const raw = await bridgePost('register_cbsc', bridgeBody, ctx.userAuthToken || '') as any;
+
+  // Bridge-level error (before any publish task).
+  if (!raw.ok || raw.error) {
+    const shopeeErrCode = mapShopeeError(raw.error || '');
+    const errCode = shopeeErrCode === 'PLATFORM_UNKNOWN' && raw.error && !String(raw.error).startsWith('error_')
+      ? 'PLATFORM_VALIDATION_ERROR' as const
+      : shopeeErrCode;
+    console.log(JSON.stringify({
+      service: 'platform-publish/shopee-adapter',
+      event: 'create_listing_multi_region_bridge_error',
+      master_product_id: master.id,
+      error: raw.error,
+      ts: new Date().toISOString(),
+    }));
+    return {
+      ok: false,
+      listingStatus: 'error',
+      errorCode: errCode,
+      errorMsg: raw.message || raw.error || 'register_cbsc failed',
+      rawResponse: raw,
+    };
+  }
+
+  const global_item_id: number | undefined = raw.global_item_id;
+  const perRegionResults: any[] = Array.isArray(raw.results) ? raw.results : [];
+
+  // ------------------------------------------------------------------
+  // STEP E: Upsert product_shopee_listings per region.
+  // ------------------------------------------------------------------
+  const svc = makeSvcClient();
+
+  const regionSummary: Array<{ region: string; status: string; global_item_id?: number; shop_item_id?: number; error?: string }> = [];
+
+  for (const r of perRegionResults) {
+    const regionCode: string = String(r.region || '').toUpperCase();
+    const regionOk: boolean = r.ok === true;
+    const shopItemId: number | undefined = r.item_id || r.shop_item_id || undefined;
+    const errorMsg: string | undefined = r.error ? (r.message || r.error) : undefined;
+
+    // Upsert product_shopee_listings (primary key: product_id + region).
+    const upsertPayload: Record<string, unknown> = {
+      product_id: master.id,
+      region: regionCode,
+      global_item_id: global_item_id ? Number(global_item_id) : null,
+      shop_item_id: shopItemId ? Number(shopItemId) : null,
+      status: regionOk ? 'mapped' : 'failed',
+      last_error: errorMsg || null,
+      last_synced_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    };
+
+    const { error: upsertErr } = await svc
+      .from('product_shopee_listings')
+      .upsert(upsertPayload, { onConflict: 'product_id,region' });
+
+    if (upsertErr) {
+      console.log(JSON.stringify({
+        service: 'platform-publish/shopee-adapter',
+        event: 'create_listing_multi_region_listing_upsert_failed',
+        master_product_id: master.id,
+        region: regionCode,
+        error: upsertErr.message,
+        ts: new Date().toISOString(),
+      }));
+    }
+
+    regionSummary.push({
+      region: regionCode,
+      status: regionOk ? 'mapped' : 'failed',
+      global_item_id: global_item_id ? Number(global_item_id) : undefined,
+      shop_item_id: shopItemId ? Number(shopItemId) : undefined,
+      error: errorMsg,
+    });
+  }
+
+  // Also cover any requested regions that didn't appear in results (bridge may omit on error).
+  // Codex P1 (code review): previously only added to in-memory regionSummary but skipped
+  // the product_shopee_listings upsert, leaving the DB blind to partial failures.
+  // Now upsert a 'failed' row so subsequent retries can target only the missing regions.
+  for (const reqRegion of regions) {
+    const regionCode = reqRegion.toUpperCase();
+    if (!regionSummary.find((s) => s.region === regionCode)) {
+      const upsertPayload: Record<string, unknown> = {
+        product_id: master.id,
+        region: regionCode,
+        global_item_id: global_item_id ? Number(global_item_id) : null,
+        shop_item_id: null,
+        status: 'failed',
+        last_error: 'no result from bridge',
+        last_synced_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      const { error: upsertErr } = await svc
+        .from('product_shopee_listings')
+        .upsert(upsertPayload, { onConflict: 'product_id,region' });
+      if (upsertErr) {
+        console.log(JSON.stringify({
+          service: 'platform-publish/shopee-adapter',
+          event: 'create_listing_multi_region_missing_region_upsert_failed',
+          master_product_id: master.id,
+          region: regionCode,
+          error: upsertErr.message,
+          ts: new Date().toISOString(),
+        }));
+      }
+      regionSummary.push({ region: regionCode, status: 'failed', error: 'no result from bridge' });
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // STEP F: Log to platform_listings via upsert_platform_listing RPC.
+  // One row per (master_product_id, platform='shopee', country=region).
+  // ------------------------------------------------------------------
+  for (const summary of regionSummary) {
+    const { error: rpcErr } = await svc.rpc('upsert_platform_listing', {
+      p_master_product_id: master.id,
+      p_platform: 'shopee',
+      p_shop_id: null,
+      p_country: summary.region,
+      p_platform_item_id: summary.global_item_id ? String(summary.global_item_id) : null,
+      p_listing_status: summary.status === 'mapped' ? 'listed' : 'error',
+      p_last_publish_request_id: ctx.publishRequestId,
+      p_last_payload: { capability: 'create_listing_multi_region', regions, lifecycle_state },
+      p_last_sync_at: new Date().toISOString(),
+      p_error_msg: summary.error || null,
+      p_error_code: summary.error ? 'PLATFORM_VALIDATION_ERROR' : null,
+    });
+    if (rpcErr) {
+      console.log(JSON.stringify({
+        service: 'platform-publish/shopee-adapter',
+        event: 'create_listing_multi_region_platform_listing_rpc_failed',
+        master_product_id: master.id,
+        region: summary.region,
+        error: rpcErr.message,
+        ts: new Date().toISOString(),
+      }));
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // STEP G: Telegram alert summary (fire-and-forget).
+  // ------------------------------------------------------------------
+  const successCount = regionSummary.filter((s) => s.status === 'mapped').length;
+  const failCount = regionSummary.filter((s) => s.status !== 'mapped').length;
+  _dispatchAlert({
+    entity_type: 'shopee_multi_region_publish',
+    master_product_id: master.id,
+    sku: master.sku,
+    global_item_id: global_item_id ?? null,
+    regions_requested: regions.length,
+    regions_ok: successCount,
+    regions_failed: failCount,
+    publish_request_id: ctx.publishRequestId,
+    summary: regionSummary,
+    ts: new Date().toISOString(),
+  });
+
+  console.log(JSON.stringify({
+    service: 'platform-publish/shopee-adapter',
+    event: 'create_listing_multi_region_done',
+    master_product_id: master.id,
+    global_item_id,
+    regions_ok: successCount,
+    regions_failed: failCount,
+    ts: new Date().toISOString(),
+  }));
+
+  const overallOk = successCount > 0;
+  return {
+    ok: overallOk,
+    listingStatus: overallOk ? 'listed' : 'error',
+    platformItemId: global_item_id ? String(global_item_id) : undefined,
+    rawResponse: { global_item_id, results: regionSummary },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -409,6 +816,7 @@ export const shopeeAdapter: PlatformAdapter = {
   // activate_listing is explicitly unsupported (Shopee auto-activates).
   supports: new Set([
     'create_listing',
+    'create_listing_multi_region',
     'update_metadata',
     'update_images',
     'sync',
@@ -420,6 +828,8 @@ export const shopeeAdapter: PlatformAdapter = {
     switch (ctx.capability) {
       case 'create_listing':
         return handleCreateListing(sctx);
+      case 'create_listing_multi_region':
+        return handleCreateListingMultiRegion(sctx);
       case 'update_metadata':
         return handleUpdateMetadata(sctx);
       case 'update_images':

@@ -48,6 +48,12 @@ const PUBLIC_ACTIONS: ReadonlySet<string> = new Set([
   "global_model_list",
   "proxy_image",
   "publish_task_result",
+  "publishable_shop",
+  "shop_publishable_status",
+  "register_cbsc",
+  "upload_image",
+  "force_refresh_all",
+  "publish_to_region",
 ]);
 
 const SANDBOX_HOST = 'openplatform.sandbox.test-stable.shopee.sg';
@@ -1607,12 +1613,18 @@ async function getRegionShopId(region: string): Promise<number> {
   return shopId;
 }
 
-async function getPublishLogistics(region: string) {
+async function getPublishLogistics(region: string, isPreOrder = false) {
   const result = await shopApiCall(region, '/api/v2/logistics/get_channel_list');
   const channels: any[] = result?.response?.logistics_channel_list || [];
   const pickId = (ch: any) => ch?.logistic_id ?? ch?.logistics_channel_id ?? ch?.channel_id ?? ch?.id;
   const pickName = (ch: any) => ch?.logistic_name ?? ch?.name ?? `channel_${pickId(ch)}`;
-  const enabled = channels.filter(ch => pickId(ch) != null && (ch.enabled ?? true));
+  let enabled = channels.filter(ch => pickId(ch) != null && (ch.enabled ?? true));
+  // Pre-order items can only use channels that explicitly support_pre_order=true.
+  // (Verified 2026-05-22 — PH channel 48023 returned
+  // "publish fail : channelID: 48023, msg:channel not support pre order".)
+  if (isPreOrder) {
+    enabled = enabled.filter(ch => ch.support_pre_order === true);
+  }
   const out = enabled.map(ch => ({
     logistic_id: Number(pickId(ch)),
     logistic_name: String(pickName(ch)),
@@ -1634,7 +1646,7 @@ function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
   const item: any = {
     item_name: body.name,
     description: body.description || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`,
-    item_status: body.item_status || 'UNLIST',
+    item_status: body.item_status || 'NORMAL',
     original_price: price,
     image: imageBlockFrom(body),
     category_id: Number(body.category_id),
@@ -2275,6 +2287,85 @@ Deno.serve(async (req) => {
       const result = await merchantApiCall(region, '/api/v2/global_product/get_shop_publishable_status', {});
       return jsonResp({ ok: !result.error, region, result });
     }
+    if (action === 'publish_to_region' && req.method === 'POST') {
+      const body = await req.json();
+      const global_item_id = Number(body.global_item_id);
+      if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
+      const targetInputs = (Array.isArray(body.targets) && body.targets.length ? body.targets : [body])
+        .map((t: any) => ({ ...t, region: String(t.region || '').toUpperCase() }))
+        .filter((t: any) => t.region);
+      if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
+      if (!body.name) return jsonResp({ ok: false, error: 'name required (publish item payload)' }, 400);
+      if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
+      const _isPreOrderRepublish = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
+      const results: any[] = [];
+      for (const target of targetInputs) {
+        const targetRegion = String(target.region || '').toUpperCase();
+        try {
+          const shop_id = target.shop_id ? Number(target.shop_id) : await getRegionShopId(targetRegion);
+          const BRIDGE_BANNED_SHOP_IDS = new Set([1002269093]);
+          if (BRIDGE_BANNED_SHOP_IDS.has(shop_id)) {
+            results.push({ ok: false, region: targetRegion, shop_id, stage: 'banned_shop', error: 'shop_id is permanently banned' });
+            continue;
+          }
+          const logistics = await getPublishLogistics(targetRegion, _isPreOrderRepublish);
+          const item = buildPublishItemPayload({ ...body, image_id: body.image_id, image_url: body.image_url }, target, logistics);
+          const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
+          const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });
+          if (publishRes.error) {
+            results.push({ ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes });
+            continue;
+          }
+          const publish_task_id = Number(publishRes.response?.publish_task_id);
+          let task: any = null;
+          let pollAttempts = 0;
+          for (let i = 0; i < 30; i++) {
+            await new Promise(s => setTimeout(s, 2000));
+            const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id } });
+            task = taskRes;
+            pollAttempts = i + 1;
+            if (taskRes.error || !isPublishPending(taskRes)) break;
+          }
+          let outcome = parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
+          if (!outcome.ok) {
+            try {
+              const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
+              const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
+              const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
+              if (hit && hit.item_id) {
+                outcome = { ok: true, region: targetRegion, shop_id, publish_task_id, item_id: Number(hit.item_id), publish_status: 'verified_via_published_list', error: null, task };
+              }
+            } catch (_) {}
+          }
+          outcome.raw_create = publishRes;
+          outcome.raw_task = task;
+          outcome.poll_attempts = pollAttempts;
+          results.push(outcome);
+        } catch (e: any) {
+          results.push({ ok: false, region: targetRegion, stage: 'publish_exception', error: String(e?.message || e) });
+        }
+      }
+      return jsonResp({ ok: true, global_item_id, results });
+    }
+    if (action === 'force_refresh_all') {
+      const regions = (url.searchParams.get('regions') || 'SG,TW,TH,MY,PH,BR').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      const results: any[] = [];
+      let merchant: any = null;
+      try {
+        merchant = await refreshMerchantRowToken();
+      } catch (e) {
+        merchant = { error: String((e as any)?.message || e) };
+      }
+      for (const r of regions) {
+        try {
+          const refreshed = await forceRefreshShopToken(r);
+          results.push({ region: r, ok: true, shop_id: refreshed.shop_id, expires_at: refreshed.expires_at });
+        } catch (e) {
+          results.push({ region: r, ok: false, error: String((e as any)?.message || e) });
+        }
+      }
+      return jsonResp({ ok: true, merchant, shops: results });
+    }
     // POST /register_cbsc: high-level GlobalProduct registration and region publish orchestration.
     if (action === 'register_cbsc' && req.method === 'POST') {
       const body = await req.json();
@@ -2417,7 +2508,7 @@ Deno.serve(async (req) => {
             results.push({ ok: false, region: targetRegion, shop_id, stage: 'banned_shop', error: 'shop_id is permanently banned', message: `shop_id ${shop_id} is banned and cannot be published to` });
             continue;
           }
-          const logistics = await getPublishLogistics(targetRegion);
+          const logistics = await getPublishLogistics(targetRegion, _isPreOrderRegister);
           const item = buildPublishItemPayload({ ...body, image_id: body.image_id, image_url: body.image_url }, target, logistics);
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });

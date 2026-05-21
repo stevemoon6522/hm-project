@@ -25,6 +25,15 @@
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
 
 // ---------------------------------------------------------------------------
+// Defense-in-depth: permanently-banned shop IDs.
+// Dispatcher gate 6 also blocks these, but we guard here for direct callers
+// (e.g. cron jobs that bypass the dispatcher).
+// 1002269093 = old BR shop, permanently banned by Shopee 2026-05 — replaced
+// by 1669858301 (starphotocardwl).  Must never be re-introduced.
+// ---------------------------------------------------------------------------
+const BANNED_SHOPEE_SHOP_IDS = new Set<string>(['1002269093']);
+
+// ---------------------------------------------------------------------------
 // Bridge invocation helpers
 // ---------------------------------------------------------------------------
 
@@ -144,12 +153,32 @@ function mapShopeeItemStatus(shopeeStatus: unknown): AdapterResult['listingStatu
 // (spec §2, bridge index.ts:2112-2241)
 // ---------------------------------------------------------------------------
 async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
-  const { masterProduct, country: region, shopId, dryRun, userAuthToken } = ctx;
+  const { masterProduct, country: region, shopId, dryRun, userAuthToken, publishRequestId } = ctx;
   if (!region) {
     return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'country/region required for create_listing' };
   }
   if (!shopId) {
     return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'shop_id required for create_listing' };
+  }
+
+  // Defense-in-depth: block banned shop IDs regardless of how this adapter was called.
+  if (BANNED_SHOPEE_SHOP_IDS.has(String(shopId))) {
+    return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: `shop_id ${shopId} is permanently banned and cannot be used` };
+  }
+
+  // P0: refuse create_listing when price/stock are missing on the master product.
+  // Publishing at 0 stock would silently create an unavailable listing.
+  // TODO (D2.5): replace this guard with a real pricing-rule lookup
+  //   (products.cost_krw → regional price via country_settings markup).
+  const price = (masterProduct as any).price ?? (masterProduct as any).global_price ?? (masterProduct as any).price_krw;
+  const stock = (masterProduct as any).stock ?? (masterProduct as any).available_stock;
+  if (price == null || stock == null) {
+    return {
+      ok: false,
+      listingStatus: 'error',
+      errorCode: 'PLATFORM_VALIDATION_ERROR',
+      errorMsg: 'price/stock missing on master product — set price and stock before publishing (D2.5 pricing-rule TODO)',
+    };
   }
 
   // Build the register_cbsc payload.
@@ -174,7 +203,10 @@ async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterRe
     image_url: masterProduct.main_image || null,
     weight_g: masterProduct.weight_g || 100,
     days_to_ship: (masterProduct as any).days_to_ship ?? 2,
+    price: Number(price),
+    stock: Number(stock),
     targets: [{ region, shop_id: Number(shopId) }],
+    publish_request_id: publishRequestId,
     dry_run: dryRun ? true : undefined,
   };
 
@@ -246,18 +278,22 @@ async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterRe
 // Only passes title/description/sku fields; leave out image_id_list.
 // ---------------------------------------------------------------------------
 async function handleUpdateMetadata(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
-  const { masterProduct, country: region, userAuthToken, platformItemId } = ctx;
+  const { masterProduct, country: region, userAuthToken, platformItemId, publishRequestId } = ctx;
   if (!platformItemId) {
     return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'platformItemId required for update_metadata' };
   }
 
+  // NOTE: weight is intentionally omitted here.
+  // Sending weight on update_global_item overwrites child model weights too,
+  // which breaks per-variant weight on multi-variation listings.
+  // TODO: add a separate update_weight capability when needed.
   const payload: Record<string, unknown> = {
     region: region || 'SG',
     global_item_id: Number(platformItemId),
     global_item_name: masterProduct.product_name || undefined,
     description: masterProduct.description || undefined,
     global_item_sku: masterProduct.sku || undefined,
-    weight: masterProduct.weight_g ? masterProduct.weight_g / 1000 : undefined, // bridge expects kg
+    publish_request_id: publishRequestId,
   };
 
   const raw = await bridgePost('update_global_item', payload, userAuthToken || '') as any;
@@ -280,75 +316,24 @@ async function handleUpdateMetadata(ctx: ShopeeAdapterContext): Promise<AdapterR
 }
 
 // ---------------------------------------------------------------------------
-// update_images — update_global_item with image_id_list only
-// (spec §3a "image.image_id_list" field; update_global_item.json:225-236,
-//  bridge index.ts:1112-1142 via runV2MutationAction)
-// NOTE: update_global_item in the V2 mutation pipeline (bridge) does NOT
-// currently accept image fields — the V2 pipeline at index.ts:1112-1142
-// only passes global_item_sku, global_item_name, description, pre_order,
-// weight. Image updates require a different approach.
+// update_images — NOT YET IMPLEMENTED in the bridge layer.
+// docs_ready=false in platform_capabilities (migration 202605200025).
+// The V2 mutation pipeline (shopee-bridge runV2MutationAction, index.ts:1112-1142)
+// only passes sku/name/description/pre_order fields — image_id_list is not
+// wired. Gate 3 will refuse this capability before we're ever called (because
+// docs_ready=false), but we also pre-check here as defense-in-depth.
 //
-// Workaround: call the non-V2 update_global_dts endpoint pattern is not
-// applicable. Instead, we note this as a P1 gap and return PLATFORM_UNKNOWN
-// with a clear message instructing the operator to use shopee-bridge
-// /upload_image + /update_global_item directly until the V2 pipeline supports
-// image fields.
-//
-// This is honest about the current bridge capability rather than pretending
-// success. The platform_capabilities gate (docs_ready=true for update_images)
-// is correctly set, but the bridge implementation doesn't expose a clean
-// image-update action through the V2 mutation pipeline.
+// TODO (bridge extension needed):
+//   1. Add image.image_id_list to runV2MutationAction update_global_item block.
+//   2. Expose a /upload_image → /update_global_item composite action on the bridge.
+//   3. Flip docs_ready back to true and remove this early return.
 // ---------------------------------------------------------------------------
-async function handleUpdateImages(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
-  const { masterProduct, country: region, userAuthToken, platformItemId } = ctx;
-  if (!platformItemId) {
-    return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'platformItemId required for update_images' };
-  }
-
-  // The spec says: use update_global_item with image_id_list only.
-  // The bridge's runV2MutationAction (index.ts:1112-1142) handles update_global_item
-  // but does NOT currently pass image fields — only sku/name/description/weight/dts.
-  //
-  // To send image_id_list we call merchantApiCall directly, but the adapter cannot
-  // do that — it goes through the bridge. The bridge exposes no dedicated "update images"
-  // action outside the V2 pipeline.
-  //
-  // Resolution (minimal): call update_global_item through the V2 pipeline with only
-  // sku so that at least the pipeline runs and we can see what happens. But because
-  // the bridge explicitly blocks empty-field payloads, this would fail.
-  //
-  // Honest P1 gap: the V2 mutation pipeline in shopee-bridge does not yet support
-  // image field updates. The update_images capability is docs_ready=true (the Shopee
-  // API docs confirm the field exists on update_global_item), but the bridge adapter
-  // layer does not yet wire it. Return a clear PLATFORM_VALIDATION_ERROR rather than
-  // silently no-op.
-  //
-  // The operator should use shopee-bridge directly:
-  //   POST /upload_image → get image_id
-  //   POST /update_global_item with image: { image_id_list: [...] }
-  // or wait for the bridge to expose this through a dedicated adapter action.
-
-  // For now, still attempt to pass image info if we have image_ids available:
-  const imageIds: string[] = (masterProduct as any).shopee_image_ids || [];
-  if (imageIds.length === 0 && masterProduct.main_image) {
-    // We have a URL but not a Shopee image ID. Cannot proceed without pre-upload.
-    return {
-      ok: false,
-      listingStatus: 'error',
-      errorCode: 'PLATFORM_VALIDATION_ERROR',
-      errorMsg: 'update_images: shopee_image_ids not set on master product. Pre-upload images via shopee-bridge /upload_image, then set shopee_image_ids on the product before calling update_images.',
-      rawResponse: { p1_gap: 'V2 mutation pipeline does not support image field updates; use shopee-bridge directly' },
-    };
-  }
-
-  // If we somehow have pre-computed image IDs, attempt the call via a direct
-  // merchantApiCall bypass — but we cannot do that from the adapter layer.
+async function handleUpdateImages(_ctx: ShopeeAdapterContext): Promise<AdapterResult> {
   return {
     ok: false,
     listingStatus: 'error',
-    errorCode: 'PLATFORM_VALIDATION_ERROR',
-    errorMsg: 'update_images: shopee_image_ids required (pre-upload via shopee-bridge /upload_image first)',
-    rawResponse: { p1_gap: 'update_images requires shopee_image_ids on master product' },
+    errorCode: 'CAPABILITY_UNSUPPORTED',
+    errorMsg: 'update_images is not yet supported: shopee-bridge V2 pipeline does not wire image_id_list. Pre-upload via /upload_image + /update_global_item directly. See TODO in adapters/shopee.ts handleUpdateImages.',
   };
 }
 

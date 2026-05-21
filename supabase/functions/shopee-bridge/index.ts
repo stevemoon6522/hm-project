@@ -2216,7 +2216,16 @@ Deno.serve(async (req) => {
       for (const target of targetInputs) {
         const targetRegion = String(target.region || '').toUpperCase();
         try {
-          const shop_id = await getRegionShopId(targetRegion);
+          // Prefer caller-provided shop_id; only fall back to region default when omitted.
+          // Ignoring the caller's shop_id (old behaviour) would publish to the wrong shop
+          // when an explicit non-default shop is passed (e.g. a second shop in the same region).
+          const shop_id = target.shop_id ? Number(target.shop_id) : await getRegionShopId(targetRegion);
+          // Defense-in-depth: block permanently-banned shop IDs even inside the bridge.
+          const BRIDGE_BANNED_SHOP_IDS = new Set([1002269093]);
+          if (BRIDGE_BANNED_SHOP_IDS.has(shop_id)) {
+            results.push({ ok: false, region: targetRegion, shop_id, stage: 'banned_shop', error: 'shop_id is permanently banned', message: `shop_id ${shop_id} is banned and cannot be published to` });
+            continue;
+          }
           const logistics = await getPublishLogistics(targetRegion);
           const item = buildPublishItemPayload({ ...body, image_id: body.image_id, image_url: body.image_url }, target, logistics);
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };

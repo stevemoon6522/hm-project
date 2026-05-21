@@ -7523,8 +7523,15 @@ async function _gkpApply() {
         }
 
         let filtered = _gkpFilter(enriched, keyword);
-        await _gkpEnsureModelsForItems(filtered, statusEl);
-        filtered = _gkpFilter(enriched, keyword);
+        const trimmedKeyword = String(keyword || '').trim();
+        // Performance: with an empty keyword, eager-loading every model list is
+        // the main source of latency after delta refresh. Keep item/global info
+        // cached, but defer model detail fetch until the operator actually
+        // expands a row or applies a selection.
+        if (trimmedKeyword) {
+          await _gkpEnsureModelsForItems(filtered, statusEl);
+          filtered = _gkpFilter(enriched, keyword);
+        }
         const cacheTag = usedCache ? ' (캐시)' : '';
         statusEl.textContent = fallbackMode
           ? `Fallback 검색 사용 중${cacheTag} · "${keyword || '(필터없음)'}" 매칭: ${filtered.length}건`
@@ -7542,10 +7549,15 @@ async function _gkpApply() {
     });
 
     // Expand/collapse toggle
-    document.getElementById('gkp-results-body').addEventListener('click', e => {
+    document.getElementById('gkp-results-body').addEventListener('click', async e => {
       const btn = e.target.closest('.gkp-expand-btn');
       if (!btn) return;
       const gid = btn.dataset.gid;
+      const statusEl = document.getElementById('gkp-status');
+      const enriched = _gkpFindEnrichedItem(gid);
+      if (enriched && (!enriched._modelsLoaded || !Array.isArray(enriched.tier_variation))) {
+        await _gkpEnsureModelsForItems([enriched], statusEl);
+      }
       if (_gkpExpanded.has(gid)) _gkpExpanded.delete(gid); else _gkpExpanded.add(gid);
       _gkpRows = _gkpBuildRows(_gkpEnrichedFiltered);
       _gkpRenderResults();

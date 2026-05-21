@@ -337,6 +337,13 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   // per-target publish tasks. SG is the safest default if the list is empty.
   const baseRegion = regions[0] || 'SG';
 
+  // Operator msg #679/#680: pre_order distinction matters at every step.
+  // - add_global_item Global DTS capped at 10 (bridge enforces via PRE_ORDER_GLOBAL_DTS).
+  // - per-region create_publish_task DTS can be 3-150 (bridge clamps per is_pre_order).
+  // - buildPublishItemPayload must send is_pre_order:true for pre_order lifecycle,
+  //   otherwise items publish as Ready Stock with DTS > 10 → Shopee rejects.
+  const is_pre_order = lifecycle_state === 'pre_order';
+
   const bridgeBody: Record<string, unknown> = {
     region: baseRegion,
     name: master.product_name || master.sku,
@@ -350,6 +357,8 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     description: master.shopee_description || master.product_name || master.sku,
     attribute_list,
     targets,
+    lifecycle_state,            // 'ready_stock' | 'pre_order' — bridge consults this
+    is_pre_order,               // explicit boolean for buildPublishItemPayload
     publish_request_id: ctx.publishRequestId,
     dry_run: ctx.dryRun ? true : undefined,
   };

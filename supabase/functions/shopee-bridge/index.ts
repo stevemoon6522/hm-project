@@ -1347,6 +1347,23 @@ function clampDaysToShip(v: unknown): number {
   return Math.max(1, Math.min(150, Number.isFinite(n) ? n : 2));
 }
 
+// Per Shopee UI/docs: Ready Stock DTS valid range is 1-10 (per Global SKU
+// frame_016 observation); Pre-Order DTS valid range is 3-150 (per Shop SKU
+// frame_020 observation). The Global add_global_item endpoint caps DTS at 10
+// regardless of pre_order — operator msg #679. So:
+//   - Ready Stock: clamp 1-10 (both Global + Region)
+//   - Pre-Order Global: force 10 (max allowed at Global level)
+//   - Pre-Order Region: clamp 3-150 (region max)
+function clampReadyStockDts(v: unknown): number {
+  const n = Number(v);
+  return Math.max(1, Math.min(10, Number.isFinite(n) ? n : 2));
+}
+function clampPreOrderRegionDts(v: unknown): number {
+  const n = Number(v);
+  return Math.max(3, Math.min(150, Number.isFinite(n) ? n : 10));
+}
+const PRE_ORDER_GLOBAL_DTS = 10;
+
 function imageBlockFrom(body: any) {
   const image: any = {};
   if (body?.image_id) image.image_id_list = [String(body.image_id)];
@@ -1589,8 +1606,14 @@ async function getPublishLogistics(region: string) {
 }
 
 function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
-  const dts = clampDaysToShip(target.days_to_ship ?? body.days_to_ship);
   const price = Number(target.price ?? body.price);
+  // is_pre_order is decided by caller (adapter) via body.is_pre_order OR
+  // lifecycle_state === 'pre_order'. Default false (Ready Stock) for back-compat.
+  const isPreOrder = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
+  const dtsRaw = target.days_to_ship ?? body.days_to_ship;
+  const dts = isPreOrder
+    ? clampPreOrderRegionDts(dtsRaw)
+    : clampReadyStockDts(dtsRaw);
   const item: any = {
     item_name: body.name,
     description: body.description || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`,
@@ -1599,7 +1622,7 @@ function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
     image: imageBlockFrom(body),
     category_id: Number(body.category_id),
     logistic: logistics,
-    pre_order: { is_pre_order: false, days_to_ship: dts },
+    pre_order: { is_pre_order: isPreOrder, days_to_ship: dts },
   };
   return item;
 }
@@ -2250,13 +2273,22 @@ Deno.serve(async (req) => {
         }, 400);
       }
 
+      // Operator msg #679: Global add_global_item DTS caps at 10. For Pre-Order
+      // products we force 10 at Global level; per-region DTS is then applied
+      // separately in each create_publish_task call (which can go up to 150).
+      // Ready Stock keeps the existing 1-10 clamp on the first target's DTS.
+      const _isPreOrderRegister = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
+      const _globalDts = _isPreOrderRegister
+        ? PRE_ORDER_GLOBAL_DTS
+        : clampReadyStockDts(targetInputs[0]?.days_to_ship ?? body.days_to_ship);
       const addPayload = buildGlobalItemPayload({
         ...body,
         attribute_list: catAttrs.attribute_list,
         price: Number(body.global_price ?? body.price ?? targetInputs[0]?.price),
         stock: Number(body.stock ?? targetInputs[0]?.stock ?? 0),
         weight_g: Number(body.weight_g ?? targetInputs[0]?.weight_g ?? 100),
-        days_to_ship: targetInputs[0]?.days_to_ship ?? body.days_to_ship,
+        days_to_ship: _globalDts,
+        is_pre_order: _isPreOrderRegister,
       });
       const addRes = await merchantApiCall(r, '/api/v2/global_product/add_global_item', { method: 'POST', body: addPayload });
       if (addRes.error) {

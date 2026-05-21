@@ -50,10 +50,7 @@ const PUBLIC_ACTIONS: ReadonlySet<string> = new Set([
   "publish_task_result",
   "publishable_shop",
   "shop_publishable_status",
-  "register_cbsc",
-  "upload_image",
-  "force_refresh_all",
-  "publish_to_region",
+  "merchant_shops",
 ]);
 
 const SANDBOX_HOST = 'openplatform.sandbox.test-stable.shopee.sg';
@@ -2293,8 +2290,12 @@ Deno.serve(async (req) => {
       return jsonResp({ ok: !result.error, region, global_item_id, result });
     }
     if (action === 'shop_publishable_status') {
-      const result = await merchantApiCall(region, '/api/v2/global_product/get_shop_publishable_status', {});
-      return jsonResp({ ok: !result.error, region, result });
+      const global_item_id = url.searchParams.get('global_item_id') || '';
+      if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
+      const offset = url.searchParams.get('offset') || '0';
+      const page_size = url.searchParams.get('page_size') || '50';
+      const result = await merchantApiCall(region, '/api/v2/global_product/get_shop_publishable_status', { query: { global_item_id, offset, page_size } });
+      return jsonResp({ ok: !result.error, region, global_item_id, result });
     }
     if (action === 'publish_to_region' && req.method === 'POST') {
       const body = await req.json();
@@ -2355,6 +2356,58 @@ Deno.serve(async (req) => {
         }
       }
       return jsonResp({ ok: true, global_item_id, results });
+    }
+    if (action === 'oauth_exchange') {
+      const code = url.searchParams.get('code') || '';
+      const main_account_id = url.searchParams.get('main_account_id') || '';
+      const shop_id = url.searchParams.get('shop_id') || '';
+      if (!code) return jsonResp({ ok: false, error: 'code required' }, 400);
+      if (!main_account_id && !shop_id) return jsonResp({ ok: false, error: 'main_account_id or shop_id required' }, 400);
+      const app = await getApp();
+      const path = '/api/v2/auth/token/get';
+      const ts = Math.floor(Date.now() / 1000);
+      const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
+      const body: any = { code, partner_id: Number(app.partner_id) };
+      if (main_account_id) body.main_account_id = Number(main_account_id);
+      if (shop_id) body.shop_id = Number(shop_id);
+      const r = await fetch(`https://${LIVE_HOST}${path}?partner_id=${app.partner_id}&timestamp=${ts}&sign=${sign}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (j.error || !j.access_token) return jsonResp({ ok: false, error: j.error || 'no_access_token', message: j.message || null, raw: j }, 502);
+      // Persist merchant row (KRSC merchant token)
+      const now = Math.floor(Date.now() / 1000);
+      const expires_at = now + Number(j.expire_in || 14400);
+      const merchant_id_list: number[] = Array.isArray(j.merchant_id_list) ? j.merchant_id_list.map((x: any) => Number(x)) : [];
+      const merchant_id = merchant_id_list[0] || null;
+      const updates: any[] = [];
+      if (main_account_id && merchant_id) {
+        const { error } = await supabase.from('shopee_tokens').upsert({
+          region: '_MERCHANT', shop_id: Number(main_account_id), merchant_id, access_token: j.access_token, refresh_token: j.refresh_token, expires_at,
+        }, { onConflict: 'region' });
+        updates.push({ kind: 'merchant', region: '_MERCHANT', shop_id: main_account_id, error: error?.message || null });
+      }
+      const shop_id_list: number[] = Array.isArray(j.shop_id_list) ? j.shop_id_list.map((x: any) => Number(x)) : [];
+      return jsonResp({ ok: true, access_token_set: !!j.access_token, expires_at, merchant_id, merchant_id_list, shop_id_list, updates, raw: j });
+    }
+    if (action === 'merchant_shops') {
+      const r = url.searchParams.get('region') || 'SG';
+      const result = await merchantApiCall(r, '/api/v2/merchant/get_shop_list_by_merchant', { query: { page_no: 1, page_size: 100 } });
+      return jsonResp({ ok: !result.error, region: r, result });
+    }
+    if (action === 'oauth_url') {
+      const app = await getApp();
+      const path = url.searchParams.get('shop') === '1'
+        ? '/api/v2/shop/auth_partner'
+        : '/api/v2/merchant/auth_partner';
+      const ts = Math.floor(Date.now() / 1000);
+      const base = `${app.partner_id}${path}${ts}`;
+      const sign = await hmac(app.partner_key, base);
+      const redirect = url.searchParams.get('redirect') || 'https://shopee-dashboard-kohl.vercel.app/v2/';
+      const oauthUrl = `https://${LIVE_HOST}${path}?partner_id=${app.partner_id}&timestamp=${ts}&sign=${sign}&redirect=${encodeURIComponent(redirect)}`;
+      return jsonResp({ ok: true, oauth_url: oauthUrl, partner_id: app.partner_id, timestamp: ts, path });
     }
     if (action === 'force_refresh_all') {
       const regions = (url.searchParams.get('regions') || 'SG,TW,TH,MY,PH,BR').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
@@ -2503,6 +2556,26 @@ Deno.serve(async (req) => {
         stage_logs.push(`publishable_shops_lookup_failed: ${String(e)}`);
       }
 
+      // Codex hypothesis C — pre-check per-shop publishable status (with reason)
+      // so we can surface KRSC's "category prohibited" / "channel/region not
+      // supported" reasons up-front instead of getting a generic publish_task
+      // failure that misattributes the cause.
+      let publishable_status: any = null;
+      const unpublishableByShop = new Map<number, string>();
+      try {
+        const stRes = await merchantApiCall(r, '/api/v2/global_product/get_shop_publishable_status', { query: { global_item_id, offset: 0, page_size: 100 } });
+        publishable_status = stRes;
+        const list = Array.isArray(stRes?.response?.shop_publishable_status_list) ? stRes.response.shop_publishable_status_list : [];
+        for (const row of list) {
+          if (row?.shop_publishable_status === false && row?.unpublishable_reason) {
+            unpublishableByShop.set(Number(row.shop_id), String(row.unpublishable_reason));
+          }
+        }
+        stage_logs.push(`shop_publishable_status: ${list.length} shops checked, ${unpublishableByShop.size} unpublishable`);
+      } catch (e) {
+        stage_logs.push(`shop_publishable_status_failed: ${String(e)}`);
+      }
+
       const results: any[] = [];
       for (const target of targetInputs) {
         const targetRegion = String(target.region || '').toUpperCase();
@@ -2515,6 +2588,14 @@ Deno.serve(async (req) => {
           const BRIDGE_BANNED_SHOP_IDS = new Set([1002269093]);
           if (BRIDGE_BANNED_SHOP_IDS.has(shop_id)) {
             results.push({ ok: false, region: targetRegion, shop_id, stage: 'banned_shop', error: 'shop_id is permanently banned', message: `shop_id ${shop_id} is banned and cannot be published to` });
+            continue;
+          }
+          // Pre-check: if KRSC reported this shop as unpublishable, surface the
+          // reason verbatim instead of letting create_publish_task return a
+          // generic failure with a misleading message.
+          const blockedReason = unpublishableByShop.get(shop_id);
+          if (blockedReason) {
+            results.push({ ok: false, region: targetRegion, shop_id, stage: 'shop_unpublishable', error: 'shop_unpublishable', message: blockedReason });
             continue;
           }
           const logistics = await getPublishLogistics(targetRegion, _isPreOrderRegister);
@@ -2568,7 +2649,7 @@ Deno.serve(async (req) => {
           results.push({ ok: false, region: target.region || r, stage: 'publish_exception', error: String(e?.message || e) });
         }
       }
-      return jsonResp({ ok: true, region: r, global_item_id, stage_logs, results, publishable_shops });
+      return jsonResp({ ok: true, region: r, global_item_id, stage_logs, results, publishable_shops, publishable_status });
       }); // end withPublishRequestId for register_cbsc
     }
     if (action === 'item_info') {

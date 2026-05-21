@@ -2190,6 +2190,177 @@
 
 <div id="toast"></div>
 
+<!-- ═══════════════════════════════════════════════════════════════════
+     Phase B — NEW Register Shopee modal (2-stage flow)
+     openRegisterShopeeModal(productId) is the entry point.
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="register-shopee-modal" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rsh-title" style="width:min(760px,100%);">
+
+    <!-- Stage 1: Preview -->
+    <div id="rsh-stage1">
+      <div class="modal-header">
+        <div>
+          <h2 id="rsh-title" style="font-size:15px;margin:0;">Shopee 등록 미리보기</h2>
+          <div id="rsh-subtitle" class="subhead" style="margin-top:2px;"></div>
+        </div>
+        <button type="button" id="rsh-close1">닫기</button>
+      </div>
+      <div class="modal-body" style="max-height:76vh;overflow-y:auto;">
+
+        <!-- Loading / error banner -->
+        <div id="rsh-loading" class="notice" style="display:none;">마스터 데이터 불러오는 중...</div>
+        <div id="rsh-error" class="notice error" style="display:none;"></div>
+        <!-- P1-3: Category 101390 is unsupported in Phase B -->
+        <div id="rsh-cat-blocked" class="notice error" style="display:none;">
+          이 상품의 카테고리(101390 Idol Collectibles)는 Phase B에서 지원되지 않습니다.
+          100740 (CD/DVD/Bluray)으로 변경하거나, 다음 Phase를 기다려 주세요.
+        </div>
+        <!-- P1-4a: staronemall_url missing -->
+        <div id="rsh-no-staronemall" class="notice error" style="display:none;">
+          staronemall URL을 먼저 마스터에 입력해 주세요. 이미지 없이는 Shopee 등록이 불가능합니다.
+        </div>
+        <!-- P1-4b: manual image URL fallback (shown when crawl returns 0 images) -->
+        <div id="rsh-manual-url-section" style="display:none;margin-top:8px;">
+          <div class="notice" style="font-size:12px;margin-bottom:6px;">
+            staronemall 페이지에서 이미지를 찾을 수 없습니다. 직접 이미지 URL을 입력해 주세요.
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input id="rsh-manual-image-url" type="url" placeholder="https://...이미지URL..."
+              style="flex:1;padding:6px 8px;font-size:12px;">
+            <button type="button" id="rsh-manual-url-add" style="font-size:12px;padding:5px 10px;">추가</button>
+          </div>
+        </div>
+
+        <!-- Basic info -->
+        <section class="grid" id="rsh-info-section" style="display:none;">
+          <div class="field span-8">
+            <label>상품명</label>
+            <div id="rsh-product-name" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:#f9f9fb;font-weight:600;"></div>
+          </div>
+          <div class="field span-4">
+            <label>SKU</label>
+            <div id="rsh-sku" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:#f9f9fb;font-family:var(--mono);font-size:12px;"></div>
+          </div>
+          <div class="field span-3">
+            <label>카테고리</label>
+            <select id="rsh-category">
+              <option value="100740">100740 (K-Pop Album)</option>
+              <option value="101390">101390 (Idol Collectibles — Phase C에서 지원 예정)</option>
+            </select>
+            <!-- Fix4: hint that inline change is persisted on Register click -->
+            <div id="rsh-category-hint" style="font-size:11px;color:var(--muted);margin-top:3px;display:none;">변경 사항은 Register 클릭 시 저장됩니다.</div>
+          </div>
+          <div class="field span-3">
+            <label>매입가 KRW</label>
+            <input id="rsh-cost-krw" type="number" min="1" step="1">
+          </div>
+          <div class="field span-3">
+            <label>무게 (g)</label>
+            <div id="rsh-weight" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:#f9f9fb;font-family:var(--mono);font-size:12px;"></div>
+          </div>
+          <div class="field span-3">
+            <label>라이프사이클</label>
+            <div id="rsh-lifecycle" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:#f9f9fb;"></div>
+          </div>
+        </section>
+
+        <!-- Specification attributes -->
+        <section id="rsh-spec-section" style="display:none;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px;">Specification (필수 속성)</div>
+          <div class="grid" id="rsh-spec-grid">
+            <!-- Populated by JS based on category -->
+          </div>
+        </section>
+
+        <!-- Image section -->
+        <section id="rsh-image-section" style="display:none;">
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;">
+            <span style="font-weight:700;font-size:13px;">이미지</span>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <span id="rsh-img-count" class="muted" style="font-size:12px;"></span>
+              <button type="button" id="rsh-reupload-btn" style="font-size:11px;padding:3px 8px;display:none;">이미지 재업로드</button>
+            </div>
+          </div>
+          <div id="rsh-img-cached" style="display:none;">
+            <div class="notice ok" style="font-size:12px;margin-bottom:8px;">캐시된 Shopee 이미지 ID 사용 중. "이미지 재업로드"를 누르면 새로 크롤링합니다.</div>
+            <div id="rsh-img-cached-preview" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+          </div>
+          <div id="rsh-img-missing" class="notice error" style="display:none;">이미지 등록 필요 — shopee_image_id가 없습니다. 아래에서 이미지를 선택해 주세요.</div>
+          <div id="rsh-img-crawl-loading" class="notice" style="display:none;">StarOneMall 이미지 크롤링 중...</div>
+          <div id="rsh-img-crawl-error" class="notice error" style="display:none;"></div>
+          <div id="rsh-img-grid" style="display:none;margin-top:8px;">
+            <!-- 4-column thumbnail grid, rendered by JS -->
+          </div>
+        </section>
+
+        <!-- Description -->
+        <section id="rsh-desc-section" style="display:none;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:6px;">설명 (Description)</div>
+          <textarea id="rsh-description" rows="8" style="width:100%;"></textarea>
+        </section>
+
+        <!-- DTS table -->
+        <section id="rsh-dts-section" style="display:none;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px;">지역별 Days-to-Ship</div>
+          <table style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="background:#faeef8;">
+                <th style="padding:6px 10px;text-align:left;width:60px;">지역</th>
+                <th style="padding:6px 10px;text-align:left;width:80px;">DTS (일)</th>
+                <th style="padding:6px 10px;text-align:left;font-size:11px;color:var(--muted);">참고</th>
+              </tr>
+            </thead>
+            <tbody id="rsh-dts-body"></tbody>
+          </table>
+        </section>
+
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="rsh-cancel1">취소</button>
+        <button type="button" id="rsh-submit1" class="primary" disabled>Register →</button>
+      </div>
+    </div>
+
+    <!-- Stage 2: Execute + Result -->
+    <div id="rsh-stage2" style="display:none;">
+      <div class="modal-header">
+        <div>
+          <h2 style="font-size:15px;margin:0;">Shopee 등록 실행 중</h2>
+          <div id="rsh-stage2-subtitle" class="subhead" style="margin-top:2px;"></div>
+        </div>
+        <button type="button" id="rsh-close2" style="display:none;">닫기</button>
+      </div>
+      <div class="modal-body">
+        <div id="rsh-stage2-error" class="notice error" style="display:none;margin-bottom:8px;"></div>
+        <!-- Fix1: upload failure retry button — shown only after upload error -->
+        <div style="margin-bottom:8px;"><button type="button" id="rsh-upload-retry-btn" style="display:none;">이미지 업로드 재시도</button></div>
+        <table style="width:100%;border-collapse:collapse;font-size:13px;">
+          <thead>
+            <tr style="background:#faeef8;">
+              <th style="padding:8px 10px;text-align:left;width:60px;">지역</th>
+              <th style="padding:8px 10px;text-align:left;width:100px;">상태</th>
+              <th style="padding:8px 10px;text-align:left;width:130px;">Shop Item ID</th>
+              <th style="padding:8px 10px;text-align:left;">메시지</th>
+            </tr>
+          </thead>
+          <tbody id="rsh-result-body"></tbody>
+        </table>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="rsh-retry-btn" class="primary" style="display:none;">실패 지역 재시도</button>
+        <button type="button" id="rsh-close2-footer" style="display:none;">닫기</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     LEGACY register-modal — commented out 2026-05-21 Phase B.
+     Keep until operator verifies new flow. Search for // LEGACY to find.
+     ═══════════════════════════════════════════════════════════════════ -->
+<!-- LEGACY START
 <div class="modal-overlay" id="register-modal" aria-hidden="true">
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal-header">
@@ -2363,12 +2534,13 @@
     </div>
   </div>
 </div>
+LEGACY END -->
 
 <script type="module">
   import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.43.5';
 
-  const SUPABASE_URL = 'https://bpdafetvjyvvwbksvowu.supabase.co';
-  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwZGFmZXR2anl2dndia3N2b3d1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxODM4MjYsImV4cCI6MjA5Mjc1OTgyNn0.p9hYSOhVyLUUO8UyRJ7Av56pLgkPUAi1XCMtc6r-AZA';
+  const SUPABASE_URL = 'https://mgqlwgnmwegzsjelbrih.supabase.co';
+  const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ncWx3Z25td2VnenNqZWxicmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDkzNDMsImV4cCI6MjA5NDg4NTM0M30.mJtqXO7WJMBUYBYVOS1FrD5qmFX6yZxGwfiGw3HUyJE';
   const SHOPEE_BRIDGE = `${SUPABASE_URL}/functions/v1/shopee-bridge`;
   // AUTH_HEADERS.Authorization starts at the anon JWT so the Supabase platform
   // JWT verification (verify_jwt=true on all our Edge Functions) lets requests
@@ -2405,19 +2577,21 @@
     productBody: document.getElementById('product-body'),
     search: document.getElementById('search'),
     refresh: document.getElementById('refresh'),
-    modal: document.getElementById('register-modal'),
-    modalRowLabel: document.getElementById('modal-row-label'),
-    close: document.getElementById('modal-close'),
-    cancel: document.getElementById('modal-cancel'),
-    submit: document.getElementById('modal-submit'),
-    summary: document.getElementById('form-summary'),
-    regionFields: document.getElementById('region-fields'),
-    variantEnabled: document.getElementById('variant-enabled'),
-    variantEditor: document.getElementById('variant-editor'),
-    variantBuild: document.getElementById('variant-build'),
-    variantBody: document.getElementById('variant-body'),
-    resultSection: document.getElementById('result-section'),
-    resultBody: document.getElementById('result-body'),
+    // LEGACY register-modal elements — now commented out in HTML (Phase B).
+    // Keep null refs here so existing code doesn't crash before being fully removed.
+    modal: null,            // was 'register-modal'
+    modalRowLabel: null,    // was 'modal-row-label'
+    close: null,            // was 'modal-close'
+    cancel: null,           // was 'modal-cancel'
+    submit: null,           // was 'modal-submit'
+    summary: null,          // was 'form-summary'
+    regionFields: null,     // was 'region-fields'
+    variantEnabled: null,   // was 'variant-enabled'
+    variantEditor: null,    // was 'variant-editor'
+    variantBuild: null,     // was 'variant-build'
+    variantBody: null,      // was 'variant-body'
+    resultSection: null,    // was 'result-section'
+    resultBody: null,       // was 'result-body'
     poSearch: document.getElementById('po-search'),
     poSort: document.getElementById('po-sort'),
     poRefresh: document.getElementById('po-refresh'),
@@ -2629,6 +2803,7 @@
   }
 
   function showSummary(message, kind = '') {
+    if (!els.summary) return; // LEGACY: modal removed in Phase B
     els.summary.style.display = message ? 'block' : 'none';
     els.summary.className = `notice ${kind}`.trim();
     els.summary.textContent = message || '';
@@ -2751,7 +2926,8 @@
       </tr>
     `).join('');
     els.productBody.querySelectorAll('[data-open]').forEach((btn) => {
-      btn.addEventListener('click', () => openModal(btn.dataset.open));
+      // Phase B: route to new 2-stage modal; legacy openModal kept below for reference
+      btn.addEventListener('click', () => openRegisterShopeeModal(btn.dataset.open));
     });
     els.productBody.querySelectorAll('[data-delete]').forEach((btn) => {
       btn.addEventListener('click', () => deleteOneMasterProduct(btn));
@@ -3491,6 +3667,7 @@
   }
 
   function renderRegionFields() {
+    if (!els.regionFields) return; // LEGACY: modal removed in Phase B
     els.regionFields.innerHTML = REGIONS.map((r) => `
       <div class="region-grid" data-region-row="${r.code}">
         <label style="display:flex;align-items:center;gap:7px;font-weight:700;">
@@ -3572,15 +3749,22 @@
     });
   }
 
+  // LEGACY: openModal is no longer called from renderProducts (Phase B replaced it with
+  // openRegisterShopeeModal). Kept here for reference only; all DOM elements are now null.
   function openModal(productId) {
+    // Guard: legacy modal HTML was removed in Phase B — call new flow instead.
+    console.warn('[v2] openModal() called — routing to openRegisterShopeeModal() (Phase B)');
+    openRegisterShopeeModal(productId);
+    return;
+    // eslint-disable-next-line no-unreachable
     const product = state.products.find((p) => String(p.id) === String(productId));
     if (!product) return;
     state.currentProduct = product;
     state.variantRows = [];
-    els.modalRowLabel.textContent = productLabel(product);
-    field('field-name').value = product.product_name ? `[PRE ORDER] ${product.product_name}` : '[PRE ORDER] ';
-    field('field-sku').value = product.sku || '';
-    field('field-category').value = '101390';
+    if (els.modalRowLabel) els.modalRowLabel.textContent = productLabel(product);
+    if (field('field-name')) field('field-name').value = product.product_name ? `[PRE ORDER] ${product.product_name}` : '[PRE ORDER] ';
+    if (field('field-sku')) field('field-sku').value = product.sku || '';
+    if (field('field-category')) field('field-category').value = '101390';
     field('field-price').value = Number(product.cost_krw || 0) > 0 ? String(Math.round(Number(product.cost_krw))) : '';
     field('field-retail-price').value = '';
     field('field-purchase-cost').value = Number(product.cost_krw || 0) > 0 ? String(Math.round(Number(product.cost_krw))) : '';
@@ -3597,24 +3781,22 @@
     field('field-brand-name').value = 'No Brand';
     field('field-brand-id').value = '0';
     field('field-attrs').value = '[{"attribute_id":100037,"attribute_value_list":[{"original_value_name":"South Korea"}]}]';
-    els.variantEnabled.checked = false;
-    els.variantEditor.style.display = 'none';
-    field('variant-name').value = 'Version';
-    field('variant-values').value = '';
+    if (els.variantEnabled) els.variantEnabled.checked = false;
+    if (els.variantEditor) els.variantEditor.style.display = 'none';
+    if (field('variant-name')) field('variant-name').value = 'Version';
+    if (field('variant-values')) field('variant-values').value = '';
     renderRegionFields();
     renderVariantRows();
     syncModalBundlePricing();
     clearErrors();
     showSummary('', '');
-    els.resultSection.style.display = 'none';
-    els.resultBody.innerHTML = '';
-    els.modal.classList.add('show');
-    els.modal.setAttribute('aria-hidden', 'false');
+    if (els.resultSection) els.resultSection.style.display = 'none';
+    if (els.resultBody) els.resultBody.innerHTML = '';
+    if (els.modal) { els.modal.classList.add('show'); els.modal.setAttribute('aria-hidden', 'false'); }
   }
 
   function closeModal() {
-    els.modal.classList.remove('show');
-    els.modal.setAttribute('aria-hidden', 'true');
+    if (els.modal) { els.modal.classList.remove('show'); els.modal.setAttribute('aria-hidden', 'true'); }
   }
 
   function clearErrors() {
@@ -3661,8 +3843,9 @@
   }
 
   function captureVariantRows() {
-    if (!els.variantEnabled.checked) return [];
+    if (!els.variantEnabled || !els.variantEnabled.checked) return [];
     const rows = [];
+    if (!els.variantBody) return rows;
     els.variantBody.querySelectorAll('tr[data-index]').forEach((tr) => {
       rows.push({
         option: tr.dataset.option,
@@ -3678,6 +3861,7 @@
   }
 
   function renderVariantRows() {
+    if (!els.variantBody) return; // LEGACY: modal removed in Phase B
     if (!state.variantRows.length) {
       els.variantBody.innerHTML = '<tr><td colspan="6" class="empty">No variants.</td></tr>';
       return;
@@ -3692,7 +3876,7 @@
         <td class="row-error" data-variant-error="${index}"></td>
       </tr>
     `).join('');
-    els.variantBody.querySelectorAll('input[data-v-field="globalPrice"]').forEach((input) => {
+    els.variantBody?.querySelectorAll('input[data-v-field="globalPrice"]').forEach((input) => {
       input.addEventListener('input', (event) => {
         event.currentTarget.dataset.bundleAuto = '0';
       });
@@ -3994,6 +4178,7 @@
   }
 
   function renderResults(rows) {
+    if (!els.resultSection || !els.resultBody) return; // LEGACY: modal removed in Phase B
     els.resultSection.style.display = 'block';
     els.resultBody.innerHTML = rows.map((row) => `
       <tr>
@@ -4011,9 +4196,9 @@
     const validated = validateForm();
     if (!validated) return;
     const payload = buildPayload(validated);
-    els.submit.disabled = true;
+    if (els.submit) els.submit.disabled = true;
     showSummary('Submitting to shopee-bridge/register_cbsc...', '');
-    els.resultSection.style.display = 'none';
+    if (els.resultSection) els.resultSection.style.display = 'none';
     try {
       const response = await fetch(`${SHOPEE_BRIDGE}/register_cbsc`, {
         method: 'POST',
@@ -4034,7 +4219,7 @@
     } catch (e) {
       showSummary(e.message || String(e), 'error');
     } finally {
-      els.submit.disabled = false;
+      if (els.submit) els.submit.disabled = false;
     }
   }
 
@@ -4075,19 +4260,20 @@
       signOut().catch((err) => console.warn('[v2] signOut error:', err));
     });
   }
-  els.close.addEventListener('click', closeModal);
-  els.cancel.addEventListener('click', closeModal);
-  els.modal.addEventListener('click', (e) => { if (e.target === els.modal) closeModal(); });
-  els.submit.addEventListener('click', submitRegistration);
+  // LEGACY modal listeners — guarded with null checks (Phase B: HTML removed).
+  if (els.close) els.close.addEventListener('click', closeModal);
+  if (els.cancel) els.cancel.addEventListener('click', closeModal);
+  if (els.modal) els.modal.addEventListener('click', (e) => { if (e.target === els.modal) closeModal(); });
+  if (els.submit) els.submit.addEventListener('click', submitRegistration);
   // Note: readyLoadPreOrders / readyPreview / readyDryRun are legacy refs (now null).
   // RSW Phase B listeners are wired in initRswListeners() instead.
-  els.variantEnabled.addEventListener('change', () => {
-    els.variantEditor.style.display = els.variantEnabled.checked ? 'block' : 'none';
-    if (els.variantEnabled.checked && !state.variantRows.length && field('variant-values').value.trim()) {
+  if (els.variantEnabled) els.variantEnabled.addEventListener('change', () => {
+    if (els.variantEditor) els.variantEditor.style.display = els.variantEnabled.checked ? 'block' : 'none';
+    if (els.variantEnabled.checked && !state.variantRows.length && field('variant-values')?.value.trim()) {
       buildVariantRowsFromInputs();
     }
   });
-  els.variantBuild.addEventListener('click', buildVariantRowsFromInputs);
+  if (els.variantBuild) els.variantBuild.addEventListener('click', buildVariantRowsFromInputs);
   bindLegacyModalBundlePricing();
 
   pingBridge();
@@ -5808,6 +5994,975 @@
     t.className = `show${type ? ' toast-' + type : ''}`;
     clearTimeout(window._toastTimer);
     window._toastTimer = setTimeout(() => { t.className = ''; }, 3000);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // PHASE B — NEW SHOPEE REGISTER MODAL (2-Stage Flow)
+  // Entry point: openRegisterShopeeModal(productId)
+  // Plan ref: register-shopee-rebuild-phase-b.md
+  // ════════════════════════════════════════════════════════════════
+
+  // Operating regions for Shopee (VN/MX intentionally out of scope).
+  const RSH_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+
+  // Platform-publish base URL (same Supabase project as the dashboard).
+  const PLATFORM_PUBLISH_URL = `${SUPABASE_URL}/functions/v1/platform-publish`;
+  const STARONE_CRAWL_URL = `${SUPABASE_URL}/functions/v1/starone-crawl`;
+
+  // Per-modal state — reset on each openRegisterShopeeModal() call.
+  let _rsh = {
+    productId: null,
+    master: null,            // full product row fetched on open
+    selectedImages: [],      // [{ src: url, idx: number }] — single cover image (P0-1: radio-style)
+    cachedImageId: null,     // shopee_image_id from master (already on Shopee CDN)
+    cachedExtraIds: [],      // shopee_extra_image_ids from master (read-only in Phase B)
+    uploadMode: false,       // true if user chose new images (overrides cache)
+    crawledImages: [],       // images array from starone-crawl observed_values
+    publishRequestId: null,  // UUID generated at Stage 2 start; fresh UUID on retry (P0-2)
+    dtsOverrides: {},        // { region: number } — user-edited DTS values
+    publishInFlight: false,  // P1-2: true while fetch is in-flight — blocks modal close
+  };
+
+  /** Quick DOM helper for rsh- prefixed IDs. */
+  function $rsh(id) { return document.getElementById('rsh-' + id); }
+
+  // P1-5: Two separate description templates — no partial token substitution.
+  // Pick based on lifecycle_state so shipping block is fully correct for each case.
+
+  const READY_STOCK_DESC_TEMPLATE = (productName) => `${productName || ''}
+
+100% Official & Authentic K-POP Album
+- Brand new, sealed, and sourced directly from the official distributor
+
+📊 Chart Certified
+- This album counts toward Hanteo and Circle (Gaon) charts
+- Your purchase directly supports the artist's chart performance
+
+📦 Fast & Secure Shipping
+- Ships from Korea with tracking
+- Safely packed with bubble wrap and a sturdy box
+- Items labeled [READY STOCK], [ON HAND], or [FAST DELIVERY] are dispatched within 1 business day
+
+⚠️ Important Notice
+- The outer box is for protection and may have minor dents, scratches, or creases.
+- The outer vinyl wrap may have slight tears or marks due to shipping.
+- These are not considered defects and are not grounds for return or refund.
+- Please purchase only if you agree to the above conditions.`;
+
+  const PRE_ORDER_DESC_TEMPLATE = (productName) => `${productName || ''}
+
+100% Official & Authentic K-POP Album
+- Brand new, sealed, and sourced directly from the official distributor
+
+📊 Chart Certified
+- This album counts toward Hanteo and Circle (Gaon) charts
+- Your purchase directly supports the artist's chart performance
+
+📅 Pre-Order Notice
+- This is a pre-order item. Estimated shipping window: per artist's announcement.
+- Items will be shipped sequentially after the official release date.
+- Pre-order may take 2-8 weeks depending on supply.
+
+⚠️ Important Notice
+- The outer box is for protection and may have minor dents, scratches, or creases.
+- The outer vinyl wrap may have slight tears or marks due to shipping.
+- These are not considered defects and are not grounds for return or refund.
+- Please purchase only if you agree to the above conditions.`;
+
+  // Pick the correct block-level template based on lifecycle_state.
+  function rshDescriptionTemplate(productName, lifecycleState) {
+    return lifecycleState === 'pre_order'
+      ? PRE_ORDER_DESC_TEMPLATE(productName)
+      : READY_STOCK_DESC_TEMPLATE(productName);
+  }
+
+  // Specification attributes per category (static mapping, plan §D).
+  // category 100740: Brand, Region of Origin, Type, Adult products
+  // category 101390: Brand, Region of Origin only (Shopee API returns empty attribute tree)
+  function rshBuildSpecSection(categoryId, master) {
+    const grid = $rsh('spec-grid');
+    if (!grid) return;
+    grid.innerHTML = '';
+
+    const extraAttrs = Array.isArray(master.shopee_extra_attributes) ? master.shopee_extra_attributes : [];
+    function extraVal(attrId) {
+      const a = extraAttrs.find((x) => Number(x.attribute_id) === attrId);
+      return a?.attribute_value_list?.[0]?.original_value_name || '';
+    }
+
+    // Brand field (attribute_id 100012) — pre-fill from shopee_brand_name
+    const brandHtml = `
+      <div class="field span-4">
+        <label>Brand</label>
+        <input id="rsh-attr-brand" type="text" value="${text(master.shopee_brand_name || 'No Brand')}">
+        <input type="hidden" id="rsh-attr-brand-id" value="${text(String(master.shopee_brand_id ?? 0))}">
+      </div>`;
+
+    // Region of Origin (attribute_id 100037 on most Shopee categories)
+    const originVal = extraVal(100037) || 'South Korea';
+    const originHtml = `
+      <div class="field span-4">
+        <label>Region of Origin</label>
+        <select id="rsh-attr-origin">
+          <option value="South Korea"${originVal === 'South Korea' ? ' selected' : ''}>South Korea</option>
+          <option value="Korea"${originVal === 'Korea' ? ' selected' : ''}>Korea (generic)</option>
+          <option value="Japan"${originVal === 'Japan' ? ' selected' : ''}>Japan</option>
+          <option value="Other"${!['South Korea','Korea','Japan'].includes(originVal) ? ' selected' : ''}>Other</option>
+        </select>
+      </div>`;
+
+    let extra100740 = '';
+    if (Number(categoryId) === 100740) {
+      // Type (attribute_id 100039 or similar — use static field)
+      const typeVal = extraVal(100039) || 'Music & Concerts';
+      extra100740 = `
+        <div class="field span-4">
+          <label>Type</label>
+          <select id="rsh-attr-type">
+            <option value="Music & Concerts"${typeVal === 'Music & Concerts' ? ' selected' : ''}>Music & Concerts</option>
+            <option value="Album"${typeVal === 'Album' ? ' selected' : ''}>Album</option>
+          </select>
+        </div>
+        <div class="field span-4">
+          <label>Adult products</label>
+          <select id="rsh-attr-adult">
+            <option value="NA" selected>NA</option>
+          </select>
+        </div>`;
+    }
+
+    grid.innerHTML = brandHtml + originHtml + extra100740;
+  }
+
+  // Build attribute_list array from spec form inputs.
+  function rshReadSpecAttributes(categoryId) {
+    const brandName = document.getElementById('rsh-attr-brand')?.value?.trim() || 'No Brand';
+    const brandId = Number(document.getElementById('rsh-attr-brand-id')?.value) || 0;
+    const origin = document.getElementById('rsh-attr-origin')?.value || 'South Korea';
+
+    const attrs = [
+      {
+        attribute_id: 100012,
+        attribute_value_list: [
+          brandId === 0
+            ? { original_value_name: 'No Brand' }
+            : { value_id: brandId, original_value_name: brandName },
+        ],
+      },
+      {
+        attribute_id: 100037,
+        attribute_value_list: [{ original_value_name: origin }],
+      },
+    ];
+
+    if (Number(categoryId) === 100740) {
+      const typeVal = document.getElementById('rsh-attr-type')?.value || 'Music & Concerts';
+      attrs.push({
+        attribute_id: 100039,
+        attribute_value_list: [{ original_value_name: typeVal }],
+      });
+      attrs.push({
+        attribute_id: 100040,
+        attribute_value_list: [{ original_value_name: 'NA' }],
+      });
+    }
+    return attrs;
+  }
+
+  // Render DTS table rows (one per region).
+  function rshRenderDtsTable(master) {
+    const body = $rsh('dts-body');
+    if (!body) return;
+    const lifecycle = master.lifecycle_state || 'ready_stock';
+    const dtsMap = master.shopee_days_to_ship || {};
+    const dtsSection = lifecycle === 'ready_stock' ? (dtsMap.ready_stock || {}) : (dtsMap.pre_order || {});
+    const defaults = { SG: 2, TW: 3, TH: 3, MY: 3, PH: 3, BR: 14 };
+
+    body.innerHTML = RSH_REGIONS.map((r) => {
+      const val = (_rsh.dtsOverrides[r] != null) ? _rsh.dtsOverrides[r] : (dtsSection[r] ?? defaults[r] ?? 2);
+      return `<tr>
+        <td style="padding:5px 10px;font-weight:700;">${text(r)}</td>
+        <td style="padding:5px 10px;">
+          <input type="number" id="rsh-dts-${r}" min="1" max="150" step="1" value="${val}"
+            style="width:60px;padding:4px 6px;font-size:12px;"
+            onchange="window._rshDtsChange('${r}', this.value)">
+        </td>
+        <td style="padding:5px 10px;font-size:11px;color:var(--muted);">
+          ${lifecycle === 'pre_order' && r === 'SG' ? 'Pre-Order — Global DTS 10 캡 적용' : ''}
+          ${lifecycle === 'pre_order' && r === 'BR' ? 'Pre-Order' : ''}
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  window._rshDtsChange = function(region, val) {
+    _rsh.dtsOverrides[region] = Number(val) || 2;
+  };
+
+  // Read DTS values from the table inputs.
+  function rshReadDts() {
+    const out = {};
+    RSH_REGIONS.forEach((r) => {
+      const el = document.getElementById(`rsh-dts-${r}`);
+      out[r] = el ? (Number(el.value) || 2) : 2;
+    });
+    return out;
+  }
+
+  // Render crawled image grid (4-column, click to select).
+  function rshRenderImageGrid(images) {
+    const grid = $rsh('img-grid');
+    if (!grid) return;
+    if (!images.length) {
+      grid.innerHTML = '<div class="notice" style="font-size:12px;">크롤링된 이미지가 없습니다.</div>';
+      grid.style.display = 'block';
+      return;
+    }
+    grid.style.display = 'grid';
+    grid.style.gridTemplateColumns = 'repeat(4, 1fr)';
+    grid.style.gap = '8px';
+    grid.innerHTML = images.map((src, i) => `
+      <div id="rsh-img-cell-${i}" onclick="window._rshToggleImage(${i})"
+        style="cursor:pointer;border:2px solid var(--border);border-radius:6px;overflow:hidden;position:relative;aspect-ratio:1;background:#f5f5f5;">
+        <img src="${text(src)}" alt="" style="width:100%;height:100%;object-fit:cover;" loading="lazy"
+          onerror="this.parentElement.style.opacity='0.3'">
+        <div id="rsh-img-badge-${i}" style="display:none;position:absolute;top:4px;left:4px;background:var(--accent);color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;"></div>
+      </div>`).join('');
+    rshUpdateImageCount();
+  }
+
+  // P0-1: Single-select (radio-style) — only 1 cover image supported in Phase B.
+  // Backend buildPublishItemPayload only accepts a single image_id.
+  window._rshToggleImage = function(idx) {
+    const existing = _rsh.selectedImages.findIndex((s) => s.idx === idx);
+    if (existing !== -1) {
+      // Click on already-selected image → deselect
+      _rsh.selectedImages = [];
+    } else {
+      // Replace any existing selection with the new one (radio behaviour)
+      _rsh.selectedImages = [{ src: _rsh.crawledImages[idx], idx }];
+    }
+    rshUpdateImageBadges();
+    rshUpdateImageCount();
+    rshCheckSubmitEnabled();
+  };
+
+  function rshUpdateImageBadges() {
+    // Clear all badges
+    _rsh.crawledImages.forEach((_, i) => {
+      const cell = document.getElementById(`rsh-img-cell-${i}`);
+      const badge = document.getElementById(`rsh-img-badge-${i}`);
+      if (!cell || !badge) return;
+      cell.style.borderColor = 'var(--border)';
+      badge.style.display = 'none';
+    });
+    // Mark the single selected image — only "선택됨" label, no order badge
+    _rsh.selectedImages.forEach((s) => {
+      const cell = document.getElementById(`rsh-img-cell-${s.idx}`);
+      const badge = document.getElementById(`rsh-img-badge-${s.idx}`);
+      if (!cell || !badge) return;
+      cell.style.borderColor = 'var(--accent)';
+      badge.style.display = 'block';
+      badge.textContent = '선택됨';
+    });
+  }
+
+  function rshUpdateImageCount() {
+    // P0-1: No N/9 count — single-select only; show "선택됨" when one is picked
+    const countEl = $rsh('img-count');
+    if (countEl) countEl.textContent = _rsh.selectedImages.length > 0 ? '선택됨' : '';
+  }
+
+  // Determine whether all required fields are present → enable Register button.
+  // Blocks: category 101390 (P1-3), missing staronemall_url with no image (P1-4a), no image set.
+  function rshCheckSubmitEnabled() {
+    const btn = $rsh('submit1');
+    if (!btn) return;
+
+    const hasImage = _rsh.cachedImageId || _rsh.selectedImages.length > 0;
+    const hasCost = Number(document.getElementById('rsh-cost-krw')?.value) > 0;
+
+    // P1-3: block if master category was 101390 (banner already shown)
+    const catBlocked = $rsh('cat-blocked') && $rsh('cat-blocked').style.display !== 'none';
+
+    // P1-4a: block if staronemall URL is missing (banner already shown)
+    const staronemallMissing = $rsh('no-staronemall') && $rsh('no-staronemall').style.display !== 'none';
+
+    btn.disabled = !hasImage || !hasCost || catBlocked || staronemallMissing;
+  }
+
+  // Show cached image preview strip.
+  function rshShowCachedImages(master) {
+    const previewEl = $rsh('img-cached-preview');
+    if (!previewEl) return;
+    const ids = [master.shopee_image_id].concat(master.shopee_extra_image_ids || []).filter(Boolean);
+    // We only have IDs, not URLs — show compact text badges
+    previewEl.innerHTML = ids.map((id, i) =>
+      `<span class="pill" style="font-size:11px;">${i === 0 ? '대표' : `추가${i}`}: ${text(String(id).slice(0, 20))}...</span>`
+    ).join('');
+  }
+
+  // Main open function — entry point for Register button click.
+  async function openRegisterShopeeModal(productId) {
+    // P2-1: ?legacy=1 disables the new modal and shows a toast instead.
+    if (RSH_LEGACY_MODE) {
+      showToast('구 모달 모드 (?legacy=1) — 새 등록 모달이 비활성화되어 있습니다. URL에서 파라미터를 제거해 Phase B 모달을 사용하세요.', 'err');
+      console.warn('[rsh] ?legacy=1 is set — new modal blocked. Remove the flag to use Phase B flow.');
+      return;
+    }
+
+    // Reset per-modal state
+    _rsh = {
+      productId,
+      master: null,
+      selectedImages: [],
+      cachedImageId: null,
+      cachedExtraIds: [],
+      uploadMode: false,
+      crawledImages: [],
+      publishRequestId: null,
+      dtsOverrides: {},
+      publishInFlight: false,
+    };
+
+    const overlay = document.getElementById('register-shopee-modal');
+    if (!overlay) return;
+
+    // Show stage 1, hide stage 2
+    const s1 = $rsh('stage1');
+    const s2 = $rsh('stage2');
+    if (s1) s1.style.display = '';
+    if (s2) s2.style.display = 'none';
+
+    // Show loading state
+    $rsh('loading').style.display = 'block';
+    $rsh('error').style.display = 'none';
+    $rsh('info-section').style.display = 'none';
+    $rsh('spec-section').style.display = 'none';
+    $rsh('image-section').style.display = 'none';
+    $rsh('desc-section').style.display = 'none';
+    $rsh('dts-section').style.display = 'none';
+    const submitBtn = $rsh('submit1');
+    if (submitBtn) submitBtn.disabled = true;
+
+    overlay.classList.add('show');
+    overlay.setAttribute('aria-hidden', 'false');
+
+    // Fetch full master product row (loadData only fetches partial columns)
+    const { data: master, error: fetchErr } = await db
+      .from('products')
+      .select('id, sku, product_name, option_name, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, main_image')
+      .eq('id', productId)
+      .single();
+
+    $rsh('loading').style.display = 'none';
+
+    if (fetchErr || !master) {
+      $rsh('error').textContent = `마스터 데이터 로드 실패: ${fetchErr?.message || '상품을 찾을 수 없습니다.'}`;
+      $rsh('error').style.display = 'block';
+      return;
+    }
+
+    _rsh.master = master;
+    _rsh.cachedImageId = master.shopee_image_id || null;
+    _rsh.cachedExtraIds = master.shopee_extra_image_ids || [];
+
+    // Populate subtitle
+    const subtitleEl = $rsh('subtitle');
+    if (subtitleEl) subtitleEl.textContent = [master.sku, master.product_name, master.option_name].filter(Boolean).join(' / ');
+
+    // Populate info fields
+    const nameEl = $rsh('product-name');
+    if (nameEl) nameEl.textContent = master.product_name || master.sku || '(이름 없음)';
+    const skuEl = $rsh('sku');
+    if (skuEl) skuEl.textContent = master.sku || '';
+
+    // P1-3: Default to 100740, NOT 101390 (101390 is blocked in Phase B).
+    // If master has 101390, show red banner + disable Register.
+    const catSel = $rsh('category');
+    const masterCatId = Number(master.shopee_category_id) || 100740;
+    const catBlockedEl = $rsh('cat-blocked');
+    const is101390Blocked = masterCatId === 101390;
+    if (catSel) {
+      // Always default dropdown to 100740 for Phase B
+      const displayCatId = is101390Blocked ? 100740 : masterCatId;
+      const opt = catSel.querySelector(`option[value="${displayCatId}"]`);
+      if (opt) opt.selected = true;
+    }
+    if (catBlockedEl) catBlockedEl.style.display = is101390Blocked ? 'block' : 'none';
+
+    const costEl = document.getElementById('rsh-cost-krw');
+    if (costEl) costEl.value = String(Number(master.cost_krw) || '');
+
+    const weightEl = $rsh('weight');
+    if (weightEl) weightEl.textContent = master.weight_g ? `${Number(master.weight_g).toLocaleString()} g` : '(미설정)';
+
+    const lifecycleEl = $rsh('lifecycle');
+    if (lifecycleEl) {
+      const ls = master.lifecycle_state || 'ready_stock';
+      lifecycleEl.textContent = ls === 'pre_order' ? '🕐 Pre-Order' : '✅ Ready Stock';
+      lifecycleEl.style.color = ls === 'pre_order' ? 'var(--yellow)' : 'var(--green)';
+    }
+
+    // Build spec section — P1-3: default to 100740, not 101390
+    const catId = Number(master.shopee_category_id) || 100740;
+    rshBuildSpecSection(catId, master);
+
+    // Listen for category change to rebuild spec
+    if (catSel) {
+      catSel.onchange = () => {
+        rshBuildSpecSection(Number(catSel.value), _rsh.master);
+      };
+    }
+
+    // Listen for cost change to re-check submit
+    if (costEl) costEl.addEventListener('input', rshCheckSubmitEnabled);
+
+    // Description
+    const descEl = document.getElementById('rsh-description');
+    if (descEl) {
+      descEl.value = master.shopee_description || rshDescriptionTemplate(master.product_name || master.sku, master.lifecycle_state);
+    }
+
+    // DTS table
+    rshRenderDtsTable(master);
+
+    // Image section
+    const imgSection = $rsh('image-section');
+    const imgCached = $rsh('img-cached');
+    const imgMissing = $rsh('img-missing');
+    const imgCrawlLoading = $rsh('img-crawl-loading');
+    const imgCrawlError = $rsh('img-crawl-error');
+    const imgGrid = $rsh('img-grid');
+    const reuploadBtn = $rsh('reupload-btn');
+
+    // Reset image sub-elements
+    if (imgCached) imgCached.style.display = 'none';
+    if (imgMissing) imgMissing.style.display = 'none';
+    if (imgCrawlLoading) imgCrawlLoading.style.display = 'none';
+    if (imgCrawlError) imgCrawlError.style.display = 'none';
+    if (imgGrid) imgGrid.style.display = 'none';
+    const noStaronemallBanner = $rsh('no-staronemall');
+    if (noStaronemallBanner) noStaronemallBanner.style.display = 'none';
+    const manualUrlSection = $rsh('manual-url-section');
+    if (manualUrlSection) manualUrlSection.style.display = 'none';
+
+    if (_rsh.cachedImageId && !_rsh.uploadMode) {
+      // Cached path: show badge + re-upload button
+      if (imgCached) imgCached.style.display = 'block';
+      rshShowCachedImages(master);
+      if (reuploadBtn) {
+        reuploadBtn.style.display = 'inline-flex';
+        reuploadBtn.onclick = () => rshStartImageReupload(master);
+      }
+    } else if (master.staronemall_url) {
+      // No cache, but has StarOneMall URL — crawl automatically
+      if (imgMissing) imgMissing.style.display = 'block';
+      await rshCrawlImages(master.staronemall_url);
+    } else {
+      // P1-4a: No cache, no staronemall_url — show red banner, disable Register, no image grid
+      if (noStaronemallBanner) noStaronemallBanner.style.display = 'block';
+    }
+
+    // Show all sections
+    $rsh('info-section').style.display = '';
+    $rsh('spec-section').style.display = '';
+    if (imgSection) imgSection.style.display = '';
+    $rsh('desc-section').style.display = '';
+    $rsh('dts-section').style.display = '';
+
+    rshCheckSubmitEnabled();
+  }
+
+  // Crawl images from StarOneMall URL and render grid.
+  async function rshCrawlImages(staronemallUrl) {
+    const imgCrawlLoading = $rsh('img-crawl-loading');
+    const imgCrawlError = $rsh('img-crawl-error');
+    const imgGrid = $rsh('img-grid');
+
+    if (imgCrawlLoading) imgCrawlLoading.style.display = 'block';
+    if (imgCrawlError) imgCrawlError.style.display = 'none';
+
+    try {
+      const session = (await db.auth.getSession()).data.session;
+      if (!session) throw new Error('로그인이 필요합니다. 다시 로그인해 주세요.');
+
+      const resp = await fetch(STARONE_CRAWL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON },
+        body: JSON.stringify({ urls: [staronemallUrl], write_to_source_records: false }),
+      });
+      const json = await resp.json();
+      if (!json.ok || !json.results?.[0]?.ok) {
+        throw new Error(json.results?.[0]?.error || json.error || '크롤링 실패');
+      }
+
+      const observed = json.results[0].observed_values || {};
+      // Combine main + detail images, dedup, max 20
+      const allImages = [
+        ...(observed.main_image_urls || []),
+        ...(observed.detail_image_urls || []),
+      ].filter((u, i, arr) => u && arr.indexOf(u) === i).slice(0, 20);
+
+      if (imgCrawlLoading) imgCrawlLoading.style.display = 'none';
+
+      if (!allImages.length) {
+        // P1-4b: crawl returned 0 images → show manual URL fallback input
+        if (imgCrawlError) {
+          imgCrawlError.textContent = 'staronemall 페이지에서 이미지를 찾을 수 없습니다. 직접 URL을 입력해 주세요.';
+          imgCrawlError.style.display = 'block';
+        }
+        const manualSection = $rsh('manual-url-section');
+        if (manualSection) {
+          manualSection.style.display = 'block';
+          rshInitManualUrlInput();
+        }
+        return;
+      }
+
+      _rsh.crawledImages = allImages;
+      _rsh.selectedImages = [];
+      rshRenderImageGrid(allImages);
+      if (imgGrid) imgGrid.style.display = '';
+    } catch (e) {
+      if (imgCrawlLoading) imgCrawlLoading.style.display = 'none';
+      if (imgCrawlError) { imgCrawlError.textContent = `이미지 크롤링 오류: ${e.message || e}`; imgCrawlError.style.display = 'block'; }
+      console.error('[rsh] crawl error:', e);
+    }
+  }
+
+  // P1-4b: Wire up manual URL input once (idempotent — guarded by data-init attribute).
+  // Operator pastes a direct image URL; modal treats it as a single-selected crawled image.
+  function rshInitManualUrlInput() {
+    const section = $rsh('manual-url-section');
+    if (!section || section.dataset.init) return;
+    section.dataset.init = '1';
+    const addBtn = document.getElementById('rsh-manual-url-add');
+    if (!addBtn) return;
+    addBtn.addEventListener('click', () => {
+      const urlInput = document.getElementById('rsh-manual-image-url');
+      const url = urlInput?.value?.trim();
+      if (!url) { showToast('이미지 URL을 입력해 주세요.', 'err'); return; }
+      // Treat the pasted URL as a single crawled image
+      _rsh.crawledImages = [url];
+      _rsh.selectedImages = [{ src: url, idx: 0 }];
+      _rsh.uploadMode = true;
+      // Render a 1-cell grid showing the URL image
+      rshRenderImageGrid([url]);
+      const imgGrid = $rsh('img-grid');
+      if (imgGrid) imgGrid.style.display = 'grid';
+      // Pre-mark it as selected
+      rshUpdateImageBadges();
+      rshUpdateImageCount();
+      rshCheckSubmitEnabled();
+      if (section) section.style.display = 'none';
+      console.log('[rsh] manual image URL added:', url);
+    });
+  }
+
+  // Re-upload button handler: ignore cache and start fresh crawl.
+  async function rshStartImageReupload(master) {
+    _rsh.uploadMode = true;
+    _rsh.selectedImages = [];
+    const imgCached = $rsh('img-cached');
+    if (imgCached) imgCached.style.display = 'none';
+    const reuploadBtn = $rsh('reupload-btn');
+    if (reuploadBtn) reuploadBtn.style.display = 'none';
+    if (master.staronemall_url) {
+      await rshCrawlImages(master.staronemall_url);
+    } else {
+      const imgMissing = $rsh('img-missing');
+      if (imgMissing) imgMissing.style.display = 'block';
+    }
+    rshCheckSubmitEnabled();
+  }
+
+  // Upload the single selected cover image to Shopee CDN via shopee-bridge.
+  // P0-1: Phase B supports only 1 cover image. shopee_extra_image_ids NOT written here
+  // (deferred to Phase D when buildPublishItemPayload supports image_id_list).
+  // Returns { coverImageId } or throws on failure.
+  async function rshUploadImages(session) {
+    const SHOPEE_BRIDGE_UPLOAD = `${SUPABASE_URL}/functions/v1/shopee-bridge/upload_image`;
+    const uploadHeaders = {
+      Authorization: `Bearer ${session.access_token}`,
+      apikey: SUPABASE_ANON,
+      'Content-Type': 'application/json',
+    };
+
+    // Phase B: only the first (and only) selected image is the cover
+    const imgRef = _rsh.selectedImages[0];
+    if (!imgRef) throw new Error('선택된 이미지가 없습니다.');
+
+    // shopee-bridge /upload_image accepts { region, source_url } for URL-based upload
+    const resp = await fetch(SHOPEE_BRIDGE_UPLOAD, {
+      method: 'POST',
+      headers: uploadHeaders,
+      body: JSON.stringify({ region: 'SG', source_url: imgRef.src }),
+    });
+    const json = await resp.json();
+    if (!json.ok || !json.image_id) {
+      throw new Error(`이미지 업로드 실패: ${json.error || json.message || '알 수 없는 오류'}`);
+    }
+    const coverImageId = json.image_id;
+
+    // Persist cover image ID to products table (shopee_extra_image_ids not touched in Phase B)
+    // Fix3: treat DB update failure as fatal — callers must not dispatch with stale state
+    const { error: updateErr } = await db
+      .from('products')
+      .update({ shopee_image_id: coverImageId })
+      .eq('id', _rsh.productId);
+    if (updateErr) {
+      throw new Error(`이미지 ID 저장 실패: ${updateErr.message}`);
+    }
+    _rsh.cachedImageId = coverImageId;
+
+    return { coverImageId };
+  }
+
+  // Stage 1 → Stage 2: execute registration.
+  // P0-2: regionsOverride — when retrying, pass only the failed region codes.
+  //        When undefined, all RSH_REGIONS are used (initial publish).
+  async function rshProceedToStage2(regionsOverride) {
+    const activeRegions = Array.isArray(regionsOverride) && regionsOverride.length > 0
+      ? regionsOverride
+      : RSH_REGIONS;
+
+    const s1 = $rsh('stage1');
+    const s2 = $rsh('stage2');
+    if (s1) s1.style.display = 'none';
+    if (s2) s2.style.display = '';
+
+    const subtitleEl2 = $rsh('stage2-subtitle');
+    if (subtitleEl2) subtitleEl2.textContent = [_rsh.master?.sku, _rsh.master?.product_name].filter(Boolean).join(' / ');
+
+    const errorEl = $rsh('stage2-error');
+    if (errorEl) errorEl.style.display = 'none';
+
+    // Generate publish_request_id on first call; retry passes a fresh UUID before calling this
+    if (!_rsh.publishRequestId) {
+      _rsh.publishRequestId = crypto.randomUUID();
+    }
+
+    // Initialise region rows to "대기"
+    // P1-2: Block modal close while publish is in-flight
+    _rsh.publishInFlight = true;
+
+    const resultBody = $rsh('result-body');
+    if (resultBody) {
+      // On initial call: render all regions. On retry (regionsOverride): update only those rows
+      if (!regionsOverride) {
+        resultBody.innerHTML = RSH_REGIONS.map((r) => `
+          <tr id="rsh-row-${r}">
+            <td style="padding:7px 10px;font-weight:700;">${text(r)}</td>
+            <td style="padding:7px 10px;"><span id="rsh-status-${r}" style="color:#94a3b8;">대기</span></td>
+            <td style="padding:7px 10px;font-family:var(--mono);font-size:12px;" id="rsh-item-${r}">—</td>
+            <td style="padding:7px 10px;font-size:12px;color:var(--muted);" id="rsh-msg-${r}"></td>
+          </tr>`).join('');
+      }
+    }
+
+    const session = (await db.auth.getSession()).data.session;
+    if (!session) {
+      _rsh.publishInFlight = false;
+      if (errorEl) { errorEl.textContent = '로그인이 만료되었습니다. 다시 로그인 후 시도해 주세요.'; errorEl.style.display = 'block'; }
+      rshShowStage2Buttons(false);
+      return;
+    }
+
+    // If user picked new images, upload them first (only on initial call, not retry)
+    if (!regionsOverride && _rsh.uploadMode && _rsh.selectedImages.length > 0) {
+      activeRegions.forEach((r) => { const el = document.getElementById(`rsh-status-${r}`); if (el) { el.textContent = '이미지 업로드 중...'; el.style.color = '#6610d4'; } });
+      try {
+        await rshUploadImages(session);
+      } catch (uploadErr) {
+        _rsh.publishInFlight = false;
+        // Fix1: preserve selectedImages so retry can re-use them without reopening the modal
+        if (errorEl) { errorEl.textContent = `이미지 업로드 실패: ${uploadErr.message || uploadErr}`; errorEl.style.display = 'block'; }
+        activeRegions.forEach((r) => { const el = document.getElementById(`rsh-status-${r}`); if (el) { el.textContent = '대기'; el.style.color = '#94a3b8'; } });
+        // Show the upload-retry button so operator can retry without closing the modal
+        const uploadRetryBtn = document.getElementById('rsh-upload-retry-btn');
+        if (uploadRetryBtn) uploadRetryBtn.style.display = 'inline-flex';
+        rshShowStage2Buttons(false);
+        return;
+      }
+    }
+
+    // Fix1: hide upload-retry button once dispatch begins (upload succeeded or wasn't needed)
+    const uploadRetryBtnDisp = document.getElementById('rsh-upload-retry-btn');
+    if (uploadRetryBtnDisp) uploadRetryBtnDisp.style.display = 'none';
+
+    // Set active rows to "처리 중"
+    activeRegions.forEach((r) => {
+      const el = document.getElementById(`rsh-status-${r}`);
+      if (el) { el.textContent = '처리 중...'; el.style.color = '#2563eb'; }
+    });
+
+    // Read current DTS overrides from the table (they were filled in Stage 1)
+    const dtsValues = rshReadDts();
+    const lifecycle = _rsh.master.lifecycle_state || 'ready_stock';
+
+    // Read cost override from the form
+    const costOverride = Number(document.getElementById('rsh-cost-krw')?.value) || Number(_rsh.master.cost_krw);
+
+    // Fix2+Fix3: persist all Stage 1 edits before dispatching.
+    // Reads values fresh from the DOM (not _rsh.master which is stale after user edits).
+    // Fix3: treat update failure as fatal — do NOT dispatch with stale DB state.
+    if (!regionsOverride) {
+      const existingDts = _rsh.master.shopee_days_to_ship || {};
+      const updatedDts = { ...existingDts, [lifecycle]: dtsValues };
+      const liveCatId = Number(document.getElementById('rsh-category')?.value) || _rsh.master.shopee_category_id;
+      const stage1Updates = {
+        shopee_category_id: liveCatId,
+        shopee_description: document.getElementById('rsh-description')?.value || _rsh.master.shopee_description,
+        shopee_extra_attributes: rshReadSpecAttributes(liveCatId) || _rsh.master.shopee_extra_attributes,
+        shopee_days_to_ship: updatedDts,
+        cost_krw: costOverride,
+      };
+      const { error: stage1PersistErr } = await db.from('products').update(stage1Updates).eq('id', _rsh.productId);
+      if (stage1PersistErr) {
+        _rsh.publishInFlight = false;
+        if (errorEl) { errorEl.textContent = `데이터 저장 실패: ${stage1PersistErr.message} — 등록이 취소되었습니다.`; errorEl.style.display = 'block'; }
+        activeRegions.forEach((r) => { const el = document.getElementById(`rsh-status-${r}`); if (el) { el.textContent = '대기'; el.style.color = '#94a3b8'; } });
+        rshShowStage2Buttons(false);
+        return;
+      }
+    }
+
+    // Call platform-publish dispatcher with activeRegions (full list or failed-only on retry)
+    let dispatchResult;
+    try {
+      const body = {
+        platform: 'shopee',
+        master_product_id: _rsh.productId,
+        capability: 'create_listing_multi_region',
+        regions: activeRegions,
+        publish_request_id: _rsh.publishRequestId,
+        lifecycle_state: lifecycle,
+      };
+      const resp = await fetch(PLATFORM_PUBLISH_URL, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      dispatchResult = await resp.json();
+    } catch (networkErr) {
+      _rsh.publishInFlight = false;
+      if (errorEl) { errorEl.textContent = `네트워크 오류: ${networkErr.message || networkErr}`; errorEl.style.display = 'block'; }
+      activeRegions.forEach((r) => {
+        const el = document.getElementById(`rsh-status-${r}`);
+        if (el) { el.textContent = '실패'; el.style.color = 'var(--red)'; }
+        const msgEl = document.getElementById(`rsh-msg-${r}`);
+        if (msgEl) msgEl.textContent = networkErr.message || '네트워크 오류';
+      });
+      rshShowStage2Buttons(true);
+      return;
+    }
+
+    _rsh.publishInFlight = false;
+
+    // Parse per-region results from raw_response
+    let regionResults = [];
+    try {
+      const raw = typeof dispatchResult.raw_response === 'string'
+        ? JSON.parse(dispatchResult.raw_response)
+        : (dispatchResult.raw_response || {});
+      regionResults = Array.isArray(raw.results) ? raw.results : [];
+    } catch (e) {
+      console.warn('[rsh] failed to parse raw_response:', e);
+    }
+
+    // If top-level error (before any region processing), show on active rows
+    if (!dispatchResult.ok && !regionResults.length) {
+      const errMsg = dispatchResult.error_msg || dispatchResult.error_code || '등록 실패';
+      activeRegions.forEach((r) => {
+        const el = document.getElementById(`rsh-status-${r}`);
+        if (el) { el.textContent = '실패'; el.style.color = 'var(--red)'; }
+        const msgEl = document.getElementById(`rsh-msg-${r}`);
+        if (msgEl) msgEl.textContent = errMsg;
+      });
+      if (errorEl) { errorEl.textContent = errMsg; errorEl.style.display = 'block'; }
+      rshShowStage2Buttons(true);
+      return;
+    }
+
+    // Map results by region
+    const resultsByRegion = {};
+    regionResults.forEach((r) => {
+      if (r.region) resultsByRegion[String(r.region).toUpperCase()] = r;
+    });
+
+    let anyFailed = false;
+    // Evaluate only active regions (retry: only failed ones; initial: all)
+    activeRegions.forEach((r) => {
+      const res = resultsByRegion[r];
+      const statusEl = document.getElementById(`rsh-status-${r}`);
+      const itemEl = document.getElementById(`rsh-item-${r}`);
+      const msgEl = document.getElementById(`rsh-msg-${r}`);
+
+      if (!res) {
+        // Region not in results — treat as failed
+        if (statusEl) { statusEl.textContent = '실패'; statusEl.style.color = 'var(--red)'; }
+        if (msgEl) msgEl.textContent = '결과 없음';
+        anyFailed = true;
+        return;
+      }
+
+      const ok = res.status === 'mapped' || res.ok === true;
+      if (statusEl) {
+        statusEl.textContent = ok ? '성공' : '실패';
+        statusEl.style.color = ok ? 'var(--green)' : 'var(--red)';
+      }
+      if (itemEl && res.shop_item_id) {
+        itemEl.textContent = String(res.shop_item_id);
+      }
+      if (msgEl && res.error) {
+        msgEl.textContent = res.error;
+        msgEl.style.color = 'var(--red)';
+      }
+      if (!ok) anyFailed = true;
+    });
+
+    rshShowStage2Buttons(anyFailed);
+
+    // Refresh LED in the product list
+    try {
+      await loadData();
+    } catch (e) {
+      console.warn('[rsh] loadData after registration failed:', e);
+    }
+  }
+
+  // Show/hide Stage 2 footer buttons.
+  function rshShowStage2Buttons(anyFailed) {
+    const closeBtn2 = $rsh('close2');
+    const closeBtnFooter = $rsh('close2-footer');
+    const retryBtn = $rsh('retry-btn');
+    if (closeBtn2) closeBtn2.style.display = 'inline-flex';
+    if (closeBtnFooter) closeBtnFooter.style.display = 'inline-flex';
+    if (retryBtn) retryBtn.style.display = anyFailed ? 'inline-flex' : 'none';
+  }
+
+  // P1-2: Close modal — blocked while publish is in-flight to prevent stale LED.
+  function rshCloseModal() {
+    if (_rsh.publishInFlight) {
+      showToast('등록 진행 중입니다. 잠시만 기다려 주세요.', 'err');
+      return;
+    }
+    const overlay = document.getElementById('register-shopee-modal');
+    if (overlay) { overlay.classList.remove('show'); overlay.setAttribute('aria-hidden', 'true'); }
+  }
+
+  // Wire up static modal button listeners once at init.
+  (function rshInitListeners() {
+    const overlay = document.getElementById('register-shopee-modal');
+    if (!overlay) return;
+
+    // Close on backdrop click — P1-2: blocked while in-flight
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) rshCloseModal(); });
+
+    // P1-2: Escape key — blocked while in-flight
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      const rshOverlay = document.getElementById('register-shopee-modal');
+      if (!rshOverlay || !rshOverlay.classList.contains('show')) return;
+      rshCloseModal();
+    });
+
+    // Stage 1 buttons
+    const cancelBtn1 = $rsh('cancel1');
+    if (cancelBtn1) cancelBtn1.addEventListener('click', rshCloseModal);
+
+    const closeBtn1 = $rsh('close1');
+    if (closeBtn1) closeBtn1.addEventListener('click', rshCloseModal);
+
+    const submitBtn1 = $rsh('submit1');
+    if (submitBtn1) submitBtn1.addEventListener('click', () => rshProceedToStage2());
+
+    // Stage 2 buttons
+    const closeBtn2 = $rsh('close2');
+    if (closeBtn2) closeBtn2.addEventListener('click', rshCloseModal);
+
+    const closeBtn2Footer = $rsh('close2-footer');
+    if (closeBtn2Footer) closeBtn2Footer.addEventListener('click', rshCloseModal);
+
+    const retryBtn = $rsh('retry-btn');
+    if (retryBtn) retryBtn.addEventListener('click', () => {
+      // P0-2: Retry must use a fresh publish_request_id so the multi-region idempotency
+      // cache doesn't replay the cached (failed) response. Also pass only failed regions.
+      const failedRegions = RSH_REGIONS.filter((r) => {
+        const el = document.getElementById(`rsh-status-${r}`);
+        return el && el.textContent === '실패';
+      });
+      if (!failedRegions.length) {
+        showToast('재시도할 실패 지역이 없습니다.', 'err');
+        return;
+      }
+      _rsh.publishRequestId = crypto.randomUUID(); // fresh UUID breaks idempotency cache
+      console.log('[rsh] retry with new requestId:', _rsh.publishRequestId, 'regions:', failedRegions);
+      rshProceedToStage2(failedRegions);
+    });
+
+    // Fix1: upload-retry button — re-runs rshUploadImages and continues dispatch on success
+    const uploadRetryBtn = document.getElementById('rsh-upload-retry-btn');
+    if (uploadRetryBtn) uploadRetryBtn.addEventListener('click', async () => {
+      const errorEl = $rsh('stage2-error');
+      if (errorEl) errorEl.style.display = 'none';
+      uploadRetryBtn.style.display = 'none';
+      _rsh.publishInFlight = true;
+
+      const session = (await db.auth.getSession()).data.session;
+      if (!session) {
+        _rsh.publishInFlight = false;
+        if (errorEl) { errorEl.textContent = '로그인이 만료되었습니다. 다시 로그인 후 시도해 주세요.'; errorEl.style.display = 'block'; }
+        uploadRetryBtn.style.display = 'inline-flex';
+        return;
+      }
+
+      // Show "이미지 업로드 중..." on all rows while retrying
+      RSH_REGIONS.forEach((r) => {
+        const el = document.getElementById(`rsh-status-${r}`);
+        if (el && el.textContent === '대기') { el.textContent = '이미지 업로드 중...'; el.style.color = '#6610d4'; }
+      });
+
+      try {
+        await rshUploadImages(session);
+      } catch (uploadErr) {
+        _rsh.publishInFlight = false;
+        if (errorEl) { errorEl.textContent = `이미지 업로드 재시도 실패: ${uploadErr.message || uploadErr}`; errorEl.style.display = 'block'; }
+        RSH_REGIONS.forEach((r) => {
+          const el = document.getElementById(`rsh-status-${r}`);
+          if (el && el.textContent === '이미지 업로드 중...') { el.textContent = '대기'; el.style.color = '#94a3b8'; }
+        });
+        uploadRetryBtn.style.display = 'inline-flex'; // stay in error state
+        return;
+      }
+
+      // Upload succeeded — continue with platform-publish dispatch
+      console.log('[rsh] upload retry succeeded, continuing dispatch');
+      _rsh.publishInFlight = false; // rshProceedToStage2 will set it back to true
+      // Call without regionsOverride to dispatch all regions (uploadMode path is skipped because cachedImageId is now set)
+      rshProceedToStage2();
+    });
+
+    // Fix4: category dropdown live change — toggle the 101390 blocked banner and update submit state
+    const catSelectEl = document.getElementById('rsh-category');
+    if (catSelectEl) catSelectEl.addEventListener('change', () => {
+      const val = Number(catSelectEl.value);
+      const catBlockedEl = $rsh('cat-blocked');
+      const categoryHintEl = document.getElementById('rsh-category-hint');
+      if (catBlockedEl) catBlockedEl.style.display = val === 101390 ? 'block' : 'none';
+      // Show the save-hint note once the operator changes the dropdown
+      if (categoryHintEl) categoryHintEl.style.display = 'block';
+      rshCheckSubmitEnabled();
+    });
+  })();
+
+  // P2-1: Legacy modal URL flag — ?legacy=1 stored for use inside openRegisterShopeeModal.
+  // The LEGACY HTML block is commented out above (search "LEGACY START"), so there is
+  // no DOM to restore. If the operator needs the old flow, they reload without the flag.
+  const RSH_LEGACY_MODE = new URLSearchParams(location.search).get('legacy') === '1';
+  if (RSH_LEGACY_MODE) {
+    console.info('[rsh] ?legacy=1 detected — new Phase B modal is disabled; Register clicks will show a toast.');
   }
 
   // ════════════════════════════════════════════════════════════════

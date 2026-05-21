@@ -317,11 +317,21 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     ? { brand_id: 0, original_brand_name: 'No Brand' }
     : { brand_id: Number(master.shopee_brand_id), original_brand_name: master.shopee_brand_name || 'No Brand' };
 
-  const targets = regions.map((r: string) => ({
-    region: r,
-    price_krw: cost_krw,
-    days_to_ship: dtsSection[r] ?? 2,
-  }));
+  // Per-region image_ids — caller (SPA) uploads one image per region (KRSC
+  // requires images live in the target region's image space) and BR needs at
+  // least 2 images. If ctx.region_image_ids is missing for a region we fall
+  // back to master.shopee_image_id (still works for SG-style same-region
+  // upload) but BR will fail at publish_task if only 1 image provided.
+  const regionImageIds: Record<string, string[]> = (ctx as any).region_image_ids || {};
+  const targets = regions.map((r: string) => {
+    const ids = Array.isArray(regionImageIds[r]) && regionImageIds[r].length ? regionImageIds[r] : null;
+    return {
+      region: r,
+      price_krw: cost_krw,
+      days_to_ship: dtsSection[r] ?? 2,
+      ...(ids ? { image_id_list: ids } : {}),
+    };
+  });
 
   // Codex P1 (code review): bridge `register_cbsc` derives base context from
   // body.region || 'SG'. Without an explicit region, every multi-region publish

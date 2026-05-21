@@ -6135,35 +6135,54 @@ LEGACY END -->
   }
 
   // Build attribute_list array from spec form inputs.
+  // Verified attribute_id + value_id mapping for category 100740 from Shopee's
+  // production get_attribute_tree(category_id_list=100740) (2026-05-21):
+  //   - 100012 Brand (handled at brand top-level, not in attribute_list)
+  //   - 100037 Region of Origin — value_id 48 = Korea
+  //   - 100693 CD, DVD & Bluray Type — value_id 3574 = Music & Concerts, 3559=Movies, 3596=TV Series, 3581=Others
+  //   - 101044 Adult products — value_id 11441 = No (operator's "NA")
+  // The earlier Phase B code used 100039/100040 which are *different* attributes that
+  // do not exist in this category — Shopee rejected with "Attribute 'CD, DVD & Bluray Type'
+  // is mandatory required" because the actual id (100693) was never sent.
+  const SHOPEE_ATTR_VALUE_MAP_100740 = {
+    region: { 'South Korea': 48, 'Korea': 48, 'Korea (generic)': 48, 'Japan': 1, 'Taiwan': 112, 'Other': 93 },
+    type: { 'Music & Concerts': 3574, 'Movies': 3559, 'TV Series': 3596, 'Others': 3581 },
+    adult: { 'NA': 11441, 'No': 11441, 'Yes': 5788 },
+  };
   function rshReadSpecAttributes(categoryId) {
-    const brandName = document.getElementById('rsh-attr-brand')?.value?.trim() || 'No Brand';
-    const brandId = Number(document.getElementById('rsh-attr-brand-id')?.value) || 0;
     const origin = document.getElementById('rsh-attr-origin')?.value || 'South Korea';
 
+    // Brand (attribute_id 100012) is sent via the top-level `brand` object in
+    // add_global_item, NOT via attribute_list. Shopee rejects with "Chocolate Type
+    // (100012) is not mapped with the category" if brand appears in attribute_list
+    // — that error message is misleading; 100012 in *this* category corresponds to
+    // the brand link, which Shopee expects only in the brand object.
     const attrs = [
       {
-        attribute_id: 100012,
-        attribute_value_list: [
-          brandId === 0
-            ? { original_value_name: 'No Brand' }
-            : { value_id: brandId, original_value_name: brandName },
-        ],
-      },
-      {
         attribute_id: 100037,
-        attribute_value_list: [{ original_value_name: origin }],
+        attribute_value_list: [{
+          value_id: SHOPEE_ATTR_VALUE_MAP_100740.region[origin] || 48,
+          original_value_name: origin === 'Korea (generic)' ? 'Korea' : origin,
+        }],
       },
     ];
 
     if (Number(categoryId) === 100740) {
       const typeVal = document.getElementById('rsh-attr-type')?.value || 'Music & Concerts';
+      const adultVal = document.getElementById('rsh-attr-adult')?.value || 'NA';
       attrs.push({
-        attribute_id: 100039,
-        attribute_value_list: [{ original_value_name: typeVal }],
+        attribute_id: 100693,
+        attribute_value_list: [{
+          value_id: SHOPEE_ATTR_VALUE_MAP_100740.type[typeVal] || 3574,
+          original_value_name: typeVal,
+        }],
       });
       attrs.push({
-        attribute_id: 100040,
-        attribute_value_list: [{ original_value_name: 'NA' }],
+        attribute_id: 101044,
+        attribute_value_list: [{
+          value_id: SHOPEE_ATTR_VALUE_MAP_100740.adult[adultVal] || 11441,
+          original_value_name: adultVal === 'NA' ? 'No' : adultVal,
+        }],
       });
     }
     return attrs;
@@ -6242,6 +6261,11 @@ LEGACY END -->
       // Replace any existing selection with the new one (radio behaviour)
       _rsh.selectedImages = [{ src: _rsh.crawledImages[idx], idx }];
     }
+    // CRITICAL FIX: mark that the user selected a fresh image so Stage 2 actually
+    // uploads it. Without this, rshProceedToStage2's `if (_rsh.uploadMode && ...)`
+    // gate skips the upload and the dispatcher fires with shopee_image_id=NULL,
+    // which Shopee rejects with "Product Image is required" on all regions.
+    _rsh.uploadMode = _rsh.selectedImages.length > 0;
     rshUpdateImageBadges();
     rshUpdateImageCount();
     rshCheckSubmitEnabled();
@@ -6577,11 +6601,13 @@ LEGACY END -->
     rshCheckSubmitEnabled();
   }
 
-  // Upload the single selected cover image to Shopee CDN via shopee-bridge.
-  // P0-1: Phase B supports only 1 cover image. shopee_extra_image_ids NOT written here
-  // (deferred to Phase D when buildPublishItemPayload supports image_id_list).
-  // Returns { coverImageId } or throws on failure.
-  async function rshUploadImages(session) {
+  // Upload the cover image to Shopee CDN per region. KRSC requires images to
+  // live in the target region's image space — uploading to SG and reusing the
+  // image_id in TW/BR triggers cross-upload validation failures. BR also needs
+  // at least 2 images, so we upload the same source twice for BR and assemble
+  // image_id_list with two distinct IDs.
+  // Returns { regionImageIds: { SG: [id], TW: [id], ..., BR: [id1, id2] }, coverImageId }.
+  async function rshUploadImages(session, regions) {
     const SHOPEE_BRIDGE_UPLOAD = `${SUPABASE_URL}/functions/v1/shopee-bridge/upload_image`;
     const uploadHeaders = {
       Authorization: `Bearer ${session.access_token}`,
@@ -6589,24 +6615,49 @@ LEGACY END -->
       'Content-Type': 'application/json',
     };
 
-    // Phase B: only the first (and only) selected image is the cover
     const imgRef = _rsh.selectedImages[0];
     if (!imgRef) throw new Error('선택된 이미지가 없습니다.');
 
-    // shopee-bridge /upload_image accepts { region, source_url } for URL-based upload
-    const resp = await fetch(SHOPEE_BRIDGE_UPLOAD, {
-      method: 'POST',
-      headers: uploadHeaders,
-      body: JSON.stringify({ region: 'SG', source_url: imgRef.src }),
-    });
-    const json = await resp.json();
-    if (!json.ok || !json.image_id) {
-      throw new Error(`이미지 업로드 실패: ${json.error || json.message || '알 수 없는 오류'}`);
+    let imgResp;
+    try {
+      imgResp = await fetch(imgRef.src);
+    } catch (e) {
+      throw new Error(`이미지 다운로드 실패 (CORS 또는 네트워크): ${e.message || e}`);
     }
-    const coverImageId = json.image_id;
+    if (!imgResp.ok) throw new Error(`이미지 다운로드 실패 (HTTP ${imgResp.status})`);
+    const blob = await imgResp.blob();
+    const dataUrl = await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onloadend = () => resolve(String(fr.result || ''));
+      fr.onerror = () => reject(new Error('FileReader failed'));
+      fr.readAsDataURL(blob);
+    });
+    const commaIdx = dataUrl.indexOf(',');
+    const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
 
-    // Persist cover image ID to products table (shopee_extra_image_ids not touched in Phase B)
-    // Fix3: treat DB update failure as fatal — callers must not dispatch with stale state
+    const targetRegions = Array.isArray(regions) && regions.length ? regions : ['SG'];
+    const regionImageIds = {};
+    let coverImageId = null;
+    for (const r of targetRegions) {
+      const count = r === 'BR' ? 2 : 1;
+      const ids = [];
+      for (let i = 0; i < count; i++) {
+        const resp = await fetch(SHOPEE_BRIDGE_UPLOAD, {
+          method: 'POST',
+          headers: uploadHeaders,
+          body: JSON.stringify({ region: r, image_base64: b64, source_url: imgRef.src }),
+        });
+        const json = await resp.json();
+        if (!json.ok || !json.image_id) {
+          throw new Error(`${r} 이미지 업로드 실패: ${json.error || json.message || '알 수 없는 오류'}`);
+        }
+        ids.push(json.image_id);
+        if (r === 'SG' && !coverImageId) coverImageId = json.image_id;
+      }
+      regionImageIds[r] = ids;
+    }
+    if (!coverImageId) coverImageId = regionImageIds[targetRegions[0]][0];
+
     const { error: updateErr } = await db
       .from('products')
       .update({ shopee_image_id: coverImageId })
@@ -6616,7 +6667,7 @@ LEGACY END -->
     }
     _rsh.cachedImageId = coverImageId;
 
-    return { coverImageId };
+    return { coverImageId, regionImageIds };
   }
 
   // Stage 1 → Stage 2: execute registration.
@@ -6670,10 +6721,12 @@ LEGACY END -->
     }
 
     // If user picked new images, upload them first (only on initial call, not retry)
+    // Per-region upload: KRSC requires images in target region image space, BR needs 2.
     if (!regionsOverride && _rsh.uploadMode && _rsh.selectedImages.length > 0) {
       activeRegions.forEach((r) => { const el = document.getElementById(`rsh-status-${r}`); if (el) { el.textContent = '이미지 업로드 중...'; el.style.color = '#6610d4'; } });
       try {
-        await rshUploadImages(session);
+        const uploadResult = await rshUploadImages(session, activeRegions);
+        _rsh.regionImageIds = uploadResult.regionImageIds || {};
       } catch (uploadErr) {
         _rsh.publishInFlight = false;
         // Fix1: preserve selectedImages so retry can re-use them without reopening the modal
@@ -6738,6 +6791,7 @@ LEGACY END -->
         regions: activeRegions,
         publish_request_id: _rsh.publishRequestId,
         lifecycle_state: lifecycle,
+        region_image_ids: _rsh.regionImageIds || {},
       };
       const resp = await fetch(PLATFORM_PUBLISH_URL, {
         method: 'POST',
@@ -6925,7 +6979,8 @@ LEGACY END -->
       });
 
       try {
-        await rshUploadImages(session);
+        const uploadResult = await rshUploadImages(session, RSH_REGIONS);
+        _rsh.regionImageIds = uploadResult.regionImageIds || {};
       } catch (uploadErr) {
         _rsh.publishInFlight = false;
         if (errorEl) { errorEl.textContent = `이미지 업로드 재시도 실패: ${uploadErr.message || uploadErr}`; errorEl.style.display = 'block'; }

@@ -680,6 +680,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // create_listing_multi_region extras (Phase A).
         regions,
         lifecycle_state,
+        // Phase B per-region image_ids — caller uploads one image per region
+        // (KRSC requires images live in the target region's image space) and
+        // BR needs at least 2 images. Adapter passes through to bridge.
+        region_image_ids: (body as any).region_image_ids || {},
       } as any);
     } catch (e) {
       adapterResult = {

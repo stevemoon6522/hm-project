@@ -1372,8 +1372,17 @@ const PRE_ORDER_GLOBAL_DTS = 10;
 
 function imageBlockFrom(body: any) {
   const image: any = {};
-  if (body?.image_id) image.image_id_list = [String(body.image_id)];
-  else if (body?.image_url) image.image_url_list = [String(body.image_url)];
+  // Some regions (e.g. BR) reject items with fewer than 2 images. Callers
+  // can pass image_id_list / image_url_list to satisfy that requirement.
+  if (Array.isArray(body?.image_id_list) && body.image_id_list.length) {
+    image.image_id_list = body.image_id_list.map((x: any) => String(x));
+  } else if (body?.image_id) {
+    image.image_id_list = [String(body.image_id)];
+  } else if (Array.isArray(body?.image_url_list) && body.image_url_list.length) {
+    image.image_url_list = body.image_url_list.map((x: any) => String(x));
+  } else if (body?.image_url) {
+    image.image_url_list = [String(body.image_url)];
+  }
   return image;
 }
 
@@ -2309,7 +2318,7 @@ Deno.serve(async (req) => {
             continue;
           }
           const logistics = await getPublishLogistics(targetRegion, _isPreOrderRepublish);
-          const item = buildPublishItemPayload({ ...body, image_id: body.image_id, image_url: body.image_url }, target, logistics);
+          const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });
           if (publishRes.error) {
@@ -2509,7 +2518,7 @@ Deno.serve(async (req) => {
             continue;
           }
           const logistics = await getPublishLogistics(targetRegion, _isPreOrderRegister);
-          const item = buildPublishItemPayload({ ...body, image_id: body.image_id, image_url: body.image_url }, target, logistics);
+          const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });
           if (publishRes.error) {

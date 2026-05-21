@@ -6551,11 +6551,13 @@ async function _gkpFetchAllGlobalItems(statusEl, opts = {}) {
   // to fetch only items added/edited since the previous cache snapshot.
   const sinceTs = Number(opts.updateTimeFromSec) || null;
   const sinceSuffix = sinceTs ? `&update_time_from=${sinceTs}` : '';
+  const untilTs = sinceTs ? (Number(opts.updateTimeToSec) || Math.floor(Date.now() / 1000)) : null;
+  const untilSuffix = untilTs ? `&update_time_to=${untilTs}` : '';
   while (hasMore) {
     statusEl.textContent = sinceTs
       ? `신규/변경 상품만 로딩 중… (${allItems.length}건)`
       : `Global 상품 목록 로딩 중… (${allItems.length}건)`;
-    const url = `${SHOPEE_BRIDGE}/global_items?region=SG&page_size=${pageSize}${sinceSuffix}` + (offset ? `&offset=${encodeURIComponent(offset)}` : '');
+    const url = `${SHOPEE_BRIDGE}/global_items?region=SG&page_size=${pageSize}${sinceSuffix}${untilSuffix}` + (offset ? `&offset=${encodeURIComponent(offset)}` : '');
     const res = await fetch(url, { headers: _bh })
       .then(x => x.json()).catch(e => ({ ok: false, _fetchErr: e.message }));
     if (!res.ok) {

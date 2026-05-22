@@ -2358,7 +2358,9 @@ Deno.serve(async (req) => {
           const publish_task_id = Number(publishRes.response?.publish_task_id);
           let task: any = null;
           let pollAttempts = 0;
-          for (let i = 0; i < 30; i++) {
+          // BR publish async is slower — double the polling window for BR only
+          const maxPoll = (targetRegion === 'BR') ? 60 : 30;
+          for (let i = 0; i < maxPoll; i++) {
             await new Promise(s => setTimeout(s, 2000));
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id } });
             task = taskRes;
@@ -2366,13 +2368,37 @@ Deno.serve(async (req) => {
             if (taskRes.error || !isPublishPending(taskRes)) break;
           }
           let outcome = parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
+          // Fallback verification: query published_list — BR gets 3 retries (5s apart), others get 1
           if (!outcome.ok) {
+            const fbRetries = (targetRegion === 'BR') ? 3 : 1;
+            const fbSleep = (targetRegion === 'BR') ? 5000 : 0;
+            for (let r = 0; r < fbRetries; r++) {
+              if (r > 0) await new Promise(s => setTimeout(s, fbSleep));
+              try {
+                const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
+                const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
+                const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
+                if (hit && hit.item_id) {
+                  outcome = { ok: true, region: targetRegion, shop_id, publish_task_id, item_id: Number(hit.item_id), publish_status: 'verified_via_published_list_retry_' + r, error: null, task };
+                  break;
+                }
+              } catch (_) {}
+            }
+          }
+          // BR-only: if still failing after fallback, re-issue create_publish_task once more
+          if (!outcome.ok && targetRegion === 'BR') {
             try {
-              const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
-              const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
-              const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
-              if (hit && hit.item_id) {
-                outcome = { ok: true, region: targetRegion, shop_id, publish_task_id, item_id: Number(hit.item_id), publish_status: 'verified_via_published_list', error: null, task };
+              const retryPublishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });
+              if (retryPublishRes.response?.publish_task_id) {
+                const retryTaskId = Number(retryPublishRes.response.publish_task_id);
+                // Give BR 15s for async resolution before final published_list check
+                await new Promise(s => setTimeout(s, 15000));
+                const finalPubRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
+                const finalItems = Array.isArray(finalPubRes?.response?.published_item) ? finalPubRes.response.published_item : [];
+                const finalHit = finalItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
+                if (finalHit && finalHit.item_id) {
+                  outcome = { ok: true, region: 'BR', shop_id, publish_task_id: retryTaskId, item_id: Number(finalHit.item_id), publish_status: 'verified_via_br_retry', error: null, task: retryPublishRes };
+                }
               }
             } catch (_) {}
           }
@@ -2707,7 +2733,9 @@ Deno.serve(async (req) => {
           console.log(`[register_cbsc] region=${targetRegion} shop_id=${shop_id} publish_task_id=${publish_task_id} create_publish_task_response=${JSON.stringify(publishRes).slice(0, 800)}`);
           let task: any = null;
           let pollAttempts = 0;
-          for (let i = 0; i < 30; i++) {
+          // BR publish async is slower — double the polling window for BR only
+          const maxPoll = (targetRegion === 'BR') ? 60 : 30;
+          for (let i = 0; i < maxPoll; i++) {
             await new Promise(s => setTimeout(s, 2000));
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id } });
             task = taskRes;
@@ -2721,25 +2749,50 @@ Deno.serve(async (req) => {
           outcome.poll_attempts = pollAttempts;
           // Fallback verification: if parser declared failure but the task may still be
           // resolving async on Shopee's side, query published_list and check whether the
-          // global_item_id has actually surfaced as a shop item. If yes, override to success.
+          // global_item_id has actually surfaced as a shop item.
+          // BR gets 3 retries (5s apart), other regions get 1 attempt.
           if (!outcome.ok) {
+            const fbRetries = (targetRegion === 'BR') ? 3 : 1;
+            const fbSleep = (targetRegion === 'BR') ? 5000 : 0;
+            for (let r = 0; r < fbRetries; r++) {
+              if (r > 0) await new Promise(s => setTimeout(s, fbSleep));
+              try {
+                const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
+                const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
+                const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
+                if (hit && hit.item_id) {
+                  outcome = {
+                    ok: true,
+                    region: targetRegion,
+                    shop_id,
+                    publish_task_id,
+                    item_id: Number(hit.item_id),
+                    publish_status: 'verified_via_published_list_retry_' + r,
+                    error: null,
+                    task,
+                  };
+                  break;
+                }
+              } catch (_) { /* ignore — keep original parsePublishOutcome verdict */ }
+            }
+          }
+          // BR-only: if still failing after fallback retries, re-issue create_publish_task once more
+          if (!outcome.ok && targetRegion === 'BR') {
             try {
-              const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
-              const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
-              const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
-              if (hit && hit.item_id) {
-                outcome = {
-                  ok: true,
-                  region: targetRegion,
-                  shop_id,
-                  publish_task_id,
-                  item_id: Number(hit.item_id),
-                  publish_status: 'verified_via_published_list',
-                  error: null,
-                  task,
-                };
+              stage_logs.push('BR retry: re-creating publish_task');
+              const retryPublishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });
+              if (retryPublishRes.response?.publish_task_id) {
+                const retryTaskId = Number(retryPublishRes.response.publish_task_id);
+                // Give BR 15s for async resolution before final published_list check
+                await new Promise(s => setTimeout(s, 15000));
+                const finalPubRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
+                const finalItems = Array.isArray(finalPubRes?.response?.published_item) ? finalPubRes.response.published_item : [];
+                const finalHit = finalItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
+                if (finalHit && finalHit.item_id) {
+                  outcome = { ok: true, region: 'BR', shop_id, publish_task_id: retryTaskId, item_id: Number(finalHit.item_id), publish_status: 'verified_via_br_retry', error: null, task: retryPublishRes };
+                }
               }
-            } catch (_) { /* ignore — keep original parsePublishOutcome verdict */ }
+            } catch (_) {}
           }
           results.push(outcome);
         } catch (e: any) {

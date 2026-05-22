@@ -2553,6 +2553,20 @@ function _defaultPreOrderDtsMap() {
   return { ...PRE_ORDER_REGION_DTS };
 }
 
+function _buildPreOrderDtsGridHtml(prefix, dtsMap = {}) {
+  return SHOPEE_REGIONS.map((region) => {
+    const value = dtsMap[region];
+    const renderedValue = value === '' || value == null ? '' : String(value);
+    return [
+      '<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:#0a0a0c;">',
+        '<span style="font-weight:600;">', region, '</span>',
+        '<input type="number" class="', prefix, '-dts-input" data-region="', region, '" min="1" max="150" value="', renderedValue, '" ',
+          'style="background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:6px 8px;border-radius:3px;font-family:monospace;font-size:12px;">',
+      '</label>',
+    ].join('');
+  }).join('');
+}
+
 function _getPreOrderDtsMap(row) {
   const saved = row?.shopeeDaysToShip?.pre_order || {};
   return { ..._defaultPreOrderDtsMap(), ...saved };
@@ -2562,16 +2576,7 @@ function _renderShopeePreOrderDts(row) {
   const wrap = document.getElementById('sp-preorder-dts');
   if (!wrap) return;
   const dtsMap = _getPreOrderDtsMap(row);
-  wrap.innerHTML = SHOPEE_REGIONS.map((region) => {
-    const value = Number(dtsMap[region]) || PRE_ORDER_REGION_DTS[region] || 10;
-    return [
-      '<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:#0a0a0c;">',
-        '<span style="font-weight:600;">', region, '</span>',
-        '<input type="number" class="sp-preorder-dts-input" data-region="', region, '" min="1" max="150" value="', value, '" ',
-          'style="background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:6px 8px;border-radius:3px;font-family:monospace;font-size:12px;">',
-      '</label>',
-    ].join('');
-  }).join('');
+  wrap.innerHTML = _buildPreOrderDtsGridHtml('sp-preorder', dtsMap);
 }
 
 function _readShopeePreOrderDtsMap() {
@@ -2592,6 +2597,18 @@ async function _persistShopeePreOrderDts(row, dtsMap) {
     pre_order: { ...dtsMap },
   };
   await Storage.updateProduct(row.id, row);
+}
+
+function _getBulkPreOrderDtsInitialMap(rows) {
+  if (!rows.length) return _defaultPreOrderDtsMap();
+  const maps = rows.map((row) => _getPreOrderDtsMap(row));
+  const next = {};
+  for (const region of SHOPEE_REGIONS) {
+    const first = Number(maps[0][region]) || PRE_ORDER_REGION_DTS[region] || 10;
+    const same = maps.every((map) => (Number(map[region]) || PRE_ORDER_REGION_DTS[region] || 10) === first);
+    next[region] = same ? first : '';
+  }
+  return next;
 }
 
 function openShopeeModal(row) {
@@ -2707,6 +2724,186 @@ async function _shopeeSyncPreOrderDts() {
     if (btn) {
       btn.disabled = false;
       btn.textContent = origLabel || '🚚 PRE ORDER DTS 동기화';
+    }
+  }
+}
+
+function _ensureBulkPreOrderDtsUi() {
+  if (!document.getElementById('preorder-dts-bulk')) {
+    const toolbar = document.querySelector('.toolbar-left');
+    const readyBtn = document.getElementById('ready-stock-bulk');
+    if (toolbar && readyBtn) {
+      const btn = document.createElement('button');
+      btn.className = 'btn';
+      btn.id = 'preorder-dts-bulk';
+      btn.disabled = true;
+      btn.title = 'Bulk edit PRE ORDER DTS for selected products and sync by region';
+      btn.innerHTML = 'PRE ORDER DTS (<span id="preorder-dts-count">0</span>)';
+      toolbar.insertBefore(btn, readyBtn);
+    }
+  }
+
+  if (!document.getElementById('preorder-dts-bulk-modal')) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'preorder-dts-bulk-modal';
+    modal.innerHTML = [
+      '<div class="modal" style="max-width:560px;">',
+        '<h3>PRE ORDER DTS Bulk Edit</h3>',
+        '<p style="color:#5a5a66;font-size:11px;margin-bottom:14px;line-height:1.5;">',
+          'Selected products will store the same PRE ORDER DTS map and push region-level shop updates where shop_item_id is mapped.',
+        '</p>',
+        '<div class="field">',
+          '<label>PRE ORDER DTS by Region</label>',
+          '<div id="bulk-preorder-dts-grid" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;"></div>',
+          '<div id="bulk-preorder-dts-note" style="margin-top:8px;color:#5a5a66;font-size:11px;line-height:1.5;"></div>',
+        '</div>',
+        '<div id="bulk-preorder-dts-status" style="display:none;font-size:11px;margin:10px 0;padding:10px;background:#fafafc;border:1px solid #d8d8e0;border-radius:3px;line-height:1.6;"></div>',
+        '<div class="modal-actions">',
+          '<button class="btn" id="bulk-preorder-dts-cancel" type="button">Cancel</button>',
+          '<button class="btn primary" id="bulk-preorder-dts-apply" type="button">Apply PRE ORDER DTS</button>',
+        '</div>',
+      '</div>',
+    ].join('');
+    document.body.appendChild(modal);
+  }
+}
+
+function _renderBulkPreOrderDts(rows) {
+  const wrap = document.getElementById('bulk-preorder-dts-grid');
+  const note = document.getElementById('bulk-preorder-dts-note');
+  if (!wrap) return;
+  const initial = _getBulkPreOrderDtsInitialMap(rows);
+  wrap.innerHTML = _buildPreOrderDtsGridHtml('bulk-preorder', initial);
+  if (note) {
+    const mixed = SHOPEE_REGIONS.filter((region) => initial[region] === '');
+    note.textContent = mixed.length
+      ? `Mixed current values: ${mixed.join(', ')}. Fill every region before syncing.`
+      : `Selected ${rows.length} item(s). Edit and apply to all selected products.`;
+  }
+}
+
+function _readBulkPreOrderDtsMap() {
+  const wrap = document.getElementById('bulk-preorder-dts-grid');
+  const next = {};
+  if (!wrap) return next;
+  wrap.querySelectorAll('.bulk-preorder-dts-input').forEach((input) => {
+    const region = String(input.dataset.region || '').toUpperCase();
+    next[region] = input.value.trim();
+  });
+  return next;
+}
+
+function _openBulkPreOrderDtsModal() {
+  const selected = _getSelectedMasterRows();
+  if (!selected.length) return;
+  _ensureBulkPreOrderDtsUi();
+  _renderBulkPreOrderDts(selected);
+  const status = document.getElementById('bulk-preorder-dts-status');
+  if (status) {
+    status.style.display = 'none';
+    status.textContent = '';
+  }
+  document.getElementById('preorder-dts-bulk-modal')?.classList.add('show');
+}
+
+async function _bulkSyncPreOrderDts() {
+  const selected = _getSelectedMasterRows();
+  if (!selected.length) return;
+  const status = document.getElementById('bulk-preorder-dts-status');
+  const btn = document.getElementById('bulk-preorder-dts-apply');
+  const rawMap = _readBulkPreOrderDtsMap();
+  const dtsMap = {};
+  const headers = {
+    'Content-Type': 'application/json',
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  };
+
+  for (const region of SHOPEE_REGIONS) {
+    const raw = rawMap[region];
+    const value = Number.parseInt(raw, 10);
+    if (!raw || !Number.isFinite(value) || value < 1 || value > 150) {
+      status.style.display = 'block';
+      status.style.color = '#d62754';
+      status.textContent = `PRE ORDER DTS invalid: ${region}=${raw || '(empty)'} (allowed 1-150)`;
+      return;
+    }
+    dtsMap[region] = value;
+  }
+
+  const shopTargets = [];
+  for (const row of selected) {
+    row.shopeeDaysToShip = {
+      ...(row.shopeeDaysToShip || {}),
+      pre_order: { ...dtsMap },
+    };
+    for (const region of SHOPEE_REGIONS) {
+      const itemId = Number.parseInt(row?.shopeeListings?.[region]?.shop_item_id, 10);
+      if (Number.isFinite(itemId) && itemId > 0) {
+        shopTargets.push({
+          rowId: row.id,
+          region,
+          item_id: itemId,
+          days_to_ship: dtsMap[region],
+        });
+      }
+    }
+  }
+
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) btn.disabled = true;
+  status.style.display = 'block';
+  status.style.color = '#5a5a66';
+  status.textContent = `Saving ${selected.length} product(s), syncing ${shopTargets.length} mapped shop items...`;
+
+  try {
+    await Promise.all(selected.map((row) => Storage.updateProduct(row.id, row)));
+
+    const failures = [];
+    let successCount = 0;
+    const PARALLELISM = 6;
+    for (let i = 0; i < shopTargets.length; i += PARALLELISM) {
+      const chunk = shopTargets.slice(i, i + PARALLELISM);
+      if (btn) btn.textContent = `Apply PRE ORDER DTS ${Math.min(i + chunk.length, shopTargets.length)}/${shopTargets.length}`;
+      const results = await Promise.allSettled(chunk.map(async (target) => {
+        const response = await fetch(`${SHOPEE_BRIDGE}/update_shop_item_dts`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({
+            region: target.region,
+            item_id: target.item_id,
+            days_to_ship: target.days_to_ship,
+            is_pre_order: true,
+          }),
+        });
+        const data = await response.json();
+        if (!data.ok) throw new Error(`${target.region}/${target.item_id}: ${data.error || data.result?.error || data.result?.message || 'unknown'}`);
+      }));
+      for (const result of results) {
+        if (result.status === 'fulfilled') successCount++;
+        else failures.push(result.reason?.message || String(result.reason));
+      }
+    }
+
+    renderTableBody();
+
+    if (failures.length) {
+      status.style.color = '#d62754';
+      status.innerHTML = `PRE ORDER DTS partial failure (${successCount}/${shopTargets.length})<br>${failures.join('<br>')}`;
+    } else {
+      status.style.color = '#15803d';
+      status.textContent = shopTargets.length
+        ? `PRE ORDER DTS synced for ${selected.length} product(s), ${shopTargets.length} shop item(s).`
+        : `PRE ORDER DTS saved for ${selected.length} product(s). No mapped shop_item_id found yet.`;
+    }
+  } catch (error) {
+    status.style.color = '#d62754';
+    status.textContent = `PRE ORDER DTS bulk sync failed: ${error.message || error}`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origLabel || 'Apply PRE ORDER DTS';
     }
   }
 }
@@ -3347,24 +3544,28 @@ function _updateSelectionUi() {
   const all = [...tbody.querySelectorAll('.row-select')];
   const checked = all.filter(cb => cb.checked);
   const btn = document.getElementById('shopee-bulk-sync');
+  const preorderBtn = document.getElementById('preorder-dts-bulk');
   const joomBtn = document.getElementById('joom-bulk-sync');
   const readyBtn = document.getElementById('ready-stock-bulk');
   const mapBtn = document.getElementById('shopee-sync-mapping');
   const clearBtn = document.getElementById('bulk-clear-mapping');
   const completeBtn = document.getElementById('bulk-complete-remove');
   const countEl = document.getElementById('bulk-sync-count');
+  const preorderCountEl = document.getElementById('preorder-dts-count');
   const joomCountEl = document.getElementById('joom-sync-count');
   const readyCountEl = document.getElementById('ready-stock-count');
   const clearCountEl = document.getElementById('bulk-clear-count');
   const completeCountEl = document.getElementById('bulk-complete-count');
   const count = checked.length;
   if (btn) btn.disabled = count === 0;
+  if (preorderBtn) preorderBtn.disabled = count === 0;
   if (joomBtn) joomBtn.disabled = count === 0;
   if (readyBtn) readyBtn.disabled = count === 0;
   if (mapBtn) mapBtn.disabled = count === 0;
   if (clearBtn) clearBtn.disabled = count === 0;
   if (completeBtn) completeBtn.disabled = count === 0;
   if (countEl) countEl.textContent = count;
+  if (preorderCountEl) preorderCountEl.textContent = count;
   if (joomCountEl) joomCountEl.textContent = count;
   if (readyCountEl) readyCountEl.textContent = count;
   if (clearCountEl) clearCountEl.textContent = count;
@@ -3834,6 +4035,25 @@ async function _shopeeSyncApply() {
     if (btn.dataset.bound) return;
     btn.dataset.bound = '1';
     btn.addEventListener('click', _shopeeBulkSync);
+  };
+  init();
+})();
+
+(function bindBulkPreOrderDts() {
+  const init = () => {
+    _ensureBulkPreOrderDtsUi();
+    const openBtn = document.getElementById('preorder-dts-bulk');
+    const modal = document.getElementById('preorder-dts-bulk-modal');
+    const cancelBtn = document.getElementById('bulk-preorder-dts-cancel');
+    const applyBtn = document.getElementById('bulk-preorder-dts-apply');
+    if (!openBtn || !modal || !cancelBtn || !applyBtn) { document.addEventListener('DOMContentLoaded', init); return; }
+    if (openBtn.dataset.bound) return;
+    openBtn.dataset.bound = '1';
+    cancelBtn.dataset.bound = '1';
+    applyBtn.dataset.bound = '1';
+    openBtn.addEventListener('click', _openBulkPreOrderDtsModal);
+    cancelBtn.addEventListener('click', () => modal.classList.remove('show'));
+    applyBtn.addEventListener('click', _bulkSyncPreOrderDts);
   };
   init();
 })();

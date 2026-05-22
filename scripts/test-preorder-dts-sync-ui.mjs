@@ -9,6 +9,8 @@ function assert(condition, message) {
 
 assert(html.includes('id="sp-preorder-dts"'), 'PRE ORDER DTS container is missing');
 assert(html.includes('id="sp-sync-preorder-dts"'), 'PRE ORDER DTS sync button is missing');
+assert(html.includes('preorder-dts-bulk'), 'bulk PRE ORDER DTS trigger is missing');
+assert(html.includes('preorder-dts-bulk-modal'), 'bulk PRE ORDER DTS modal is missing');
 
 const mapMatch = html.match(/const PRE_ORDER_REGION_DTS = Object\.freeze\((\{[\s\S]*?\})\);/);
 assert(mapMatch, 'PRE_ORDER_REGION_DTS map is missing');
@@ -30,6 +32,13 @@ for (const token of [
   'is_pre_order: true',
   'days_to_ship: target.days_to_ship',
   "syncPreOrderDts.addEventListener('click', _shopeeSyncPreOrderDts);",
+  'function _ensureBulkPreOrderDtsUi()',
+  'function _openBulkPreOrderDtsModal()',
+  'async function _bulkSyncPreOrderDts()',
+  'const rawMap = _readBulkPreOrderDtsMap();',
+  "btn.id = 'preorder-dts-bulk';",
+  "document.getElementById('preorder-dts-bulk-modal')?.classList.add('show');",
+  "applyBtn.addEventListener('click', _bulkSyncPreOrderDts);",
 ]) {
   assert(html.includes(token), `PRE ORDER DTS flow missing ${token}`);
 }

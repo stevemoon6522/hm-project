@@ -1,4 +1,4 @@
-// Shopee Bridge v43: D2 P1 — publish_request_id idempotency gate for all mutating bridge actions.
+// Shopee Bridge v44: v2 register variants — buildGlobalModels seller_stock migration + per-model weight/image fields + register_cbsc failure state machine (§6-1) + idempotency_token as request_id.
 // v42: harden StarOneMall image proxy/upload_image validation and generated-upload idempotency.
 // v41: /health reports the hosted deployment version from DENO_DEPLOYMENT_ID.
 // v40: GlobalProduct registration uses add_global_item -> init_tier_variation/add_global_model -> create_publish_task -> get_publish_task_result.
@@ -1388,7 +1388,13 @@ function normalizeTierVariation(variation: any) {
   return variation.tier_variation.slice(0, 2).map((t: any) => ({
     name: String(t?.name || '').trim(),
     option_list: Array.isArray(t?.option_list)
-      ? t.option_list.map((o: any) => ({ option: String(o?.option || '').trim() })).filter((o: any) => o.option)
+      ? t.option_list.map((o: any) => {
+          const entry: any = { option: String(o?.option || '').trim() };
+          // Path A (§2-3): per-option image. Pass through image object/url if provided.
+          // probe_per_option_image_ok gate enforced at UI layer before calling bridge.
+          if (o?.image) entry.image = o.image;
+          return entry;
+        }).filter((o: any) => o.option)
       : [],
   })).filter((t: any) => t.name && t.option_list.length > 0);
 }
@@ -1402,15 +1408,37 @@ function normalizeVariation(variation: any) {
   return { tier_variation, model };
 }
 
+// buildGlobalModels — v44: migrated from normal_stock (sunset 2024-10-23) to seller_stock.
+// Also adds optional per-model weight (float, kg) and per-option image fields when provided.
+// Probe gate flags (probe_per_model_weight_ok / probe_per_option_image_ok) are checked at the
+// UI layer before calling register_cbsc; bridge always sends what it receives.
 function buildGlobalModels(variation: any, fallbackPrice: number, fallbackStock: number) {
   const normalized = normalizeVariation(variation);
   if (!normalized) return [];
-  return normalized.model.map((m: any) => ({
-    tier_index: Array.isArray(m?.tier_index) ? m.tier_index.map((x: any) => Number(x)) : [],
-    global_model_sku: String(m?.global_model_sku || m?.model_sku || '').trim(),
-    original_price: Number(m?.global_original_price ?? m?.original_price ?? fallbackPrice),
-    normal_stock: Number(m?.stock ?? fallbackStock ?? 0),
-  }));
+  return normalized.model.map((m: any) => {
+    const stock = Number(m?.stock ?? fallbackStock ?? 0);
+    const model: any = {
+      tier_index: Array.isArray(m?.tier_index) ? m.tier_index.map((x: any) => Number(x)) : [],
+      global_model_sku: String(m?.global_model_sku || m?.model_sku || '').trim(),
+      original_price: Number(m?.global_original_price ?? m?.original_price ?? fallbackPrice),
+      // seller_stock replaces deprecated normal_stock (Shopee sunset 2024-10-23).
+      seller_stock: [{ stock }],
+    };
+    // Optional: per-model weight in kg (probe_per_model_weight_ok gate at UI layer).
+    // weight_g is stored in grams in our DB; Shopee expects kg float.
+    if (m?.weight_g != null && Number(m.weight_g) > 0) {
+      model.weight = Number(m.weight_g) / 1000;
+    } else if (m?.weight != null && Number(m.weight) > 0) {
+      // Already in kg (direct pass-through from caller).
+      model.weight = Number(m.weight);
+    }
+    // Optional: per-model image_id (probe_per_option_image_ok gate at UI layer).
+    // Shopee docs path A: model[].image_id — sent when available.
+    if (m?.image_id) {
+      model.image_id = String(m.image_id);
+    }
+    return model;
+  });
 }
 
 function buildPublishModels(variation: any, fallbackPrice: number) {
@@ -1438,7 +1466,8 @@ function buildGlobalItemPayload(body: any) {
     },
     image: imageBlockFrom(body),
     original_price: Number(body.global_price ?? body.price),
-    normal_stock: Number(body.stock || 0),
+    // seller_stock replaces deprecated normal_stock at global item level (Shopee sunset 2024-10-23).
+    seller_stock: [{ stock: Number(body.stock || 0) }],
     pre_order: { days_to_ship: dts },
     brand: body.brand && body.brand.original_brand_name
       ? { brand_id: Number(body.brand.brand_id || 0), original_brand_name: String(body.brand.original_brand_name) }
@@ -2429,9 +2458,14 @@ Deno.serve(async (req) => {
       return jsonResp({ ok: true, merchant, shops: results });
     }
     // POST /register_cbsc: high-level GlobalProduct registration and region publish orchestration.
+    // v44: accepts body.idempotency_token (UUID) forwarded from UI card — used as request_id
+    //      for the withPublishRequestId gate so duplicate browser submits are blocked.
+    //      body.variation.model[] now supports per-model weight_g and image_id fields (§6-1, §2-2).
     if (action === 'register_cbsc' && req.method === 'POST') {
       const body = await req.json();
       const r = body.region || 'SG';
+      // Use UI-supplied idempotency_token as the publish request id when provided (§6-2).
+      const _cbscIdempotencyToken = body.idempotency_token ? String(body.idempotency_token) : null;
       const targetInputs = (Array.isArray(body.targets) && body.targets.length ? body.targets : [body])
         .map((t: any) => ({ ...t, region: t.region || r }))
         .filter((t: any) => t.region);
@@ -2440,7 +2474,7 @@ Deno.serve(async (req) => {
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
 
-      return withPublishRequestId(action, r, null, body, async () => {
+      return withPublishRequestId(action, r, _cbscIdempotencyToken, body, async () => {
       const stage_logs: string[] = [];
       const catAttrs = await buildCategoryAttributeList(r, Number(body.category_id), Array.isArray(body.attribute_list) ? body.attribute_list : []);
       if (catAttrs.missing.length > 0) {
@@ -2523,6 +2557,9 @@ Deno.serve(async (req) => {
       if (!global_item_id) return jsonResp({ ok: false, region: r, stage: 'add_global_item', error: 'no global_item_id', raw: addRes }, 502);
       stage_logs.push(`add_global_item ok: global_item_id=${global_item_id}`);
 
+      // §6-1 failure state machine: variation setup with explicit stage tracking.
+      // init_tier_variation failure → auto delete_global_item (cleanup orphan).
+      // add_global_model partial failure → no auto cleanup (dangerous), return partial_published.
       const baseVariation = normalizeVariation(body.variation || targetInputs.find((t: any) => t.variation)?.variation);
       if (baseVariation) {
         const globalModels = buildGlobalModels(baseVariation, Number(body.global_price ?? body.price ?? targetInputs[0]?.price), Number(body.stock ?? 0));
@@ -2530,14 +2567,74 @@ Deno.serve(async (req) => {
           method: 'POST',
           body: { global_item_id, tier_variation: baseVariation.tier_variation, global_model: [globalModels[0]] },
         });
-        if (initRes.error) return jsonResp({ ok: false, region: r, stage: 'init_tier_variation', global_item_id, error: initRes.error, message: initRes.message, raw: initRes }, 502);
+        if (initRes.error) {
+          // §6-1: init_tier_variation failed → orphan global_item exists. Auto-cleanup.
+          stage_logs.push(`init_tier_variation FAILED: ${initRes.error} — attempting delete_global_item cleanup`);
+          let cleanupState = 'cleanup_required';
+          try {
+            const delRes = await merchantApiCall(r, '/api/v2/global_product/delete_global_item', {
+              method: 'POST',
+              body: { global_item_id },
+            });
+            if (!delRes.error) {
+              cleanupState = 'cleanup_done';
+              stage_logs.push(`delete_global_item cleanup ok: global_item_id=${global_item_id}`);
+            } else {
+              stage_logs.push(`delete_global_item cleanup FAILED: ${delRes.error}`);
+            }
+          } catch (cleanupErr: any) {
+            stage_logs.push(`delete_global_item cleanup exception: ${String(cleanupErr?.message || cleanupErr)}`);
+          }
+          return jsonResp({
+            ok: false,
+            region: r,
+            stage: 'init_tier_variation',
+            cleanup_state: cleanupState,
+            global_item_id: cleanupState === 'cleanup_done' ? null : global_item_id,
+            error: initRes.error,
+            message: initRes.message,
+            stage_logs,
+            raw: initRes,
+          }, 502);
+        }
         stage_logs.push(`init_tier_variation ok: 1/${globalModels.length} models`);
         if (globalModels.length > 1) {
           const addModelRes = await merchantApiCall(r, '/api/v2/global_product/add_global_model', {
             method: 'POST',
             body: { global_item_id, model_list: globalModels.slice(1) },
           });
-          if (addModelRes.error) return jsonResp({ ok: false, region: r, stage: 'add_global_model', global_item_id, error: addModelRes.error, message: addModelRes.message, raw: addModelRes }, 502);
+          if (addModelRes.error) {
+            // §6-1: add_global_model failure — partial state. No auto cleanup (dangerous).
+            // Return partial_published so UI can surface the correct DB state.
+            // P1 #1: include per-model identifiers so UI/operator knows which options to retry.
+            stage_logs.push(`add_global_model FAILED: ${addModelRes.error} — partial model state, no auto-cleanup`);
+            const failedModels = globalModels.slice(1).map((m: any, idx: number) => ({
+              tier_index: m.tier_index,
+              global_model_sku: m.model_sku ?? m.global_model_sku ?? null,
+              error: addModelRes.error,
+            }));
+            const succeededModels = [{
+              tier_index: globalModels[0].tier_index,
+              global_model_sku: globalModels[0].model_sku ?? globalModels[0].global_model_sku ?? null,
+              // global_model_id is not returned by init_tier_variation; must be fetched separately if needed
+              global_model_id: null,
+            }];
+            return jsonResp({
+              ok: false,
+              region: r,
+              stage: 'add_global_model',
+              cleanup_state: 'partial_published',
+              global_item_id,
+              models_added: 1,
+              models_failed: globalModels.length - 1,
+              succeeded_models: succeededModels,
+              failed_models: failedModels,
+              error: addModelRes.error,
+              message: addModelRes.message,
+              stage_logs,
+              raw: addModelRes,
+            }, 502);
+          }
           stage_logs.push(`add_global_model ok: ${globalModels.length - 1} models`);
         }
       }

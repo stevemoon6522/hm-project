@@ -1919,12 +1919,13 @@
         </div>
       </div>
 
-      <!-- Probe 2: model weight -->
-      <div class="panel" style="padding:14px 16px;">
-        <h3 style="font-size:14px;margin:0 0 8px;">Probe 2 — model weight 필드</h3>
+      <!-- Probe 2: per-model weight (probe_per_model_weight_ok) -->
+      <div class="panel" style="margin-bottom:14px;padding:14px 16px;">
+        <h3 style="font-size:14px;margin:0 0 8px;">Probe 2 — 옵션별 weight 매핑 (probe_per_model_weight_ok)</h3>
         <p style="font-size:12px;color:var(--muted);margin:0 0 10px;">
           순서: (a) 현재 weight 읽기 → (b) 0.08 kg으로 push → (c) 재조회 → (d) 비교.<br>
-          <strong>Note (P0-4 / KRSC docs):</strong> update_global_model.weight 는 top-level 단일 float — 이 호출의 모든 listed model에 동일 weight가 적용됩니다. 단일 model probe payload를 사용하세요.
+          <strong>Note (P0-4 / KRSC docs):</strong> update_global_model.weight 는 top-level 단일 float — 이 호출의 모든 listed model에 동일 weight가 적용됩니다. 단일 model probe payload를 사용하세요.<br>
+          결과가 <strong>Pass</strong>이면 발행 시 옵션별 weight를 payload에 포함합니다. Fail이면 top-level weight만 사용합니다.
         </p>
         <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
           <div class="field" style="flex:1;min-width:200px;">
@@ -1960,7 +1961,48 @@
         </div>
         <div id="probe2-result" style="display:none;margin-top:8px;">
           <span id="probe2-badge" style="font-size:13px;font-weight:600;"></span>
-          <button type="button" id="probe2-save" style="margin-left:10px;display:none;">💾 capability flag 저장</button>
+          <button type="button" id="probe2-save" style="margin-left:10px;display:none;">💾 probe_per_model_weight_ok 저장</button>
+        </div>
+      </div>
+
+      <!-- Probe 3: per-option image (probe_per_option_image_ok) -->
+      <div class="panel" style="padding:14px 16px;">
+        <h3 style="font-size:14px;margin:0 0 8px;">Probe 3 — 옵션별 이미지 매핑 (probe_per_option_image_ok)</h3>
+        <p style="font-size:12px;color:var(--muted);margin:0 0 10px;">
+          Plan §2-3 경로 A: init_tier_variation body 의 tier_variation[].option_list[].image 필드가 Shopee 에서 받아지는지 확인.<br>
+          순서: (a) burnable global_item_id로 init_tier_variation 호출 (option_list에 image 포함) → (b) get_global_item_info 재조회 → (c) 응답의 tier_variation[].option_list[].image_url 비교.<br>
+          결과가 <strong>Pass</strong>이면 발행 시 옵션별 이미지를 tier_variation option_list에 포함합니다. Fail이면 발행 후 update_tier_variation fallback으로 처리합니다.
+        </p>
+        <div class="notice" style="margin-bottom:10px;">
+          ⚠ <strong>주의:</strong> 이 probe는 실제 init_tier_variation을 재호출합니다. 위에서 선택한 burnable global_item_id를 사용합니다.
+          기존 tier_variation이 덮어써질 수 있습니다.
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
+          <div class="field" style="flex:1;min-width:280px;">
+            <label for="probe3-image-url">테스트용 이미지 URL (Shopee media_space에 업로드된 image_id 또는 URL)</label>
+            <input type="text" id="probe3-image-url" placeholder="예: https://cf.shopee.kr/file/abc123 또는 image_id">
+          </div>
+          <button type="button" id="probe3-run" class="btn-dry">🔬 option image probe 실행</button>
+          <span id="probe3-status" style="font-size:12px;color:var(--muted);">대기 중</span>
+        </div>
+        <div id="probe3-sequence" style="display:none;">
+          <div class="call-block">
+            <h4>(a) init_tier_variation (option_list[].image 포함) — POST register_cbsc variation (STUB)</h4>
+            <!-- TODO LIVE CALL: init_tier_variation with option image — plan §7 step 5.5 -->
+            <pre class="payload-pre" id="probe3-a-pre">—</pre>
+          </div>
+          <div class="call-block">
+            <h4>(b) 재조회 — GET raw_call/get_global_item_info</h4>
+            <pre class="payload-pre" id="probe3-b-pre">—</pre>
+          </div>
+          <div class="call-block">
+            <h4>(c) 비교 결과 — tier_variation[].option_list[].image_url</h4>
+            <pre class="payload-pre" id="probe3-c-pre">—</pre>
+          </div>
+        </div>
+        <div id="probe3-result" style="display:none;margin-top:8px;">
+          <span id="probe3-badge" style="font-size:13px;font-weight:600;"></span>
+          <button type="button" id="probe3-save" style="margin-left:10px;display:none;">💾 probe_per_option_image_ok 저장</button>
         </div>
       </div>
 
@@ -2837,19 +2879,23 @@ LEGACY END -->
     // 2026-05-20 (operator msg #501): newest products at the top. Position
     // is still respected for legacy ordering, but created_at flips to DESC
     // so the bulk-register flow's latest rows always show up first.
+    // v44: include variation columns for grouped product display (§9-6).
+    // Fallback to no-variation select if schema cache misses on new columns.
     let [productsRes, listingsRes, rollupsRes] = await Promise.all([
       db.from('products')
-        .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at')
-        .order('position', { ascending: true, nullsFirst: false })
+        .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at, product_group_id, variation_tier_names, variation_option_names, variation_tier_index')
+        .order('product_group_id', { ascending: true, nullsFirst: false })
+        .order('variation_tier_index', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false }),
       db.from('product_shopee_listings').select('*'),
       db.from('platform_listing_rollups').select('master_product_id, platform, listed_count, pending_count, error_count, total_count, per_shop_detail'),
     ]);
-    if (productsRes.error && /lifecycle_state|weight_measured_at|schema cache|column/i.test(`${productsRes.error.message || ''} ${productsRes.error.details || ''}`)) {
-      productsRes = await db.from('products')
-        .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, position, created_at')
-        .order('position', { ascending: true, nullsFirst: false })
-        .order('created_at', { ascending: false });
+    if (productsRes.error && /lifecycle_state|weight_measured_at|schema cache|column|variation/i.test(`${productsRes.error.message || ''} ${productsRes.error.details || ''}`)) {
+      // P1 #3 (option b): migration is expected to be applied; variation columns are required.
+      // Fail loudly instead of silently dropping columns — the fallback path masked openRegisterShopeeModal's
+      // variant guard and could expose operators to a broken register flow.
+      console.error('[v2] loadData: variation column fetch failed — migration may not be applied.', productsRes.error);
+      throw new Error(`DB schema error: variation columns unavailable (${productsRes.error.message || productsRes.error.code || 'unknown'}). 관리자에게 마이그레이션 적용을 확인하세요.`);
     }
     if (productsRes.error) throw productsRes.error;
     if (listingsRes.error) throw listingsRes.error;
@@ -2904,13 +2950,22 @@ LEGACY END -->
       updateBulkDeleteUi();
       return;
     }
-    els.productBody.innerHTML = rows.map((p) => `
+    els.productBody.innerHTML = rows.map((p) => {
+      // §9-6 display rule: variation rows show product_name + "—" + option names.
+      const isVariantRow = Array.isArray(p.variation_tier_names) && p.variation_tier_names.length > 0;
+      const optionDisplay = isVariantRow && Array.isArray(p.variation_option_names)
+        ? p.variation_option_names.join(' / ')
+        : (p.option_name || '');
+      const nameDisplay = isVariantRow && optionDisplay
+        ? `${text(p.product_name || '')} <span style="color:var(--muted);">— ${text(optionDisplay)}</span>`
+        : text(p.product_name || '');
+      return `
       <tr data-product-id="${text(p.id)}">
         <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}"></td>
         <td class="mono pl-edit" data-field="sku" data-id="${text(p.id)}" title="더블클릭하여 편집" style="white-space:nowrap;cursor:text;">${text(p.sku || '')}</td>
         <td style="white-space:normal;">
-          <div class="pl-edit" data-field="product_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;">${text(p.product_name || '')}</div>
-          <div class="muted pl-edit" data-field="option_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;font-size:11px;">${text(p.option_name || '') || '<i style="color:#cbd5e1;">(no option)</i>'}</div>
+          <div class="${isVariantRow ? '' : 'pl-edit'}" data-field="product_name" data-id="${text(p.id)}" title="${isVariantRow ? '옵션 묶음 상품 — 새 등록 화면에서 편집' : '더블클릭하여 편집'}" style="cursor:${isVariantRow ? 'default' : 'text'};">${nameDisplay}</div>
+          ${isVariantRow ? `<div style="font-size:10px;color:var(--muted);">📦 옵션 묶음${p.product_group_id ? ' · 그룹 ' + text(p.product_group_id.slice(0,8)) + '…' : ''}</div>` : `<div class="muted pl-edit" data-field="option_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;font-size:11px;">${text(p.option_name || '') || '<i style="color:#cbd5e1;">(no option)</i>'}</div>`}
         </td>
         <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.cost_krw || 0).toLocaleString()}</td>
         <td class="mono pl-edit" data-field="weight_g" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.weight_g || 0).toLocaleString()}</td>
@@ -2924,7 +2979,8 @@ LEGACY END -->
           <button type="button" data-delete="${text(p.id)}" data-sku="${text(p.sku || '')}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">🗑</button>
         </td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
     els.productBody.querySelectorAll('[data-open]').forEach((btn) => {
       // Phase B: route to new 2-stage modal; legacy openModal kept below for reference
       btn.addEventListener('click', () => openRegisterShopeeModal(btn.dataset.open));
@@ -6335,6 +6391,16 @@ LEGACY END -->
       return;
     }
 
+    // §9-6 legacy read-path guard: variation_tier_index IS NOT NULL rows are option-bundle
+    // products created by the new v2 register variants flow. Opening them in the legacy
+    // 5-step wizard would corrupt the variation_* columns. Block and show an info toast.
+    const productRow = state.products && state.products.find(p => String(p.id) === String(productId));
+    if (productRow && Array.isArray(productRow.variation_tier_index) && productRow.variation_tier_index.length > 0) {
+      showToast('옵션 묶음 상품은 새 등록 화면(📦 상품 등록)에서 편집해주세요. 이 모달로는 편집할 수 없습니다.', 'err');
+      console.warn('[openRegisterShopeeModal] blocked: variation_tier_index IS NOT NULL for product', productId);
+      return;
+    }
+
     // Reset per-modal state
     _rsh = {
       productId,
@@ -9025,7 +9091,8 @@ LEGACY END -->
   const probeState = {
     globalItemId: null,
     probe1Result: null,  // 'pass' | 'fail' | null
-    probe2Result: null,
+    probe2Result: null,  // probe_per_model_weight_ok
+    probe3Result: null,  // probe_per_option_image_ok (plan §7 step 5.5)
   };
 
   /**
@@ -9052,13 +9119,13 @@ LEGACY END -->
       // Query: GET /rest/v1/shopee_app_config?select=key,value,updated_at&key=in.(probe_item_name_ok,probe_model_weight_ok)
       const url = SUPABASE_URL + '/rest/v1/shopee_app_config'
         + '?select=key,value,updated_at'
-        + '&key=in.(probe_item_name_ok,probe_model_weight_ok)';
+        + '&key=in.(probe_item_name_ok,probe_model_weight_ok,probe_per_model_weight_ok,probe_per_option_image_ok)';
       const res = await fetch(url, { headers: AUTH_HEADERS });
 
       if (!res.ok) {
         // Table missing or access error — show banner
         const banner = res.status === 404 || res.status === 400
-          ? '⚠ shopee_app.config 테이블이 없습니다. TODO: DB 마이그레이션으로 생성 필요 (plan §9-3).'
+          ? '⚠ shopee_app_config 테이블이 없습니다. DB 마이그레이션 202605220001 을 적용해주세요.'
           : `⚠ flags 로드 실패 (HTTP ${res.status})`;
         flagsEl.innerHTML = '<span style="color:var(--red);">' + esc(banner) + '</span>';
         return;
@@ -9070,17 +9137,18 @@ LEGACY END -->
 
       const fmt = function(key, label) {
         const r = byKey[key];
-        if (!r) return '<span style="color:var(--muted);">' + label + ': <em>미설정</em></span>';
-        const ok = r.value === true || r.value?.ok === true;
+        if (!r || r.value === null || r.value === undefined) return '<span style="color:var(--muted);">' + label + ': <em>미설정</em></span>';
+        const ok = r.value === true || (r.value && r.value.ok === true);
         const ts = r.updated_at ? new Date(r.updated_at).toLocaleString('ko-KR') : '—';
         return (ok ? '✅' : '❌') + ' <strong>' + label + '</strong>: '
           + (ok ? 'Pass' : 'Fail') + ' (기록: ' + esc(ts) + ')';
       };
 
       flagsEl.innerHTML = [
-        fmt('probe_item_name_ok',    'probe_item_name_ok'),
-        fmt('probe_model_weight_ok', 'probe_model_weight_ok'),
-      ].join(' &nbsp;&nbsp; ');
+        fmt('probe_item_name_ok',          'probe_item_name_ok'),
+        fmt('probe_per_model_weight_ok',   'probe_per_model_weight_ok (옵션별 weight)'),
+        fmt('probe_per_option_image_ok',   'probe_per_option_image_ok (옵션별 image)'),
+      ].join('<br>');
     } catch (e) {
       flagsEl.innerHTML = '<span style="color:var(--red);">flags 조회 오류: ' + esc(String(e.message || e)) + '</span>';
     }
@@ -9322,7 +9390,119 @@ LEGACY END -->
     if (p2Save && !p2Save.dataset.probeBound) {
       p2Save.dataset.probeBound = '1';
       p2Save.addEventListener('click', function() {
-        probeSaveFlag('probe_model_weight_ok', probeState.probe2Result === 'pass');
+        // v44: save to new canonical key probe_per_model_weight_ok (§7 step 5.5)
+        probeSaveFlag('probe_per_model_weight_ok', probeState.probe2Result === 'pass');
+      });
+    }
+
+    // Probe 3: per-option image (probe_per_option_image_ok) — plan §7 step 5.5
+    const p3Btn = document.getElementById('probe3-run');
+    if (p3Btn && !p3Btn.dataset.probeBound) {
+      p3Btn.dataset.probeBound = '1';
+      p3Btn.addEventListener('click', async function() {
+        if (!probeState.globalItemId) {
+          showToast('먼저 burnable global_item_id를 입력하고 선택하세요.', 'err'); return;
+        }
+        const imageUrl = (document.getElementById('probe3-image-url')?.value || '').trim();
+        if (!imageUrl) {
+          showToast('테스트용 이미지 URL 또는 image_id를 입력하세요.', 'err'); return;
+        }
+        const statusEl  = document.getElementById('probe3-status');
+        const seqEl     = document.getElementById('probe3-sequence');
+        const resultEl  = document.getElementById('probe3-result');
+        const badgeEl   = document.getElementById('probe3-badge');
+        const saveBtn   = document.getElementById('probe3-save');
+        const aEl = document.getElementById('probe3-a-pre');
+        const bEl = document.getElementById('probe3-b-pre');
+        const cEl = document.getElementById('probe3-c-pre');
+
+        if (statusEl)  statusEl.textContent  = '⏳ 실행 중…';
+        if (seqEl)     seqEl.style.display   = 'block';
+        if (resultEl)  resultEl.style.display = 'none';
+
+        // Build probe payload: init_tier_variation with image in option_list (Plan §2-3 path A)
+        const probeImageObj = /^\d+$/.test(imageUrl)
+          ? { image_id: imageUrl }
+          : { image_url: imageUrl };
+        const probeTierVariation = [{
+          name: 'PROBE_MEMBER',
+          option_list: [
+            { option: 'PROBE_A', image: probeImageObj },
+            { option: 'PROBE_B' },
+          ],
+        }];
+        const probeModel = [{
+          tier_index: [0],
+          global_model_sku: 'PROBE-SKU-A',
+          original_price: 100,
+          seller_stock: [{ stock: 0 }],
+        }];
+        const probePayload = {
+          global_item_id: Number(probeState.globalItemId),
+          tier_variation: probeTierVariation,
+          global_model: [probeModel[0]],
+        };
+
+        const reqInfo = {
+          method: 'POST',
+          url: SHOPEE_BRIDGE + '/init_tier_variation',
+          body: probePayload,
+          note: 'STUB — not fired (plan §7 step 5.5 TODO LIVE CALL)',
+        };
+        console.log('[PROBE 3-a] init_tier_variation with option image:', reqInfo);
+        if (aEl) aEl.textContent = JSON.stringify({ request: reqInfo, response: { _stub: true, note: 'TODO LIVE CALL' } }, null, 2);
+
+        await new Promise(function(r) { setTimeout(r, 300); });
+
+        // Readback stub
+        const readbackMock = {
+          ok: true,
+          result: {
+            response: {
+              tier_variation: [{
+                name: 'PROBE_MEMBER',
+                option_list: [
+                  { option: 'PROBE_A', image: { image_url: imageUrl } },
+                  { option: 'PROBE_B' },
+                ],
+              }],
+            },
+          },
+          _stub: true,
+        };
+        console.log('[PROBE 3-b] get_global_item_info readback (stub):', readbackMock);
+        if (bEl) bEl.textContent = JSON.stringify({ request: { note: 'get_global_item_info (stub)' }, response: readbackMock }, null, 2);
+
+        await new Promise(function(r) { setTimeout(r, 200); });
+
+        // Compare: did option_list[0].image survive the round-trip?
+        const readbackOptions = readbackMock?.result?.response?.tier_variation?.[0]?.option_list || [];
+        const opt0 = readbackOptions[0] || {};
+        const imagePreserved = !!(opt0.image && (opt0.image.image_url || opt0.image.image_id));
+        const compareResult = {
+          sent_image: probeImageObj,
+          readback_option_0: opt0,
+          image_preserved_in_readback: imagePreserved,
+          pass: imagePreserved,
+          note: 'STUB comparison — values are mocked (plan §7 step 5.5 TODO LIVE CALL)',
+        };
+        console.log('[PROBE 3-c] compare:', compareResult);
+        if (cEl) cEl.textContent = JSON.stringify(compareResult, null, 2);
+
+        if (resultEl)  resultEl.style.display = 'block';
+        if (statusEl)  statusEl.textContent   = imagePreserved ? '✅ Pass (stub)' : '❌ Fail (stub)';
+        if (badgeEl)   badgeEl.textContent    = 'Probe 3 result: ' + (imagePreserved ? '✅ Pass (mock)' : '❌ Fail (mock)');
+        if (badgeEl)   badgeEl.style.color    = imagePreserved ? 'var(--green)' : 'var(--red)';
+        if (saveBtn)   saveBtn.style.display  = 'inline-block'; // always show — operator decides pass/fail
+
+        probeState.probe3Result = imagePreserved ? 'pass' : 'fail';
+      });
+    }
+    const p3Save = document.getElementById('probe3-save');
+    if (p3Save && !p3Save.dataset.probeBound) {
+      p3Save.dataset.probeBound = '1';
+      p3Save.addEventListener('click', function() {
+        probeSaveFlag('probe_per_option_image_ok', probeState.probe3Result === 'pass');
       });
     }
   }
@@ -9972,6 +10152,8 @@ LEGACY END -->
       if (mrLifecycle() === 'pre_order') return 'PO';
       return ($('mr-location').value || '').trim().toUpperCase();
     }
+    // mrComputeSku: kept as prefill helper (plan §5-3, operator decision #9 — manual SKU, auto-assembly removed).
+    // Returns a suggested SKU prefix; operator overrides per-option row manually.
     function mrComputeSku(row) {
       const loc = mrLocation() || 'PO';
       return [
@@ -9981,6 +10163,63 @@ LEGACY END -->
         mrSlug(row.version, 3),
         (row.member || '').trim()
       ].join('-');
+    }
+
+    // mrGroupCards — group MR_PREV rows by source_record_id into card groups.
+    // Each group has a shared idempotency_token (UUID, stable per browser session).
+    // Returns array of card group objects: { source_record_id, idempotency_token, rows[], tierNames[], twoAxis }.
+    function mrGroupCards() {
+      const groupMap = new Map();
+      for (const row of MR_PREV) {
+        const key = row.source_record_id || ('__tmp__' + (row.tempId || ''));
+        if (!groupMap.has(key)) {
+          groupMap.set(key, {
+            source_record_id: row.source_record_id || null,
+            // Idempotency token: stable per group, generated once, persisted on group object.
+            // If token already on row (e.g. from previous grouping), reuse it.
+            idempotency_token: row._group_token || crypto.randomUUID(),
+            tierNames: row._tierNames || ['멤버'],
+            twoAxis: row._twoAxis || false,
+            rows: [],
+          });
+          // Store token back on the first row so it survives re-renders.
+          row._group_token = groupMap.get(key).idempotency_token;
+        }
+        groupMap.get(key).rows.push(row);
+      }
+      return Array.from(groupMap.values());
+    }
+
+    // mrBuildTierIndex — compute tier_index[] for an option row inside a card group.
+    // Collects unique axis0/axis1 values across the group and assigns integer indices.
+    // P1 #2: case-normalize keys for dedup (trim + toLowerCase) while preserving display value.
+    function mrBuildTierCoords(groups) {
+      for (const g of groups) {
+        const axis0Keys = [];  // lowercase keys for dedup
+        const axis0Vals = [];  // original display values (parallel array)
+        const axis1Keys = [];
+        const axis1Vals = [];
+        for (const row of g.rows) {
+          const v0 = (row._opt0 || '').trim();
+          const v1 = (row._opt1 || '').trim();
+          const k0 = v0.toLowerCase();
+          const k1 = v1.toLowerCase();
+          if (v0 && !axis0Keys.includes(k0)) { axis0Keys.push(k0); axis0Vals.push(v0); }
+          if (g.twoAxis && v1 && !axis1Keys.includes(k1)) { axis1Keys.push(k1); axis1Vals.push(v1); }
+        }
+        for (const row of g.rows) {
+          const v0 = (row._opt0 || '').trim();
+          const v1 = (row._opt1 || '').trim();
+          const i0 = axis0Keys.indexOf(v0.toLowerCase());
+          if (g.twoAxis) {
+            const i1 = axis1Keys.indexOf(v1.toLowerCase());
+            row._tierIndex = i0 >= 0 && i1 >= 0 ? [i0, i1] : null;
+          } else {
+            row._tierIndex = i0 >= 0 ? [i0] : null;
+          }
+          row._optionNames = g.twoAxis ? [v0, v1] : [v0];
+        }
+      }
     }
     function mrStripNonAscii(s) {
       // Remove Hangul + Hiragana/Katakana + CJK Han + Hangul Jamo + zero-width.
@@ -10207,202 +10446,370 @@ LEGACY END -->
       }
     }
 
+    // mrRenderPreviewCards — v44: group rows by source_record_id → 1 card per group.
+    // Each card shows card-level header (title/artist/album/version) + N option rows
+    // (each row has: axis0 name, optional axis1 name, SKU, 매입가, 무게, 메인이미지, 추가이미지).
+    // Tier axis names and 2-axis toggle are stored on the group object.
+    // console.log trace for dry-run verification.
+
+    // Statuses that indicate NO registration intent (cross-card SKU check exclusion list).
+    // Used in both mrRenderPreviewCards and mrPromoteAll.
+    const CROSS_SKU_INACTIVE = new Set(['rejected', 'skipped', 'crawling']);
+
     function mrRenderPreviewCards() {
       const wrap = $('mr-preview-cards');
       wrap.innerHTML = '';
-      const okCount = MR_PREV.filter(r => r.status === 'preview' || r.status === 'done').length;
+      const okCount   = MR_PREV.filter(r => r.status === 'preview' || r.status === 'done').length;
       const failCount = MR_PREV.filter(r => r.status === 'failed').length;
       const doneCount = MR_PREV.filter(r => r.status === 'done').length;
       $('mr-stage2-summary').textContent = `전체 ${MR_PREV.length}건 · 준비 ${okCount} · 등록 완료 ${doneCount} · 실패 ${failCount}`;
       $('mr-retry-failed-btn').style.display = failCount > 0 ? '' : 'none';
       $('mr-promote-btn').disabled = okCount === 0;
 
-      MR_PREV.forEach((row, idx) => {
-        const card = el('div', { class: 'panel', style: 'padding:12px;display:grid;grid-template-columns:120px 1fr 160px;gap:12px;align-items:start;' });
+      const groups = mrGroupCards();
+      mrBuildTierCoords(groups);
+      console.log('[mrRenderPreviewCards] groups:', groups.length, groups.map(g => ({ key: g.source_record_id, rows: g.rows.length, token: g.idempotency_token })));
 
-        // Thumbnail (#5: broken-image red placeholder)
-        const main = (row.observed && Array.isArray(row.observed.main_image_urls)) ? row.observed.main_image_urls[0] : null;
-        const thumb = el('div', { style: 'width:120px;height:120px;background:#f4f4f5;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);text-align:center;' });
-        if (main) {
-          const img = el('img', { src: main, style: 'width:100%;height:100%;object-fit:cover;' });
-          img.addEventListener('error', () => {
-            thumb.style.background = '#fee2e2';
-            thumb.style.color = '#991b1b';
-            thumb.innerHTML = '';
-            thumb.textContent = '이미지 깨짐';
-          });
+      groups.forEach((group, gIdx) => {
+        const firstRow = group.rows[0] || {};
+        const cardStatus = group.rows.every(r => r.status === 'done') ? 'done'
+          : group.rows.some(r => r.status === 'failed') ? 'failed'
+          : group.rows.some(r => r.status === 'promoting') ? 'promoting'
+          : group.rows.some(r => r.status === 'crawling') ? 'crawling'
+          : 'preview';
+
+        const card = el('div', { class: 'panel', style: 'padding:14px;margin-bottom:12px;' });
+
+        // ── Card header ──────────────────────────────────────────────
+        const header = el('div', { style: 'display:grid;grid-template-columns:120px 1fr;gap:12px;align-items:start;margin-bottom:10px;' });
+
+        // Thumbnail
+        const mainImg = (firstRow.observed && Array.isArray(firstRow.observed.main_image_urls)) ? firstRow.observed.main_image_urls[0] : null;
+        const thumb = el('div', { style: 'width:120px;height:120px;background:#f4f4f5;border-radius:8px;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--muted);text-align:center;flex-shrink:0;' });
+        if (mainImg) {
+          const img = el('img', { src: mainImg, style: 'width:100%;height:100%;object-fit:cover;' });
+          img.addEventListener('error', () => { thumb.style.background = '#fee2e2'; thumb.innerHTML = '<span style="color:#991b1b;">이미지 깨짐</span>'; });
           thumb.appendChild(img);
-        } else {
-          thumb.style.background = '#fee2e2';
-          thumb.style.color = '#991b1b';
-          thumb.textContent = '이미지 없음';
+        } else { thumb.style.background = '#fee2e2'; thumb.textContent = '이미지 없음'; }
+        header.appendChild(thumb);
+
+        // Card info column
+        const infoCol = el('div', { style: 'display:flex;flex-direction:column;gap:5px;font-size:12px;min-width:0;' });
+        const cardTop = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
+        cardTop.appendChild(el('span', { style: 'font-weight:700;' }, `카드 #${gIdx + 1}`));
+        const lab = mrStatusLabel(cardStatus);
+        cardTop.appendChild(el('span', { style: `color:${lab.color};font-weight:600;` }, lab.text));
+        if (firstRow.deduped) cardTop.appendChild(el('span', { style: 'color:var(--muted);' }, '· 중복 재사용'));
+        if (firstRow.url) {
+          cardTop.appendChild(el('a', { href: firstRow.url, target: '_blank', rel: 'noopener', style: 'color:var(--muted);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;' }, firstRow.url));
         }
-        card.appendChild(thumb);
+        infoCol.appendChild(cardTop);
 
-        const body = el('div', { style: 'display:flex;flex-direction:column;gap:6px;font-size:12px;min-width:0;' });
-        const top = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
-        top.appendChild(el('span', { style: 'font-weight:600;' }, `#${idx + 1}`));
-        const lab = mrStatusLabel(row.status);
-        top.appendChild(el('span', { style: `color:${lab.color};font-weight:600;` }, lab.text));
-        if (row.deduped) top.appendChild(el('span', { style: 'color:var(--muted);' }, '· 중복 source_record 재사용'));
-        if (row.product_id) top.appendChild(el('span', { style: 'color:#16a34a;' }, '· products 생성됨'));
-        const urlA = el('a', { href: row.url, target: '_blank', rel: 'noopener', style: 'color:var(--muted);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px;' }, row.url);
-        top.appendChild(urlA);
-        body.appendChild(top);
+        const titleDiv = el('div', { style: 'font-weight:600;font-size:13px;' }, (firstRow.observed && firstRow.observed.title) || '(제목 없음)');
+        infoCol.appendChild(titleDiv);
 
-        if (row.status === 'failed') {
-          body.appendChild(el('div', { style: 'color:#dc2626;font-size:12px;' }, row.error || '알 수 없는 오류'));
+        // Artist/Album/Version fields (card-level, shared across options)
+        if (firstRow.cost_krw == null) {
+          firstRow.cost_krw = (firstRow.observed && Number.isFinite(Number(firstRow.observed.price_krw))) ? Number(firstRow.observed.price_krw) : 0;
         }
 
-        const title = (row.observed && row.observed.title) || '';
-        body.appendChild(el('div', { style: 'font-weight:600;font-size:13px;' }, title || '(제목 없음)'));
-
-        // Cost + weight inline editors (#1)
-        if (row.cost_krw == null) {
-          // initialize from crawl on first render
-          row.cost_krw = (row.observed && Number.isFinite(Number(row.observed.price_krw))) ? Number(row.observed.price_krw) : 0;
-        }
-        const costRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
-        const costLab = el('label', { style: 'display:flex;gap:4px;align-items:center;' });
-        costLab.appendChild(el('span', { style: 'color:var(--muted);' }, '매입가(KRW):'));
-        const costInp = el('input', {
-          type: 'number', min: '0', step: '1',
-          style: `font-size:12px;padding:3px 6px;width:110px;text-align:right;${row.cost_krw > 0 ? '' : 'background:#fee2e2;color:#991b1b;'}`,
-          value: String(row.cost_krw || 0)
-        });
-        costInp.addEventListener('input', (e) => {
-          const v = Number(e.target.value);
-          row.cost_krw = Number.isFinite(v) && v >= 0 ? v : 0;
-          if (row.cost_krw > 0) {
-            e.target.style.background = '';
-            e.target.style.color = '';
-          } else {
-            e.target.style.background = '#fee2e2';
-            e.target.style.color = '#991b1b';
-          }
-        });
-        costLab.appendChild(costInp);
-        costRow.appendChild(costLab);
-
-        const wLab = el('label', { style: 'display:flex;gap:4px;align-items:center;' });
-        wLab.appendChild(el('span', { style: 'color:var(--muted);' }, '무게(g):'));
-        const wInp = el('input', {
-          type: 'number', min: '1', step: '1',
-          style: 'font-size:12px;padding:3px 6px;width:80px;text-align:right;',
-          value: String(row.weight_g || '')
-        });
-        wInp.addEventListener('input', (e) => {
-          const v = Number(e.target.value);
-          row.weight_g = Number.isFinite(v) && v > 0 ? v : 0;
-        });
-        wLab.appendChild(wInp);
-        costRow.appendChild(wLab);
-
-        if ((row.cost_krw || 0) === 0) {
-          costRow.appendChild(el('span', { style: 'color:#dc2626;font-size:11px;' }, '⚠ 매입가 0 — 등록 차단됨'));
-        }
-        body.appendChild(costRow);
-
-        const grid = el('div', { style: 'display:grid;grid-template-columns:repeat(4, 1fr);gap:6px;' });
-        function mkField(label, key) {
+        const fieldGrid = el('div', { style: 'display:grid;grid-template-columns:repeat(3,1fr);gap:6px;' });
+        const mkCardField = (label, key) => {
           const wrap2 = el('div', { style: 'display:flex;flex-direction:column;gap:2px;' });
           wrap2.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, label));
-          const inp = el('input', { type: 'text', style: 'font-size:12px;padding:4px 6px;', value: row[key] || '' });
-          inp.addEventListener('input', (e) => {
-            row[key] = e.target.value;
-            mrRefreshSkuChip(card, row);
-          });
+          const inp = el('input', { type: 'text', style: 'font-size:12px;padding:4px 6px;', value: firstRow[key] || '' });
+          inp.addEventListener('input', (e) => { firstRow[key] = e.target.value; });
           wrap2.appendChild(inp);
           return wrap2;
+        };
+        fieldGrid.appendChild(mkCardField('Artist', 'artist'));
+        fieldGrid.appendChild(mkCardField('Album', 'album'));
+        fieldGrid.appendChild(mkCardField('Version', 'version'));
+        infoCol.appendChild(fieldGrid);
+
+        // Default 매입가/무게 (prefill for new option rows)
+        const defaultsRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
+        defaultsRow.appendChild(el('span', { style: 'color:var(--muted);' }, '기본값:'));
+
+        const defCostLab = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
+        defCostLab.appendChild(el('span', { style: 'color:var(--muted);' }, '매입가(KRW)'));
+        const defCostInp = el('input', { type: 'number', min: '0', step: '1', style: 'font-size:12px;padding:3px 6px;width:100px;text-align:right;', value: String(firstRow.cost_krw || 0) });
+        defCostInp.addEventListener('input', (e) => { firstRow.cost_krw = Number(e.target.value) || 0; });
+        defCostLab.appendChild(defCostInp);
+        defaultsRow.appendChild(defCostLab);
+
+        const defWLab = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
+        defWLab.appendChild(el('span', { style: 'color:var(--muted);' }, '무게(g)'));
+        const defWInp = el('input', { type: 'number', min: '1', step: '1', style: 'font-size:12px;padding:3px 6px;width:75px;text-align:right;', value: String(firstRow.weight_g || '') });
+        defWInp.addEventListener('input', (e) => { firstRow.weight_g = Number(e.target.value) || 0; });
+        defWLab.appendChild(defWInp);
+        defaultsRow.appendChild(defWLab);
+
+        infoCol.appendChild(defaultsRow);
+
+        // Shopee 발행 필드 (category_id / days_to_ship — card level, required for register_cbsc)
+        // Phase A whitelist: 100740 = CD/DVD/Bluray, 101390 = Idol Collectibles
+        const SHOPEE_CATEGORY_WHITELIST = [
+          { id: 100740, label: 'CD/DVD/Bluray (100740)' },
+          { id: 101390, label: 'Idol Collectibles (101390)' },
+        ];
+        if (!SHOPEE_CATEGORY_WHITELIST.some(c => c.id === firstRow._shopee_category_id)) {
+          firstRow._shopee_category_id = 100740;
         }
-        grid.appendChild(mkField('Artist (SKU 3자)', 'artist'));
-        grid.appendChild(mkField('Album (SKU 5자)', 'album'));
-        grid.appendChild(mkField('Version (SKU 3자)', 'version'));
-        grid.appendChild(mkField('Member (SKU 그대로)', 'member'));
-        body.appendChild(grid);
+        if (!firstRow._shopee_days_to_ship) firstRow._shopee_days_to_ship = mrLifecycle() === 'pre_order' ? 10 : 3;
+        const shopeeRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
+        shopeeRow.appendChild(el('span', { style: 'color:var(--muted);' }, 'Shopee:'));
 
-        const skuLine = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:12px;' });
-        skuLine.appendChild(el('span', { style: 'color:var(--muted);' }, 'SKU:'));
-        const initialSku = mrComputeSku(row);
-        const skuBad = mrHasNonAscii(initialSku);
-        const skuChip = el('code', {
-          style: `font-size:12px;background:${skuBad ? '#fee2e2' : '#f4f4f5'};color:${skuBad ? '#991b1b' : ''};padding:2px 6px;border-radius:4px;`,
-          dataset: { skuDisplay: '1' }
-        }, initialSku);
-        if (skuBad) skuChip.title = 'SKU는 영문/숫자만 허용됩니다.';
-        skuLine.appendChild(skuChip);
-        body.appendChild(skuLine);
-
-        // SKU collision block (#2) — initially hidden, shown by mrRefreshCollisionUi
-        const collisionBlock = el('div', {
-          style: 'display:none;background:#fef3c7;border:1px solid #fcd34d;padding:6px 8px;border-radius:6px;font-size:11px;',
-          dataset: { collisionBlock: '1' }
+        const catWr = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
+        catWr.appendChild(el('span', { style: 'color:var(--muted);' }, 'category'));
+        const catSel = el('select', { style: 'font-size:12px;padding:2px 4px;' });
+        SHOPEE_CATEGORY_WHITELIST.forEach(c => {
+          const opt = el('option', { value: String(c.id) }, c.label);
+          if (c.id === firstRow._shopee_category_id) opt.selected = true;
+          catSel.appendChild(opt);
         });
-        const colHeader = el('div', { style: 'color:#92400e;font-weight:600;margin-bottom:4px;' });
-        colHeader.appendChild(document.createTextNode('⚠ 동일 SKU('));
-        colHeader.appendChild(el('code', { style: 'background:#fde68a;padding:1px 4px;border-radius:3px;', dataset: { collisionSku: '1' } }, initialSku));
-        colHeader.appendChild(document.createTextNode(') 가 이미 products에 있습니다.'));
-        collisionBlock.appendChild(colHeader);
-        const reuseId = `mr-col-${row.tempId || idx}-reuse`;
-        const overId = `mr-col-${row.tempId || idx}-overwrite`;
-        const colRadios = el('div', { style: 'display:flex;gap:12px;' });
-        const reuseLab = el('label', { style: 'display:flex;gap:4px;align-items:center;' });
-        const reuseRadio = el('input', { type: 'radio', name: `mr-col-${row.tempId || idx}`, value: 'reuse', id: reuseId });
-        if (!row.collisionMode || row.collisionMode === 'reuse') reuseRadio.checked = true;
-        reuseRadio.addEventListener('change', () => { row.collisionMode = 'reuse'; });
-        reuseLab.appendChild(reuseRadio);
-        reuseLab.appendChild(el('span', null, '기존 그대로 사용'));
-        colRadios.appendChild(reuseLab);
-        const overLab = el('label', { style: 'display:flex;gap:4px;align-items:center;' });
-        const overRadio = el('input', { type: 'radio', name: `mr-col-${row.tempId || idx}`, value: 'overwrite', id: overId });
-        if (row.collisionMode === 'overwrite') overRadio.checked = true;
-        overRadio.addEventListener('change', () => { row.collisionMode = 'overwrite'; });
-        overLab.appendChild(overRadio);
-        overLab.appendChild(el('span', null, '새 값으로 덮어쓰기 (매입가/무게/이미지/제목)'));
-        colRadios.appendChild(overLab);
-        collisionBlock.appendChild(colRadios);
-        body.appendChild(collisionBlock);
-        // initial visibility
-        mrRefreshCollisionUi(card, row);
+        catSel.addEventListener('change', (e) => { firstRow._shopee_category_id = Number(e.target.value); });
+        catWr.appendChild(catSel);
+        shopeeRow.appendChild(catWr);
 
-        card.appendChild(body);
+        const dtsWr = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
+        dtsWr.appendChild(el('span', { style: 'color:var(--muted);' }, 'DTS(일)'));
+        const dtsInp = el('input', {
+          type: 'number', min: '1', max: '150', step: '1',
+          style: 'font-size:12px;padding:3px 6px;width:60px;text-align:right;',
+          value: String(firstRow._shopee_days_to_ship),
+          title: '1-150 정수 (KRSC pre_order 한계 150일)',
+        });
+        dtsInp.addEventListener('input', (e) => {
+          const v = parseInt(e.target.value, 10);
+          if (Number.isInteger(v) && v >= 1 && v <= 150) {
+            firstRow._shopee_days_to_ship = v;
+            dtsInp.style.border = '';
+          } else {
+            // MEDIUM 3: invalid — set null so mrPromoteAll fails-fast; show red border
+            firstRow._shopee_days_to_ship = null;
+            dtsInp.style.border = '2px solid #dc2626';
+          }
+        });
+        dtsWr.appendChild(dtsInp);
+        shopeeRow.appendChild(dtsWr);
 
-        const actions = el('div', { style: 'display:flex;flex-direction:column;gap:6px;' });
-        if (row.product_id) {
-          const jumpBtn = el('button', { type: 'button', style: 'font-size:11px;padding:5px 10px;' }, '상품 목록으로');
-          jumpBtn.addEventListener('click', () => {
-            if (typeof window.showView === 'function') window.showView('view-ready-stock');
-          });
-          actions.appendChild(jumpBtn);
+        infoCol.appendChild(shopeeRow);
+
+        // Tier axis name inputs
+        const tierRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
+        tierRow.appendChild(el('span', { style: 'color:var(--muted);' }, '옵션 축 ①:'));
+        const tier0Inp = el('input', { type: 'text', style: 'font-size:12px;padding:3px 6px;width:100px;', value: group.tierNames[0] || '멤버', placeholder: '예: 멤버' });
+        tier0Inp.addEventListener('input', (e) => { group.tierNames[0] = e.target.value.trim() || '멤버'; });
+        tierRow.appendChild(tier0Inp);
+
+        if (group.twoAxis) {
+          tierRow.appendChild(el('span', { style: 'color:var(--muted);' }, '옵션 축 ②:'));
+          const tier1Inp = el('input', { type: 'text', style: 'font-size:12px;padding:3px 6px;width:100px;', value: group.tierNames[1] || '버전', placeholder: '예: 버전' });
+          tier1Inp.addEventListener('input', (e) => { group.tierNames[1] = e.target.value.trim() || '버전'; });
+          tierRow.appendChild(tier1Inp);
         }
-        if (row.status !== 'done' && row.status !== 'crawling' && row.status !== 'promoting') {
-          // 행 복제: same source_record + same crawl, blank member.
-          // Lets one URL spawn N products with different SKUs (one per member).
-          if (row.source_record_id) {
-            const dupBtn = el('button', { type: 'button', style: 'font-size:11px;padding:5px 10px;' }, '+ 멤버용 행 복제');
-            dupBtn.addEventListener('click', () => {
-              const clone = {
-                ...row,
-                member: '',
-                status: 'preview',
-                error: null,
-                product_id: undefined
-              };
-              const idx2 = MR_PREV.indexOf(row);
-              if (idx2 >= 0) MR_PREV.splice(idx2 + 1, 0, clone);
-              else MR_PREV.push(clone);
+
+        const toggleAxisBtn = el('button', { type: 'button', style: 'font-size:11px;padding:3px 8px;' }, group.twoAxis ? '− 2축 모드 끄기' : '+ 옵션 축 추가 (2축 모드)');
+        toggleAxisBtn.addEventListener('click', () => {
+          group.twoAxis = !group.twoAxis;
+          if (group.twoAxis && !group.tierNames[1]) group.tierNames[1] = '버전';
+          // Propagate 2-axis toggle to all rows in group
+          for (const row of group.rows) row._twoAxis = group.twoAxis;
+          mrRenderPreviewCards();
+        });
+        tierRow.appendChild(toggleAxisBtn);
+        infoCol.appendChild(tierRow);
+
+        // Parent SKU preview (read-only, auto-generated from option SKUs' common prefix)
+        {
+          const allSkus = group.rows.filter(r => !CROSS_SKU_INACTIVE.has(r.status)).map(r => (r._sku || '').trim()).filter(Boolean);
+          if (allSkus.length > 0) {
+            function _previewCommonPrefix(strs) {
+              if (!strs.length) return '';
+              let p = strs[0];
+              for (let i = 1; i < strs.length; i++) {
+                while (!strs[i].startsWith(p)) { p = p.slice(0, -1); if (!p) return ''; }
+              }
+              return p.replace(/[-_]+$/, '');
+            }
+            let parentSkuPreview = _previewCommonPrefix(allSkus);
+            if (!parentSkuPreview || allSkus.includes(parentSkuPreview)) parentSkuPreview = allSkus[0] + '-P';
+            const parentSkuDiv = el('div', { style: 'font-size:11px;color:var(--muted);' });
+            const parentSkuSpan = el('span', { title: 'global_item_sku (옵션 SKU들의 공통 prefix 자동 생성)', style: 'cursor:help;border-bottom:1px dotted var(--muted);' }, `parent SKU: ${parentSkuPreview}`);
+            parentSkuDiv.appendChild(parentSkuSpan);
+            infoCol.appendChild(parentSkuDiv);
+          }
+        }
+
+        if (cardStatus === 'failed' && firstRow.error) {
+          infoCol.appendChild(el('div', { style: 'color:#dc2626;font-size:12px;' }, firstRow.error));
+        }
+
+        header.appendChild(infoCol);
+        card.appendChild(header);
+
+        // ── Option rows ──────────────────────────────────────────────
+        const optionContainer = el('div', { style: 'border-top:1px solid var(--border);padding-top:8px;display:flex;flex-direction:column;gap:6px;' });
+
+        const renderOptionRow = (row, rowIdx) => {
+          // Initialize per-option fields on first render
+          if (row._opt0 == null) row._opt0 = row.member || '';
+          if (row._opt1 == null) row._opt1 = '';
+          if (row._sku == null) row._sku = mrComputeSku(row);
+          if (row._cost_krw == null) row._cost_krw = row.cost_krw || 0;
+          if (row._weight_g == null) row._weight_g = row.weight_g || 0;
+          if (row._main_image == null) {
+            const obs = row.observed;
+            row._main_image = (obs && Array.isArray(obs.main_image_urls) && obs.main_image_urls[0]) ? obs.main_image_urls[0] : '';
+          }
+          if (row._extra_images == null) {
+            const obs = row.observed;
+            row._extra_images = (obs && Array.isArray(obs.detail_image_urls)) ? [...obs.detail_image_urls] : [];
+          }
+
+          const optRow = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;padding:6px 8px;background:var(--surface2,#f8f9fa);border-radius:6px;' });
+
+          // Status chip per row
+          const rowLab = mrStatusLabel(row.status);
+          optRow.appendChild(el('span', { style: `font-size:10px;color:${rowLab.color};font-weight:600;align-self:center;min-width:40px;` }, rowLab.text));
+
+          // Axis 0 option name
+          const mkOptField = (label, val, setter, w) => {
+            const wr = el('div', { style: 'display:flex;flex-direction:column;gap:1px;' });
+            wr.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, label));
+            const inp = el('input', { type: 'text', style: `font-size:12px;padding:3px 6px;width:${w}px;`, value: val || '' });
+            inp.addEventListener('input', (e) => setter(e.target.value));
+            wr.appendChild(inp);
+            return wr;
+          };
+
+          const mkNumField = (label, val, setter, w) => {
+            const wr = el('div', { style: 'display:flex;flex-direction:column;gap:1px;' });
+            wr.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, label));
+            const inp = el('input', { type: 'number', min: '0', step: '1', style: `font-size:12px;padding:3px 6px;width:${w}px;text-align:right;`, value: String(val || '') });
+            inp.addEventListener('input', (e) => setter(Number(e.target.value) || 0));
+            wr.appendChild(inp);
+            return wr;
+          };
+
+          const axis0Name = group.tierNames[0] || '멤버';
+          optRow.appendChild(mkOptField(axis0Name, row._opt0, (v) => { row._opt0 = v; }, 90));
+          if (group.twoAxis) {
+            const axis1Name = group.tierNames[1] || '버전';
+            optRow.appendChild(mkOptField(axis1Name, row._opt1, (v) => { row._opt1 = v; }, 80));
+          }
+
+          // SKU (manual input, no auto-assembly)
+          const skuWr = el('div', { style: 'display:flex;flex-direction:column;gap:1px;flex:1;min-width:130px;' });
+          skuWr.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, 'SKU (수동 입력)'));
+          const skuInp = el('input', { type: 'text', style: 'font-size:12px;padding:3px 6px;width:100%;font-family:monospace;', value: row._sku || '', placeholder: '예: PO-XSH-LOVEM-LOV-SHN' });
+          const skuBad = () => !row._sku || mrHasNonAscii(row._sku) || (MR_EXISTING_SKUS.has(row._sku) && row.collisionMode !== 'overwrite');
+          skuInp.addEventListener('input', (e) => {
+            row._sku = e.target.value.trim();
+            skuInp.style.background = skuBad() ? '#fee2e2' : '';
+          });
+          skuInp.style.background = skuBad() ? '#fee2e2' : '';
+          skuWr.appendChild(skuInp);
+          optRow.appendChild(skuWr);
+
+          optRow.appendChild(mkNumField('매입가(KRW)', row._cost_krw, (v) => { row._cost_krw = v; }, 90));
+          optRow.appendChild(mkNumField('무게(g)', row._weight_g, (v) => { row._weight_g = v; }, 70));
+
+          // Main image URL
+          const imgWr = el('div', { style: 'display:flex;flex-direction:column;gap:1px;flex:2;min-width:160px;' });
+          imgWr.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, '메인 이미지 URL'));
+          const imgInp = el('input', { type: 'text', style: 'font-size:12px;padding:3px 6px;width:100%;', value: row._main_image || '', placeholder: 'https://...' });
+          imgInp.addEventListener('input', (e) => { row._main_image = e.target.value.trim(); imgInp.style.background = !row._main_image ? '#fee2e2' : ''; });
+          imgInp.style.background = !row._main_image ? '#fee2e2' : '';
+          imgWr.appendChild(imgInp);
+          optRow.appendChild(imgWr);
+
+          // Row status error
+          // LOW 5: skip per-row display for card-level errors (DTS/category) — card header shows them.
+          if (row.status === 'failed' && row.error && !row._cardError) {
+            optRow.appendChild(el('span', { style: 'color:#dc2626;font-size:11px;align-self:center;' }, row.error));
+          }
+          if (row.status === 'done' && row.product_id) {
+            optRow.appendChild(el('span', { style: 'color:#16a34a;font-size:11px;align-self:center;' }, '✓ 생성됨'));
+          }
+
+          // Shopee publish result badge (HIGH 1): show per-option ✓/❌ from register_cbsc
+          if (row.shopeePublishState === 'published') {
+            optRow.appendChild(el('span', {
+              style: 'background:#16a34a;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;align-self:center;',
+              title: row.shopeePublishNote || '등록 성공',
+            }, '✓'));
+          } else if (row.shopeePublishState === 'partial_published' || row.shopeePublishState === 'publish_failed') {
+            optRow.appendChild(el('span', {
+              style: 'background:#dc2626;color:#fff;font-size:10px;font-weight:700;padding:2px 7px;border-radius:10px;align-self:center;',
+              title: row.shopeePublishNote || '등록 실패',
+            }, '❌ ' + (row.shopeePublishNote || '실패')));
+          } else if (row.shopeePublishNote) {
+            // Any other state with a note (e.g. pending_publish, cleanup_required)
+            optRow.appendChild(el('span', {
+              style: 'font-size:10px;color:var(--muted);align-self:center;',
+            }, row.shopeePublishNote));
+          }
+
+          // Remove row button
+          if (row.status !== 'done' && row.status !== 'promoting') {
+            const xBtn = el('button', { type: 'button', style: 'font-size:10px;padding:2px 7px;align-self:center;background:#fee2e2;color:#991b1b;' }, '✕');
+            xBtn.addEventListener('click', () => {
+              MR_PREV = MR_PREV.filter(x => x !== row);
               mrRenderPreviewCards();
             });
-            actions.appendChild(dupBtn);
+            optRow.appendChild(xBtn);
           }
-          const skipBtn = el('button', { type: 'button', style: 'font-size:11px;padding:5px 10px;' }, '이 행 제외');
-          skipBtn.addEventListener('click', () => {
-            MR_PREV = MR_PREV.filter(x => x !== row);
+
+          return optRow;
+        };
+
+        group.rows.forEach((row, rowIdx) => {
+          optionContainer.appendChild(renderOptionRow(row, rowIdx));
+        });
+
+        // "+ 옵션 행 추가" button
+        if (cardStatus !== 'done') {
+          const addOptBtn = el('button', { type: 'button', style: 'font-size:11px;padding:4px 10px;margin-top:4px;' }, '+ 옵션 행 추가');
+          addOptBtn.addEventListener('click', () => {
+            const clone = {
+              ...firstRow,
+              status: 'preview',
+              error: null,
+              product_id: undefined,
+              _opt0: '',
+              _opt1: '',
+              _sku: '',
+              _cost_krw: firstRow.cost_krw || firstRow._cost_krw || 0,
+              _weight_g: firstRow.weight_g || firstRow._weight_g || 0,
+              _main_image: '',
+              _extra_images: [],
+              _twoAxis: group.twoAxis,
+              // Share the group's idempotency token
+              _group_token: group.idempotency_token,
+            };
+            const lastInGroup = group.rows[group.rows.length - 1];
+            const idx2 = MR_PREV.indexOf(lastInGroup);
+            if (idx2 >= 0) MR_PREV.splice(idx2 + 1, 0, clone);
+            else MR_PREV.push(clone);
             mrRenderPreviewCards();
           });
-          actions.appendChild(skipBtn);
+          optionContainer.appendChild(addOptBtn);
         }
-        card.appendChild(actions);
+
+        card.appendChild(optionContainer);
+
+        // Card-level exclude button
+        if (cardStatus !== 'done') {
+          const cardSkipBtn = el('button', { type: 'button', style: 'font-size:11px;padding:4px 10px;margin-top:8px;background:#fee2e2;color:#991b1b;' }, '✕ 카드 전체 제외');
+          cardSkipBtn.addEventListener('click', () => {
+            MR_PREV = MR_PREV.filter(r => !group.rows.includes(r));
+            mrRenderPreviewCards();
+          });
+          card.appendChild(cardSkipBtn);
+        }
+
         wrap.appendChild(card);
       });
     }
@@ -10447,80 +10854,509 @@ LEGACY END -->
       const err = $('mr-stage2-error');
       err.style.display = 'none';
       const lifecycle = mrLifecycle();
-      // Codex P1: include 'failed' rows that have source_record_id (e.g. RPC failed
-      // after successful crawl). Without this, RPC-failed rows have no retry path
-      // because the 실패만 재시도 button only handles failed-without-source_record_id.
-      const targets = MR_PREV.filter(r => r.source_record_id && (r.status === 'preview' || r.status === 'failed'));
-      if (targets.length === 0) { err.textContent = '등록할 행이 없습니다.'; err.style.display = 'block'; return; }
-      for (const row of targets) {
-        const sku = mrComputeSku(row);
-        // Codex P1: validate each SKU component, not just total segment count
-        // (mrComputeSku always returns 5 segments — empty tokens were silently passing).
-        const tokenErr =
-          !mrLocation() ? 'LOC가 비어있습니다.'
-          : !(row.artist || '').trim() ? 'Artist가 비어있습니다.'
-          : !(row.album || '').trim() ? 'Album이 비어있습니다.'
-          : !(row.version || '').trim() ? 'Version이 비어있습니다.'
-          : null;
-        if (tokenErr) {
-          row.status = 'failed';
-          row.error = `SKU 구성요소 누락 — ${tokenErr}`;
-          continue;
+
+      // Re-group and compute tier coords for final validation
+      const groups = mrGroupCards();
+      mrBuildTierCoords(groups);
+
+      // Filter to groups that have at least one preview/failed row with source_record_id
+      const activeGroups = groups.filter(g =>
+        g.source_record_id &&
+        g.rows.some(r => r.status === 'preview' || r.status === 'failed')
+      );
+      if (activeGroups.length === 0) { err.textContent = '등록할 카드가 없습니다.'; err.style.display = 'block'; return; }
+
+      // ── Cross-card SKU collision check (P1 #2) ────────────────────
+      // Collect all SKUs that belong to ANY card with active/committed intent.
+      // Inactive states (rejected, skipped, crawling) are excluded.
+      // CROSS_SKU_INACTIVE is declared in the outer scope (shared with mrRenderPreviewCards).
+      {
+        const crossSkuMap = new Map(); // sku → source_record_id of its card
+        for (const g of groups) {
+          for (const row of g.rows) {
+            const sku = (row._sku || '').trim();
+            if (!sku) continue;
+            // Include all active-intent statuses: done, preview, failed, promoting, validated, etc.
+            if (!CROSS_SKU_INACTIVE.has(row.status) && g.source_record_id) {
+              crossSkuMap.set(sku, g.source_record_id);
+            }
+          }
+          // HIGH 2: also include cached parent SKU so parent collision is caught early
+          if (g._cachedParentSku && g.source_record_id) {
+            crossSkuMap.set(g._cachedParentSku, g.source_record_id);
+          }
         }
-        // Operator requirement 2026-05-20: SKU must be English/ASCII only.
-        const krFieldErr =
-          mrHasNonAscii(mrLocation()) ? 'LOC에 한글/CJK 문자가 있습니다.'
-          : mrHasNonAscii(row.artist) ? 'Artist에 한글/CJK 문자가 있습니다.'
-          : mrHasNonAscii(row.album) ? 'Album에 한글/CJK 문자가 있습니다.'
-          : mrHasNonAscii(row.version) ? 'Version에 한글/CJK 문자가 있습니다.'
-          : mrHasNonAscii(row.member) ? 'Member에 한글/CJK 문자가 있습니다.'
-          : null;
-        if (krFieldErr) {
-          row.status = 'failed';
-          row.error = `SKU는 영문/숫자만 허용 — ${krFieldErr}`;
-          continue;
+        // Check each active group's rows against cross-card map
+        for (const group of activeGroups) {
+          const activeRows = group.rows.filter(r => r.status === 'preview' || r.status === 'failed');
+          for (const row of activeRows) {
+            const sku = (row._sku || '').trim();
+            if (sku && crossSkuMap.has(sku) && crossSkuMap.get(sku) !== group.source_record_id) {
+              row.status = 'failed';
+              row.error = `SKU 중복 (다른 카드에서 이미 사용됨): ${sku}`;
+            }
+          }
         }
-        if (!(row.cost_krw > 0)) {
-          row.status = 'failed';
-          row.error = '매입가가 0 입니다. 직접 입력해주세요.';
-          continue;
-        }
-        if (!(row.weight_g > 0)) {
-          row.status = 'failed';
-          row.error = '무게가 0 입니다. 직접 입력해주세요.';
-          continue;
-        }
-        const overwrite = MR_EXISTING_SKUS.has(sku) && row.collisionMode === 'overwrite';
-        row.status = 'promoting';
-        mrRenderPreviewCards();
-        try {
-          const { data, error } = await db.rpc('promote_source_to_product', {
-            p_source_record_id: row.source_record_id,
-            p_sku: sku,
-            p_weight_g: row.weight_g,
-            p_lifecycle_state: lifecycle,
-            p_option_name: null,
-            p_cost_krw_override: row.cost_krw,
-            p_overwrite: overwrite
-          });
-          if (error) throw error;
-          const result = Array.isArray(data) ? data[0] : data;
-          row.product_id = result && result.product_id;
-          row.status = 'done';
-        } catch (e) {
-          row.status = 'failed';
-          row.error = (e && (e.message || e.details)) ? (e.message || e.details) : String(e);
-        }
-        mrRenderPreviewCards();
       }
+
+      // ── Per-group validation ───────────────────────────────────────
+      // Phase A category whitelist (must stay in sync with render-side SHOPEE_CATEGORY_WHITELIST)
+      const VALID_CATEGORY_IDS = new Set([100740, 101390]);
+      for (const group of activeGroups) {
+        const activeRows = group.rows.filter(r => r.status === 'preview' || r.status === 'failed');
+        const firstRowHdr = group.rows[0]; // card-level header row
+
+        // Validate category_id whitelist
+        const catId = firstRowHdr && firstRowHdr._shopee_category_id;
+        if (!catId || !VALID_CATEGORY_IDS.has(Number(catId))) {
+          // LOW 5: card-level error — stamp _cardError=true so option rows skip per-row display.
+          // Card header shows the error via firstRow.error; option rows must not duplicate it.
+          const msg = `category_id 값이 유효하지 않습니다 (100740 또는 101390 선택). 현재값: ${catId}`;
+          activeRows.forEach(r => { r.status = 'failed'; r.error = msg; r._cardError = true; });
+          continue;
+        }
+
+        // Validate days_to_ship 1–150 integer
+        // MEDIUM 3: DTS is set to null when user enters invalid value in the input handler.
+        // Check null/NaN explicitly — don't silently fall through with falsy 0.
+        const dts = firstRowHdr && firstRowHdr._shopee_days_to_ship;
+        if (dts === null || dts === undefined || !Number.isInteger(dts) || dts < 1 || dts > 150) {
+          // LOW 5: card-level error — stamp _cardError=true so option rows skip per-row display.
+          const msg = `DTS 값이 유효하지 않습니다 (1-150 정수). 현재값: ${dts}`;
+          activeRows.forEach(r => { r.status = 'failed'; r.error = msg; r._cardError = true; });
+          continue;
+        }
+
+        // Validate 2-axis combos ≤ 50
+        if (group.twoAxis) {
+          const coordSet = new Set(activeRows.map(r => JSON.stringify(r._tierIndex)).filter(Boolean));
+          if (activeRows.length > 50) {
+            activeRows.forEach(r => { r.status = 'failed'; r.error = '옵션 조합이 50개를 초과합니다.'; });
+            continue;
+          }
+          if (coordSet.size !== activeRows.length) {
+            activeRows.forEach(r => { r.status = 'failed'; r.error = '2축 좌표 중복이 있습니다. 옵션명을 확인하세요.'; });
+            continue;
+          }
+        }
+
+        // Validate each option row (LOW 5: clear _cardError so these are row-level failures)
+        const skuSet = new Set();
+        let rowErr = false;
+        for (const row of activeRows) {
+          row._cardError = false; // clear before per-row checks
+          const sku = (row._sku || '').trim();
+          if (!sku) { row.status = 'failed'; row.error = 'SKU가 비어있습니다.'; rowErr = true; continue; }
+          if (mrHasNonAscii(sku)) { row.status = 'failed'; row.error = 'SKU는 영문/숫자만 허용됩니다.'; rowErr = true; continue; }
+          if (skuSet.has(sku)) { row.status = 'failed'; row.error = `카드 안 SKU 중복: ${sku}`; rowErr = true; continue; }
+          skuSet.add(sku);
+          if (!(row._cost_krw > 0)) { row.status = 'failed'; row.error = '매입가가 0입니다.'; rowErr = true; continue; }
+          if (!(row._weight_g > 0)) { row.status = 'failed'; row.error = '무게가 0입니다.'; rowErr = true; continue; }
+          if (!row._main_image) { row.status = 'failed'; row.error = '메인 이미지 URL이 비어있습니다.'; rowErr = true; continue; }
+          if (!row._opt0) { row.status = 'failed'; row.error = `${group.tierNames[0] || '옵션'}이 비어있습니다.`; rowErr = true; continue; }
+          if (group.twoAxis && !row._opt1) { row.status = 'failed'; row.error = `${group.tierNames[1] || '버전'}이 비어있습니다.`; rowErr = true; continue; }
+        }
+        if (rowErr) continue; // skip to next group, this group has row-level errors
+      }
+
+      mrRenderPreviewCards();
+
+      // ── Per-group registration ─────────────────────────────────────
+      for (const group of activeGroups) {
+        const activeRows = group.rows.filter(r => r.status === 'preview' || r.status === 'failed');
+        if (activeRows.length === 0) continue;
+
+        // Build variation_options array
+        const variationOptions = activeRows.map(r => ({
+          sku:            (r._sku || '').trim(),
+          cost_krw:       r._cost_krw || 0,
+          weight_g:       r._weight_g || 0,
+          main_image:     r._main_image || '',
+          extra_images:   r._extra_images || [],
+          option_names:   group.twoAxis ? [r._opt0 || '', r._opt1 || ''] : [r._opt0 || ''],
+          tier_index:     r._tierIndex || [activeRows.indexOf(r)],
+          collision_mode: r.collisionMode || 'reuse',
+        }));
+
+        console.log('[mrPromoteAll] group:', group.source_record_id, 'options:', variationOptions.length, variationOptions);
+
+        // Mark all rows promoting
+        activeRows.forEach(r => { r.status = 'promoting'; });
+        mrRenderPreviewCards();
+
+        // ── Single option row: use legacy promote_source_to_product RPC ──
+        if (activeRows.length === 1) {
+          const row  = activeRows[0];
+          const vOpt = variationOptions[0];
+          const overwrite = MR_EXISTING_SKUS.has(vOpt.sku) && row.collisionMode === 'overwrite';
+          try {
+            const { data, error } = await db.rpc('promote_source_to_product', {
+              p_source_record_id:  group.source_record_id,
+              p_sku:               vOpt.sku,
+              p_weight_g:          vOpt.weight_g,
+              p_lifecycle_state:   lifecycle,
+              p_option_name:       vOpt.option_names[0] || null,
+              p_cost_krw_override: vOpt.cost_krw,
+              p_overwrite:         overwrite,
+              p_idempotency_token: group.idempotency_token,
+            });
+            if (error) throw error;
+            const result = Array.isArray(data) ? data[0] : data;
+            row.product_id = result && result.product_id;
+            row.status = 'done';
+            console.log('[mrPromoteAll] single-option promote ok:', row.product_id);
+          } catch (e) {
+            row.status = 'failed';
+            row.error = (e && (e.message || e.details)) ? (e.message || e.details) : String(e);
+          }
+          mrRenderPreviewCards();
+
+        } else {
+          // ── Multi-option group: use promote_source_group_to_products RPC ──
+          // (plan §4, §6-2 idempotency_token)
+          try {
+            const { data, error } = await db.rpc('promote_source_group_to_products', {
+              p_source_record_id:       group.source_record_id,
+              p_lifecycle_state:        lifecycle,
+              p_variation_tier_names:   group.tierNames.filter(Boolean),
+              p_variation_options:      variationOptions,
+              p_card_header_overrides:  { cost_krw: activeRows[0]._cost_krw, weight_g: activeRows[0]._weight_g },
+              p_idempotency_token:      group.idempotency_token,
+            });
+            if (error) throw error;
+
+            // Map product_ids back to rows by SKU
+            const rpcRows = Array.isArray(data) ? data : [];
+            console.log('[mrPromoteAll] group RPC result:', rpcRows);
+            for (const row of activeRows) {
+              const sku = (row._sku || '').trim();
+              const rpcRow = rpcRows.find(r => r.sku === sku);
+              row.product_id = rpcRow ? rpcRow.product_id : null;
+              row.status     = rpcRow ? 'done' : 'failed';
+              if (!rpcRow) row.error = 'RPC 응답에 SKU 없음';
+            }
+            mrRenderPreviewCards();
+
+            // §7 step 6: register_cbsc — マスター保存後 Shopee 1 Global Product + N Models 発行
+            // Probe gate: probe_per_model_weight_ok / probe_per_option_image_ok flags decide
+            // whether weight/image fields are included per model. Strip when not yet verified.
+            try {
+              // 1. Read probe flags from shopee_app_config
+              let probeWeightOk = false;
+              let probeImageOk  = false;
+              try {
+                const { data: probeRows } = await db
+                  .from('shopee_app_config')
+                  .select('key, value')
+                  .in('key', ['probe_per_model_weight_ok', 'probe_per_option_image_ok']);
+                if (Array.isArray(probeRows)) {
+                  probeWeightOk = !!(probeRows.find(r => r.key === 'probe_per_model_weight_ok')?.value);
+                  probeImageOk  = !!(probeRows.find(r => r.key === 'probe_per_option_image_ok')?.value);
+                }
+              } catch (probeErr) {
+                console.warn('[mrPromoteAll] probe flag fetch failed, defaulting to strip mode:', probeErr);
+              }
+              if (!probeWeightOk) console.log('[mrPromoteAll] probe_per_model_weight_ok=false: stripping per-model weight from variation.model');
+              if (!probeImageOk)  console.log('[mrPromoteAll] probe_per_option_image_ok=false: stripping option_list[].image from tier_variation');
+
+              // 2. Build tier_variation (axis definitions) — conditionally include per-option image
+              const tierVariation = (group.tierNames.filter(Boolean)).map((name, axisIdx) => {
+                // Collect unique option values for this axis (case-normalized dedup, original display)
+                const seenKeys = new Set();
+                const optionList = [];
+                for (const row of activeRows) {
+                  const raw = (axisIdx === 0 ? row._opt0 : row._opt1) || '';
+                  const k = raw.trim().toLowerCase();
+                  if (!k || seenKeys.has(k)) continue;
+                  seenKeys.add(k);
+                  const optEntry = { option: raw.trim() };
+                  if (probeImageOk && row._main_image) {
+                    // Only attach image to axis0 option entries (axis1 images not standard)
+                    if (axisIdx === 0) optEntry.image = { image_url: row._main_image };
+                  }
+                  optionList.push(optEntry);
+                }
+                return { name, option_list: optionList };
+              });
+
+              // 3. Build model list
+              const firstRow = activeRows[0];
+              const cbscModels = variationOptions.map(vOpt => {
+                const model = {
+                  tier_index:       vOpt.tier_index,
+                  global_model_sku: vOpt.sku,
+                  original_price:   vOpt.cost_krw,
+                  seller_stock:     [{ stock: 0 }],
+                };
+                if (probeWeightOk) model.weight_g = vOpt.weight_g;
+                return model;
+              });
+
+              // 4. Build per-region targets (6 regions) using default shop IDs
+              // image_id_list per region: for now use main_image URL uploaded via upload_image.
+              // We don't have pre-uploaded image_id here — include image_url_list as fallback.
+              const CBSC_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+              const cbscTargets = CBSC_REGIONS.map(rgn => ({
+                region:        rgn,
+                price:         firstRow._cost_krw || variationOptions[0].cost_krw || 0,
+                days_to_ship:  firstRow._shopee_days_to_ship, // validated 1-150 int; null means pre-check already failed
+                image_url_list: activeRows.map(r => r._main_image).filter(Boolean).slice(0, 9),
+              }));
+
+              // 5. Title / description from observed
+              const cbscTitle = (firstRow.observed && firstRow.observed.title) || firstRow.artist || 'UNKNOWN';
+              const cbscDesc  = (firstRow.observed && firstRow.observed.description_html) || cbscTitle;
+
+              // 5b. Auto-generate global_item_sku (parent SKU) from option SKUs' common prefix.
+              //     e.g. ["PO-XSH-LOV-A", "PO-XSH-LOV-B"] → prefix "PO-XSH-LOV-"
+              //     The parent SKU must differ from all option SKUs (global_model_sku).
+              const _optSkus = variationOptions.map(v => v.sku);
+              function _commonPrefix(strs) {
+                if (!strs.length) return '';
+                let prefix = strs[0];
+                for (let i = 1; i < strs.length; i++) {
+                  while (!strs[i].startsWith(prefix)) {
+                    prefix = prefix.slice(0, -1);
+                    if (!prefix) return '';
+                  }
+                }
+                return prefix;
+              }
+              let cbscParentSku = _commonPrefix(_optSkus);
+              // Trim trailing '-' or '_' for cleanliness, then ensure uniqueness from option SKUs
+              cbscParentSku = cbscParentSku.replace(/[-_]+$/, '');
+              if (!cbscParentSku || _optSkus.includes(cbscParentSku)) {
+                // Fallback: append '-P' to the first option SKU
+                cbscParentSku = _optSkus[0] + '-P';
+              }
+
+              // HIGH 2: ensure parent SKU is unique vs (a) option SKUs in this card,
+              // (b) option SKUs + cached parent SKUs of all other active cards, (c) MR_EXISTING_SKUS.
+              {
+                // Collect all other-card option SKUs and parent SKUs
+                const allOtherCardSkus = new Set();
+                for (const g2 of groups) {
+                  if (g2.source_record_id === group.source_record_id) continue;
+                  for (const r2 of g2.rows) {
+                    if (CROSS_SKU_INACTIVE.has(r2.status)) continue;
+                    const s2 = (r2._sku || '').trim();
+                    if (s2) allOtherCardSkus.add(s2);
+                  }
+                  // Include cached parent SKU if present (stored after first build)
+                  if (g2._cachedParentSku) allOtherCardSkus.add(g2._cachedParentSku);
+                }
+                const allOptSkuSet = new Set(_optSkus);
+                const isConflict = (sku) =>
+                  allOptSkuSet.has(sku) ||
+                  allOtherCardSkus.has(sku) ||
+                  MR_EXISTING_SKUS.has(sku);
+                if (isConflict(cbscParentSku)) {
+                  let resolved = false;
+                  for (let attempt = 1; attempt <= 50; attempt++) {
+                    const candidate = _optSkus[0] + '-P' + (attempt > 1 ? attempt : '');
+                    if (!isConflict(candidate)) {
+                      cbscParentSku = candidate;
+                      resolved = true;
+                      break;
+                    }
+                  }
+                  if (!resolved) {
+                    // 50 attempts exhausted — fail entire card
+                    activeRows.forEach(r => { r.status = 'failed'; r.error = 'parent SKU 자동 생성 실패 (50회 충돌). 옵션 SKU를 변경하세요.'; });
+                    mrRenderPreviewCards();
+                    continue;
+                  }
+                }
+                // Cache for other-card collision detection in same batch
+                group._cachedParentSku = cbscParentSku;
+              }
+
+              console.log('[mrPromoteAll] parent_sku (global_item_sku):', cbscParentSku, 'from options:', _optSkus);
+
+              const cbscBody = {
+                region:            'SG',
+                name:              cbscTitle,
+                sku:               cbscParentSku,
+                category_id:       firstRow._shopee_category_id || 100740,
+                description:       cbscDesc,
+                weight_g:          variationOptions[0].weight_g || firstRow._weight_g || 100,
+                is_pre_order:      lifecycle === 'pre_order',
+                lifecycle_state:   lifecycle,
+                variation:         { tier_variation: tierVariation, model: cbscModels },
+                targets:           cbscTargets,
+                idempotency_token: group.idempotency_token,
+              };
+
+              console.log('[mrPromoteAll] register_cbsc payload:', JSON.stringify(cbscBody).slice(0, 2000));
+
+              // Mark all rows as publishing
+              activeRows.forEach(r => { r.shopeePublishState = 'pending_publish'; });
+              mrRenderPreviewCards();
+
+              const cbscResp = await fetch(`${SHOPEE_BRIDGE}/register_cbsc`, {
+                method: 'POST',
+                headers: Object.assign({}, AUTH_HEADERS, { 'Content-Type': 'application/json' }),
+                body: JSON.stringify(cbscBody),
+              });
+              const cbscJson = await cbscResp.json().catch(() => ({ ok: false, error: `HTTP ${cbscResp.status}` }));
+              console.log('[mrPromoteAll] register_cbsc response:', JSON.stringify(cbscJson).slice(0, 2000));
+
+              // Decode all relevant fields upfront regardless of ok/stage
+              const cbscStage       = cbscJson.stage || '';
+              const cbscCleanup     = cbscJson.cleanup_state || '';
+              const cbscGlobalId    = cbscJson.global_item_id || null;
+              const cbscFailedM     = Array.isArray(cbscJson.failed_models)   ? cbscJson.failed_models   : [];
+              const cbscSucceededM  = Array.isArray(cbscJson.succeeded_models) ? cbscJson.succeeded_models : [];
+              const skusInGroup     = variationOptions.map(v => v.sku);
+
+              if (cbscJson.ok && cbscGlobalId) {
+                const globalItemId = cbscGlobalId;
+
+                // 6. Update products.shopee_item_id = global_item_id for all rows in group
+                await db.from('products')
+                  .update({ shopee_item_id: globalItemId, shopee_publish_state: 'published' })
+                  .in('sku', skusInGroup);
+
+                // 7. Insert product_shopee_listings per product per region
+                const resultsArr = Array.isArray(cbscJson.results) ? cbscJson.results : [];
+                const listingUpserts = [];
+                for (const row of activeRows) {
+                  for (const res of resultsArr) {
+                    const rgn = String(res.region || '').toUpperCase();
+                    listingUpserts.push({
+                      product_id:      row.product_id,
+                      region:          rgn,
+                      shop_item_id:    res.item_id ? Number(res.item_id) : null,
+                      shopee_item_id:  globalItemId,
+                      publish_status:  res.ok ? 'published' : 'publish_failed',
+                      last_error:      res.ok ? null : (res.error || res.message || null),
+                      last_synced_at:  new Date().toISOString(),
+                    });
+                  }
+                }
+                if (listingUpserts.length > 0) {
+                  const { error: listErr } = await db.from('product_shopee_listings').upsert(listingUpserts, { onConflict: 'product_id,region' });
+                  if (listErr) console.warn('[mrPromoteAll] product_shopee_listings upsert error:', listErr);
+                }
+
+                // 8. Check for per-region partial failures
+                const failedRegions = resultsArr.filter(r => !r.ok).map(r => r.region);
+                if (failedRegions.length > 0) {
+                  await db.from('products')
+                    .update({ shopee_publish_state: 'partial_published' })
+                    .in('sku', skusInGroup);
+                  activeRows.forEach(r => {
+                    r.shopeePublishState = 'partial_published';
+                    r.shopeePublishNote  = `실패 리전: ${failedRegions.join(', ')}`;
+                  });
+                  showToast(`Shopee 발행 일부 실패: ${failedRegions.join(', ')} — 나머지 리전은 성공했습니다.`, 'warn');
+                } else {
+                  activeRows.forEach(r => { r.shopeePublishState = 'published'; });
+                  showToast(`Shopee 발행 완료 (global_item_id: ${globalItemId}, ${resultsArr.length}개 리전)`, 'ok');
+                }
+
+                // 9. ok:true 이지만 add_global_model 부분 실패 포함 케이스
+                // (bridge가 ok:true + failed_models 동시 반환하는 경우는 현재 없지만 방어적으로 처리)
+                if (cbscStage === 'add_global_model' && cbscFailedM.length > 0) {
+                  await db.from('products')
+                    .update({ shopee_publish_state: 'partial_published' })
+                    .in('sku', skusInGroup);
+                  const failedSkus = cbscFailedM.map(m => m.global_model_sku).filter(Boolean).join(', ');
+                  // Mark succeeded ✓ / failed ✗ per row
+                  activeRows.forEach(r => {
+                    const sku = (r._sku || '').trim();
+                    if (cbscFailedM.some(m => m.global_model_sku === sku)) {
+                      r.shopeePublishState = 'partial_published';
+                      r.shopeePublishNote  = '❌ 옵션 등록 실패';
+                    } else if (cbscSucceededM.some(m => m.global_model_sku === sku)) {
+                      r.shopeePublishNote  = '✓ 등록됨';
+                    }
+                  });
+                  showToast(`옵션 일부 실패 (partial_published): ${failedSkus}. 셀러센터에서 정리 필요.`, 'warn');
+                }
+
+              } else if (!cbscJson.ok && cbscStage === 'add_global_model' && cbscGlobalId) {
+                // CRITICAL 2 fix: partial_published — global_item created, some models failed
+                // ok:false + stage=add_global_model + global_item_id present + failed_models present
+                await db.from('products')
+                  .update({ shopee_item_id: cbscGlobalId, shopee_publish_state: 'partial_published' })
+                  .in('sku', skusInGroup);
+                activeRows.forEach(r => {
+                  const sku = (r._sku || '').trim();
+                  if (cbscFailedM.some(m => m.global_model_sku === sku)) {
+                    r.shopeePublishState = 'partial_published';
+                    r.shopeePublishNote  = '❌ 옵션 등록 실패';
+                  } else if (cbscSucceededM.some(m => m.global_model_sku === sku)) {
+                    r.shopeePublishState = 'partial_published';
+                    r.shopeePublishNote  = '✓ 등록됨';
+                  } else {
+                    r.shopeePublishState = 'partial_published';
+                  }
+                });
+                const failedSkus = cbscFailedM.map(m => m.global_model_sku).filter(Boolean).join(', ');
+                showToast(`옵션 일부 실패 (partial_published) — 셀러센터에서 정리 필요: ${failedSkus}`, 'warn');
+
+              } else if (!cbscJson.ok && cbscCleanup === 'cleanup_done') {
+                // Orphan was auto-cleaned — safe to retry
+                await db.from('products')
+                  .update({ shopee_publish_state: 'unpublished' })
+                  .in('sku', skusInGroup);
+                activeRows.forEach(r => { r.shopeePublishState = 'unpublished'; });
+                showToast('Shopee 등록 롤백 완료 (cleanup_done). 다시 발행을 시도하세요.', 'warn');
+
+              } else if (!cbscJson.ok && cbscStage === 'init_tier_variation' && cbscCleanup === 'cleanup_required') {
+                // LOW 4: narrow to init_tier_variation only.
+                // Note: add_global_item failures emit no cleanup_state (orphan only at item level — operator manual cleanup via 셀러센터).
+                //       init_tier_variation can leave global_item orphan → cleanup_required.
+                // cleanup_required — manual intervention needed
+                await db.from('products')
+                  .update({ shopee_publish_state: 'cleanup_required' })
+                  .in('sku', skusInGroup);
+                activeRows.forEach(r => { r.shopeePublishState = 'cleanup_required'; });
+                showToast('Shopee 등록 중단 (cleanup_required): 셀러센터에서 직접 확인 후 재시도하세요.', 'err');
+
+              } else if (!cbscJson.ok && cbscStage === 'add_global_model' && !cbscGlobalId) {
+                // add_global_model failed but no global_item_id — treat as full failure
+                const errMsg = cbscJson.error || cbscJson.message || `HTTP ${cbscResp.status}`;
+                await db.from('products')
+                  .update({ shopee_publish_state: 'publish_failed' })
+                  .in('sku', skusInGroup);
+                activeRows.forEach(r => { r.shopeePublishState = 'publish_failed'; r.shopeePublishNote = errMsg; });
+                showToast(`Shopee 발행 실패 (add_global_model): ${errMsg}`, 'err');
+
+              } else {
+                // register_cbsc full failure (add_global_item, init, or unknown stage)
+                const errMsg = cbscJson.error || cbscJson.message || `HTTP ${cbscResp.status}`;
+                await db.from('products')
+                  .update({ shopee_publish_state: 'publish_failed' })
+                  .in('sku', skusInGroup);
+                activeRows.forEach(r => { r.shopeePublishState = 'publish_failed'; r.shopeePublishNote = errMsg; });
+                showToast(`Shopee 발행 실패: ${errMsg}`, 'err');
+              }
+
+              mrRenderPreviewCards();
+            } catch (cbscErr) {
+              console.error('[mrPromoteAll] register_cbsc exception:', cbscErr);
+              showToast(`Shopee 발행 중 오류: ${cbscErr?.message || cbscErr}`, 'err');
+            }
+
+          } catch (e) {
+            activeRows.forEach(r => {
+              r.status = 'failed';
+              r.error = (e && (e.message || e.details)) ? (e.message || e.details) : String(e);
+            });
+            mrRenderPreviewCards();
+          }
+        }
+      } // end for groups loop
+
       // refresh master products list so 상품 목록 reflects new rows
       const anySuccess = MR_PREV.some(r => r.status === 'done');
       if (typeof window.loadData === 'function') {
         try { await window.loadData(); } catch (e) { /* keep flow alive */ }
       }
       // 2026-05-20 (operator msg #501): auto-navigate to 상품 목록 when at
-      // least one row landed successfully, so the operator immediately sees
-      // the freshly created masters at the top without a manual click.
+      // least one row landed successfully.
       if (anySuccess && typeof window.showView === 'function') {
         window.showView('view-products');
       }

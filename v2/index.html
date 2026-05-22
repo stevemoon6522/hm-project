@@ -10667,6 +10667,8 @@ LEGACY END -->
             const obs = row.observed;
             row._extra_images = (obs && Array.isArray(obs.detail_image_urls)) ? [...obs.detail_image_urls] : [];
           }
+          // Ensure at least 2 extra image slots exist (indices 0 and 1)
+          while (row._extra_images.length < 2) row._extra_images.push('');
 
           const optRow = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;padding:6px 8px;background:var(--surface2,#f8f9fa);border-radius:6px;' });
 
@@ -10716,13 +10718,43 @@ LEGACY END -->
           optRow.appendChild(mkNumField('매입가(KRW)', row._cost_krw, (v) => { row._cost_krw = v; }, 90));
           optRow.appendChild(mkNumField('무게(g)', row._weight_g, (v) => { row._weight_g = v; }, 70));
 
-          // Main image URL
-          const imgWr = el('div', { style: 'display:flex;flex-direction:column;gap:1px;flex:2;min-width:160px;' });
-          imgWr.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, '메인 이미지 URL'));
+          // Multi-slot image inputs: main + up to 9 extras
+          const imgWr = el('div', { style: 'display:flex;flex-direction:column;gap:3px;flex:2;min-width:180px;' });
+
+          // Main image slot
+          const mainImgLab = el('label', { style: 'font-size:10px;color:var(--muted);' }, '메인 이미지 URL');
+          imgWr.appendChild(mainImgLab);
           const imgInp = el('input', { type: 'text', style: 'font-size:12px;padding:3px 6px;width:100%;', value: row._main_image || '', placeholder: 'https://...' });
           imgInp.addEventListener('input', (e) => { row._main_image = e.target.value.trim(); imgInp.style.background = !row._main_image ? '#fee2e2' : ''; });
           imgInp.style.background = !row._main_image ? '#fee2e2' : '';
           imgWr.appendChild(imgInp);
+
+          // Extra image slots (render existing ones)
+          const extraSlotsWr = el('div', { style: 'display:flex;flex-direction:column;gap:2px;' });
+          const renderExtraSlots = () => {
+            extraSlotsWr.innerHTML = '';
+            row._extra_images.forEach((val, ei) => {
+              const slotWr = el('div', { style: 'display:flex;gap:3px;align-items:center;' });
+              const slotLab = el('label', { style: 'font-size:10px;color:var(--muted);white-space:nowrap;' }, `추가 이미지 #${ei + 1}`);
+              const slotInp = el('input', { type: 'text', style: 'font-size:12px;padding:2px 5px;flex:1;', value: val || '', placeholder: 'https://...' });
+              slotInp.addEventListener('input', (e) => { row._extra_images[ei] = e.target.value.trim(); });
+              // Remove slot button (only for index >= 2)
+              const rmBtn = el('button', { type: 'button', style: 'font-size:9px;padding:1px 5px;flex-shrink:0;', title: '슬롯 삭제' }, '✕');
+              rmBtn.addEventListener('click', () => { row._extra_images.splice(ei, 1); renderExtraSlots(); });
+              slotWr.appendChild(slotLab);
+              slotWr.appendChild(slotInp);
+              if (ei >= 2) slotWr.appendChild(rmBtn);
+              extraSlotsWr.appendChild(slotWr);
+            });
+            // "+ 추가 이미지" button — max 9 extras (total 10 images)
+            if (row._extra_images.length < 9) {
+              const addSlotBtn = el('button', { type: 'button', style: 'font-size:10px;padding:2px 7px;margin-top:2px;' }, '+ 추가 이미지');
+              addSlotBtn.addEventListener('click', () => { row._extra_images.push(''); renderExtraSlots(); });
+              extraSlotsWr.appendChild(addSlotBtn);
+            }
+          };
+          renderExtraSlots();
+          imgWr.appendChild(extraSlotsWr);
           optRow.appendChild(imgWr);
 
           // Row status error
@@ -10784,7 +10816,7 @@ LEGACY END -->
               _cost_krw: firstRow.cost_krw || firstRow._cost_krw || 0,
               _weight_g: firstRow.weight_g || firstRow._weight_g || 0,
               _main_image: '',
-              _extra_images: [],
+              _extra_images: ['', ''],
               _twoAxis: group.twoAxis,
               // Share the group's idempotency token
               _group_token: group.idempotency_token,
@@ -10850,28 +10882,127 @@ LEGACY END -->
       }
     }
 
+    // ── mrCompositeMainImage ──────────────────────────────────────────────────
+    // Fetch mainImageUrl, cover-crop to 850x850 inner box centered on 1000x1000 canvas,
+    // then composite shop-overlay-layer.png on top. The layer PNG's transparent inner
+    // window (1000x1000 with 75px pink frame) reveals the 850x850 main image.
+    // Returns base64 PNG string (no data: prefix). Caches by URL.
+    // CORS: tries direct fetch first; on failure falls back to shopee-bridge /proxy_image.
+    // 운영자 정책 msg #821 (2026-05-22): Shopee / eBay / Qoo10 만 적용. 850x850 inner + 75 padding.
+    const _mrCompositeCache = new Map(); // mainImageUrl → base64
+    async function mrCompositeMainImage(mainImageUrl) {
+      if (_mrCompositeCache.has(mainImageUrl)) return _mrCompositeCache.get(mainImageUrl);
+
+      // Helper: fetch blob with CORS fallback
+      async function fetchBlobWithFallback(url) {
+        try {
+          const r = await fetch(url, { mode: 'cors' });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          return await r.blob();
+        } catch (_) {
+          const proxyUrl = SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(url);
+          const r2 = await fetch(proxyUrl, { headers: AUTH_HEADERS });
+          if (!r2.ok) throw new Error(`proxy HTTP ${r2.status}`);
+          return await r2.blob();
+        }
+      }
+
+      // Helper: blob → HTMLImageElement
+      function blobToImg(blob) {
+        return new Promise((resolve, reject) => {
+          const objUrl = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => { URL.revokeObjectURL(objUrl); resolve(img); };
+          img.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error('이미지 로드 실패')); };
+          img.src = objUrl;
+        });
+      }
+
+      // Load main image
+      const mainBlob = await fetchBlobWithFallback(mainImageUrl);
+      const mainImg  = await blobToImg(mainBlob);
+
+      // Load overlay layer (relative to current page /v2/)
+      const layerUrl  = new URL('shop-overlay-layer.png', window.location.href).href;
+      const layerBlob = await fetchBlobWithFallback(layerUrl);
+      const layerImg  = await blobToImg(layerBlob);
+
+      // Draw onto 1000x1000 canvas. Operator policy (msg #821): main image
+      // sized to 850x850 inner box, centered with 75px padding to align with
+      // the layer PNG's transparent window. Outer 75px frame comes from layer.
+      const targetSize = 1000;
+      const innerSize  = 850;   // main image cover-crop size
+      const inset      = (targetSize - innerSize) / 2; // 75
+
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = targetSize;
+      const ctx = canvas.getContext('2d');
+
+      // Cover-crop main image to 850x850, clipped to inner box, centered at (75,75)
+      const srcW = mainImg.naturalWidth, srcH = mainImg.naturalHeight;
+      const scale = Math.max(innerSize / srcW, innerSize / srcH);
+      const drawW = srcW * scale, drawH = srcH * scale;
+      const dx = inset + (innerSize - drawW) / 2;
+      const dy = inset + (innerSize - drawH) / 2;
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(inset, inset, innerSize, innerSize);
+      ctx.clip();
+      ctx.drawImage(mainImg, dx, dy, drawW, drawH);
+      ctx.restore();
+
+      // Composite overlay (full 1000x1000 — outer frame + transparent inner window)
+      ctx.drawImage(layerImg, 0, 0, targetSize, targetSize);
+
+      // Export to base64 PNG
+      const b64 = await new Promise((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (!blob) { reject(new Error('canvas.toBlob 실패')); return; }
+          const fr = new FileReader();
+          fr.onloadend = () => {
+            const dataUrl = String(fr.result || '');
+            const commaIdx = dataUrl.indexOf(',');
+            resolve(commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl);
+          };
+          fr.onerror = () => reject(new Error('FileReader 실패'));
+          fr.readAsDataURL(blob);
+        }, 'image/png');
+      });
+
+      _mrCompositeCache.set(mainImageUrl, b64);
+      return b64;
+    }
+
     // ── mrUploadRegionImages ──────────────────────────────────────────────────
     // Upload one image URL to each of the 6 CBSC regions.
+    // isMainImage=true → composite with shop-overlay-layer.png before upload.
     // BR gets 2 uploads (Shopee BR 2-image policy, root cause #4).
     // Returns regionImageMap: { SG: [id], TW: [id], TH: [id], MY: [id], PH: [id], BR: [id1, id2] }
     // Throws if image fetch fails. Per-region upload failure returns null for that region.
-    async function mrUploadRegionImages(imageUrl, onProgress) {
+    async function mrUploadRegionImages(imageUrl, onProgress, isMainImage = false) {
       const regions = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
 
       // Fetch image once and convert to base64
       let b64;
       try {
-        const imgResp = await fetch(imageUrl);
-        if (!imgResp.ok) throw new Error(`이미지 다운로드 실패 (HTTP ${imgResp.status})`);
-        const blob = await imgResp.blob();
-        const dataUrl = await new Promise((resolve, reject) => {
-          const fr = new FileReader();
-          fr.onloadend = () => resolve(String(fr.result || ''));
-          fr.onerror = () => reject(new Error('FileReader failed'));
-          fr.readAsDataURL(blob);
-        });
-        const commaIdx = dataUrl.indexOf(',');
-        b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+        if (isMainImage) {
+          // Use composite (cover-crop + overlay layer) for main image
+          b64 = await mrCompositeMainImage(imageUrl);
+        } else {
+          // Extra images: plain fetch
+          const imgResp = await fetch(imageUrl);
+          if (!imgResp.ok) throw new Error(`이미지 다운로드 실패 (HTTP ${imgResp.status})`);
+          const blob = await imgResp.blob();
+          const dataUrl = await new Promise((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onloadend = () => resolve(String(fr.result || ''));
+            fr.onerror = () => reject(new Error('FileReader failed'));
+            fr.readAsDataURL(blob);
+          });
+          const commaIdx = dataUrl.indexOf(',');
+          b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+        }
       } catch (e) {
         throw new Error(`이미지 fetch 실패: ${e.message || e}`);
       }
@@ -11139,26 +11270,6 @@ LEGACY END -->
               if (!probeWeightOk) console.log('[mrPromoteAll] probe_per_model_weight_ok=false: stripping per-model weight from variation.model');
               if (!probeImageOk)  console.log('[mrPromoteAll] probe_per_option_image_ok=false: stripping option_list[].image from tier_variation');
 
-              // 2. Build tier_variation (axis definitions) — conditionally include per-option image
-              const tierVariation = (group.tierNames.filter(Boolean)).map((name, axisIdx) => {
-                // Collect unique option values for this axis (case-normalized dedup, original display)
-                const seenKeys = new Set();
-                const optionList = [];
-                for (const row of activeRows) {
-                  const raw = (axisIdx === 0 ? row._opt0 : row._opt1) || '';
-                  const k = raw.trim().toLowerCase();
-                  if (!k || seenKeys.has(k)) continue;
-                  seenKeys.add(k);
-                  const optEntry = { option: raw.trim() };
-                  if (probeImageOk && row._main_image) {
-                    // Only attach image to axis0 option entries (axis1 images not standard)
-                    if (axisIdx === 0) optEntry.image = { image_url: row._main_image };
-                  }
-                  optionList.push(optEntry);
-                }
-                return { name, option_list: optionList };
-              });
-
               // 3. Build model list
               const firstRow = activeRows[0];
               const cbscModels = variationOptions.map(vOpt => {
@@ -11172,34 +11283,53 @@ LEGACY END -->
                 return model;
               });
 
-              // 4. Upload main image to each region, then build per-region targets.
+              // 4. Upload main images (one per option, composited with layer) + extra images.
               // Each region requires its own image_id (cross-region reuse not allowed).
               // BR requires 2 distinct image IDs (Shopee BR 2-image policy, root cause #4).
+              // Per-option main images are uploaded for path A (tier_variation option_list[].image.image_id).
+              // Product-level image_id_list = first option's composited main + valid extras.
               const CBSC_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
-              const cardMainImage = (activeRows[0] && activeRows[0]._main_image) || '';
-              let regionImageMap = {}; // { region: [image_id, ...] | null }
-              const skippedRegions = new Set();
 
-              if (cardMainImage) {
-                // Show progress in UI
-                activeRows.forEach(r => { r.shopeePublishNote = '이미지 업로드 중... 0/6'; });
+              // 4a. Upload each option's main image (composited with shop-overlay-layer.png) per region
+              const optionRegionMaps = []; // optionRegionMaps[i] = regionImageMap for activeRows[i]
+              let skippedRegions = new Set();
+
+              {
+                const totalUploadSteps = activeRows.length * 6; // 6 regions per option
+                let uploadStep = 0;
+                activeRows.forEach(r => { r.shopeePublishNote = `이미지 업로드 중... 0/${totalUploadSteps}`; });
                 mrRenderPreviewCards();
 
-                try {
-                  regionImageMap = await mrUploadRegionImages(cardMainImage, (done, total, region) => {
-                    activeRows.forEach(r => { r.shopeePublishNote = `이미지 업로드 중... ${done}/${total} (${region})`; });
+                let hardFail = false;
+                for (let oi = 0; oi < activeRows.length; oi++) {
+                  const optMainUrl = (activeRows[oi]._main_image || '').trim();
+                  if (!optMainUrl) {
+                    activeRows.forEach(r => { r.status = 'failed'; r.error = `옵션 ${oi + 1} 메인 이미지가 없습니다.`; });
                     mrRenderPreviewCards();
-                  });
-                } catch (imgErr) {
-                  // Hard failure fetching the image itself — skip entire card
-                  activeRows.forEach(r => { r.status = 'failed'; r.error = `이미지 업로드 실패: ${imgErr.message}`; });
-                  mrRenderPreviewCards();
-                  continue;
+                    hardFail = true;
+                    break;
+                  }
+                  let rMap;
+                  try {
+                    rMap = await mrUploadRegionImages(optMainUrl, (done, total, region) => {
+                      uploadStep++;
+                      activeRows.forEach(r => { r.shopeePublishNote = `이미지 업로드 중... ${uploadStep}/${totalUploadSteps} (옵션 ${oi + 1} ${region})`; });
+                      mrRenderPreviewCards();
+                    }, true /* isMainImage — composite with overlay layer */);
+                  } catch (imgErr) {
+                    activeRows.forEach(r => { r.status = 'failed'; r.error = `이미지 업로드 실패 (옵션 ${oi + 1}): ${imgErr.message}`; });
+                    mrRenderPreviewCards();
+                    hardFail = true;
+                    break;
+                  }
+                  optionRegionMaps.push(rMap);
                 }
+                if (hardFail) continue;
 
-                // Per-region: null means that region's upload failed — skip it
+                // Collect skipped regions (failed for all options in that region)
                 for (const rgn of CBSC_REGIONS) {
-                  if (!regionImageMap[rgn]) {
+                  const allFailed = optionRegionMaps.every(m => !m || m[rgn] == null);
+                  if (allFailed) {
                     skippedRegions.add(rgn);
                     showToast(`이미지 업로드 실패 — ${rgn} 리전 건너뜀`, 'warn');
                   }
@@ -11207,11 +11337,6 @@ LEGACY END -->
 
                 activeRows.forEach(r => { r.shopeePublishNote = ''; });
                 mrRenderPreviewCards();
-              } else {
-                // No main image — can't proceed
-                activeRows.forEach(r => { r.status = 'failed'; r.error = '메인 이미지 URL이 없어 이미지 업로드를 수행할 수 없습니다.'; });
-                mrRenderPreviewCards();
-                continue;
               }
 
               const publishRegions = CBSC_REGIONS.filter(rgn => !skippedRegions.has(rgn));
@@ -11221,12 +11346,60 @@ LEGACY END -->
                 continue;
               }
 
+              // 4b. Upload extra images for first option (product-level image_id_list supplement)
+              const firstOptionExtras = (activeRows[0]._extra_images || []).filter(u => (u || '').trim());
+              const extraRegionMaps = [];
+              for (const extraUrl of firstOptionExtras) {
+                try {
+                  const em = await mrUploadRegionImages(extraUrl, null, false);
+                  extraRegionMaps.push(em);
+                } catch (_) {
+                  extraRegionMaps.push(null);
+                }
+              }
+
+              // Build per-region image_id_list: first option main + valid extras
+              const firstOptMap = optionRegionMaps[0] || {};
+              const buildImageIdList = (rgn) => {
+                const ids = [...(firstOptMap[rgn] || [])];
+                for (const em of extraRegionMaps) {
+                  if (em && em[rgn] && em[rgn].length > 0) ids.push(em[rgn][0]);
+                }
+                return ids;
+              };
+
               const cbscTargets = publishRegions.map(rgn => ({
                 region:         rgn,
                 price:          firstRow._cost_krw || variationOptions[0].cost_krw || 0,
                 days_to_ship:   firstRow._shopee_days_to_ship, // validated 1-150 int
-                image_id_list:  regionImageMap[rgn] || [],
+                image_id_list:  buildImageIdList(rgn),
               }));
+
+              // 2. Build tier_variation with or without per-option image_id (path A / fallback)
+              // path A: probeImageOk=true AND 1-axis mode → include image.image_id per option_list entry
+              // path A fallback: if Shopee rejects, retry without image fields (see register_cbsc call)
+              const pathAEnabled = probeImageOk && !group.twoAxis;
+              const buildTierVariation = (includeOptionImages) => {
+                return (group.tierNames.filter(Boolean)).map((name, axisIdx) => {
+                  const seenKeys = new Set();
+                  const optionList = [];
+                  for (const row of activeRows) {
+                    const raw = (axisIdx === 0 ? row._opt0 : row._opt1) || '';
+                    const k = raw.trim().toLowerCase();
+                    if (!k || seenKeys.has(k)) continue;
+                    seenKeys.add(k);
+                    const optEntry = { option: raw.trim() };
+                    if (includeOptionImages && axisIdx === 0) {
+                      const rowIdx = activeRows.indexOf(row);
+                      const sgIds = (optionRegionMaps[rowIdx] || {})['SG'] || [];
+                      if (sgIds.length > 0) optEntry.image = { image_id: sgIds[0] };
+                    }
+                    optionList.push(optEntry);
+                  }
+                  return { name, option_list: optionList };
+                });
+              };
+              const tierVariation = buildTierVariation(pathAEnabled);
 
               // 5. Title / description from observed
               const cbscTitle = (firstRow.observed && firstRow.observed.title) || firstRow.artist || 'UNKNOWN';
@@ -11319,12 +11492,38 @@ LEGACY END -->
               activeRows.forEach(r => { r.shopeePublishState = 'pending_publish'; });
               mrRenderPreviewCards();
 
-              const cbscResp = await fetch(`${SHOPEE_BRIDGE}/register_cbsc`, {
-                method: 'POST',
-                headers: Object.assign({}, AUTH_HEADERS, { 'Content-Type': 'application/json' }),
-                body: JSON.stringify(cbscBody),
-              });
-              const cbscJson = await cbscResp.json().catch(() => ({ ok: false, error: `HTTP ${cbscResp.status}` }));
+              // Path A: send with per-option image_id in tier_variation.
+              // If Shopee rejects at add_global_item or init_tier_variation with an image-related error,
+              // retry once without option images (path A fallback).
+              const doRegisterCbsc = async (body) => {
+                const resp = await fetch(`${SHOPEE_BRIDGE}/register_cbsc`, {
+                  method: 'POST',
+                  headers: Object.assign({}, AUTH_HEADERS, { 'Content-Type': 'application/json' }),
+                  body: JSON.stringify(body),
+                });
+                const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+                return { resp, json };
+              };
+
+              let { resp: cbscResp, json: cbscJson } = await doRegisterCbsc(cbscBody);
+              console.log('[mrPromoteAll] register_cbsc response:', JSON.stringify(cbscJson).slice(0, 2000));
+
+              // Path A fallback: if failure is at add_global_item or init_tier_variation and
+              // we sent option images, retry once without them.
+              if (!cbscJson.ok && pathAEnabled &&
+                  (cbscJson.stage === 'add_global_item' || cbscJson.stage === 'init_tier_variation') &&
+                  !cbscJson.global_item_id /* no orphan yet — safe to retry */) {
+                console.log('[mrPromoteAll] path A rejected by Shopee — retrying without option_list[].image');
+                showToast('Shopee가 옵션별 이미지 미지원 — 공통 이미지로 발행됩니다', 'warn');
+                const fallbackVariation = buildTierVariation(false);
+                const fallbackBody = Object.assign({}, cbscBody, {
+                  variation: { tier_variation: fallbackVariation, model: cbscModels },
+                });
+                const retry = await doRegisterCbsc(fallbackBody);
+                cbscResp = retry.resp;
+                cbscJson  = retry.json;
+                console.log('[mrPromoteAll] register_cbsc fallback response:', JSON.stringify(cbscJson).slice(0, 2000));
+              }
               console.log('[mrPromoteAll] register_cbsc response:', JSON.stringify(cbscJson).slice(0, 2000));
 
               // Decode all relevant fields upfront regardless of ok/stage

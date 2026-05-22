@@ -2646,11 +2646,7 @@ async function _shopeeSyncPreOrderDts() {
   const status = document.getElementById('sp-status');
   const btn = document.getElementById('sp-sync-preorder-dts');
   const dtsMap = _readShopeePreOrderDtsMap();
-  const headers = {
-    'Content-Type': 'application/json',
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-  };
+  const headers = await _joomAuthHeaders();
 
   for (const region of SHOPEE_REGIONS) {
     const value = Number.parseInt(dtsMap[region], 10);
@@ -2814,11 +2810,7 @@ async function _bulkSyncPreOrderDts() {
   const btn = document.getElementById('bulk-preorder-dts-apply');
   const rawMap = _readBulkPreOrderDtsMap();
   const dtsMap = {};
-  const headers = {
-    'Content-Type': 'application/json',
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-  };
+  const headers = await _joomAuthHeaders();
 
   for (const region of SHOPEE_REGIONS) {
     const raw = rawMap[region];

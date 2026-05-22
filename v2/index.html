@@ -10596,6 +10596,97 @@ LEGACY END -->
 
         infoCol.appendChild(shopeeRow);
 
+        // ── Joom 발행 영역 ────────────────────────────────────────────
+        {
+          const JOOM_CATEGORIES = [
+            { id: 'music_albums_cd', label: 'music_albums_cd (K-pop CD 기본값)' },
+            { id: 'music_albums',    label: 'music_albums' },
+            { id: 'trading_cards',   label: 'trading_cards' },
+            { id: 'memorabilia',     label: 'memorabilia' },
+            { id: 'fan_attributes',  label: 'fan_attributes' },
+          ];
+          if (!firstRow._joomCategory) firstRow._joomCategory = 'music_albums_cd';
+          if (firstRow._joomBrand == null) firstRow._joomBrand = firstRow.artist || '';
+          if (firstRow._joomMainImageOverride == null) firstRow._joomMainImageOverride = '';
+
+          const joomRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
+          joomRow.appendChild(el('span', { style: 'color:#5c24b0;font-weight:700;' }, 'Joom:'));
+
+          // Category select
+          const joomCatWr = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
+          joomCatWr.appendChild(el('span', { style: 'color:var(--muted);' }, '카테고리'));
+          const joomCatSel = el('select', { style: 'font-size:12px;padding:2px 4px;' });
+          JOOM_CATEGORIES.forEach(c => {
+            const opt = el('option', { value: c.id }, c.label);
+            if (c.id === firstRow._joomCategory) opt.selected = true;
+            joomCatSel.appendChild(opt);
+          });
+          joomCatSel.addEventListener('change', (e) => { firstRow._joomCategory = e.target.value; });
+          joomCatWr.appendChild(joomCatSel);
+          joomRow.appendChild(joomCatWr);
+
+          // Brand input
+          const joomBrandWr = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
+          joomBrandWr.appendChild(el('span', { style: 'color:var(--muted);' }, 'Brand'));
+          const joomBrandInp = el('input', { type: 'text', style: 'font-size:12px;padding:3px 6px;width:110px;', value: firstRow._joomBrand || '', placeholder: 'artist 자동' });
+          joomBrandInp.addEventListener('input', (e) => { firstRow._joomBrand = e.target.value; });
+          joomBrandWr.appendChild(joomBrandInp);
+          joomRow.appendChild(joomBrandWr);
+
+          infoCol.appendChild(joomRow);
+
+          // Joom main image override (separate row for readability)
+          const joomImgRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
+          joomImgRow.appendChild(el('span', { style: 'color:var(--muted);' }, 'Joom 메인이미지(정사각형):'));
+          const joomImgInp = el('input', { type: 'text', style: 'font-size:12px;padding:3px 6px;flex:1;min-width:200px;max-width:340px;', value: firstRow._joomMainImageOverride || '', placeholder: '비워두면 옵션 행 메인이미지 사용' });
+          joomImgInp.addEventListener('input', (e) => { firstRow._joomMainImageOverride = e.target.value.trim(); });
+          joomImgRow.appendChild(joomImgInp);
+          infoCol.appendChild(joomImgRow);
+
+          // Joom status display + publish button
+          const joomStatusRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
+
+          // Status badge
+          const joomStatus = group.joomStatus || 'pending';
+          let joomDot = '', joomStatusText = '', joomStatusColor = 'var(--muted)';
+          if (joomStatus === 'pending') {
+            joomDot = '⚪'; joomStatusText = '발행 전'; joomStatusColor = 'var(--muted)';
+          } else if (joomStatus === 'publishing') {
+            joomDot = '🟡'; joomStatusText = '발행 중...'; joomStatusColor = '#a15c07';
+          } else if (joomStatus === 'published') {
+            joomDot = '🟢'; joomStatusText = '발행 완료'; joomStatusColor = 'var(--green)';
+          } else if (joomStatus === 'failed') {
+            joomDot = '🔴'; joomStatusText = '실패'; joomStatusColor = 'var(--red)';
+          } else if (joomStatus === 'blocked') {
+            joomDot = '🚫'; joomStatusText = 'Joom 영구 위반'; joomStatusColor = 'var(--red)';
+          }
+          joomStatusRow.appendChild(el('span', { style: `color:${joomStatusColor};` }, `${joomDot} ${joomStatusText}`));
+
+          if (joomStatus === 'published' && group.joomProductId) {
+            const joomLink = el('a', {
+              href: `https://merchant.joom.com/products/${group.joomProductId}`,
+              target: '_blank', rel: 'noopener',
+              style: 'font-size:11px;color:#5c24b0;font-family:monospace;',
+            }, group.joomProductId);
+            joomStatusRow.appendChild(joomLink);
+          } else if ((joomStatus === 'failed' || joomStatus === 'blocked') && group.joomError) {
+            joomStatusRow.appendChild(el('span', { style: 'color:var(--red);font-size:11px;', title: group.joomError }, group.joomError.slice(0, 60) + (group.joomError.length > 60 ? '…' : '')));
+          }
+
+          // Publish button
+          if (joomStatus !== 'published' && joomStatus !== 'blocked') {
+            const joomPublishBtn = el('button', {
+              type: 'button',
+              style: 'font-size:11px;padding:3px 10px;background:#5c24b0;color:#fff;border-color:#5c24b0;',
+              disabled: joomStatus === 'publishing',
+            }, '🚀 Joom 발행');
+            joomPublishBtn.addEventListener('click', () => mrPromoteJoom(group));
+            joomStatusRow.appendChild(joomPublishBtn);
+          }
+
+          infoCol.appendChild(joomStatusRow);
+        }
+
         // Tier axis name inputs
         const tierRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
         tierRow.appendChild(el('span', { style: 'color:var(--muted);' }, '옵션 축 ①:'));
@@ -11685,6 +11776,180 @@ LEGACY END -->
       if (anySuccess && typeof window.showView === 'function') {
         window.showView('view-products');
       }
+    }
+
+    // mrPromoteJoom — Joom 별도 발행 (Shopee 흐름과 분리).
+    // Codex P0 #1 (cross-card SKU duplicate guard), P0 #2 (lookup-sku recovery check),
+    // P0 #3 (square main image validation via shopee-bridge proxy_image),
+    // P1 #6 (price floor $1), P1 #7 (permanent infraction escalation) 반영.
+    async function mrPromoteJoom(group) {
+      const firstRow = group.rows[0];
+      if (!firstRow) { showToast('카드 행이 없습니다.'); return; }
+
+      // Determine parent SKU
+      const allSkus = group.rows.filter(r => !CROSS_SKU_INACTIVE.has(r.status)).map(r => (r._sku || '').trim()).filter(Boolean);
+      function _commonPrefix(strs) {
+        if (!strs.length) return '';
+        let p = strs[0];
+        for (let i = 1; i < strs.length; i++) { while (!strs[i].startsWith(p)) { p = p.slice(0, -1); if (!p) return ''; } }
+        return p.replace(/[-_]+$/, '');
+      }
+      let parentSku = group._cachedParentSku || _commonPrefix(allSkus);
+      if (!parentSku || allSkus.includes(parentSku)) parentSku = allSkus[0] ? allSkus[0] + '-P' : ('JOOM-' + (group.source_record_id || '').slice(0, 8));
+
+      // P0 #3: square main image validation (via shopee-bridge proxy_image for CORS safety — P1 #4)
+      const mainImageUrl = firstRow._joomMainImageOverride || firstRow._main_image || '';
+      if (!mainImageUrl) { showToast('Joom 메인 이미지 URL 필수 (옵션 행 메인이미지 또는 Joom 전용 URL 입력)'); return; }
+      try {
+        const proxyUrl = SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(mainImageUrl);
+        const respImg = await fetch(proxyUrl, { headers: AUTH_HEADERS });
+        if (!respImg.ok) { showToast('메인 이미지 다운로드 실패 (proxy HTTP ' + respImg.status + ')'); return; }
+        const blob = await respImg.blob();
+        const img = new Image();
+        const objUrl = URL.createObjectURL(blob);
+        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = objUrl; });
+        URL.revokeObjectURL(objUrl);
+        if (img.naturalWidth !== img.naturalHeight) {
+          showToast(`Joom 메인 이미지는 정사각형 필수 — 현재 ${img.naturalWidth}×${img.naturalHeight}. 정사각형 이미지 URL을 입력하거나 staronemall 원본을 확인하세요.`);
+          return;
+        }
+      } catch (e) {
+        showToast('이미지 검증 실패: ' + (e.message || e));
+        return;
+      }
+
+      // P0 #1: cross-card SKU duplicate guard
+      const myOptionSkus = new Set(group.rows.map(r => (r._sku || '').trim()).filter(Boolean));
+      const groups = mrGroupCards();
+      for (const otherGroup of groups) {
+        if (otherGroup.source_record_id === group.source_record_id) continue;
+        for (const r of otherGroup.rows) {
+          if (CROSS_SKU_INACTIVE.has(r.status)) continue;
+          const sku = (r._sku || '').trim();
+          if (sku && myOptionSkus.has(sku)) {
+            showToast(`옵션 SKU "${sku}" 가 다른 카드와 중복 — Joom immutable 위반으로 발행 차단`);
+            return;
+          }
+        }
+      }
+
+      // Build variantsConfig
+      let variantsConfig;
+      try {
+        variantsConfig = group.rows.map((r) => {
+          if (!r._sku) throw new Error('옵션 SKU 가 비어 있습니다. 모든 옵션에 SKU를 입력하세요.');
+          const optParts = [];
+          if (r._opt0) optParts.push(r._opt0);
+          if (group.twoAxis && r._opt1) optParts.push(r._opt1);
+          const optionName = optParts.join(' / ') || 'ONE SIZE';
+          const costKrw = Number(r._cost_krw || firstRow.cost_krw || 0);
+          if (!costKrw) throw new Error(`옵션 "${optionName}" 매입가가 0원입니다.`);
+          const usdRaw = costKrw / 1380 / 0.85;
+          const usdPrice = usdRaw.toFixed(2);
+          // P1 #6: price floor guard
+          if (parseFloat(usdPrice) < 1.0) {
+            throw new Error(`옵션 "${optionName}" USD 가격 $${usdPrice} 가 너무 낮음 (최저 $1 필요, 현재 매입가 ${costKrw}원)`);
+          }
+          return {
+            name: optionName,
+            sku: r._sku,
+            price: usdPrice,
+            currency: 'USD',
+            inventory: 50,
+            enabled: true,
+          };
+        });
+      } catch (e) {
+        showToast(e.message || String(e));
+        return;
+      }
+
+      const payload = {
+        row: { sku: parentSku, cost: Number(firstRow._cost_krw || firstRow.cost_krw || 0), weight: Number(firstRow._weight_g || firstRow.weight_g || 0) },
+        scrapedAssets: {
+          name: (firstRow.observed && firstRow.observed.title) || firstRow.product_name || '',
+          mainImage: mainImageUrl,
+          extraImages: (firstRow._extra_images || []).filter(Boolean),
+          detailImages: [],
+        },
+        variantsConfig,
+        categoryId: firstRow._joomCategory || 'music_albums_cd',
+        enabled: true,
+        namePrefix: '[PRE ORDER]',
+        artist: firstRow.artist || '',
+        album: firstRow.album || '',
+        contents: '',
+        brand: firstRow._joomBrand || firstRow.artist || '',
+      };
+
+      group.joomStatus = 'publishing';
+      group.joomError = null;
+      mrRenderPreviewCards();
+
+      const JOOM_BRIDGE = SHOPEE_BRIDGE.replace('/shopee-bridge', '/joom-bridge');
+
+      try {
+        const resp = await fetch(JOOM_BRIDGE + '/publish', {
+          method: 'POST',
+          headers: AUTH_HEADERS,
+          body: JSON.stringify(payload),
+        });
+        const json = await resp.json();
+
+        if (json.ok && json.joom_product_id) {
+          // P0 #2: lookup-sku partial recovery verification
+          try {
+            const lookupResp = await fetch(JOOM_BRIDGE + '/lookup-sku?sku=' + encodeURIComponent(group.rows[0]._sku), { headers: AUTH_HEADERS });
+            const lookupJson = await lookupResp.json();
+            if (!lookupJson.ok || lookupJson.joom_product_id !== json.joom_product_id) {
+              showToast('발행 응답과 lookup-sku 불일치, 운영자 확인 필요', 'err');
+            }
+          } catch (lookupErr) {
+            console.warn('[mrPromoteJoom] lookup-sku check failed:', lookupErr);
+          }
+
+          // DB UPDATE per row
+          for (const row of group.rows) {
+            const matched = (json.variants || []).find(v => v.sku === row._sku);
+            if (!matched) continue;
+            await db.from('products').update({
+              joom_product_id: json.joom_product_id,
+              joom_variant_id: matched.sku,
+              joom_currency: 'USD',
+              joom_status: json.state || 'pending',
+              joom_published_at: new Date().toISOString(),
+              joom_last_synced_price: matched.price,
+              joom_last_synced_at: new Date().toISOString(),
+              joom_mapping_status: 'mapped',
+              joom_mapping_error: null,
+            }).eq('sku', row._sku);
+          }
+
+          // P1 #7: permanent infraction escalation
+          const permanentInfractions = (json.infractions || []).filter(i => i.kind === 'permanent');
+          if (permanentInfractions.length) {
+            group.joomStatus = 'blocked';
+            group.joomError = `Joom 영구 위반 ${permanentInfractions.length}건 (${permanentInfractions.map(i => i.code || i.kind).join(', ')})`;
+            showToast(group.joomError, 'err');
+          } else {
+            group.joomStatus = 'published';
+            group.joomProductId = json.joom_product_id;
+            const warnInfractions = (json.infractions || []).filter(i => i.kind !== 'permanent');
+            const msg = `Joom 발행 완료 ${json.joom_product_id}` + (warnInfractions.length ? ` (warning ${warnInfractions.length}건)` : '');
+            showToast(msg, 'ok');
+          }
+        } else {
+          group.joomStatus = 'failed';
+          group.joomError = json.error || json.message || '알 수 없는 오류';
+          showToast('Joom 발행 실패: ' + group.joomError, 'err');
+        }
+      } catch (e) {
+        group.joomStatus = 'failed';
+        group.joomError = e.message || String(e);
+        showToast('Joom 발행 예외: ' + group.joomError, 'err');
+      }
+
+      mrRenderPreviewCards();
     }
 
     function mrInit() {

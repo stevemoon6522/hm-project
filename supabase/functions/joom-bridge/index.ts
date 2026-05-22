@@ -404,7 +404,15 @@ async function handleRequest(req: Request): Promise<Response> {
           enabled: v.enabled, size: v.size, shippingWeight: v.shippingWeight,
         })),
         infractions: ((data.review || {}).infractions || []).map((i: any) => ({
-          code: i.code, kind: i.kind, note: i.note, regions: i.regions,
+          code: i.code,
+          kind: i.kind,
+          note: i.note,
+          regions: i.regions,
+          description: i.description,
+          where: i.where,
+          brand_id: i.brandId,
+          variant_sku: i.variantSku,
+          is_permanent: i.isPermanent === true,
         })),
         computed_listing_usd,
       });

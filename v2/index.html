@@ -10850,6 +10850,86 @@ LEGACY END -->
       }
     }
 
+    // ── mrUploadRegionImages ──────────────────────────────────────────────────
+    // Upload one image URL to each of the 6 CBSC regions.
+    // BR gets 2 uploads (Shopee BR 2-image policy, root cause #4).
+    // Returns regionImageMap: { SG: [id], TW: [id], TH: [id], MY: [id], PH: [id], BR: [id1, id2] }
+    // Throws if image fetch fails. Per-region upload failure returns null for that region.
+    async function mrUploadRegionImages(imageUrl, onProgress) {
+      const regions = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+
+      // Fetch image once and convert to base64
+      let b64;
+      try {
+        const imgResp = await fetch(imageUrl);
+        if (!imgResp.ok) throw new Error(`이미지 다운로드 실패 (HTTP ${imgResp.status})`);
+        const blob = await imgResp.blob();
+        const dataUrl = await new Promise((resolve, reject) => {
+          const fr = new FileReader();
+          fr.onloadend = () => resolve(String(fr.result || ''));
+          fr.onerror = () => reject(new Error('FileReader failed'));
+          fr.readAsDataURL(blob);
+        });
+        const commaIdx = dataUrl.indexOf(',');
+        b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+      } catch (e) {
+        throw new Error(`이미지 fetch 실패: ${e.message || e}`);
+      }
+
+      const regionImageMap = {};
+      let done = 0;
+      for (const r of regions) {
+        const count = r === 'BR' ? 2 : 1;
+        const ids = [];
+        let failed = false;
+        for (let i = 0; i < count; i++) {
+          try {
+            const resp = await fetch(`${SHOPEE_BRIDGE}/upload_image`, {
+              method: 'POST',
+              headers: Object.assign({}, AUTH_HEADERS, { 'Content-Type': 'application/json' }),
+              body: JSON.stringify({ region: r, image_base64: b64 }),
+            });
+            const json = await resp.json().catch(() => ({ ok: false }));
+            if (!json.ok || !json.image_id) {
+              throw new Error(`upload_image ${r} 실패: ${json.error || json.message || '알 수 없는 오류'}`);
+            }
+            ids.push(json.image_id);
+          } catch (e) {
+            console.warn('[mrUploadRegionImages] region upload failed:', r, e.message);
+            failed = true;
+            break;
+          }
+        }
+        regionImageMap[r] = failed ? null : ids;
+        done++;
+        if (typeof onProgress === 'function') onProgress(done, regions.length, r);
+      }
+      return regionImageMap;
+    }
+
+    // ── buildDefaultAttributeList ─────────────────────────────────────────────
+    // Returns mandatory attribute_list for known Shopee CBSC categories.
+    // category 100740 (CD/DVD/Bluray): Region of Origin (Korea), CD type (Music & Concerts),
+    //   Adult products (No) — TW shop requires this.
+    // category 101390 (Idol Collectibles): Region of Origin (Korea) + TODO for full mandatory list.
+    function buildDefaultAttributeList(categoryId) {
+      const cat = Number(categoryId);
+      if (cat === 100740) {
+        return [
+          { attribute_id: 100037, attribute_value_list: [{ value_id: 48, original_value_name: 'Korea' }] },
+          { attribute_id: 100693, attribute_value_list: [{ value_id: 3574, original_value_name: 'Music & Concerts' }] },
+          { attribute_id: 101044, attribute_value_list: [{ value_id: 11441, original_value_name: 'No' }] },
+        ];
+      }
+      if (cat === 101390) {
+        return [
+          { attribute_id: 100037, attribute_value_list: [{ value_id: 48, original_value_name: 'Korea' }] },
+          // TODO: verify full mandatory attribute list for category 101390 (Idol Collectibles) per region.
+        ];
+      }
+      return [];
+    }
+
     async function mrPromoteAll() {
       const err = $('mr-stage2-error');
       err.style.display = 'none';
@@ -11092,15 +11172,60 @@ LEGACY END -->
                 return model;
               });
 
-              // 4. Build per-region targets (6 regions) using default shop IDs
-              // image_id_list per region: for now use main_image URL uploaded via upload_image.
-              // We don't have pre-uploaded image_id here — include image_url_list as fallback.
+              // 4. Upload main image to each region, then build per-region targets.
+              // Each region requires its own image_id (cross-region reuse not allowed).
+              // BR requires 2 distinct image IDs (Shopee BR 2-image policy, root cause #4).
               const CBSC_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
-              const cbscTargets = CBSC_REGIONS.map(rgn => ({
-                region:        rgn,
-                price:         firstRow._cost_krw || variationOptions[0].cost_krw || 0,
-                days_to_ship:  firstRow._shopee_days_to_ship, // validated 1-150 int; null means pre-check already failed
-                image_url_list: activeRows.map(r => r._main_image).filter(Boolean).slice(0, 9),
+              const cardMainImage = (activeRows[0] && activeRows[0]._main_image) || '';
+              let regionImageMap = {}; // { region: [image_id, ...] | null }
+              const skippedRegions = new Set();
+
+              if (cardMainImage) {
+                // Show progress in UI
+                activeRows.forEach(r => { r.shopeePublishNote = '이미지 업로드 중... 0/6'; });
+                mrRenderPreviewCards();
+
+                try {
+                  regionImageMap = await mrUploadRegionImages(cardMainImage, (done, total, region) => {
+                    activeRows.forEach(r => { r.shopeePublishNote = `이미지 업로드 중... ${done}/${total} (${region})`; });
+                    mrRenderPreviewCards();
+                  });
+                } catch (imgErr) {
+                  // Hard failure fetching the image itself — skip entire card
+                  activeRows.forEach(r => { r.status = 'failed'; r.error = `이미지 업로드 실패: ${imgErr.message}`; });
+                  mrRenderPreviewCards();
+                  continue;
+                }
+
+                // Per-region: null means that region's upload failed — skip it
+                for (const rgn of CBSC_REGIONS) {
+                  if (!regionImageMap[rgn]) {
+                    skippedRegions.add(rgn);
+                    showToast(`이미지 업로드 실패 — ${rgn} 리전 건너뜀`, 'warn');
+                  }
+                }
+
+                activeRows.forEach(r => { r.shopeePublishNote = ''; });
+                mrRenderPreviewCards();
+              } else {
+                // No main image — can't proceed
+                activeRows.forEach(r => { r.status = 'failed'; r.error = '메인 이미지 URL이 없어 이미지 업로드를 수행할 수 없습니다.'; });
+                mrRenderPreviewCards();
+                continue;
+              }
+
+              const publishRegions = CBSC_REGIONS.filter(rgn => !skippedRegions.has(rgn));
+              if (publishRegions.length === 0) {
+                activeRows.forEach(r => { r.status = 'failed'; r.error = '모든 리전 이미지 업로드가 실패했습니다.'; });
+                mrRenderPreviewCards();
+                continue;
+              }
+
+              const cbscTargets = publishRegions.map(rgn => ({
+                region:         rgn,
+                price:          firstRow._cost_krw || variationOptions[0].cost_krw || 0,
+                days_to_ship:   firstRow._shopee_days_to_ship, // validated 1-150 int
+                image_id_list:  regionImageMap[rgn] || [],
               }));
 
               // 5. Title / description from observed
@@ -11182,6 +11307,7 @@ LEGACY END -->
                 weight_g:          variationOptions[0].weight_g || firstRow._weight_g || 100,
                 is_pre_order:      lifecycle === 'pre_order',
                 lifecycle_state:   lifecycle,
+                attribute_list:    buildDefaultAttributeList(firstRow._shopee_category_id || 100740),
                 variation:         { tier_variation: tierVariation, model: cbscModels },
                 targets:           cbscTargets,
                 idempotency_token: group.idempotency_token,

@@ -1157,6 +1157,18 @@
       </select>
     </div>
 
+    <div class="field">
+      <label>PRE ORDER DTS by Region
+        <span style="color:#5a5a66;font-size:10px;font-weight:normal;">(shop-level update_item pre_order sync)</span>
+      </label>
+      <div id="sp-preorder-dts" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;">
+        <!-- pre order DTS inputs -->
+      </div>
+      <div style="margin-top:8px;display:flex;justify-content:flex-end;">
+        <button class="btn" id="sp-sync-preorder-dts" type="button">🚚 PRE ORDER DTS 동기화</button>
+      </div>
+    </div>
+
     <div id="sp-status" style="display:none;font-size:11px;margin:10px 0;padding:10px;background:#fafafc;border:1px solid #d8d8e0;border-radius:3px;line-height:1.6;"></div>
 
     <div style="background:#fef3c7;border:1px solid #b45309;border-radius:3px;padding:8px 10px;margin:10px 0;font-size:11px;color:#78350f;line-height:1.5;">
@@ -1600,6 +1612,8 @@ function dbRowToProduct(row) {
     joomPublishedAt: row.joom_published_at || null,
     purpose: row.purpose || 'price_edit',
     tags: row.tags || [],
+    lifecycleState: row.lifecycle_state || 'price_edit',
+    shopeeDaysToShip: row.shopee_days_to_ship || null,
     shopeeListings: {},  // {SG: {shop_item_id, last_synced_price, status}, TW:{...}, TH:{...}} — Storage.loadAll 에서 채움
   };
 }
@@ -1620,6 +1634,8 @@ function productToDbRow(p) {
     joom_published_at: p.joomPublishedAt || null,
     purpose: p.purpose || 'price_edit',
     tags: (p.tags && p.tags.length) ? p.tags : null,
+    lifecycle_state: p.lifecycleState || null,
+    shopee_days_to_ship: p.shopeeDaysToShip || null,
   };
 }
 
@@ -2524,6 +2540,60 @@ function _shopeeRenderRegionItems(row) {
   });
 }
 
+const PRE_ORDER_REGION_DTS = Object.freeze({
+  SG: 10,
+  TW: 10,
+  TH: 10,
+  MY: 10,
+  PH: 10,
+  BR: 10,
+});
+
+function _defaultPreOrderDtsMap() {
+  return { ...PRE_ORDER_REGION_DTS };
+}
+
+function _getPreOrderDtsMap(row) {
+  const saved = row?.shopeeDaysToShip?.pre_order || {};
+  return { ..._defaultPreOrderDtsMap(), ...saved };
+}
+
+function _renderShopeePreOrderDts(row) {
+  const wrap = document.getElementById('sp-preorder-dts');
+  if (!wrap) return;
+  const dtsMap = _getPreOrderDtsMap(row);
+  wrap.innerHTML = SHOPEE_REGIONS.map((region) => {
+    const value = Number(dtsMap[region]) || PRE_ORDER_REGION_DTS[region] || 10;
+    return [
+      '<label style="display:flex;flex-direction:column;gap:4px;font-size:11px;color:#0a0a0c;">',
+        '<span style="font-weight:600;">', region, '</span>',
+        '<input type="number" class="sp-preorder-dts-input" data-region="', region, '" min="1" max="150" value="', value, '" ',
+          'style="background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:6px 8px;border-radius:3px;font-family:monospace;font-size:12px;">',
+      '</label>',
+    ].join('');
+  }).join('');
+}
+
+function _readShopeePreOrderDtsMap() {
+  const wrap = document.getElementById('sp-preorder-dts');
+  const next = {};
+  if (!wrap) return next;
+  wrap.querySelectorAll('.sp-preorder-dts-input').forEach((input) => {
+    const region = String(input.dataset.region || '').toUpperCase();
+    const value = Number.parseInt(input.value, 10);
+    if (region) next[region] = value;
+  });
+  return next;
+}
+
+async function _persistShopeePreOrderDts(row, dtsMap) {
+  row.shopeeDaysToShip = {
+    ...(row.shopeeDaysToShip || {}),
+    pre_order: { ...dtsMap },
+  };
+  await Storage.updateProduct(row.id, row);
+}
+
 function openShopeeModal(row) {
   _shopeeCurrentRow = row;
   const modal = document.getElementById('shopee-modal');
@@ -2533,6 +2603,7 @@ function openShopeeModal(row) {
   tokensEl.textContent = '로딩 중...';
 
   _shopeeRenderRegionItems(row);
+  _renderShopeePreOrderDts(row);
 
   _shopeeFetchTokens().then(tokens => {
     if (!tokens.length) {
@@ -2550,6 +2621,94 @@ function openShopeeModal(row) {
   });
 
   modal.classList.add('show');
+}
+
+async function _shopeeSyncPreOrderDts() {
+  const row = _shopeeCurrentRow;
+  if (!row) return;
+  const status = document.getElementById('sp-status');
+  const btn = document.getElementById('sp-sync-preorder-dts');
+  const dtsMap = _readShopeePreOrderDtsMap();
+  const headers = {
+    'Content-Type': 'application/json',
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  };
+
+  for (const region of SHOPEE_REGIONS) {
+    const value = Number.parseInt(dtsMap[region], 10);
+    if (!Number.isFinite(value) || value < 1 || value > 150) {
+      status.style.display = 'block';
+      status.style.color = '#d62754';
+      status.textContent = `PRE ORDER DTS invalid: ${region}=${dtsMap[region]} (allowed 1-150)`;
+      return;
+    }
+  }
+
+  const shopTargets = SHOPEE_REGIONS
+    .map((region) => ({
+      region,
+      item_id: Number.parseInt(row?.shopeeListings?.[region]?.shop_item_id, 10),
+      days_to_ship: Number.parseInt(dtsMap[region], 10),
+    }))
+    .filter((target) => Number.isFinite(target.item_id) && target.item_id > 0);
+
+  const origLabel = btn ? btn.textContent : '';
+  if (btn) btn.disabled = true;
+  status.style.display = 'block';
+  status.style.color = '#5a5a66';
+  status.textContent = `Saving PRE ORDER DTS (${shopTargets.length} mapped regions)...`;
+
+  try {
+    await _persistShopeePreOrderDts(row, dtsMap);
+
+    const failures = [];
+    const successes = [];
+    for (let i = 0; i < shopTargets.length; i++) {
+      const target = shopTargets[i];
+      if (btn) btn.textContent = `🚚 PRE ORDER DTS ${i + 1}/${shopTargets.length}`;
+      const response = await fetch(`${SHOPEE_BRIDGE}/update_shop_item_dts`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          region: target.region,
+          item_id: target.item_id,
+          days_to_ship: target.days_to_ship,
+          is_pre_order: true,
+        }),
+      });
+      const data = await response.json();
+      if (!data.ok) {
+        failures.push(`${target.region}/${target.item_id}: ${data.error || data.result?.error || data.result?.message || 'unknown'}`);
+      } else {
+        successes.push(`${target.region}=${target.days_to_ship}`);
+      }
+    }
+
+    row.shopeeDaysToShip = {
+      ...(row.shopeeDaysToShip || {}),
+      pre_order: { ...dtsMap },
+    };
+    renderTableBody();
+
+    if (failures.length) {
+      status.style.color = '#d62754';
+      status.innerHTML = `PRE ORDER DTS partial failure (${successes.length}/${shopTargets.length})<br>${failures.join('<br>')}`;
+    } else {
+      status.style.color = '#15803d';
+      status.textContent = shopTargets.length
+        ? `PRE ORDER DTS synced: ${successes.join(', ')}`
+        : 'PRE ORDER DTS saved. No mapped shop_item_id found yet.';
+    }
+  } catch (error) {
+    status.style.color = '#d62754';
+    status.textContent = `PRE ORDER DTS sync failed: ${error.message || error}`;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origLabel || '🚚 PRE ORDER DTS 동기화';
+    }
+  }
 }
 
 async function _shopeeTestImage() {
@@ -3151,13 +3310,15 @@ async function _shopeeBulkSync() {
     const cancel = document.getElementById('sp-cancel');
     const testImg = document.getElementById('sp-test-image');
     const updatePrices = document.getElementById('sp-update-prices');
+    const syncPreOrderDts = document.getElementById('sp-sync-preorder-dts');
     const modal = document.getElementById('shopee-modal');
-    if (!cancel || !testImg || !updatePrices) { document.addEventListener('DOMContentLoaded', init); return; }
+    if (!cancel || !testImg || !updatePrices || !syncPreOrderDts) { document.addEventListener('DOMContentLoaded', init); return; }
     if (cancel.dataset.bound) return;
     cancel.dataset.bound = '1';
     cancel.addEventListener('click', () => modal.classList.remove('show'));
     testImg.addEventListener('click', _shopeeTestImage);
     updatePrices.addEventListener('click', _shopeeUpdatePrices);
+    syncPreOrderDts.addEventListener('click', _shopeeSyncPreOrderDts);
   };
   init();
 })();

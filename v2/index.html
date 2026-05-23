@@ -10598,14 +10598,17 @@ LEGACY END -->
 
         // ── Joom 발행 영역 ────────────────────────────────────────────
         {
+          // 운영자 msg #884: 모든 Joom 등록 = Music Albums 카테고리 (parent).
+          // Music Albums 는 J1172 없음 (검증 완료 2026-05-23 burnable 6a10fc14d240c30149144e1a).
+          // Record CD (music_albums_cd) 는 Joom 측 inherit 이슈로 J1172 발생.
           const JOOM_CATEGORIES = [
-            { id: 'music_albums_cd', label: 'music_albums_cd (K-pop CD 기본값)' },
-            { id: 'music_albums',    label: 'music_albums' },
-            { id: 'trading_cards',   label: 'trading_cards' },
-            { id: 'memorabilia',     label: 'memorabilia' },
-            { id: 'fan_attributes',  label: 'fan_attributes' },
+            { id: 'music_albums',    label: 'Music Albums (운영자 default)' },
+            { id: 'music_albums_cd', label: 'Record CD (J1172 발생 가능)' },
+            { id: 'trading_cards',   label: 'Trading Cards' },
+            { id: 'memorabilia',     label: 'Memorabilia' },
+            { id: 'fan_attributes',  label: 'Fan Attributes' },
           ];
-          if (!firstRow._joomCategory) firstRow._joomCategory = 'music_albums_cd';
+          if (!firstRow._joomCategory) firstRow._joomCategory = 'music_albums';
           if (firstRow._joomBrand == null) firstRow._joomBrand = firstRow.artist || '';
           if (firstRow._joomMainImageOverride == null) firstRow._joomMainImageOverride = '';
 
@@ -11873,7 +11876,7 @@ LEGACY END -->
           detailImages: [],
         },
         variantsConfig,
-        categoryId: firstRow._joomCategory || 'music_albums_cd',
+        categoryId: firstRow._joomCategory || 'music_albums',
         enabled: true,
         namePrefix: '[PRE ORDER]',
         artist: firstRow.artist || '',

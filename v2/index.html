@@ -11902,9 +11902,12 @@ LEGACY END -->
         if (json.ok && json.joom_product_id) {
           // P0 #2: lookup-sku partial recovery verification
           try {
-            const lookupResp = await fetch(JOOM_BRIDGE + '/lookup-sku?sku=' + encodeURIComponent(group.rows[0]._sku), { headers: AUTH_HEADERS });
+            const lookupResp = await fetch(JOOM_BRIDGE + '/lookup-sku?id=' + encodeURIComponent(json.joom_product_id), { headers: AUTH_HEADERS });
             const lookupJson = await lookupResp.json();
-            if (!lookupJson.ok || lookupJson.joom_product_id !== json.joom_product_id) {
+            const expectedSkus = new Set(group.rows.map(r => r._sku).filter(Boolean));
+            const returnedSkus = new Set((lookupJson.variant_skus || []).filter(Boolean));
+            const allMatched = expectedSkus.size > 0 && [...expectedSkus].every(s => returnedSkus.has(s));
+            if (!lookupJson.ok || lookupJson.joom_product_id !== json.joom_product_id || !allMatched) {
               showToast('발행 응답과 lookup-sku 불일치, 운영자 확인 필요', 'err');
             }
           } catch (lookupErr) {

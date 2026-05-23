@@ -420,37 +420,36 @@ async function handleRequest(req: Request): Promise<Response> {
 
     if (action === "lookup-sku" && req.method === "GET") {
       // GET /lookup-sku?sku=ABC → resolve Joom productId + variantId + currency + current price
-      // for the variant whose sku matches. Used by shopee-dashboard manual Joom sync button
-      // to populate products.joom_product_id, joom_variant_id, joom_currency.
-      const sku = url.searchParams.get("sku") || "";
-      if (!sku.trim()) return jsonResp({ ok: false, error: "sku query param required" }, 400);
+      // for the variant whose sku matches. Also accepts ?id=<hex24> to lookup by Joom productId.
+      // Returns product.state + variant.review when found so callers can poll moderation status.
+      const sku = (url.searchParams.get("sku") || "").trim();
+      const id = (url.searchParams.get("id") || "").trim();
+      if (!sku && !id) return jsonResp({ ok: false, error: "sku or id query param required" }, 400);
+      const isHexId = id && /^[a-f0-9]{24}$/.test(id);
+      const qparam = isHexId ? `id=${encodeURIComponent(id)}` : `sku=${encodeURIComponent(sku)}`;
       try {
-        // /products?sku=... returns the product whose merchant SKU is the parent's sku.
-        // Joom permits a parent product to share its SKU with one of its variants, so we
-        // search variants[] for an exact match too.
-        const product = await joomFetch(`/products?sku=${encodeURIComponent(sku.trim())}`);
+        const product = await joomFetch(`/products?${qparam}`);
         const variants: any[] = product?.variants || [];
-        const matched = variants.find((v: any) => String(v?.sku || "") === sku.trim());
-        if (!matched) {
-          return jsonResp({
-            ok: false,
-            error: "variant_sku_not_found",
-            joom_product_id: product?.id || null,
-            variant_count: variants.length,
-            variant_skus_sample: variants.slice(0, 5).map((v: any) => v?.sku || null),
-          }, 404);
-        }
+        // If lookup is by id, return product+variants overview (no specific variant match needed).
+        // If lookup is by sku, find matching variant; if no exact match still return product info
+        // so callers can detect parent-vs-variant SKU confusion (was 404, now 200 with matched=null).
+        const matched = sku ? variants.find((v: any) => String(v?.sku || "") === sku) : null;
         return jsonResp({
-          ok: true,
+          ok: !sku || !!matched,
           joom_product_id: String(product?.id || ""),
-          joom_variant_id: String(matched.id || ""),
-          joom_currency: String(matched.currency || ""),
-          joom_price: matched.price != null ? String(matched.price) : null,
-          joom_enabled: !!matched.enabled,
+          joom_product_state: product?.state || null,
           product_name: product?.name || "",
-        });
+          main_image_state: product?.mainImage?.imageState || null,
+          review: product?.review || null,
+          variant_count: variants.length,
+          variant_skus: variants.map((v: any) => v?.sku || null),
+          joom_variant_id: matched ? String(matched.id || "") : null,
+          joom_currency: matched ? String(matched.currency || "") : null,
+          joom_price: matched && matched.price != null ? String(matched.price) : null,
+          joom_enabled: matched ? !!matched.enabled : null,
+          error: sku && !matched ? "variant_sku_not_found" : undefined,
+        }, sku && !matched ? 404 : 200);
       } catch (e: any) {
-        // /products returns 404 when sku not found at parent level
         return jsonResp({ ok: false, error: "joom_product_not_found", detail: String(e?.message || e) }, 404);
       }
     }

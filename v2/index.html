@@ -11782,6 +11782,82 @@ LEGACY END -->
     }
 
     // mrPromoteJoom — Joom 별도 발행 (Shopee 흐름과 분리).
+    // ---------------------------------------------------------------------------
+    // V1-parity Joom listing price calculator (ported verbatim from C:\dev\shopee-dashboard\index.html
+    // — calcRowFull('SG').listing). Operator (msg #896) requires V1 formula instead of the prior
+    // naive cost/1380/0.85. SG row + duty=0 branch is the only path Joom uses because Joom is global
+    // and V1 _joomBulkSync (line 4076) uses PRICE_REGION='SG'.
+    // ---------------------------------------------------------------------------
+    const _V2_JOOM_SHIP_DATA_SG = {"mode":"split","smallStep":10,"smallStart":10,"smallFees":[0.4,0.4,0.4,0.4,0.4,0.48,0.56,0.64,0.72,0.8,0.88,0.96,1.04,1.12,1.2,1.28,1.36,1.44,1.52,1.6,1.68,1.76,1.84,1.92,2.0,2.08,2.16,2.24,2.32,2.4,2.48,2.56,2.64,2.72,2.8,2.88,2.96,3.04,3.12,3.2,3.28,3.36,3.44,3.52,3.6,3.68,3.76,3.84,3.92,4.0,4.08,4.16,4.24,4.32,4.4,4.48,4.56,4.64,4.72,4.8,4.88,4.96,5.04,5.12,5.2,5.28,5.36,5.44,5.52,5.6,5.68,5.76,5.84,5.92,6.0,6.08,6.16,6.24,6.32,6.4,6.48,6.56,6.64,6.72,6.8,6.88,6.96,7.04,7.12,7.2,7.28,7.36,7.44,7.52,7.6,7.68,7.76,7.84,7.92,8.0],"largeStep":100,"largeStart":1100,"largeFees":[8.7,9.4,10.1,10.8,11.5,12.2,12.9,13.6,14.3,15.0,15.7,16.4,17.1,17.8,18.5,19.2,19.9,20.6,21.3,22.0,22.7,23.4,24.1,24.8,25.5,26.2,26.9,27.6,28.3,29.0,29.7,30.4,31.1,31.8,32.5,33.2,33.9,34.6,35.3,36.0,36.7,37.4,38.1,38.8,39.5,40.2,40.9,41.6,42.3,43.0]};
+
+    function _v2JoomShippingFeeSG(weightG) {
+      const data = _V2_JOOM_SHIP_DATA_SG;
+      if (!weightG || weightG <= 0) return 0;
+      if (weightG <= 1000) {
+        const step = data.smallStep;
+        let rounded = Math.ceil(weightG / step) * step;
+        rounded = Math.max(rounded, data.smallStart);
+        const idx = Math.floor((rounded - data.smallStart) / step);
+        if (idx >= 0 && idx < data.smallFees.length) return data.smallFees[idx];
+      }
+      const step = data.largeStep;
+      let rounded = Math.ceil(weightG / step) * step;
+      rounded = Math.max(rounded, data.largeStart);
+      const idx = Math.floor((rounded - data.largeStart) / step);
+      if (idx < 0) return data.largeFees[0];
+      if (idx >= data.largeFees.length) return data.largeFees[data.largeFees.length - 1];
+      return data.largeFees[idx];
+    }
+
+    let _v2JoomSgCountryCache = null;
+    let _v2JoomSgCountryPromise = null;
+    async function _v2LoadSgCountry() {
+      if (_v2JoomSgCountryCache) return _v2JoomSgCountryCache;
+      if (_v2JoomSgCountryPromise) return _v2JoomSgCountryPromise;
+      _v2JoomSgCountryPromise = (async () => {
+        const { data, error } = await db.from('country_settings').select('*').eq('country_code', 'SG').single();
+        if (error || !data) throw new Error('country_settings SG row 없음: ' + (error?.message || 'no row'));
+        _v2JoomSgCountryCache = {
+          exchangeRate: Number(data.exchange_rate),
+          pgFee:        Number(data.pg_fee)        || 0,
+          salesFee:     Number(data.sales_fee)     || 0,
+          fspFee:       Number(data.fsp_fee)       || 0,
+          otherFee:     Number(data.other_fee)     || 0,
+          settlementFee: Number(data.settlement_fee) || 0,
+          gst:          Number(data.gst)           || 0,
+          fspCcb:       Number(data.fsp_ccb)       || 0,
+          importDuty:   Number(data.import_duty)   || 0,
+          fixedServiceFee: Number(data.fixed_service_fee) || 0,
+          purchaseVat:  Number(data.purchase_vat)  || 0,
+        };
+        return _v2JoomSgCountryCache;
+      })();
+      return _v2JoomSgCountryPromise;
+    }
+
+    // Ported verbatim from V1 calcRowFull duty=0 branch (which is the only one SG hits — importDuty=0).
+    // Returns SG `listing` value (denominated in SGD per V1 convention) — used directly as Joom USD price
+    // per operator decision (V1 _joomBulkSync line 4114 does the same — `calcRow(row, 'SG').listing`).
+    function _v2JoomCalcSgListing(costKrw, weightG, c) {
+      if (!costKrw || costKrw <= 0) return 0;
+      const shipping = weightG > 0 ? _v2JoomShippingFeeSG(weightG) : 0;
+      const effectiveCost = costKrw * (1 - (c.purchaseVat || 0) / 100);
+      const settlementLocal = effectiveCost / c.exchangeRate;
+      const cr = c.salesFee / 100;
+      const vr = c.gst / 100;
+      const sales_pg    = c.pgFee / 100;
+      const sales_fsp   = c.fspFee / 100;
+      const sales_other = c.otherFee / 100;
+      const sales_ccb   = c.fspCcb / 100;
+      const settle_pct  = c.settlementFee / 100;
+      const fixedFee    = c.fixedServiceFee || 0;
+      const sf = sales_pg + sales_fsp + sales_other + sales_ccb;
+      const incomeTarget = settlementLocal / (1 - settle_pct);
+      // SG importDuty=0 → simple branch only.
+      const denom = (1 + vr) * (1 - sf) - (cr + vr);
+      return denom > 0 ? (incomeTarget + shipping + fixedFee) / denom : 0;
+    }
+
     // Codex P0 #1 (cross-card SKU duplicate guard), P0 #2 (lookup-sku recovery check),
     // P0 #3 (square main image validation via shopee-bridge proxy_image),
     // P1 #6 (price floor $1), P1 #7 (permanent infraction escalation) 반영.
@@ -11837,6 +11913,8 @@ LEGACY END -->
       }
 
       // Build variantsConfig
+      let sgCountry;
+      try { sgCountry = await _v2LoadSgCountry(); } catch (e) { showToast('SG country_settings 로드 실패: ' + (e.message || e), 'err'); return; }
       let variantsConfig;
       try {
         variantsConfig = group.rows.map((r) => {
@@ -11847,8 +11925,9 @@ LEGACY END -->
           const optionName = optParts.join(' / ') || 'ONE SIZE';
           const costKrw = Number(r._cost_krw || firstRow.cost_krw || 0);
           if (!costKrw) throw new Error(`옵션 "${optionName}" 매입가가 0원입니다.`);
-          const usdRaw = costKrw / 1380 / 0.85;
-          const usdPrice = usdRaw.toFixed(2);
+          const weightG = Number(r._weight_g || firstRow._weight_g || firstRow.weight_g || 0);
+          const listing = _v2JoomCalcSgListing(costKrw, weightG, sgCountry);
+          const usdPrice = listing.toFixed(2);
           // P1 #6: price floor guard
           if (parseFloat(usdPrice) < 1.0) {
             throw new Error(`옵션 "${optionName}" USD 가격 $${usdPrice} 가 너무 낮음 (최저 $1 필요, 현재 매입가 ${costKrw}원)`);

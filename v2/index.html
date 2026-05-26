@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
@@ -873,6 +873,91 @@
       .dc-grid { grid-template-columns: 1fr; }
       .dc-card { min-height: auto; }
     }
+
+    /* ── Fee/Exchange-rate settings view ── */
+    .fee-country-tabs {
+      display: flex;
+      gap: 4px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .fee-country-tab {
+      padding: 6px 14px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s, color .15s, border-color .15s;
+    }
+    .fee-country-tab:hover { background: #fff2f9; color: var(--text); }
+    .fee-country-tab.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+    .fee-grid-v2 {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 18px 28px;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 900px) { .fee-grid-v2 { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 600px) { .fee-grid-v2 { grid-template-columns: 1fr; } }
+    .fee-input-v2 { display: flex; flex-direction: column; gap: 4px; }
+    .fee-input-v2 label {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .fee-input-v2 .fee-row {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 4px;
+    }
+    .fee-input-v2 .fee-row:focus-within { border-bottom-color: var(--accent); }
+    .fee-input-v2 input[type=number] {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      font-size: 15px;
+      font-family: var(--mono);
+      color: var(--text);
+      min-width: 0;
+    }
+    .fee-input-v2 .fee-unit {
+      font-size: 10px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .fee-input-v2 .fee-hint {
+      font-size: 10px;
+      color: var(--muted);
+      line-height: 1.35;
+    }
+    .fee-save-bar {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding-top: 14px;
+      border-top: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .fee-save-status {
+      font-size: 11px;
+      color: var(--muted);
+      flex: 1;
+      min-width: 0;
+    }
+    .fee-save-status.ok { color: var(--green); font-weight: 600; }
+    .fee-save-status.err { color: var(--red); font-weight: 600; }
   </style>
 </head>
 <body>
@@ -918,6 +1003,7 @@
       <button class="nav-tab" onclick="showView('view-probe')">🔬 Probe</button>
       <button class="nav-tab" onclick="showView('view-ingest')">📥 수집 검토</button>
       <button class="nav-tab" onclick="showView('view-history')">📜 변경 이력</button>
+      <button class="nav-tab" onclick="showView('view-fee-settings')">⚙ 수수료 설정</button>
       <button id="logout" type="button" class="nav-tab" style="margin-left:auto;">Sign out</button>
     </div>
 
@@ -1050,6 +1136,18 @@
           </div>
           <div id="w-staronemall-status" style="font-size:11px;color:var(--muted);margin-top:5px;"></div>
           <img id="w-staronemall-preview" alt="" style="display:none;width:96px;height:96px;object-fit:cover;border:1px solid var(--border);border-radius:6px;margin-top:8px;background:#fff;">
+
+          <!-- Components extraction panel (hidden until URL is valid) -->
+          <div id="w-components-panel" style="display:none;margin-top:10px;padding:10px 12px;border:1px solid var(--border);border-radius:6px;background:#f8fafc;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+              <span style="font-size:12px;font-weight:600;color:var(--muted);">구성품 자동 추출 (Claude Vision)</span>
+              <span id="w-components-spinner" style="display:none;font-size:12px;color:var(--muted);">⏳ 추출 중...</span>
+              <button type="button" id="w-components-reextract" style="display:none;font-size:11px;padding:2px 8px;margin-left:auto;">↻ 재추출</button>
+            </div>
+            <pre id="w-components-result" style="display:none;margin:0 0 8px;font-size:12px;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid var(--border);border-radius:4px;padding:8px;max-height:200px;overflow-y:auto;"></pre>
+            <div id="w-components-error" style="display:none;font-size:12px;color:var(--red);margin-bottom:6px;"></div>
+            <button type="button" id="w-components-approve" style="display:none;font-size:12px;padding:4px 12px;background:#15803d;color:#fff;border:none;border-radius:4px;cursor:pointer;">✓ 승인 — description 에 적용</button>
+          </div>
         </div>
 
         <div class="wfield">
@@ -2189,6 +2287,26 @@
       </div>
     </div><!-- /view-ingest -->
 
+    <!-- ═══════════════════════════════════════════════
+         VIEW: 수수료 / 환율 설정
+         country_settings 테이블의 각 국가 행을 직접 편집한다.
+         운영 지역: SG / TW / TH / MY / PH / BR + EX(eBay virtual)
+         ═══════════════════════════════════════════════ -->
+    <div id="view-fee-settings" class="view">
+      <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:18px;">
+        <h2 style="font-size:18px;margin:0;">수수료 / 환율 설정</h2>
+        <span style="font-size:12px;color:var(--muted);">country_settings 테이블 직접 편집 · 저장 시 즉시 DB 반영</span>
+      </div>
+
+      <div class="fee-country-tabs" id="fee-country-tabs">
+        <!-- populated by JS -->
+      </div>
+
+      <div class="panel" style="padding:20px;" id="fee-fields-panel">
+        <div style="color:var(--muted);font-size:13px;">국가 탭을 선택하면 수수료 항목이 표시됩니다.</div>
+      </div>
+    </div><!-- /view-fee-settings -->
+
   </div><!-- /app-shell -->
 </main>
 
@@ -2584,6 +2702,7 @@ LEGACY END -->
   const SUPABASE_URL = 'https://mgqlwgnmwegzsjelbrih.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ncWx3Z25td2VnenNqZWxicmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDkzNDMsImV4cCI6MjA5NDg4NTM0M30.mJtqXO7WJMBUYBYVOS1FrD5qmFX6yZxGwfiGw3HUyJE';
   const SHOPEE_BRIDGE = `${SUPABASE_URL}/functions/v1/shopee-bridge`;
+  const STARONEMALL_VISION_URL = `${SUPABASE_URL}/functions/v1/staronemall-vision`;
   // AUTH_HEADERS.Authorization starts at the anon JWT so the Supabase platform
   // JWT verification (verify_jwt=true on all our Edge Functions) lets requests
   // reach the handler at all. The inner auth gate (requireAuthenticatedUser)
@@ -4895,6 +5014,8 @@ LEGACY END -->
       timer = setTimeout(() => {
         if (isValidStaronemallUrl(input.value)) {
           setRegisterStaronemallStatus('Shopee Media 미적용: URL 확인 완료. Generate + upload 버튼을 누르면 업로드됩니다.', 'ok');
+          // Auto-trigger component extraction on valid URL
+          triggerComponentsExtraction(input.value.trim());
         }
       }, 700);
     };
@@ -4908,6 +5029,151 @@ LEGACY END -->
       generateRegisterLayeredImageFromStaronemall();
     });
     document.getElementById('w-staronemall-apply-cover')?.addEventListener('click', applyPendingRegisterCoverImage);
+
+    // Re-extract button inside the components panel
+    document.getElementById('w-components-reextract')?.addEventListener('click', () => {
+      const url = input.value.trim();
+      if (url) {
+        _componentsCache.delete(url); // Bust session cache for re-extraction
+        triggerComponentsExtraction(url, true);
+      }
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Components extraction (Claude Vision) — staronemall-vision edge function
+  // ---------------------------------------------------------------------------
+
+  // Session cache: url → { components_en, masterId, approved }
+  const _componentsCache = new Map();
+
+  function _componentsPanel() { return document.getElementById('w-components-panel'); }
+  function _componentsSpinner() { return document.getElementById('w-components-spinner'); }
+  function _componentsResult() { return document.getElementById('w-components-result'); }
+  function _componentsError() { return document.getElementById('w-components-error'); }
+  function _componentsApproveBtn() { return document.getElementById('w-components-approve'); }
+  function _componentsReextractBtn() { return document.getElementById('w-components-reextract'); }
+
+  function showComponentsPanel() {
+    const panel = _componentsPanel();
+    if (panel) panel.style.display = '';
+  }
+
+  function setComponentsLoading(loading) {
+    const spinner = _componentsSpinner();
+    const result = _componentsResult();
+    const approveBtn = _componentsApproveBtn();
+    const reextractBtn = _componentsReextractBtn();
+    if (spinner) spinner.style.display = loading ? '' : 'none';
+    if (result && loading) result.style.display = 'none';
+    if (approveBtn && loading) approveBtn.style.display = 'none';
+    if (reextractBtn) reextractBtn.style.display = loading ? 'none' : '';
+  }
+
+  function showComponentsResult(text, masterId, url) {
+    const result = _componentsResult();
+    const approveBtn = _componentsApproveBtn();
+    const errEl = _componentsError();
+    if (result) { result.textContent = text; result.style.display = ''; }
+    if (errEl) errEl.style.display = 'none';
+    if (approveBtn) {
+      approveBtn.style.display = '';
+      approveBtn.disabled = false;
+      approveBtn.style.background = '#15803d';
+      approveBtn.textContent = '✓ 승인 — description 에 적용';
+      approveBtn.onclick = () => applyComponentsToDescription(text, masterId, url);
+    }
+  }
+
+  function showComponentsError(msg) {
+    const result = _componentsResult();
+    const approveBtn = _componentsApproveBtn();
+    const errEl = _componentsError();
+    if (result) result.style.display = 'none';
+    if (approveBtn) approveBtn.style.display = 'none';
+    if (errEl) { errEl.textContent = '⚠ ' + msg; errEl.style.display = ''; }
+  }
+
+  async function triggerComponentsExtraction(staronemallUrl, forceReextract = false) {
+    if (!staronemallUrl || !isValidStaronemallUrl(staronemallUrl)) return;
+
+    // Session cache hit — skip API call
+    if (!forceReextract && _componentsCache.has(staronemallUrl)) {
+      const cached = _componentsCache.get(staronemallUrl);
+      showComponentsPanel();
+      showComponentsResult(cached.components_en, cached.masterId, staronemallUrl);
+      return;
+    }
+
+    // master_row_id = 0 → edge function extracts but does not persist (row not yet saved)
+    const masterId = (state.registerFlow?.savedProductIds?.[0]) || 0;
+
+    showComponentsPanel();
+    setComponentsLoading(true);
+
+    try {
+      const resp = await fetch(`${STARONEMALL_VISION_URL}/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+        body: JSON.stringify({ master_row_id: masterId, staronemall_url: staronemallUrl }),
+      });
+      const json = await resp.json();
+      if (!resp.ok || !json.ok) {
+        throw new Error(json.error || `HTTP ${resp.status}`);
+      }
+      const componentsEn = json.components_en || '';
+      _componentsCache.set(staronemallUrl, { components_en: componentsEn, masterId });
+      setComponentsLoading(false);
+      showComponentsResult(componentsEn, masterId, staronemallUrl);
+
+      // If masterId was 0 (draft row), attempt to persist once the row is saved
+      if (!json.persisted && masterId === 0) {
+        const realId = state.registerFlow?.savedProductIds?.[0];
+        if (realId) {
+          persistComponentsToDb(realId, componentsEn).catch(() => {});
+        }
+      }
+    } catch (e) {
+      setComponentsLoading(false);
+      showComponentsError((e && e.message) ? e.message : String(e));
+    }
+  }
+
+  async function persistComponentsToDb(masterId, componentsEn) {
+    if (!masterId || !componentsEn) return;
+    await db.from('products').update({
+      components_extracted_en: componentsEn,
+      components_extracted_at: new Date().toISOString(),
+      components_approved: 0,
+    }).eq('id', masterId);
+  }
+
+  async function applyComponentsToDescription(text, masterId, staronemallUrl) {
+    // Find description field in the wizard
+    const descField = document.getElementById('w-description') || document.getElementById('w-shopee-description');
+    if (descField) {
+      const existing = (descField.value || '').trim();
+      const section = '\n\n[Inclusions]\n' + text;
+      if (!existing.includes('[Inclusions]')) {
+        descField.value = existing + section;
+      } else {
+        descField.value = existing.replace(/\[Inclusions\][\s\S]*$/, '[Inclusions]\n' + text);
+      }
+    }
+
+    // Persist approved flag to DB if master row exists
+    const realMasterId = masterId || state.registerFlow?.savedProductIds?.[0];
+    if (realMasterId) {
+      await db.from('products').update({ components_approved: 1 }).eq('id', realMasterId);
+    }
+
+    // Update approve button UI
+    const approveBtn = _componentsApproveBtn();
+    if (approveBtn) {
+      approveBtn.textContent = realMasterId ? '✓ 승인 완료' : '✓ 적용됨 (저장 후 DB 반영)';
+      approveBtn.disabled = true;
+      approveBtn.style.background = '#64748b';
+    }
   }
 
   function validateAllWizSteps(includePublishStep = true) {
@@ -6441,7 +6707,7 @@ LEGACY END -->
     // Fetch full master product row (loadData only fetches partial columns)
     const { data: master, error: fetchErr } = await db
       .from('products')
-      .select('id, sku, product_name, option_name, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, main_image')
+      .select('id, sku, product_name, option_name, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, main_image, components_extracted_en, components_extracted_at, components_approved')
       .eq('id', productId)
       .single();
 
@@ -10690,6 +10956,66 @@ LEGACY END -->
           infoCol.appendChild(joomStatusRow);
         }
 
+        // ── eBay 발행 영역 ────────────────────────────────────────────────
+        {
+          if (firstRow._ebayCategory == null) firstRow._ebayCategory = '176984'; // K-Pop Album Music CDs
+
+          const ebayRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;margin-top:4px;' });
+          ebayRow.appendChild(el('span', { style: 'color:#e53935;font-weight:700;' }, 'eBay:'));
+
+          // Category ID input (editable override)
+          const ebayCatWr = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
+          ebayCatWr.appendChild(el('span', { style: 'color:var(--muted);' }, '카테고리 ID'));
+          const ebayCatInp = el('input', { type: 'text', style: 'font-size:12px;padding:3px 6px;width:80px;', value: firstRow._ebayCategory || '176984', placeholder: '176984' });
+          ebayCatInp.addEventListener('input', (e) => { firstRow._ebayCategory = e.target.value.trim(); });
+          ebayCatWr.appendChild(ebayCatInp);
+          ebayRow.appendChild(ebayCatWr);
+
+          infoCol.appendChild(ebayRow);
+
+          // eBay status display + publish button
+          const ebayStatusRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
+
+          const ebayStatus = group.ebayStatus || 'pending';
+          let ebayDot = '', ebayStatusText = '', ebayStatusColor = 'var(--muted)';
+          if (ebayStatus === 'pending') {
+            ebayDot = '⚪'; ebayStatusText = '발행 전'; ebayStatusColor = 'var(--muted)';
+          } else if (ebayStatus === 'dialog') {
+            ebayDot = '🟡'; ebayStatusText = '설명 입력 중...'; ebayStatusColor = '#a15c07';
+          } else if (ebayStatus === 'publishing') {
+            ebayDot = '🟡'; ebayStatusText = '발행 중...'; ebayStatusColor = '#a15c07';
+          } else if (ebayStatus === 'published') {
+            ebayDot = '🟢'; ebayStatusText = '발행 완료'; ebayStatusColor = 'var(--green)';
+          } else if (ebayStatus === 'failed') {
+            ebayDot = '🔴'; ebayStatusText = '실패'; ebayStatusColor = 'var(--red)';
+          }
+          ebayStatusRow.appendChild(el('span', { style: `color:${ebayStatusColor};` }, `${ebayDot} ${ebayStatusText}`));
+
+          if (ebayStatus === 'published' && group.ebayItemId) {
+            const ebayLink = el('a', {
+              href: `https://www.ebay.com/itm/${group.ebayItemId}`,
+              target: '_blank', rel: 'noopener',
+              style: 'font-size:11px;color:#e53935;font-family:monospace;',
+            }, group.ebayItemId);
+            ebayStatusRow.appendChild(ebayLink);
+          } else if (ebayStatus === 'failed' && group.ebayError) {
+            ebayStatusRow.appendChild(el('span', { style: 'color:var(--red);font-size:11px;', title: group.ebayError }, group.ebayError.slice(0, 60) + (group.ebayError.length > 60 ? '…' : '')));
+          }
+
+          if (ebayStatus !== 'published') {
+            const ebayPublishBtn = el('button', {
+              type: 'button',
+              style: 'font-size:11px;padding:3px 10px;background:#e53935;color:#fff;border-color:#e53935;',
+              disabled: ebayStatus === 'publishing' || ebayStatus === 'dialog',
+            }, '🛒 eBay 발행');
+            ebayPublishBtn.addEventListener('click', () => mrPromoteEbay(group));
+            ebayStatusRow.appendChild(ebayPublishBtn);
+          }
+
+          infoCol.appendChild(ebayStatusRow);
+        }
+        // ── end eBay 발행 영역 ────────────────────────────────────────────
+
         // Tier axis name inputs
         const tierRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
         tierRow.appendChild(el('span', { style: 'color:var(--muted);' }, '옵션 축 ①:'));
@@ -11809,6 +12135,61 @@ LEGACY END -->
       return data.largeFees[idx];
     }
 
+    // ── eBay pricing helpers ───────────────────────────────────────────────
+    // country_settings 'EX' row: exchange_rate=1380, sales_fee=13, pg_fee=2.7
+    let _v2EbayExCountryCache = null;
+    let _v2EbayExCountryPromise = null;
+    async function _v2LoadEbayExCountry() {
+      if (_v2EbayExCountryCache) return _v2EbayExCountryCache;
+      if (_v2EbayExCountryPromise) return _v2EbayExCountryPromise;
+      _v2EbayExCountryPromise = (async () => {
+        const { data, error } = await db.from('country_settings').select('*').eq('country_code', 'EX').single();
+        if (error || !data) throw new Error('country_settings EX row 없음 (eBay virtual row): ' + (error?.message || 'no row'));
+        _v2EbayExCountryCache = {
+          exchangeRate: Number(data.exchange_rate),
+          pgFee:        Number(data.pg_fee)        || 0,
+          salesFee:     Number(data.sales_fee)     || 0,
+          fspFee:       Number(data.fsp_fee)       || 0,
+          otherFee:     Number(data.other_fee)     || 0,
+          settlementFee: Number(data.settlement_fee) || 0,
+          gst:          Number(data.gst)           || 0,
+          fspCcb:       Number(data.fsp_ccb)       || 0,
+          importDuty:   Number(data.import_duty)   || 0,
+          fixedServiceFee: Number(data.fixed_service_fee) || 0,
+          purchaseVat:  Number(data.purchase_vat)  || 0,
+        };
+        return _v2EbayExCountryCache;
+      })();
+      return _v2EbayExCountryPromise;
+    }
+
+    // eBay listing price formula — cloned from _v2JoomCalcSgListing (same math)
+    // country_settings 'EX' row provides exchange_rate=1380, sales_fee=13%, pg_fee=2.7%
+    // shipping: eBay ships fee is handled by policy (free shipping ON listing);
+    //   for price calc, use flat 0 (buyer pays per eBay International Shipping account setting)
+    function _v2EbayCalcUsdListing(costKrw, weightG, c) {
+      if (!costKrw || costKrw <= 0) return 0;
+      // No KSE/Joom ship-fee table — eBay shipping embedded in policy; use 0 for listing
+      const shipping = 0;
+      const effectiveCost = costKrw * (1 - (c.purchaseVat || 0) / 100);
+      const settlementLocal = effectiveCost / c.exchangeRate;
+      const cr = c.salesFee / 100;
+      const vr = c.gst / 100;
+      const sales_pg    = c.pgFee / 100;
+      const sales_fsp   = c.fspFee / 100;
+      const sales_other = c.otherFee / 100;
+      const sales_ccb   = c.fspCcb / 100;
+      const settle_pct  = c.settlementFee / 100;
+      const fixedFee    = c.fixedServiceFee || 0;
+      const sf = sales_pg + sales_fsp + sales_other + sales_ccb;
+      const incomeTarget = settlementLocal / (1 - settle_pct);
+      const denom = (1 + vr) * (1 - sf) - (cr + vr);
+      // Round to 2 decimals — charm pricing (e.g. 32.99) handled by operator if needed
+      const raw = denom > 0 ? (incomeTarget + shipping + fixedFee) / denom : 0;
+      return Math.round(raw * 100) / 100;
+    }
+    // ── end eBay helpers ───────────────────────────────────────────────────
+
     let _v2JoomSgCountryCache = null;
     let _v2JoomSgCountryPromise = null;
     async function _v2LoadSgCountry() {
@@ -12037,6 +12418,182 @@ LEGACY END -->
       mrRenderPreviewCards();
     }
 
+    // ── mrPromoteEbay ── eBay single-SKU listing publish (mirrors mrPromoteJoom)
+    // Plan §B + §C: ebay-bridge /publish orchestration via v2 dialog
+    // Codex BLOCKER §a: condition=NEW only; no conditionDescriptors
+    // Codex BLOCKER §d: post-publish lookup-item verification
+    // Operator Decision #4: EAN excluded
+    // Operator Decision #6: description operator-supplied (dialog textarea)
+    async function mrPromoteEbay(group) {
+      const firstRow = group.rows[0];
+      if (!firstRow) { showToast('카드 행이 없습니다.'); return; }
+
+      // eBay MVP: single-SKU only — use first active row's SKU
+      const activeSku = (firstRow._sku || '').trim();
+      if (!activeSku) { showToast('옵션 SKU 가 비어 있습니다. SKU를 입력하세요.'); return; }
+
+      // SKU max 50 guard — sell/inventory.yaml L748 (grill-with-docs Revision §2)
+      if (activeSku.length > 50) {
+        showToast(`SKU 최대 50자 초과: ${activeSku.length}자. SKU를 줄여주세요.`);
+        return;
+      }
+
+      // cost_krw required
+      const costKrw = Number(firstRow._cost_krw || firstRow.cost_krw || 0);
+      if (!costKrw) {
+        showToast('매입가(cost_krw) 가 0원입니다. 매입가를 입력하세요.');
+        return;
+      }
+
+      // Build ebay-bridge URL
+      const EBAY_BRIDGE = SHOPEE_BRIDGE.replace('/shopee-bridge', '/ebay-bridge');
+
+      // Load EX country_settings for price calc
+      let exCountry;
+      try { exCountry = await _v2LoadEbayExCountry(); } catch (e) { showToast('eBay 가격 설정 로드 실패: ' + (e.message || e), 'err'); return; }
+
+      const weightG = Number(firstRow._weight_g || firstRow.weight_g || 0);
+      const priceUsd = _v2EbayCalcUsdListing(costKrw, weightG, exCountry);
+      if (priceUsd < 1.0) {
+        showToast(`계산된 eBay 가격 $${priceUsd.toFixed(2)} 가 너무 낮습니다. 매입가 또는 country_settings EX를 확인하세요.`);
+        return;
+      }
+
+      // Gather title
+      const title = (() => {
+        const artist = (firstRow.artist || '').trim();
+        const album = (firstRow.album || '').trim();
+        const name = (firstRow.observed && firstRow.observed.title) || firstRow.product_name || '';
+        if (artist && album) return `${artist} - ${album} Official K-Pop Album CD`;
+        return name.slice(0, 80);
+      })();
+      if (!title) { showToast('제목(title)을 구성할 수 없습니다. artist/album 또는 상품명을 확인하세요.'); return; }
+
+      // Gather images
+      const mainImage = firstRow._joomMainImageOverride || firstRow._main_image || firstRow.main_image || '';
+      if (!mainImage) { showToast('메인 이미지 URL이 없습니다. 이미지를 먼저 등록하세요.'); return; }
+      const extraImages = (firstRow._extra_images || []).filter(Boolean);
+      const imageUrls = [mainImage, ...extraImages].slice(0, 24);
+
+      // Category ID — use _ebayCategory if set, or plan fallback constant
+      // Operator can set firstRow._ebayCategory via UI; default: K-Pop Album Music CDs
+      const categoryId = firstRow._ebayCategory || '176984'; // K-Pop Album Music CDs fallback
+
+      // Aspects — 8 standard aspects matching 286513755306 pattern
+      // aspect name max 40자, value max 50자 — grill-with-docs Revision §5
+      const aspects = {};
+      if (firstRow.artist) aspects['Artist'] = [firstRow.artist.trim().slice(0, 50)];
+      aspects['Type'] = ['Album'];
+      aspects['Format'] = ['CD'];
+      if (firstRow.artist) aspects['Record Label'] = [firstRow.artist.trim().slice(0, 50)];
+      const year = new Date().getFullYear();
+      aspects['Release Year'] = [String(year)];
+      if (firstRow.album) aspects['Release Title'] = [firstRow.album.trim().slice(0, 50)];
+      aspects['Genre'] = ['K-Pop'];
+      aspects['Country of Manufacture'] = ['South Korea'];
+
+      // Description — Operator Decision #6: operator supplies directly in dialog textarea
+      // Show dialog to get description (and allow price override)
+      group.ebayStatus = 'dialog';
+      mrRenderPreviewCards();
+
+      // Simple inline prompt (avoids modal complexity; follows mrPromoteJoom pattern)
+      const descInput = prompt(
+        `[eBay 발행] 상품 설명(영문, 최대 4000자)을 입력하세요:\n` +
+        `제목: ${title}\n` +
+        `계산 가격: $${priceUsd.toFixed(2)}\n` +
+        `SKU: ${activeSku}\n\n` +
+        `설명:`
+      );
+      group.ebayStatus = 'pending';
+
+      if (descInput === null) {
+        showToast('eBay 발행 취소됨');
+        mrRenderPreviewCards();
+        return;
+      }
+      const description = (descInput || '').trim();
+      if (!description) {
+        showToast('설명이 비어 있습니다. 설명을 입력해야 발행할 수 있습니다. (Operator Decision #6)');
+        mrRenderPreviewCards();
+        return;
+      }
+      // description max 4000 guard — grill-with-docs Revision §6
+      const safeDescription = description.length > 4000 ? description.slice(0, 4000) : description;
+
+      // Publish
+      group.ebayStatus = 'publishing';
+      group.ebayError = null;
+      mrRenderPreviewCards();
+
+      try {
+        const resp = await fetch(EBAY_BRIDGE + '/publish', {
+          method: 'POST',
+          headers: AUTH_HEADERS,
+          body: JSON.stringify({
+            sku: activeSku,
+            title,
+            description: safeDescription,
+            imageUrls,
+            aspects,
+            condition: 'NEW',            // Codex BLOCKER §a: always NEW
+            priceUsd: priceUsd.toFixed(2),
+            quantity: 50,
+            categoryId: String(categoryId),
+            weightG: weightG || 0,
+            marketplaceId: 'EBAY_US',
+          }),
+        });
+        const json = await resp.json();
+
+        if (json.ok && json.ebay_item_id) {
+          // Post-publish verification: lookup-item — Codex BLOCKER §d
+          try {
+            const lookupResp = await fetch(
+              EBAY_BRIDGE + '/lookup-item?sku=' + encodeURIComponent(activeSku),
+              { headers: AUTH_HEADERS }
+            );
+            const lookupJson = await lookupResp.json();
+            if (!lookupJson.ok || !lookupJson.verification?.published_offer_found) {
+              showToast('발행 완료되었으나 lookup-item 검증 불일치 — 운영자 확인 필요', 'err');
+            }
+          } catch (lookupErr) {
+            console.warn('[mrPromoteEbay] lookup-item check failed:', lookupErr);
+          }
+
+          // DB update — products row
+          await db.from('products').update({
+            ebay_sku: activeSku,
+            ebay_item_id: json.ebay_item_id,
+            ebay_offer_id: json.ebay_offer_id,
+            ebay_status: 'PUBLISHED',
+            ebay_published_at: new Date().toISOString(),
+            ebay_last_synced_price: parseFloat(priceUsd.toFixed(2)),
+            ebay_last_synced_at: new Date().toISOString(),
+            ebay_marketplace_id: 'EBAY_US',
+            ebay_mapping_status: 'mapped',
+            ebay_mapping_error: null,
+            ebay_category_id: String(categoryId),
+          }).eq('sku', activeSku);
+
+          group.ebayStatus = 'published';
+          group.ebayItemId = json.ebay_item_id;
+          showToast(`eBay 발행 완료 — Item ID: ${json.ebay_item_id}`, 'ok');
+        } else {
+          group.ebayStatus = 'failed';
+          group.ebayError = json.error || json.message || '알 수 없는 오류';
+          showToast('eBay 발행 실패: ' + group.ebayError, 'err');
+        }
+      } catch (e) {
+        group.ebayStatus = 'failed';
+        group.ebayError = e.message || String(e);
+        showToast('eBay 발행 예외: ' + group.ebayError, 'err');
+      }
+
+      mrRenderPreviewCards();
+    }
+    // ── end mrPromoteEbay ──────────────────────────────────────────────────
+
     function mrInit() {
       if (!$('view-register') || $('view-register').dataset.mrInited === '1') return;
       $('view-register').dataset.mrInited = '1';
@@ -12143,7 +12700,211 @@ LEGACY END -->
       mrInit();
     }
   })();
+  // ════════════════════════════════════════════════════════════════
+  // FEE / EXCHANGE-RATE SETTINGS  (ported from V1 §03 수수료/환율 설정)
+  // Operates on country_settings table directly via Supabase client.
+  // Supported rows: SG TW TH MY PH BR EX (eBay virtual)
+  // ════════════════════════════════════════════════════════════════
+  (() => {
+    // Field definitions (mirrors V1 FEE_FIELDS)
+    const FEE_FIELDS = [
+      { key: 'exchange_rate',     label: 'Exchange Rate',     unit: 'KRW',   hint: '환율 (1 현지통화 = ? 원)',               isPercent: false },
+      { key: 'pg_fee',            label: 'PG 수수료',          unit: '%',     hint: 'Transaction · Sales 기준',             isPercent: true  },
+      { key: 'sales_fee',         label: '판매 수수료',         unit: '%',     hint: 'Commission · Pre-VAT 기준 (Shopee 공식)', isPercent: true  },
+      { key: 'fsp_fee',           label: 'FSP 수수료',         unit: '%',     hint: 'Sales 기준',                           isPercent: true  },
+      { key: 'other_fee',         label: '기타 수수료',         unit: '%',     hint: 'Traffic/Platform · Sales 기준',         isPercent: true  },
+      { key: 'settlement_fee',    label: '정산 수수료',         unit: '%',     hint: 'Payoneer · Income 기준 (사후 차감)',     isPercent: true  },
+      { key: 'gst',               label: 'GST / VAT',         unit: '%',     hint: '판매가 기준 (Listing+Duty)',             isPercent: true  },
+      { key: 'import_duty',       label: 'Import Duty',       unit: '%',     hint: '수입관세 CIF 기준 (TH 등)',              isPercent: true  },
+      { key: 'fsp_ccb',           label: 'FSP / CCB',         unit: '%',     hint: 'Sales 기준',                           isPercent: true  },
+      { key: 'fixed_service_fee', label: 'Service Fee (고정)', unit: 'local', hint: '주문건당 고정 수수료 (현지 통화)',         isPercent: false },
+      { key: 'purchase_vat',      label: '매입가 부가세 차감',   unit: '%',     hint: '매입가에 포함된 부가세 (Joom: 9.1)',     isPercent: true  },
+    ];
 
+    // Operating country codes in display order
+    const FEE_COUNTRIES = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'EX'];
+
+    let feeActiveCountry = 'SG';
+    // In-memory cache of loaded rows: { [code]: {...db row fields} }
+    let feeRows = {};
+    // Codes whose in-memory data differs from DB (pending save)
+    let feeDirty = new Set();
+    let feeSaveTimer = null;
+
+    // ── Render ──────────────────────────────────────────────────
+    function feeRender() {
+      const tabsEl = document.getElementById('fee-country-tabs');
+      const panelEl = document.getElementById('fee-fields-panel');
+      if (!tabsEl || !panelEl) return;
+
+      // Country tabs
+      tabsEl.innerHTML = FEE_COUNTRIES.map(code => {
+        const label = code + (feeDirty.has(code) ? ' *' : '');
+        return '<button class="fee-country-tab' + (code === feeActiveCountry ? ' active' : '') + '" data-fee-code="' + code + '">' + label + '</button>';
+      }).join('');
+      tabsEl.querySelectorAll('.fee-country-tab').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+          feeActiveCountry = btn.dataset.feeCode;
+          feeRender();
+        });
+      });
+
+      const row = feeRows[feeActiveCountry];
+      if (!row) {
+        panelEl.innerHTML = '<div style="color:var(--muted);font-size:13px;">DB에서 ' + feeActiveCountry + ' 행을 불러오는 중…</div>';
+        return;
+      }
+
+      const fieldsHtml = FEE_FIELDS.map(function(f) {
+        const val = (row[f.key] != null) ? Number(row[f.key]) : 0;
+        const step = f.isPercent ? '0.01' : '0.0001';
+        return '<div class="fee-input-v2">' +
+               '<label>' + f.label + '</label>' +
+               '<div class="fee-row">' +
+               '<input type="number" step="' + step + '" value="' + val + '" data-fee-key="' + f.key + '">' +
+               '<span class="fee-unit">' + f.unit + '</span>' +
+               '</div>' +
+               '<div class="fee-hint">' + f.hint + '</div>' +
+               '</div>';
+      }).join('');
+
+      panelEl.innerHTML =
+        '<div class="fee-grid-v2">' + fieldsHtml + '</div>' +
+        '<div class="fee-save-bar">' +
+        '<span class="fee-save-status" id="fee-save-status">변경 사항은 자동 저장됩니다</span>' +
+        '<button type="button" id="fee-reset-btn" style="font-size:12px;padding:5px 12px;">' + feeActiveCountry + ' DB에서 복원</button>' +
+        '</div>';
+
+      // Input listeners — auto-save on change
+      panelEl.querySelectorAll('input[data-fee-key]').forEach(function(input) {
+        input.addEventListener('input', function(e) {
+          const key = e.target.dataset.feeKey;
+          const val = parseFloat(e.target.value);
+          if (!isNaN(val)) {
+            feeRows[feeActiveCountry][key] = val;
+            feeDirty.add(feeActiveCountry);
+            feeScheduleSave();
+            feeSetStatus('저장 중…', '');
+            // Update active tab label to show dirty marker
+            tabsEl.querySelectorAll('.fee-country-tab').forEach(function(b) {
+              if (b.dataset.feeCode === feeActiveCountry) {
+                b.textContent = feeActiveCountry + ' *';
+              }
+            });
+          }
+        });
+      });
+
+      const resetBtn = document.getElementById('fee-reset-btn');
+      if (resetBtn) resetBtn.addEventListener('click', feeResetActive);
+    }
+
+    function feeSetStatus(msg, cls) {
+      const el = document.getElementById('fee-save-status');
+      if (!el) return;
+      el.textContent = msg;
+      el.className = 'fee-save-status' + (cls ? ' ' + cls : '');
+    }
+
+    // ── Save (debounced, 500ms) ─────────────────────────────────
+    function feeScheduleSave() {
+      clearTimeout(feeSaveTimer);
+      feeSaveTimer = setTimeout(feeFlush, 500);
+    }
+
+    async function feeFlush() {
+      const toSave = [...feeDirty];
+      feeDirty.clear();
+      feeSaveTimer = null;
+
+      const results = await Promise.allSettled(toSave.map(feeWriteRow));
+
+      const failed = results
+        .map(function(r, i) { return r.status === 'rejected' ? toSave[i] : null; })
+        .filter(Boolean);
+
+      if (failed.length) {
+        // Re-mark failed codes as dirty so user can retry by editing again
+        failed.forEach(function(c) { feeDirty.add(c); });
+        feeSetStatus('저장 실패: ' + failed.join(', '), 'err');
+      } else {
+        // Invalidate Joom/eBay price caches so next publish uses fresh values
+        feeInvalidateCaches();
+        feeSetStatus('저장 완료 ✓', 'ok');
+        setTimeout(function() { feeSetStatus('변경 사항은 자동 저장됩니다', ''); }, 2000);
+      }
+      // Re-render tabs to remove dirty markers on saved codes
+      feeRender();
+    }
+
+    async function feeWriteRow(code) {
+      const row = feeRows[code];
+      if (!row) return;
+      const { error } = await db
+        .from('country_settings')
+        .update(row)
+        .eq('country_code', code);
+      if (error) throw new Error(error.message);
+    }
+
+    // ── Cache invalidation ──────────────────────────────────────
+    function feeInvalidateCaches() {
+      // These variables live in the outer IIFE scope (Joom SG and eBay EX caches).
+      // Access them via window-level assignment fallback — they are module-scoped so
+      // we attempt reassignment; if they are not writable the worst case is stale cache
+      // (the user can reload the page).
+      try { _v2JoomSgCountryCache = null; } catch (_) {}
+      try { _v2JoomSgCountryPromise = null; } catch (_) {}
+      try { _v2EbayExCountryCache = null; } catch (_) {}
+      try { _v2EbayExCountryPromise = null; } catch (_) {}
+    }
+
+    // ── Reset: reload active country from DB ────────────────────
+    async function feeResetActive() {
+      const code = feeActiveCountry;
+      feeDirty.delete(code);
+      feeSetStatus(code + ' DB에서 다시 불러오는 중…', '');
+      await feeLoadRow(code);
+      feeRender();
+      feeSetStatus(code + ' 복원 완료', 'ok');
+      setTimeout(function() { feeSetStatus('변경 사항은 자동 저장됩니다', ''); }, 2000);
+    }
+
+    // ── Load single row from DB ─────────────────────────────────
+    async function feeLoadRow(code) {
+      const { data, error } = await db
+        .from('country_settings')
+        .select('*')
+        .eq('country_code', code)
+        .maybeSingle();
+      if (error) {
+        console.error('[fee-settings] loadRow error', code, error);
+        return;
+      }
+      feeRows[code] = data ? data : { country_code: code };
+    }
+
+    // ── Load all operating rows ─────────────────────────────────
+    async function feeInit() {
+      await Promise.all(FEE_COUNTRIES.map(feeLoadRow));
+      feeRender();
+    }
+
+    // ── Hook into showView — lazy-load on first open ─────────────
+    const _origShowView = window.showView;
+    let feeInitialized = false;
+    window.showView = function(viewId) {
+      _origShowView(viewId);
+      if (viewId === 'view-fee-settings') {
+        if (!feeInitialized) {
+          feeInitialized = true;
+          feeInit();
+        } else {
+          feeRender();
+        }
+      }
+    };
+  })();
 </script>
 </body>
 </html>

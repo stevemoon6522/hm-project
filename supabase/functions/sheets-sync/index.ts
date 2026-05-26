@@ -90,6 +90,99 @@ const PRIMARY_KEYS: Record<string, string[]> = {
   country_settings: ["country_code"],
 };
 
+const TABLE_EXPORT_CONFIG: Record<string, { columns: string[]; labels: Record<string, string> }> = {
+  products: {
+    columns: [
+      "staronemall_url",
+      "shopee_item_id",
+      "product_name",
+      "sku",
+      "option_name",
+      "sourcing_price",
+      "cost_krw",
+      "weight_g",
+      "position",
+      "global_model_id",
+      "purpose",
+      "lifecycle_state",
+      "tags",
+      "description",
+      "main_image",
+      "joom_product_id",
+      "joom_status",
+      "joom_published_at",
+      "created_at",
+      "id",
+    ],
+    labels: {
+      staronemall_url: "Staronemall URL",
+      shopee_item_id: "Shopee Item ID",
+      product_name: "상품명",
+      sku: "SKU",
+      option_name: "옵션명",
+      sourcing_price: "도매가",
+      cost_krw: "정산가",
+      weight_g: "무게(g)",
+      position: "정렬순서",
+      global_model_id: "Global Model ID",
+      purpose: "용도",
+      lifecycle_state: "상태",
+      tags: "태그",
+      description: "설명",
+      main_image: "메인 이미지",
+      joom_product_id: "Joom Product ID",
+      joom_status: "Joom 상태",
+      joom_published_at: "Joom 등록일",
+      created_at: "생성일",
+      id: "ID",
+    },
+  },
+};
+
+function getOrderedColumns(table: string, allCols: string[]): string[] {
+  const config = TABLE_EXPORT_CONFIG[table];
+  if (!config) {
+    const pks = PRIMARY_KEYS[table];
+    const writable = Array.from(WRITABLE_COLUMNS[table] || new Set());
+    return [
+      ...pks,
+      ...writable.filter((c) => !pks.includes(c)),
+      ...allCols.filter((c) => !pks.includes(c) && !writable.includes(c)),
+    ];
+  }
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const col of config.columns) {
+    if (allCols.includes(col) && !seen.has(col)) {
+      ordered.push(col);
+      seen.add(col);
+    }
+  }
+  for (const col of allCols) {
+    if (!seen.has(col)) ordered.push(col);
+  }
+  return ordered;
+}
+
+function exportHeaderLabel(table: string, col: string): string {
+  const config = TABLE_EXPORT_CONFIG[table];
+  if (config?.labels?.[col]) return config.labels[col];
+  const pks = PRIMARY_KEYS[table];
+  const writable = WRITABLE_COLUMNS[table] || new Set();
+  return pks.includes(col) || writable.has(col) ? col : `${col} (read-only)`;
+}
+
+function normalizeSheetHeader(table: string, rawHeader: string): string {
+  const cleaned = String(rawHeader || "").replace(/ \(read-only\)$/, "").trim();
+  if (!cleaned) return cleaned;
+  const config = TABLE_EXPORT_CONFIG[table];
+  if (!config) return cleaned;
+  for (const [col, label] of Object.entries(config.labels)) {
+    if (label === cleaned) return col;
+  }
+  return cleaned;
+}
+
 function json(body: any, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -230,19 +323,9 @@ async function pushTable(table: string): Promise<{ rows: number; sheetTab: strin
     await writeSheet(table, [["(no rows)"]]);
     return { rows: 0, sheetTab: table };
   }
-  // Stable column order: pks first, then writable, then read-only
   const allCols = Object.keys(data[0]);
-  const pks = PRIMARY_KEYS[table];
-  const writable = Array.from(WRITABLE_COLUMNS[table] || new Set());
-  const ordered = [
-    ...pks,
-    ...writable.filter((c) => !pks.includes(c)),
-    ...allCols.filter((c) => !pks.includes(c) && !writable.includes(c)),
-  ];
-  // Add header row with read-only marker on non-writable columns
-  const header = ordered.map((c) =>
-    pks.includes(c) || (WRITABLE_COLUMNS[table] || new Set()).has(c) ? c : `${c} (read-only)`,
-  );
+  const ordered = getOrderedColumns(table, allCols);
+  const header = ordered.map((c) => exportHeaderLabel(table, c));
   const rows = [header, ...data.map((row: any) => ordered.map((c) => formatCell(row[c])))];
   await writeSheet(table, rows);
   return { rows: data.length, sheetTab: table };
@@ -262,7 +345,7 @@ async function previewPull(table: string): Promise<any> {
   if (!PRIMARY_KEYS[table]) throw new Error(`table not whitelisted: ${table}`);
   const sheetRows = await readSheet(table);
   if (!sheetRows.length) return { table, changes: [], note: "empty sheet" };
-  const header = sheetRows[0].map((h: string) => String(h).replace(/ \(read-only\)$/, "").trim());
+  const header = sheetRows[0].map((h: string) => normalizeSheetHeader(table, h));
   const writable = WRITABLE_COLUMNS[table] || new Set();
   const pks = PRIMARY_KEYS[table];
 

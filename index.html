@@ -1597,6 +1597,7 @@ async function signOut() {
 function dbRowToProduct(row) {
   return {
     id: row.id,
+    createdAt: row.created_at || null,
     itemId: row.shopee_item_id || '',
     globalModelId: row.global_model_id != null ? String(row.global_model_id) : '',
     sku: row.sku || '',
@@ -1827,6 +1828,36 @@ async function persistProductNow(product) {
   await Storage.updateProduct(product.id, product);
 }
 
+const SD_POSITION_NORMALIZE_KEY = 'sd_position_normalized_v1';
+
+async function _normalizeExistingProductPositions() {
+  if (!state.rows.length) return { changed: 0 };
+  const ordered = [...state.rows].sort((a, b) => {
+    const aTs = a?.createdAt ? Date.parse(a.createdAt) : 0;
+    const bTs = b?.createdAt ? Date.parse(b.createdAt) : 0;
+    if (aTs !== bTs) return bTs - aTs;
+    return String(b.id || '').localeCompare(String(a.id || ''), undefined, { numeric: true, sensitivity: 'base' });
+  });
+  const updates = [];
+  for (let i = 0; i < ordered.length; i++) {
+    const row = ordered[i];
+    const nextPos = i;
+    if (Number(row.position) !== nextPos) {
+      row.position = nextPos;
+      updates.push({ id: row.id, position: nextPos });
+    }
+  }
+  if (!updates.length) {
+    try { localStorage.setItem(SD_POSITION_NORMALIZE_KEY, '1'); } catch {}
+    return { changed: 0 };
+  }
+  for (const update of updates) {
+    await Storage.updateProduct(update.id, { ...state.rows.find(r => String(r.id) === String(update.id)), position: update.position });
+  }
+  try { localStorage.setItem(SD_POSITION_NORMALIZE_KEY, '1'); } catch {}
+  return { changed: updates.length };
+}
+
 async function flushSaveQueue() {
   const productUpdates = [...saveQueue.products.entries()];
   const countryUpdates = [...saveQueue.countries];
@@ -1874,6 +1905,12 @@ async function initStorage() {
     state.rows = rows;
     state.countries = countries;
     state.nextId = rows.length > 0 ? Math.max(...rows.map((_,i) => i)) + 2 : 1;
+
+    try {
+      if (localStorage.getItem(SD_POSITION_NORMALIZE_KEY) !== '1') {
+        await _normalizeExistingProductPositions();
+      }
+    } catch (_) {}
 
     renderTableHeader();
     document.getElementById('select-all-rows').addEventListener('change', function() {

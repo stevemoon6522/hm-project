@@ -45,6 +45,7 @@ const CORS: Record<string, string> = {
 // Picked to allow common edits (cost, price, name) but exclude IDs/audit fields.
 const WRITABLE_COLUMNS: Record<string, Set<string>> = {
   products: new Set([
+    "position",
     "sku",
     "product_name",
     "option_name",

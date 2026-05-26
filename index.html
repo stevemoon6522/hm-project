@@ -842,7 +842,7 @@
     <div class="toolbar-left" style="display:flex;gap:6px;flex-wrap:nowrap;align-items:center;overflow-x:auto">
       <button class="btn" id="keyword-price-open" title="Shopee Global SKU 상품 검색 후 상품 마스터에 추가">🔍 상품 검색</button>
       <button class="btn" id="eng-sync-open" title="Global Product 의 영문 상품명/옵션명을 6개 활성 매장(SG/TW/TH/MY/PH/BR)에 일괄 sync 정책 설정">🌐 매장 영문 sync</button>
-      <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 상품 목록을 가져와 SKU 매핑 자동 채움">🔗 Shopee 매핑 동기화</button>
+      <button class="btn" id="shopee-sync-mapping" title="Shopee 6개 region에서 누락된 SKU 매핑만 채움">🔗 누락 매핑 동기화</button>
       <button class="btn" id="shopee-bulk-sync" disabled title="선택된 행의 Shopee 가격을 일괄 업데이트">☑ Shopee 동기화 (<span id="bulk-sync-count">0</span>)</button>
       <button class="btn" id="joom-bulk-sync" disabled title="선택된 행의 Joom SKU 를 lookup 하고 가격을 동기화 (lookup → DB 저장 → update-price)">🌐 Joom 동기화 (<span id="joom-sync-count">0</span>)</button>
       <button class="btn" id="ready-stock-bulk" disabled title="선택된 상품의 모든 region DTS 를 1일로 일괄 변경 (Shopee Global Product API)">📦 Ready Stock 처리 (<span id="ready-stock-count">0</span>)</button>
@@ -3663,6 +3663,14 @@ function _normalizeName(s) {
   return _normalize(s);
 }
 
+function _rowHasCompleteShopeeMapping(row, regions = SHOPEE_REGIONS) {
+  const listings = row?.shopeeListings || {};
+  return regions.every(region => {
+    const listing = listings[region];
+    return !!listing?.shop_item_id;
+  });
+}
+
 function _skuEditKey(row) {
   return row?.id != null ? String(row.id) : '';
 }
@@ -3753,9 +3761,16 @@ async function _shopeeSyncStart() {
   startBtn.disabled = true;
 
   // 1) Compute which selected rows/regions still need mapping.
-  const rowsToSync = _getSelectedMasterRows().filter(r => r.purpose !== 'registration');
-  if (rowsToSync.length === 0) {
+  const selectedRows = _getSelectedMasterRows().filter(r => r.purpose !== 'registration');
+  if (selectedRows.length === 0) {
     progress.innerHTML = '<span style="color:#d62754;">매핑 동기화할 상품을 먼저 체크하세요.</span>';
+    startBtn.disabled = false;
+    return;
+  }
+  const rowsToSync = selectedRows.filter(r => !_rowHasCompleteShopeeMapping(r));
+  const fullyMappedRows = selectedRows.length - rowsToSync.length;
+  if (rowsToSync.length === 0) {
+    progress.innerHTML = `<span style="color:#15803d;">선택한 ${selectedRows.length}개 상품이 모두 완전 매핑 상태입니다.</span>`;
     startBtn.disabled = false;
     return;
   }
@@ -3909,7 +3924,8 @@ async function _shopeeSyncStart() {
   }
   summary.style.display = 'block';
   summary.innerHTML =
-    `<b>전체 ${productMatches.length}행 × 6 region = ${productMatches.length * 6} 셀</b><br>` +
+    `<b>전체 ${productMatches.length}행 × 6 region = ${productMatches.length * 6} 셀</b>` +
+    (fullyMappedRows ? ` <span style="color:#9a9aa6;">(완전 매핑 ${fullyMappedRows}행 skip)</span>` : '') + '<br>' +
     `신규 매칭 <b style="color:#15803d;">${totalMatched}</b> · ` +
     `기존 유지 <b style="color:#b0b0bc;">${totalExisting}</b> · ` +
     `미매칭 <b style="color:#5a5a66;">${totalMissing}</b> · ` +
@@ -7333,6 +7349,16 @@ function _gkpExistingRowKeys(row) {
   return keys;
 }
 
+function _gkpHasCompleteListingCoverage(productId, pickedRow, regions, listingByRegion) {
+  const requireModel = !!_gkpIdString(pickedRow?.global_model_id);
+  return regions.every(region => {
+    const listing = listingByRegion?.[region];
+    if (!listing?.shop_item_id) return false;
+    if (requireModel && !listing?.shop_model_id) return false;
+    return true;
+  });
+}
+
 function _gkpSkuSummary(row) {
   const itemSku = _gkpCleanSku(row.item_sku);
   if (row.rowType === 'model_header') {
@@ -7618,10 +7644,40 @@ async function _gkpApply() {
     // 2. Load active shops
     const { data: shopsData, error: shopsErr } = await db.from('shopee_shops').select('region, shop_id, status').eq('status', 'active');
     const shops = (shopsData || []).map(s => ({ region: s.region, shop_id: _gkpIdString(s.shop_id) }));
+    const activeRegions = shops.map(s => s.region);
     const activeShopIdSet = new Set(shops.map(s => s.shop_id));
 
+    const candidateProductIds = [...new Set(uniqueRows
+      .map(r => productIdBySku.get(_gkpPickedRowKey(r)))
+      .filter(Boolean))];
+    const existingListingByProduct = new Map();
+    if (candidateProductIds.length) {
+      const { data: existingListings, error: existingListingsErr } = await db
+        .from('product_shopee_listings')
+        .select('product_id, region, shop_item_id, shop_model_id')
+        .in('product_id', candidateProductIds);
+      if (existingListingsErr) throw existingListingsErr;
+      for (const listing of (existingListings || [])) {
+        const pid = String(listing.product_id);
+        if (!existingListingByProduct.has(pid)) existingListingByProduct.set(pid, {});
+        existingListingByProduct.get(pid)[listing.region] = listing;
+      }
+    }
+
+    const mappingRows = uniqueRows.filter(row => {
+      const productId = productIdBySku.get(_gkpPickedRowKey(row));
+      if (!productId) return true;
+      return !_gkpHasCompleteListingCoverage(
+        productId,
+        row,
+        activeRegions,
+        existingListingByProduct.get(String(productId)) || {}
+      );
+    });
+    const skippedMapped = uniqueRows.length - mappingRows.length;
+
     // 3. Per unique global_item_id: published_list + (variant only) per-region shop_model_list
-    const globalItemIds = [...new Set(uniqueRows.map(r => _gkpIdString(r.shopee_item_id)).filter(Boolean))];
+    const globalItemIds = [...new Set(mappingRows.map(r => _gkpIdString(r.shopee_item_id)).filter(Boolean))];
     const mappingErrors = [];
     const listingRows = [];
     let processed = 0;
@@ -7630,7 +7686,7 @@ async function _gkpApply() {
     for (let chunkStart = 0; chunkStart < globalItemIds.length; chunkStart += PARALLELISM) {
       const chunk = globalItemIds.slice(chunkStart, chunkStart + PARALLELISM);
       await Promise.all(chunk.map(async (gid) => {
-        const picksForThisGid = uniqueRows.filter(r => _gkpIdString(r.shopee_item_id) === gid);
+        const picksForThisGid = mappingRows.filter(r => _gkpIdString(r.shopee_item_id) === gid);
         const enriched = _gkpFindEnrichedItem(gid);
         if (!enriched) {
           // Cache lost between search and apply (rare). We can't tell variant vs single safely.
@@ -7754,7 +7810,7 @@ async function _gkpApply() {
     }
 
     // 5. Compose log
-    let logMsg = `✅ ${inserted}건 추가 / ${updated}건 ID 업데이트 / ${skipped}건 기존 유지 / ${upsertedCount}건 매핑.`;
+    let logMsg = `✅ ${inserted}건 추가 / ${updated}건 ID 업데이트 / ${skipped}건 기존 유지 / ${skippedMapped}건 완전 매핑 skip / ${upsertedCount}건 매핑.`;
     if (mappingErrors.length) {
       const headerErrors = mappingErrors.slice(0, 10);
       logMsg += `\n⚠️ ${mappingErrors.length}건 매핑 이슈:\n${headerErrors.join('\n')}`;

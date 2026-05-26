@@ -848,6 +848,8 @@
       <button class="btn" id="ready-stock-bulk" disabled title="선택된 상품의 모든 region DTS 를 1일로 일괄 변경 (Shopee Global Product API)">📦 Ready Stock 처리 (<span id="ready-stock-count">0</span>)</button>
       <button class="btn" id="sheets-push" title="DB → Google Sheets 내보내기 (모든 row 덮어쓰기)">📤 Sheet 내보내기</button>
       <button class="btn" id="sheets-pull" title="Google Sheets 에서 변경된 셀을 DB 에 적용 (먼저 미리보기 → 확인 → 적용)">📥 Sheet → DB</button>
+      <button class="btn" id="backup-json" title="products / product_shopee_listings / country_settings 전체를 JSON 1개로 백업">💾 JSON 백업</button>
+      <button class="btn" id="backup-csv-bundle" title="products / product_shopee_listings / country_settings 전체를 CSV 3개로 백업">🗂 CSV 백업</button>
       <button class="btn" id="global-backfill-master" title="기존 Product Master 행의 옵션명/무게를 Shopee Global Product 메타데이터로 채움">🛠 옵션·무게 백필</button>
       <button class="btn" id="bulk-clear-mapping" disabled title="선택된 상품의 Shopee region 매핑만 삭제 (상품은 유지)">🧹 매핑 삭제 (<span id="bulk-clear-count">0</span>)</button>
       <button class="btn danger" id="bulk-complete-remove" disabled title="선택된 상품을 완료 처리하고 상품 마스터에서 삭제">✅ 완료 처리 (<span id="bulk-complete-count">0</span>)</button>
@@ -4407,6 +4409,110 @@ async function _readyStockBulkApply() {
    ════════════════════════════════════════════════════════════════════ */
 const SHEETS_SYNC = SUPABASE_URL + '/functions/v1/sheets-sync';
 
+async function _loadBackupTables() {
+  const [productsRes, listingsRes, countriesRes] = await Promise.all([
+    db.from('products').select('*').order('position', { ascending: true }).order('created_at', { ascending: true }),
+    db.from('product_shopee_listings').select('*').order('product_id', { ascending: true }).order('region', { ascending: true }),
+    db.from('country_settings').select('*').order('country_code', { ascending: true }),
+  ]);
+  if (productsRes.error) throw productsRes.error;
+  if (listingsRes.error) throw listingsRes.error;
+  if (countriesRes.error) throw countriesRes.error;
+  return {
+    products: productsRes.data || [],
+    product_shopee_listings: listingsRes.data || [],
+    country_settings: countriesRes.data || [],
+  };
+}
+
+function _downloadTextFile(filename, content, type = 'text/plain;charset=utf-8;') {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function _csvEscape(value) {
+  if (value === null || value === undefined) return '';
+  const str = typeof value === 'object' ? JSON.stringify(value) : String(value);
+  return `"${str.replace(/"/g, '""')}"`;
+}
+
+function _tableRowsToCsv(rows) {
+  if (!rows.length) return '\ufeff(no rows)\n';
+  const columns = Object.keys(rows[0]);
+  const lines = [
+    columns.map(_csvEscape).join(','),
+    ...rows.map(row => columns.map(col => _csvEscape(row[col])).join(',')),
+  ];
+  return '\ufeff' + lines.join('\n');
+}
+
+async function _backupJsonBundle() {
+  const btn = document.getElementById('backup-json');
+  const orig = btn ? btn.innerHTML : null;
+  if (btn) { btn.disabled = true; btn.textContent = '💾 JSON 백업 중..'; }
+  try {
+    const tables = await _loadBackupTables();
+    const now = new Date();
+    const stamp = now.toISOString().replace(/[:.]/g, '-');
+    const payload = {
+      exported_at: now.toISOString(),
+      source: 'shopee-dashboard',
+      version: 1,
+      tables,
+    };
+    _downloadTextFile(`sd_backup_${stamp}.json`, JSON.stringify(payload, null, 2), 'application/json;charset=utf-8;');
+    const statusEl = document.getElementById('save-status');
+    if (statusEl) {
+      statusEl.textContent = `JSON 백업 완료 (products=${tables.products.length}, listings=${tables.product_shopee_listings.length}, countries=${tables.country_settings.length})`;
+      statusEl.style.color = '#15803d';
+      setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 8000);
+    }
+  } catch (e) {
+    const statusEl = document.getElementById('save-status');
+    if (statusEl) {
+      statusEl.textContent = 'JSON 백업 실패: ' + (e.message || e);
+      statusEl.style.color = '#d62754';
+      setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 8000);
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
+async function _backupCsvBundle() {
+  const btn = document.getElementById('backup-csv-bundle');
+  const orig = btn ? btn.innerHTML : null;
+  if (btn) { btn.disabled = true; btn.textContent = '🗂 CSV 백업 중..'; }
+  try {
+    const tables = await _loadBackupTables();
+    const now = new Date();
+    const stamp = now.toISOString().replace(/[:.]/g, '-');
+    _downloadTextFile(`sd_products_${stamp}.csv`, _tableRowsToCsv(tables.products), 'text/csv;charset=utf-8;');
+    _downloadTextFile(`sd_product_shopee_listings_${stamp}.csv`, _tableRowsToCsv(tables.product_shopee_listings), 'text/csv;charset=utf-8;');
+    _downloadTextFile(`sd_country_settings_${stamp}.csv`, _tableRowsToCsv(tables.country_settings), 'text/csv;charset=utf-8;');
+    const statusEl = document.getElementById('save-status');
+    if (statusEl) {
+      statusEl.textContent = `CSV 백업 완료 (products=${tables.products.length}, listings=${tables.product_shopee_listings.length}, countries=${tables.country_settings.length})`;
+      statusEl.style.color = '#15803d';
+      setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 8000);
+    }
+  } catch (e) {
+    const statusEl = document.getElementById('save-status');
+    if (statusEl) {
+      statusEl.textContent = 'CSV 백업 실패: ' + (e.message || e);
+      statusEl.style.color = '#d62754';
+      setTimeout(() => { statusEl.textContent = ''; statusEl.style.color = ''; }, 8000);
+    }
+  } finally {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  }
+}
+
 async function _sheetsPush() {
   const tables = ['products', 'product_shopee_listings', 'country_settings'];
   const btn = document.getElementById('sheets-push');
@@ -4510,12 +4616,18 @@ async function _sheetsPull() {
   const init = () => {
     const pushBtn = document.getElementById('sheets-push');
     const pullBtn = document.getElementById('sheets-pull');
-    if (!pushBtn || !pullBtn) { document.addEventListener('DOMContentLoaded', init); return; }
+    const backupJsonBtn = document.getElementById('backup-json');
+    const backupCsvBtn = document.getElementById('backup-csv-bundle');
+    if (!pushBtn || !pullBtn || !backupJsonBtn || !backupCsvBtn) { document.addEventListener('DOMContentLoaded', init); return; }
     if (pushBtn.dataset.bound) return;
     pushBtn.dataset.bound = '1';
     pullBtn.dataset.bound = '1';
+    backupJsonBtn.dataset.bound = '1';
+    backupCsvBtn.dataset.bound = '1';
     pushBtn.addEventListener('click', _sheetsPush);
     pullBtn.addEventListener('click', _sheetsPull);
+    backupJsonBtn.addEventListener('click', _backupJsonBundle);
+    backupCsvBtn.addEventListener('click', _backupCsvBundle);
   };
   init();
 })();

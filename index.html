@@ -3541,6 +3541,15 @@ function _getSelectedMasterRows() {
   return state.rows.filter(r => selectedIds.has(String(r.id)));
 }
 
+function _nextTopPosition() {
+  if (!state.rows.length) return 0;
+  const nums = state.rows
+    .map(r => Number(r?.position))
+    .filter(n => Number.isFinite(n));
+  if (!nums.length) return 0;
+  return Math.min(...nums) - 1;
+}
+
 function _updateSelectionUi() {
   const tbody = document.getElementById('tbody');
   if (!tbody) return;
@@ -4890,6 +4899,10 @@ function filterRows() {
   const sorted = byTag
     .map((r, idx) => ({ r, idx }))
     .sort((a, b) => {
+      const aPos = Number.isFinite(Number(a.r.position)) ? Number(a.r.position) : 0;
+      const bPos = Number.isFinite(Number(b.r.position)) ? Number(b.r.position) : 0;
+      if (aPos !== bPos) return aPos - bPos;
+
       const aId = String(a.r.itemId || '').trim();
       const bId = String(b.r.itemId || '').trim();
       const aEmpty = !aId;
@@ -5142,7 +5155,7 @@ document.getElementById('m-save').addEventListener('click', async () => {
     sourcingPrice: parseFloat(document.getElementById('m-wholesale').value) || 0,
     cost,
     weight,
-    position: state.rows.length,
+    position: _nextTopPosition(),
     staronemallUrl: document.getElementById('m-url').value.trim(),
     joomProductId: '',
     joomStatus: '',
@@ -5169,7 +5182,7 @@ document.getElementById('add-row-inline').addEventListener('click', async () => 
     option: '',
     cost: 0,
     weight: 0,
-    position: state.rows.length,
+    position: _nextTopPosition(),
     staronemallUrl: '',
     joomProductId: '',
     joomStatus: '',
@@ -5199,7 +5212,7 @@ document.getElementById('add-row-inline').addEventListener('click', async () => 
 document.getElementById('add-row-register').addEventListener('click', async () => {
   const newProduct = {
     itemId: '', sku: '', option: '', cost: 0, weight: 0,
-    position: state.rows.length, staronemallUrl: '',
+    position: _nextTopPosition(), staronemallUrl: '',
     joomProductId: '', joomStatus: '', joomPublishedAt: null,
     purpose: 'registration',
   };
@@ -5302,9 +5315,9 @@ document.getElementById('csv-file')?.addEventListener('change', e => {
     }
 
     // 새 행 일괄 삽입
-    let position = state.rows.length;
+    let position = _nextTopPosition();
     for (const r of newRows) {
-      r.position = position++;
+      r.position = position--;
       const newId = await Storage.insertProduct(r);
       if (newId) {
         r.id = newId;

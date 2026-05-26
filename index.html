@@ -1830,7 +1830,7 @@ async function persistProductNow(product) {
   await Storage.updateProduct(product.id, product);
 }
 
-const SD_POSITION_NORMALIZE_KEY = 'sd_position_normalized_v1';
+const SD_POSITION_NORMALIZE_KEY = 'sd_position_normalized_v2';
 
 async function _normalizeExistingProductPositions() {
   if (!state.rows.length) return { changed: 0 };

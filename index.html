@@ -1821,6 +1821,12 @@ function autoSave() {
   saveTimer = setTimeout(flushSaveQueue, 400);
 }
 
+async function persistProductNow(product) {
+  if (!product?.id) return;
+  saveQueue.products.delete(product.id);
+  await Storage.updateProduct(product.id, product);
+}
+
 async function flushSaveQueue() {
   const productUpdates = [...saveQueue.products.entries()];
   const countryUpdates = [...saveQueue.countries];
@@ -1855,6 +1861,11 @@ function markCountryDirty(code) {
   saveQueue.countries.add(code);
   autoSave();
 }
+
+window.addEventListener('pagehide', () => {
+  if (saveQueue.products.size <= 0 && saveQueue.countries.size <= 0) return;
+  void flushSaveQueue();
+});
 
 /* ─── 초기 로드: Supabase에서 모든 데이터 가져오기 ───────────── */
 async function initStorage() {
@@ -4509,7 +4520,6 @@ async function refreshRowFromStaronemall(row) {
     row.sourcingPrice = wholesale;
     row.cost = Math.round(wholesale * STARONEMALL_MARGIN);
     if (result.data.name) row.productName = result.data.name;
-    markProductDirty(row);
     return { ok: true, cost: row.cost, wholesale };
   } catch (err) {
     return { ok: false, error: err.message };
@@ -4555,10 +4565,10 @@ function startEditUrl(td) {
     const val = input.value.trim();
     if (val !== current) {
       row.staronemallUrl = val;
-      markProductDirty(row);
       if (val && val.indexOf('staronemall.com') !== -1) {
         await refreshRowFromStaronemall(row);
       }
+      await persistProductNow(row);
     }
     renderTableBody();
     renderVerify();

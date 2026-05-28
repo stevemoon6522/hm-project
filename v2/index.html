@@ -2688,6 +2688,23 @@
           </div>
         </section>
 
+        <!-- Variant options -->
+        <section id="rsh-variant-section" style="display:none;">
+          <div style="font-weight:700;font-size:13px;margin-bottom:8px;">옵션 구성</div>
+          <table style="width:100%;border-collapse:collapse;font-size:12px;">
+            <thead>
+              <tr style="background:#faeef8;">
+                <th style="padding:6px 8px;text-align:left;">옵션</th>
+                <th style="padding:6px 8px;text-align:left;">SKU</th>
+                <th style="padding:6px 8px;text-align:right;width:90px;">매입가</th>
+                <th style="padding:6px 8px;text-align:right;width:70px;">무게</th>
+                <th style="padding:6px 8px;text-align:left;width:80px;">이미지</th>
+              </tr>
+            </thead>
+            <tbody id="rsh-variant-body"></tbody>
+          </table>
+        </section>
+
         <!-- Specification attributes -->
         <section id="rsh-spec-section" style="display:none;">
           <div style="font-weight:700;font-size:13px;margin-bottom:8px;">Specification (필수 속성)</div>
@@ -3349,6 +3366,9 @@ LEGACY END -->
       // Phase B: route to new 2-stage modal; legacy openModal kept below for reference
       btn.addEventListener('click', () => openRegisterShopeeModal(btn.dataset.open));
     });
+    els.productBody.querySelectorAll('[data-open-shopee-group]').forEach((btn) => {
+      btn.addEventListener('click', () => openRegisterShopeeGroupModal(btn.dataset.openShopeeGroup));
+    });
     els.productBody.querySelectorAll('[data-delete]').forEach((btn) => {
       btn.addEventListener('click', () => deleteOneMasterProduct(btn));
     });
@@ -3524,7 +3544,9 @@ LEGACY END -->
         <td style="text-align:center;">${plGroupPlatformCell(rows, 'qoo10')}</td>
         <td style="text-align:center;">${plGroupPlatformCell(rows, 'ebay')}</td>
         <td style="text-align:center;">${plGroupPlatformCell(rows, 'alibaba')}</td>
-        <td><span class="muted" style="font-size:11px;">마스터</span></td>
+        <td style="white-space:nowrap;">
+          <button type="button" data-open-shopee-group="${text(first.product_group_id || '')}" class="primary" style="font-size:11px;padding:4px 8px;">Shopee 등록</button>
+        </td>
       </tr>`;
     if (collapsed) return groupHtml;
     return groupHtml + rows.map((row) => renderProductOptionRow(row, group.key, true)).join('');
@@ -4736,13 +4758,15 @@ LEGACY END -->
       }
 
       if (!hasVariants) {
+        const listingStatus = info.ok === false ? 'error' : 'mapped';
         const fields = {
           shop_item_id: info.item_id,
           shop_model_id: null,
           shop_id: info.shop_id || null,
           global_item_id: globalItemId,
           global_model_id: null,
-          status: info.item_status || info.publish_status || null,
+          status: listingStatus,
+          last_error: listingStatus === 'error' ? resultMessage(info) : null,
           published_at: new Date().toISOString(),
         };
         const saved = await upsertListingWithFallback(state.currentProduct.id, region, fields);
@@ -4773,7 +4797,8 @@ LEGACY END -->
           shop_id: info.shop_id || null,
           global_item_id: globalItemId,
           global_model_id: globalModel.global_model_id || null,
-          status: info.item_status || info.publish_status || null,
+          status: info.ok === false ? 'error' : 'mapped',
+          last_error: info.ok === false ? resultMessage(info) : null,
           published_at: new Date().toISOString(),
         });
         if (saved.ok) savedCount += 1;
@@ -4786,7 +4811,8 @@ LEGACY END -->
           shop_id: info.shop_id || null,
           global_item_id: globalItemId,
           global_model_id: null,
-          status: info.item_status || info.publish_status || null,
+          status: info.ok === false ? 'error' : 'mapped',
+          last_error: info.ok === false ? resultMessage(info) : null,
           published_at: new Date().toISOString(),
         });
         savedCount = saved.ok ? 1 : 0;
@@ -6786,7 +6812,10 @@ LEGACY END -->
   // Per-modal state — reset on each openRegisterShopeeModal() call.
   let _rsh = {
     productId: null,
+    productGroupId: null,
+    mode: 'single',
     master: null,            // full product row fetched on open
+    products: [],            // option rows when opening a grouped master product
     selectedImages: [],      // [{ src: url, idx: number }] — single cover image (P0-1: radio-style)
     cachedImageId: null,     // shopee_image_id from master (already on Shopee CDN)
     cachedExtraIds: [],      // shopee_extra_image_ids from master (read-only in Phase B)
@@ -7078,7 +7107,12 @@ LEGACY END -->
     if (!btn) return;
 
     const hasImage = _rsh.cachedImageId || _rsh.selectedImages.length > 0;
-    const hasCost = Number(document.getElementById('rsh-cost-krw')?.value) > 0;
+    const rows = _rsh.products && _rsh.products.length ? _rsh.products : [_rsh.master].filter(Boolean);
+    const hasCost = _rsh.mode === 'group'
+      ? rows.every((p) => Number(p.cost_krw || 0) > 0)
+      : Number(document.getElementById('rsh-cost-krw')?.value) > 0;
+    const hasWeight = rows.every((p) => Number(p.weight_g || 0) > 0);
+    const hasSku = rows.every((p) => String(p.sku || '').trim());
 
     // P1-3: block if master category was 101390 (banner already shown)
     const catBlocked = $rsh('cat-blocked') && $rsh('cat-blocked').style.display !== 'none';
@@ -7086,7 +7120,7 @@ LEGACY END -->
     // P1-4a: block if staronemall URL is missing (banner already shown)
     const staronemallMissing = $rsh('no-staronemall') && $rsh('no-staronemall').style.display !== 'none';
 
-    btn.disabled = !hasImage || !hasCost || catBlocked || staronemallMissing;
+    btn.disabled = !hasImage || !hasCost || !hasWeight || !hasSku || catBlocked || staronemallMissing;
   }
 
   // Show cached image preview strip.
@@ -7100,8 +7134,100 @@ LEGACY END -->
     ).join('');
   }
 
+  const RSH_PRODUCT_SELECT =
+    'id, sku, product_name, option_name, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, main_image, extra_images, components_extracted_en, components_extracted_at, components_approved, product_group_id, variation_tier_names, variation_option_names, variation_tier_index';
+
+  function rshSortedProducts(rows) {
+    return (rows || []).slice().sort((a, b) => plTierSortKey(a).localeCompare(plTierSortKey(b)));
+  }
+
+  function rshProductIds() {
+    return (_rsh.products && _rsh.products.length ? _rsh.products : [_rsh.master])
+      .filter(Boolean)
+      .map((p) => p.id)
+      .filter(Boolean);
+  }
+
+  function rshParentSku(rows) {
+    return plParentSku(rows || []);
+  }
+
+  function rshWeightSummary(rows) {
+    return `${plNumberRange(rows || [], 'weight_g')} g`;
+  }
+
+  function rshOptionName(product) {
+    return plOptionDisplay(product) || product?.option_name || product?.sku || '옵션';
+  }
+
+  function rshRenderVariantSection() {
+    const section = $rsh('variant-section');
+    const body = $rsh('variant-body');
+    if (!section || !body) return;
+    const rows = rshSortedProducts(_rsh.products || []);
+    if (_rsh.mode !== 'group' || rows.length <= 1) {
+      section.style.display = 'none';
+      body.innerHTML = '';
+      return;
+    }
+    body.innerHTML = rows.map((p) => `
+      <tr>
+        <td style="padding:6px 8px;font-weight:700;">${text(rshOptionName(p))}</td>
+        <td style="padding:6px 8px;font-family:var(--mono);font-size:11px;">${text(p.sku || '')}</td>
+        <td style="padding:6px 8px;text-align:right;font-family:var(--mono);">${Number(p.cost_krw || 0).toLocaleString()}</td>
+        <td style="padding:6px 8px;text-align:right;font-family:var(--mono);">${Number(p.weight_g || 0).toLocaleString()}</td>
+        <td style="padding:6px 8px;color:${p.main_image ? 'var(--green)' : 'var(--red)'};">${p.main_image ? '있음' : '필요'}</td>
+      </tr>
+    `).join('');
+    section.style.display = '';
+  }
+
+  function rshUseDirectImage(url, label = '첨부 이미지') {
+    const src = String(url || '').trim();
+    if (!src) return;
+    _rsh.crawledImages = [src];
+    _rsh.selectedImages = [{ src, idx: 0 }];
+    _rsh.uploadMode = true;
+    const imgMissing = $rsh('img-missing');
+    if (imgMissing) imgMissing.style.display = 'none';
+    rshRenderImageGrid([src]);
+    const imgGrid = $rsh('img-grid');
+    if (imgGrid) imgGrid.style.display = 'grid';
+    rshUpdateImageBadges();
+    rshUpdateImageCount();
+    const countEl = $rsh('img-count');
+    if (countEl) countEl.textContent = `${label} 선택됨`;
+  }
+
+  async function openRegisterShopeeGroupModal(productGroupId) {
+    const groupId = String(productGroupId || '').trim();
+    if (!groupId) {
+      showToast('상품 그룹 ID가 없어 Shopee 등록 모달을 열 수 없습니다.', 'err');
+      return;
+    }
+    const { data, error } = await db
+      .from('products')
+      .select(RSH_PRODUCT_SELECT)
+      .eq('product_group_id', groupId);
+    if (error) {
+      showToast(`옵션 묶음 로드 실패: ${error.message || error}`, 'err');
+      return;
+    }
+    const rows = rshSortedProducts(data || []).filter(plIsGroupedVariant);
+    if (!rows.length) {
+      showToast('이 그룹에 등록할 옵션 상품이 없습니다.', 'err');
+      return;
+    }
+    await openRegisterShopeeModal(rows[0].id, {
+      allowVariant: true,
+      mode: 'group',
+      productGroupId: groupId,
+      products: rows,
+    });
+  }
+
   // Main open function — entry point for Register button click.
-  async function openRegisterShopeeModal(productId) {
+  async function openRegisterShopeeModal(productId, options = {}) {
     // P2-1: ?legacy=1 disables the new modal and shows a toast instead.
     if (RSH_LEGACY_MODE) {
       showToast('구 모달 모드 (?legacy=1) — 새 등록 모달이 비활성화되어 있습니다. URL에서 파라미터를 제거해 Phase B 모달을 사용하세요.', 'err');
@@ -7112,8 +7238,9 @@ LEGACY END -->
     // §9-6 legacy read-path guard: variation_tier_index IS NOT NULL rows are option-bundle
     // products created by the new v2 register variants flow. Opening them in the legacy
     // 5-step wizard would corrupt the variation_* columns. Block and show an info toast.
-    const productRow = state.products && state.products.find(p => String(p.id) === String(productId));
-    if (productRow && Array.isArray(productRow.variation_tier_index) && productRow.variation_tier_index.length > 0) {
+    const preloadedProducts = Array.isArray(options.products) ? rshSortedProducts(options.products) : [];
+    const productRow = preloadedProducts[0] || (state.products && state.products.find(p => String(p.id) === String(productId)));
+    if (!options.allowVariant && productRow && Array.isArray(productRow.variation_tier_index) && productRow.variation_tier_index.length > 0) {
       showToast('옵션 묶음 상품은 새 등록 화면(📦 상품 등록)에서 편집해주세요. 이 모달로는 편집할 수 없습니다.', 'err');
       console.warn('[openRegisterShopeeModal] blocked: variation_tier_index IS NOT NULL for product', productId);
       return;
@@ -7122,7 +7249,10 @@ LEGACY END -->
     // Reset per-modal state
     _rsh = {
       productId,
+      productGroupId: options.productGroupId || productRow?.product_group_id || null,
+      mode: options.mode === 'group' ? 'group' : 'single',
       master: null,
+      products: preloadedProducts,
       selectedImages: [],
       cachedImageId: null,
       cachedExtraIds: [],
@@ -7146,6 +7276,7 @@ LEGACY END -->
     $rsh('loading').style.display = 'block';
     $rsh('error').style.display = 'none';
     $rsh('info-section').style.display = 'none';
+    $rsh('variant-section').style.display = 'none';
     $rsh('spec-section').style.display = 'none';
     $rsh('image-section').style.display = 'none';
     $rsh('desc-section').style.display = 'none';
@@ -7156,12 +7287,21 @@ LEGACY END -->
     overlay.classList.add('show');
     overlay.setAttribute('aria-hidden', 'false');
 
-    // Fetch full master product row (loadData only fetches partial columns)
-    const { data: master, error: fetchErr } = await db
-      .from('products')
-      .select('id, sku, product_name, option_name, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, main_image, components_extracted_en, components_extracted_at, components_approved')
-      .eq('id', productId)
-      .single();
+    // Fetch full master product row (loadData only fetches partial columns).
+    // Group mode passes preloaded option rows so the modal can build one
+    // Shopee Global Product with multiple models.
+    let master = preloadedProducts[0] || null;
+    let fetchErr = null;
+    if (!master) {
+      const res = await db
+        .from('products')
+        .select(RSH_PRODUCT_SELECT)
+        .eq('id', productId)
+        .single();
+      master = res.data;
+      fetchErr = res.error;
+      _rsh.products = master ? [master] : [];
+    }
 
     $rsh('loading').style.display = 'none';
 
@@ -7172,18 +7312,23 @@ LEGACY END -->
     }
 
     _rsh.master = master;
+    if (!_rsh.products.length) _rsh.products = [master];
     _rsh.cachedImageId = master.shopee_image_id || null;
     _rsh.cachedExtraIds = master.shopee_extra_image_ids || [];
 
     // Populate subtitle
     const subtitleEl = $rsh('subtitle');
-    if (subtitleEl) subtitleEl.textContent = [master.sku, master.product_name, master.option_name].filter(Boolean).join(' / ');
+    if (subtitleEl) {
+      subtitleEl.textContent = _rsh.mode === 'group'
+        ? `${rshParentSku(_rsh.products)} / ${_rsh.products.length} options`
+        : [master.sku, master.product_name, master.option_name].filter(Boolean).join(' / ');
+    }
 
     // Populate info fields
     const nameEl = $rsh('product-name');
     if (nameEl) nameEl.textContent = master.product_name || master.sku || '(이름 없음)';
     const skuEl = $rsh('sku');
-    if (skuEl) skuEl.textContent = master.sku || '';
+    if (skuEl) skuEl.textContent = _rsh.mode === 'group' ? rshParentSku(_rsh.products) : (master.sku || '');
 
     // P1-3: Default to 100740, NOT 101390 (101390 is blocked in Phase B).
     // If master has 101390, show red banner + disable Register.
@@ -7203,7 +7348,11 @@ LEGACY END -->
     if (costEl) costEl.value = String(Number(master.cost_krw) || '');
 
     const weightEl = $rsh('weight');
-    if (weightEl) weightEl.textContent = master.weight_g ? `${Number(master.weight_g).toLocaleString()} g` : '(미설정)';
+    if (weightEl) {
+      weightEl.textContent = _rsh.mode === 'group'
+        ? rshWeightSummary(_rsh.products)
+        : (master.weight_g ? `${Number(master.weight_g).toLocaleString()} g` : '(미설정)');
+    }
 
     const lifecycleEl = $rsh('lifecycle');
     if (lifecycleEl) {
@@ -7215,6 +7364,7 @@ LEGACY END -->
     // Build spec section — P1-3: default to 100740, not 101390
     const catId = Number(master.shopee_category_id) || 100740;
     rshBuildSpecSection(catId, master);
+    rshRenderVariantSection();
 
     // Listen for category change to rebuild spec
     if (catSel) {
@@ -7263,6 +7413,8 @@ LEGACY END -->
         reuploadBtn.style.display = 'inline-flex';
         reuploadBtn.onclick = () => rshStartImageReupload(master);
       }
+    } else if (master.main_image) {
+      rshUseDirectImage(master.main_image, '첨부 이미지');
     } else if (master.staronemall_url) {
       // No cache, but has StarOneMall URL — crawl automatically
       if (imgMissing) imgMissing.style.display = 'block';
@@ -7442,16 +7594,196 @@ LEGACY END -->
     }
     if (!coverImageId) coverImageId = regionImageIds[targetRegions[0]][0];
 
-    const { error: updateErr } = await db
+    const productIds = rshProductIds();
+    let updateQuery = db
       .from('products')
-      .update({ shopee_image_id: coverImageId })
-      .eq('id', _rsh.productId);
+      .update({ shopee_image_id: coverImageId });
+    updateQuery = productIds.length > 1
+      ? updateQuery.in('id', productIds)
+      : updateQuery.eq('id', _rsh.productId);
+    const { error: updateErr } = await updateQuery;
     if (updateErr) {
       throw new Error(`이미지 ID 저장 실패: ${updateErr.message}`);
     }
     _rsh.cachedImageId = coverImageId;
 
     return { coverImageId, regionImageIds };
+  }
+
+  function rshBuildTierVariation(products) {
+    const rows = rshSortedProducts(products);
+    const tierNames = Array.isArray(rows[0]?.variation_tier_names) && rows[0].variation_tier_names.length
+      ? rows[0].variation_tier_names
+      : ['Option'];
+    return tierNames.map((name, axisIdx) => {
+      const seen = new Set();
+      const optionList = [];
+      rows.forEach((row) => {
+        const values = Array.isArray(row.variation_option_names) ? row.variation_option_names : [row.option_name || row.sku || 'Option'];
+        const raw = String(values[axisIdx] || '').trim();
+        const key = raw.toLowerCase();
+        if (!raw || seen.has(key)) return;
+        seen.add(key);
+        optionList.push({ option: raw });
+      });
+      return { name: String(name || `Option ${axisIdx + 1}`), option_list: optionList };
+    }).filter((tier) => tier.option_list.length > 0);
+  }
+
+  function rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle) {
+    const products = rshSortedProducts(_rsh.products || []);
+    const master = _rsh.master || products[0] || {};
+    const categoryId = Number(document.getElementById('rsh-category')?.value) || Number(master.shopee_category_id) || 100740;
+    const productCosts = products.map((p) => Number(p.cost_krw || 0)).filter((n) => Number.isFinite(n) && n > 0);
+    const productWeights = products.map((p) => Number(p.weight_g || 0)).filter((n) => Number.isFinite(n) && n > 0);
+    const basePrice = productCosts[0] || Number(document.getElementById('rsh-cost-krw')?.value) || Number(master.cost_krw || 0);
+    const maxWeight = productWeights.length ? Math.max(...productWeights) : Number(master.weight_g || 100);
+    const parentSku = rshParentSku(products) || `${products[0]?.sku || master.sku || 'V2-SHOPEE'}-P`;
+    const imageId = _rsh.cachedImageId || master.shopee_image_id || '';
+    const brandObj = master.shopee_brand_id === 0 || master.shopee_brand_id == null
+      ? { brand_id: 0, original_brand_name: 'No Brand' }
+      : { brand_id: Number(master.shopee_brand_id), original_brand_name: master.shopee_brand_name || 'No Brand' };
+
+    const model = products.map((p, index) => ({
+      tier_index: Array.isArray(p.variation_tier_index) && p.variation_tier_index.length ? p.variation_tier_index : [index],
+      global_model_sku: String(p.sku || '').trim(),
+      model_sku: String(p.sku || '').trim(),
+      original_price: Number(p.cost_krw || basePrice),
+      global_original_price: Number(p.cost_krw || basePrice),
+      stock: Number(p.inventory || 0),
+    }));
+
+    const targets = activeRegions.map((region) => {
+      const imageIds = Array.isArray(_rsh.regionImageIds?.[region]) ? _rsh.regionImageIds[region].filter(Boolean) : [];
+      return {
+        region,
+        price: basePrice,
+        days_to_ship: dtsValues[region] || 2,
+        ...(imageIds.length ? { image_id_list: imageIds } : {}),
+      };
+    });
+
+    return {
+      region: activeRegions[0] || 'SG',
+      name: master.product_name || products[0]?.product_name || parentSku,
+      sku: parentSku,
+      category_id: categoryId,
+      brand: brandObj,
+      image_id: imageId,
+      weight_g: maxWeight,
+      price: basePrice,
+      stock: Number(master.inventory || 0),
+      description: document.getElementById('rsh-description')?.value || master.shopee_description || master.product_name || parentSku,
+      attribute_list: rshReadSpecAttributes(categoryId),
+      targets,
+      lifecycle_state: lifecycle,
+      is_pre_order: lifecycle === 'pre_order',
+      variation: {
+        tier_variation: rshBuildTierVariation(products),
+        model,
+      },
+      source_product_id: master.id,
+      idempotency_token: _rsh.publishRequestId,
+    };
+  }
+
+  async function rshRegisterGroupViaCbsc(session, activeRegions, dtsValues, lifecycle, errorEl) {
+    const products = rshSortedProducts(_rsh.products || []);
+    if (products.length < 2) throw new Error('옵션 묶음 상품이 아닙니다.');
+
+    let payload;
+    let json;
+    try {
+      payload = rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle);
+      console.log('[rsh] group register_cbsc payload:', JSON.stringify(payload).slice(0, 2000));
+      const resp = await fetch(`${SHOPEE_BRIDGE}/register_cbsc`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          apikey: SUPABASE_ANON,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+    } catch (networkErr) {
+      _rsh.publishInFlight = false;
+      const msg = networkErr.message || String(networkErr);
+      if (errorEl) { errorEl.textContent = `네트워크 오류: ${msg}`; errorEl.style.display = 'block'; }
+      activeRegions.forEach((r) => {
+        const el = document.getElementById(`rsh-status-${r}`);
+        if (el) { el.textContent = '실패'; el.style.color = 'var(--red)'; }
+        const msgEl = document.getElementById(`rsh-msg-${r}`);
+        if (msgEl) msgEl.textContent = msg;
+      });
+      rshShowStage2Buttons(true);
+      return;
+    }
+
+    _rsh.publishInFlight = false;
+
+    if (!json.ok) {
+      const details = Array.isArray(json.missing_attributes)
+        ? json.missing_attributes.map((a) => a.attribute_name || a.attribute_id).filter(Boolean).join(', ')
+        : '';
+      const errMsg = [json.stage, json.error, json.message, details].filter(Boolean).join(' - ') || 'Shopee 등록 실패';
+      if (errorEl) { errorEl.textContent = errMsg; errorEl.style.display = 'block'; }
+      activeRegions.forEach((r) => {
+        const el = document.getElementById(`rsh-status-${r}`);
+        if (el) { el.textContent = '실패'; el.style.color = 'var(--red)'; }
+        const msgEl = document.getElementById(`rsh-msg-${r}`);
+        if (msgEl) msgEl.textContent = errMsg;
+      });
+      rshShowStage2Buttons(true);
+      return;
+    }
+
+    const previousCurrent = state.currentProduct;
+    state.currentProduct = products[0];
+    let mappingRows = [];
+    try {
+      mappingRows = await persistMappings(json, payload);
+      if (json.global_item_id) {
+        await db.from('products')
+          .update({ shopee_item_id: json.global_item_id, shopee_publish_state: 'published' })
+          .in('id', products.map((p) => p.id));
+      }
+    } catch (persistErr) {
+      console.warn('[rsh] group mapping persistence failed:', persistErr);
+      if (errorEl) {
+        errorEl.textContent = `등록은 완료됐지만 매핑 저장 확인이 필요합니다: ${persistErr.message || persistErr}`;
+        errorEl.style.display = 'block';
+      }
+    } finally {
+      state.currentProduct = previousCurrent;
+    }
+
+    const rowsByRegion = new Map(mappingRows.map((row) => [String(row.region || '').toUpperCase(), row]));
+    let anyFailed = false;
+    activeRegions.forEach((r) => {
+      const row = rowsByRegion.get(r);
+      const ok = !!row?.ok;
+      const statusEl = document.getElementById(`rsh-status-${r}`);
+      const itemEl = document.getElementById(`rsh-item-${r}`);
+      const msgEl = document.getElementById(`rsh-msg-${r}`);
+      if (statusEl) {
+        statusEl.textContent = ok ? '성공' : '실패';
+        statusEl.style.color = ok ? 'var(--green)' : 'var(--red)';
+      }
+      if (itemEl) itemEl.textContent = row?.item ? String(row.item) : '—';
+      if (msgEl) {
+        msgEl.textContent = row?.message || (ok ? 'mapped' : '결과 없음');
+        msgEl.style.color = ok ? 'var(--muted)' : 'var(--red)';
+      }
+      if (!ok) anyFailed = true;
+    });
+
+    rshShowStage2Buttons(anyFailed);
+    try {
+      await loadData();
+    } catch (e) {
+      console.warn('[rsh] loadData after group registration failed:', e);
+    }
   }
 
   // Stage 1 → Stage 2: execute registration.
@@ -7553,9 +7885,12 @@ LEGACY END -->
         shopee_description: document.getElementById('rsh-description')?.value || _rsh.master.shopee_description,
         shopee_extra_attributes: rshReadSpecAttributes(liveCatId) || _rsh.master.shopee_extra_attributes,
         shopee_days_to_ship: updatedDts,
-        cost_krw: costOverride,
       };
-      const { error: stage1PersistErr } = await db.from('products').update(stage1Updates).eq('id', _rsh.productId);
+      if (_rsh.mode !== 'group') stage1Updates.cost_krw = costOverride;
+      const productIds = rshProductIds();
+      let stage1Query = db.from('products').update(stage1Updates);
+      stage1Query = productIds.length > 1 ? stage1Query.in('id', productIds) : stage1Query.eq('id', _rsh.productId);
+      const { error: stage1PersistErr } = await stage1Query;
       if (stage1PersistErr) {
         _rsh.publishInFlight = false;
         if (errorEl) { errorEl.textContent = `데이터 저장 실패: ${stage1PersistErr.message} — 등록이 취소되었습니다.`; errorEl.style.display = 'block'; }
@@ -7563,6 +7898,11 @@ LEGACY END -->
         rshShowStage2Buttons(false);
         return;
       }
+    }
+
+    if (_rsh.mode === 'group') {
+      await rshRegisterGroupViaCbsc(session, activeRegions, dtsValues, lifecycle, errorEl);
+      return;
     }
 
     // Call platform-publish dispatcher with activeRegions (full list or failed-only on retry)

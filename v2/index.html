@@ -1794,13 +1794,13 @@
     <!-- ═══════════════════════════════════════════════
          VIEW: 상품 조회 + 매입가 동기화 (plan §5-7, Phase C)
          cost inline edit → region preview → dry-run modal.
-         Live push DISABLED: Shopee update_price returns system busy for all 6 shops since 2026-05-13.
+         Live push uses the verified V1 shop-level update_price path.
          ═══════════════════════════════════════════════ -->
     <div id="view-price-sync" class="view">
 
-      <!-- P0-3: price API broken banner — always visible -->
+      <!-- Price sync banner — always visible -->
       <div class="cat-banner" id="cat-api-banner">
-        ⚠ Shopee 가격 동기화 API 가 system busy 응답 중. 가격 push 는 dry-run 까지만 가능. Shopee 응답 후 활성화 예정. (티켓 제출됨)
+        V1 검증 가격식 기준: Shopee는 shop-level update_price, Joom은 lookup-sku + update-price 흐름으로 동기화합니다. 실호출 전 dry-run 확인 권장.
       </div>
 
       <!-- toolbar -->
@@ -1818,9 +1818,10 @@
         <button id="cat-refresh" type="button">새로고침</button>
         <span id="cat-count" style="font-size:12px;font-weight:600;color:var(--accent);white-space:nowrap;"></span>
         <button id="cat-dry-btn" type="button" class="btn-dry">📊 dry-run 선택 행</button>
-        <!-- 실호출 버튼: DISABLED — price API system busy (2026-05-13 ticket filed) -->
-        <button id="cat-live-btn" type="button" class="btn-live" disabled
-          title="Shopee price API 응답 대기 중.">🔥 실호출 선택 행</button>
+        <button id="cat-live-btn" type="button" class="btn-live"
+          title="선택 행을 Shopee shop-level update_price로 실동기화">🔥 Shopee 실호출 선택 행</button>
+        <button id="cat-joom-btn" type="button" class="btn-live"
+          title="선택 행을 Joom lookup-sku + update-price로 실동기화">🌐 Joom 가격 동기화</button>
         <span id="cat-error" class="status err" style="display:none;font-size:12px;"></span>
       </div>
 
@@ -2698,6 +2699,15 @@ LEGACY END -->
 
 <script type="module">
   import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.43.5';
+  import {
+    PRICE_SYNC_CURRENCY,
+    PRICE_SYNC_REGIONS,
+    calculateJoomPrice,
+    calculateShopeePrice,
+    formatPriceForRegion,
+    normalizeCountrySettings,
+    normalizeShopeeOriginalPrice,
+  } from './price-engine.js';
 
   const SUPABASE_URL = 'https://mgqlwgnmwegzsjelbrih.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ncWx3Z25td2VnenNqZWxicmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDkzNDMsImV4cCI6MjA5NDg4NTM0M30.mJtqXO7WJMBUYBYVOS1FrD5qmFX6yZxGwfiGw3HUyJE';
@@ -5970,7 +5980,7 @@ LEGACY END -->
         const region = String(l.region || '').toUpperCase();
         if (!DC_ACTIVE_REGIONS.includes(region)) return false;
         const oldPrice = Number(l.last_synced_price);
-        const newPrice = catComputeNewPrice(cost, region);
+        const newPrice = catComputeNewPrice(cost, region, p.weight_g);
         if (!Number.isFinite(oldPrice) || oldPrice <= 0 || !Number.isFinite(newPrice) || newPrice <= 0) return false;
         return Math.abs(newPrice - oldPrice) / oldPrice * 100 >= DC_PRICE_DELTA_RISK_PCT;
       });
@@ -5980,7 +5990,7 @@ LEGACY END -->
     return {
       count: riskIds.size,
       note: '매입가 누락/0원, READY_STOCK 원가 14일 초과, 현재가 대비 50% 이상 차이를 합산',
-      source: 'products + product_shopee_listings · margin threshold rules는 데이터 소스 미연결',
+      source: 'products + product_shopee_listings + country_settings · V1 price engine',
       partial: true,
       sourceMissing: true,
       dangerAt: 10,
@@ -8391,24 +8401,11 @@ LEGACY END -->
 
   // ── Constants ──────────────────────────────────────────────────
 
-  // OPERATING regions for Phase C (BR included as data column — not for live push)
-  const CAT_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+  // OPERATING regions for V1 pricing sync parity.
+  const CAT_REGIONS = PRICE_SYNC_REGIONS.slice();
 
   // Currency symbols per region (display only)
-  const CAT_CURRENCY = { SG: 'SGD', TW: 'TWD', TH: 'THB', MY: 'MYR', PH: 'PHP', BR: 'BRL' };
-
-  // Placeholder region multipliers (cost_krw → region price).
-  // TODO plan §5-7: read margin formula from country_settings table and replace these constants.
-  // country_settings.margin_formula column is the authoritative source.
-  // These fallbacks are used ONLY when country_settings row is missing or formula is null.
-  const CAT_REGION_MULTIPLIER = {
-    SG: 0.014,  // TODO plan §5-7: read margin formula from country_settings
-    TW: 0.30,   // TODO plan §5-7: read margin formula from country_settings
-    TH: 0.40,   // TODO plan §5-7: read margin formula from country_settings
-    MY: 0.04,   // TODO plan §5-7: read margin formula from country_settings
-    PH: 0.60,   // TODO plan §5-7: read margin formula from country_settings
-    BR: 0.07,   // TODO plan §5-7: read margin formula from country_settings
-  };
+  const CAT_CURRENCY = PRICE_SYNC_CURRENCY;
 
   // In-memory cache of pending cost edits: { [productId]: newCostKrw }
   const pendingCostEdits = {};
@@ -8423,23 +8420,24 @@ LEGACY END -->
   // Region column visibility (all on by default)
   let _catRegionVisible = new Set(CAT_REGIONS);
 
-  // country_settings margin formulas fetched once: { [region]: formulaString | null }
-  let _catMarginFormulas = {};
+  // country_settings fetched once and normalized by region for the V1 engine.
+  let _catCountrySettingsByRegion = new Map();
 
   // ── Price calculation ───────────────────────────────────────────
 
-  /**
-   * Compute new region price from cost_krw.
-   * Tries country_settings.margin_formula first; falls back to CAT_REGION_MULTIPLIER constant.
-   * TODO plan §5-7: wire country_settings.margin_formula evaluation (currently only multiplier used).
-   */
-  function catComputeNewPrice(costKrw, region) {
-    const cost = Number(costKrw);
-    if (!Number.isFinite(cost) || cost <= 0) return null;
-    // TODO plan §5-7: if _catMarginFormulas[region] is set, evaluate the formula.
-    // Currently falling back to constant multiplier for all regions.
-    const mult = CAT_REGION_MULTIPLIER[region] || 0;
-    return Math.round(cost * mult * 100) / 100;
+  function catCountrySettings(region) {
+    return _catCountrySettingsByRegion.get(String(region || '').toUpperCase()) || null;
+  }
+
+  /** Compute a Shopee update_price original_price from the verified V1 formula. */
+  function catComputeNewPrice(costKrw, region, weightG) {
+    const calc = calculateShopeePrice({
+      costKrw,
+      weightG,
+      region,
+      countrySettings: catCountrySettings(region),
+    });
+    return calc.ok ? calc.originalPrice : null;
   }
 
   /** Effective cost for a product row: pendingCostEdits override or DB value */
@@ -8482,7 +8480,7 @@ LEGACY END -->
     let offset = 0;
     while (true) {
       const url = SUPABASE_URL + '/rest/v1/products'
-        + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,cost_updated_at,created_at'
+        + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,cost_updated_at,created_at,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
         + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
       const res = await fetch(url, {
         headers: Object.assign({}, AUTH_HEADERS, {
@@ -8498,7 +8496,7 @@ LEGACY END -->
           // Fallback query without cost_updated_at
           const res2 = await fetch(
             SUPABASE_URL + '/rest/v1/products'
-              + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,created_at'
+              + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,created_at,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
               + '&order=lifecycle_state.asc,created_at.asc',
             {
               headers: Object.assign({}, AUTH_HEADERS, {
@@ -8529,7 +8527,7 @@ LEGACY END -->
       let lOffset = 0;
       while (true) {
         const lUrl = SUPABASE_URL + '/rest/v1/product_shopee_listings'
-          + '?select=product_id,region,shop_id,shop_item_id,last_synced_price,last_synced_at'
+          + '?select=product_id,region,shop_id,shop_item_id,shop_model_id,status,published_at,last_synced_price,last_synced_at'
           + '&product_id=in.(' + ids + ')';
         const lRes = await fetch(lUrl, {
           headers: Object.assign({}, AUTH_HEADERS, {
@@ -8550,8 +8548,7 @@ LEGACY END -->
       }
     }
 
-    // Fetch country_settings once for margin formulas
-    // TODO plan §5-7: use margin_formula field when it exists in country_settings
+    // Fetch country_settings once for the V1 pricing engine.
     let countrySettings = [];
     try {
       const csRes = await fetch(
@@ -8564,13 +8561,11 @@ LEGACY END -->
       }
     } catch (e) { /* country_settings optional */ }
 
-    // Build margin formula map
-    _catMarginFormulas = {};
+    // Build country settings map.
+    _catCountrySettingsByRegion = new Map();
     countrySettings.forEach(function(cs) {
       const code = String(cs.region || cs.country_code || '').toUpperCase();
-      if (code && cs.margin_formula) {
-        _catMarginFormulas[code] = cs.margin_formula;
-      }
+      if (code) _catCountrySettingsByRegion.set(code, normalizeCountrySettings(cs, code));
     });
 
     _catCache = { products: products, listings: listings, countrySettings: countrySettings, ts: now };
@@ -8628,7 +8623,7 @@ LEGACY END -->
    * effectiveCost: number
    * Returns HTML string of <td> pairs (current + new).
    */
-  function catBuildRegionCells(listingByRegion, effectiveCost) {
+  function catBuildRegionCells(listingByRegion, effectiveCost, weightG) {
     let html = '';
     let maxDeltaPct = 0;
 
@@ -8637,12 +8632,12 @@ LEGACY END -->
       const listing = listingByRegion.get(r);
       const currentPrice = listing && listing.last_synced_price != null
         ? Number(listing.last_synced_price) : null;
-      const newPrice = catComputeNewPrice(effectiveCost, r);
+      const newPrice = catComputeNewPrice(effectiveCost, r, weightG);
 
       // Current price cell
       if (currentPrice != null) {
         html += '<td data-cat-region="' + r + '" style="font-size:12px;' + dimStyle + '">'
-          + currentPrice.toLocaleString() + ' ' + CAT_CURRENCY[r] + '</td>';
+          + formatPriceForRegion(r, currentPrice) + ' ' + CAT_CURRENCY[r] + '</td>';
       } else {
         html += '<td data-cat-region="' + r + '" style="color:var(--muted);' + dimStyle + '">—</td>';
       }
@@ -8663,7 +8658,7 @@ LEGACY END -->
           }
         }
         html += '<td data-cat-region-new="' + r + '" class="cat-new-price ' + deltaClass + '" style="' + dimStyle + '">'
-          + newPrice.toLocaleString() + ' ' + CAT_CURRENCY[r]
+          + formatPriceForRegion(r, newPrice) + ' ' + CAT_CURRENCY[r]
           + (deltaLabel ? '<br><span class="cat-delta-label">' + esc(deltaLabel) + '</span>' : '')
           + '</td>';
       } else {
@@ -8690,7 +8685,8 @@ LEGACY END -->
     const listingByRegion = new Map();
     listings.forEach(function(l) { listingByRegion.set(String(l.region), l); });
 
-    const regionResult = catBuildRegionCells(listingByRegion, newCost);
+    const product = _catCache.products.find(function(p) { return String(p.id) === pid; });
+    const weightG = product ? product.weight_g : 0;
 
     // Update each region td in this row
     CAT_REGIONS.forEach(function(r) {
@@ -8702,10 +8698,10 @@ LEGACY END -->
       const listing = listingByRegion.get(r);
       const currentPrice = listing && listing.last_synced_price != null
         ? Number(listing.last_synced_price) : null;
-      const np = catComputeNewPrice(newCost, r);
+      const np = catComputeNewPrice(newCost, r, weightG);
 
       if (currentPrice != null) {
-        tdCurrent.textContent = currentPrice.toLocaleString() + ' ' + CAT_CURRENCY[r];
+        tdCurrent.textContent = formatPriceForRegion(r, currentPrice) + ' ' + CAT_CURRENCY[r];
       } else {
         tdCurrent.innerHTML = '<span style="color:var(--muted)">—</span>';
       }
@@ -8724,7 +8720,7 @@ LEGACY END -->
           }
         }
         tdNew.className = 'cat-new-price ' + deltaClass;
-        tdNew.innerHTML = np.toLocaleString() + ' ' + CAT_CURRENCY[r]
+        tdNew.innerHTML = formatPriceForRegion(r, np) + ' ' + CAT_CURRENCY[r]
           + (deltaLabel ? '<br><span class="cat-delta-label">' + esc(deltaLabel) + '</span>' : '');
       } else {
         tdNew.className = 'cat-new-price cat-price-same';
@@ -8733,7 +8729,7 @@ LEGACY END -->
     });
 
     // Update max delta cell
-    const maxDelta = computeMaxDelta(newCost, listingByRegion);
+    const maxDelta = computeMaxDelta(newCost, listingByRegion, weightG);
     const tdDelta = tr.querySelector('[data-cat-delta]');
     if (tdDelta) {
       tdDelta.innerHTML = maxDelta > 0.5
@@ -8742,7 +8738,6 @@ LEGACY END -->
     }
 
     // Warn row if cost changed by > 30% vs original DB cost
-    const product = _catCache.products.find(function(p) { return String(p.id) === pid; });
     if (product) {
       const origCost = Number(product.cost_krw || 0);
       const isLargeChange = origCost > 0 && Math.abs(newCost - origCost) / origCost > 0.30;
@@ -8765,12 +8760,12 @@ LEGACY END -->
     }
   }
 
-  function computeMaxDelta(costKrw, listingByRegion) {
+  function computeMaxDelta(costKrw, listingByRegion, weightG) {
     let max = 0;
     CAT_REGIONS.forEach(function(r) {
       const listing = listingByRegion.get(r);
       const currentPrice = listing && listing.last_synced_price != null ? Number(listing.last_synced_price) : null;
-      const np = catComputeNewPrice(costKrw, r);
+      const np = catComputeNewPrice(costKrw, r, weightG);
       if (currentPrice != null && currentPrice > 0 && np != null) {
         const pct = Math.abs((np - currentPrice) / currentPrice * 100);
         if (pct > max) max = pct;
@@ -8895,7 +8890,7 @@ LEGACY END -->
       const isLargeChange = pid in pendingCostEdits && origCost > 0
         && Math.abs(pendingCostEdits[pid] - origCost) / origCost > 0.30;
 
-      const regionResult = catBuildRegionCells(byRegion, effectiveCost);
+      const regionResult = catBuildRegionCells(byRegion, effectiveCost, p.weight_g);
       const maxDelta = regionResult.maxDeltaPct;
       const isStale = catIsStale(p);
 
@@ -9008,17 +9003,10 @@ LEGACY END -->
   // ── Dry-run payload builder ─────────────────────────────────────
 
   /**
-   * Build dry-run payloads per plan §5-7.
-   * For each selected product with a pendingCostEdit:
-   *   - builds one payload per region (using the region's listing.shop_id if available)
-   *   - payload_hash: "dry:<sha256-simpleHash>"
-   *   - rollback_policy: "no_auto_rollback_resume_only"  (P0-3)
-   *
-   * NOTE: v2.global_product.update_price body schema is NOT in docs_ai cache.
-   * TODO LIVE CALL: verify exact body schema when update_price endpoint is documented.
-   * endpoint: POST /api/v2/global_product/update_price (via shopee-bridge action update_global_price)
+   * Build V1-parity shop-level price payloads.
+   * One payload = one region item update via shopee-bridge /update_price.
    */
-  function catBuildDryRunPayloads() {
+  function catBuildPriceSyncPayloads() {
     const runId = catUlid();
     const payloads = [];
 
@@ -9038,7 +9026,6 @@ LEGACY END -->
       const newCost = pid in pendingCostEdits ? pendingCostEdits[pid] : Number(product.cost_krw || 0);
       if (!newCost || newCost <= 0) return;
 
-      const globalItemId = product.shopee_item_id ? Number(product.shopee_item_id) : null;
       const byRegion = listingIdx.get(pid) || new Map();
 
       // P0 safety check: large change AND no confirm checkbox ticked
@@ -9053,59 +9040,55 @@ LEGACY END -->
         }
       }
 
-      // Build one envelope per region
-      const globalPriceList = [];
+      // Build one shop-level update_price envelope per mapped region.
       CAT_REGIONS.forEach(function(r) {
         const listing = byRegion.get(r);
-        const newPrice = catComputeNewPrice(newCost, r);
-        if (newPrice == null) return;
-        // shop_id from listing (may be null if listing missing)
-        const shopId = listing ? (listing.shop_id || null) : null;
-        globalPriceList.push({
-          shop_id: shopId,  // bigint — from product_shopee_listings.shop_id
-          original_price: newPrice,
+        if (!listing || !listing.shop_item_id) return;
+        const itemId = Number(listing.shop_item_id);
+        if (!Number.isFinite(itemId) || itemId <= 0) return;
+        const newPrice = catComputeNewPrice(newCost, r, product.weight_g);
+        const priceInfo = normalizeShopeeOriginalPrice(r, newPrice);
+        if (!priceInfo.ok) return;
+
+        const modelId = listing.shop_model_id ? Number(listing.shop_model_id) : null;
+        const priceEntry = modelId
+          ? { model_id: modelId, original_price: priceInfo.value }
+          : { original_price: priceInfo.value };
+        const payload = {
+          region: r,
+          item_id: itemId,
+          price_list: [priceEntry],
+        };
+        const hashInput = JSON.stringify({
+          action: 'update_price',
+          product_id: pid,
+          region: r,
+          payload: payload,
+          run_id: runId,
         });
-      });
+        const payloadHash = 'dry:' + simpleHash(hashInput);
 
-      if (!globalPriceList.length) return;
-
-      const hashInput = JSON.stringify({
-        action: 'update_global_price',
-        global_item_id: globalItemId,
-        global_price_list: globalPriceList,
-        run_id: runId,
-      });
-      const payloadHash = 'dry:' + simpleHash(hashInput); // P0-1: dry: prefix keeps hash space separate
-
-      // TODO LIVE CALL: v2.global_product.update_price body schema is NOT in docs_ai cache.
-      // endpoint: POST /api/v2/global_product/update_price (shopee-bridge action: update_global_price)
-      // Body shape below is inferred from plan §5-7 and KRSC §0-4 API mapping.
-      // Mark: docs_ai mismatch — update_price.json MISSING from docs_ai cache as of 2026-05-14.
-      const payload = {
-        global_item_id: globalItemId,              // bigint — products.shopee_item_id
-        global_price_list: globalPriceList,        // per-region price list
-        actor: 'v2-catalog',
-        dry_run: true,
-        run_id: runId,
-        payload_hash: payloadHash,                 // P0-1: 'dry:' prefix
-        rollback_policy: 'no_auto_rollback_resume_only',  // P0-3
-        // TODO LIVE CALL: update_price body schema unverified — docs_ai/apis/global_product/
-        //   v2.global_product.update_price.json MISSING. Confirm exact field names before live call.
-      };
-
-      payloads.push({
-        productId: pid,
-        sku: product.sku || pid,
-        globalItemId: globalItemId,
-        newCost: newCost,
-        payload: payload,
-        payloadHash: payloadHash,
-        // Bridge URL (update_global_price action — existing bridge action from plan §4-0 table)
-        bridgeUrl: SHOPEE_BRIDGE + '/update_global_price',
+        payloads.push({
+          productId: pid,
+          sku: product.sku || pid,
+          region: r,
+          itemId: itemId,
+          modelId: modelId,
+          listing: listing,
+          newCost: newCost,
+          price: priceInfo.value,
+          payload: payload,
+          payloadHash: payloadHash,
+          bridgeUrl: SHOPEE_BRIDGE + '/update_price',
+        });
       });
     });
 
     return { runId: runId, payloads: payloads };
+  }
+
+  function catBuildDryRunPayloads() {
+    return catBuildPriceSyncPayloads();
   }
 
   // ── Dry-run modal ───────────────────────────────────────────────
@@ -9122,33 +9105,29 @@ LEGACY END -->
     }
 
     const PRICE_API_BROKEN_NOTE = '<div class="cat-banner" style="margin-bottom:8px;">'
-      + '⚠ 가격 push 는 dry-run 만 가능 (system busy 응답 중). 아래 payload는 검증용입니다.'
+      + 'V1 검증식으로 계산한 Shopee shop-level update_price payload입니다. 실호출 전 이 내용을 확인하세요.'
       + '</div>';
 
     const ROLLBACK_NOTE = '<div class="notice rsw-rollback-note" style="margin-bottom:12px;">'
       + '⚠ <strong>부분 실패 시 자동 reverse 없음 (P0-3)</strong> — 실패 row만 retry 가능.'
       + '</div>';
 
-    // TODO LIVE CALL note
-    const DOCS_MISMATCH_NOTE = '<div class="notice" style="margin-bottom:12px;">'
-      + '⚠ <strong>docs_ai mismatch</strong>: v2.global_product.update_price.json 이 docs_ai 캐시에 없음. '
-      + 'body 스키마는 plan §5-7 기반 추론값 — 실호출 전 Shopee 문서 확인 필요.'
-      + '</div>';
-
     let callsHtml = payloads.map(function(p, i) {
       return '<div class="call-block">'
-        + '<h4>' + (i + 1) + '. ' + esc(p.sku) + ' → update_global_price</h4>'
+        + '<h4>' + (i + 1) + '. ' + esc(p.sku) + ' / ' + esc(p.region) + ' → update_price</h4>'
         + '<div class="call-note">URL: <code>' + esc(p.bridgeUrl) + '</code></div>'
         + '<div class="call-note">payload_hash: <code>' + esc(p.payloadHash) + '</code>'
         + ' <span class="muted">(dry: prefix — ok와 hash 공간 분리, P0-1)</span></div>'
         + '<div class="call-note">new cost: <strong>' + Number(p.newCost).toLocaleString() + ' ₩</strong>'
-        + (p.globalItemId ? ' · global_item_id: ' + p.globalItemId : ' · <span style="color:var(--red)">global_item_id 없음</span>')
+        + ' · item_id: ' + esc(p.itemId)
+        + (p.modelId ? ' · model_id: ' + esc(p.modelId) : ' · item-level')
+        + ' · price: <strong>' + esc(formatPriceForRegion(p.region, p.price)) + ' ' + esc(CAT_CURRENCY[p.region] || '') + '</strong>'
         + '</div>'
         + '<pre class="payload-pre">' + esc(JSON.stringify(p.payload, null, 2)) + '</pre>'
         + '</div>';
     }).join('');
 
-    modalBody.innerHTML = PRICE_API_BROKEN_NOTE + DOCS_MISMATCH_NOTE + ROLLBACK_NOTE + callsHtml
+    modalBody.innerHTML = PRICE_API_BROKEN_NOTE + ROLLBACK_NOTE + callsHtml
       + '<div class="muted" style="font-size:11px;margin-top:8px;">run_id: ' + esc(runId) + ' · ' + payloads.length + '건</div>';
 
     // Store payloads for confirm handler
@@ -9169,13 +9148,40 @@ LEGACY END -->
 
   // ── Dry-run execution ───────────────────────────────────────────
 
+  async function catPersistProductCost(productId, newCost, nowIso) {
+    const costUpdateFields = { cost_krw: newCost };
+    try {
+      const { error: costErr } = await db.from('products')
+        .update(Object.assign({}, costUpdateFields, { cost_updated_at: nowIso }))
+        .eq('id', productId);
+      if (costErr && /cost_updated_at|column|schema cache/i.test(costErr.message || '')) {
+        const { error: fallbackErr } = await db.from('products').update(costUpdateFields).eq('id', productId);
+        if (fallbackErr) return { ok: false, error: fallbackErr.message || String(fallbackErr) };
+      } else if (costErr) {
+        return { ok: false, error: costErr.message || String(costErr) };
+      }
+    } catch (e) {
+      return { ok: false, error: e.message || String(e) };
+    }
+
+    if (_catCache) {
+      const product = _catCache.products.find(function(prod) { return String(prod.id) === String(productId); });
+      if (product) {
+        product.cost_krw = newCost;
+        product.cost_updated_at = nowIso;
+      }
+    }
+    delete pendingCostEdits[String(productId)];
+    return { ok: true };
+  }
+
   /**
    * Execute dry-run:
    * 1. Insert dry_run row into shopee_mutation_log via Supabase (if table exists)
    * 2. Write updated cost_krw + cost_updated_at to products table
    * 3. console.log the full payload
    *
-   * Note: bridge is NOT called (system busy + dry_run policy).
+   * Note: bridge is NOT called in dry-run mode.
    * shopee_mutation_log INSERT: If table doesn't exist yet (plan §3-2 migration pending),
    * catches the error and continues — the local cost update still happens.
    */
@@ -9189,14 +9195,15 @@ LEGACY END -->
 
     for (const p of payloads) {
       // console.log the full payload (always)
-      console.log('[CAT dry-run] update_global_price payload:', JSON.stringify(p.payload, null, 2));
+      console.log('[CAT dry-run] update_price payload:', JSON.stringify(p.payload, null, 2));
 
       // Attempt to insert into shopee_mutation_log
       try {
         const logRow = {
           actor: 'v2-catalog',
-          action: 'update_global_price',
-          target_global_item_id: p.globalItemId || null,
+          action: 'update_price',
+          region: p.region,
+          target_shop_item_id: p.itemId || null,
           payload_hash: p.payloadHash,
           request_payload: p.payload,
           status: 'dry_run',
@@ -9211,36 +9218,12 @@ LEGACY END -->
         console.warn('[CAT dry-run] mutation_log unavailable:', e.message || e);
       }
 
-      // Write updated cost_krw and cost_updated_at to products table
-      // This is acknowledged by operator: local cost is source of truth (plan §5-7)
-      const costUpdateFields = { cost_krw: p.newCost };
-      // cost_updated_at may not exist yet — use fallback
-      try {
-        const { error: costErr } = await db.from('products')
-          .update(Object.assign({}, costUpdateFields, { cost_updated_at: now }))
-          .eq('id', p.productId);
-        if (costErr && /cost_updated_at|column|schema cache/i.test(costErr.message || '')) {
-          // Retry without cost_updated_at if column missing
-          await db.from('products').update(costUpdateFields).eq('id', p.productId);
-        } else if (costErr) {
-          errorMsgs.push(p.sku + ': ' + costErr.message);
-          continue;
-        }
-      } catch (e) {
-        errorMsgs.push(p.sku + ': ' + (e.message || e));
+      // Write updated cost_krw and cost_updated_at to products table.
+      const costPersist = await catPersistProductCost(p.productId, p.newCost, now);
+      if (!costPersist.ok) {
+        errorMsgs.push(p.sku + ': ' + costPersist.error);
         continue;
       }
-
-      // Update local cache so row doesn't look stale after confirm
-      if (_catCache) {
-        const product = _catCache.products.find(function(prod) { return String(prod.id) === String(p.productId); });
-        if (product) {
-          product.cost_krw = p.newCost;
-          product.cost_updated_at = now;
-        }
-      }
-      // Clear pending edit (now committed to DB)
-      delete pendingCostEdits[p.productId];
       successCount++;
     }
 
@@ -9252,6 +9235,328 @@ LEGACY END -->
 
     // Re-render to reflect committed costs and clear pending state
     applyAndRenderCatalog();
+  }
+
+  function catSelectedProducts() {
+    if (!_catCache) return [];
+    return Array.from(catSelectedIds)
+      .map(function(pid) { return (_catCache.products || []).find(function(p) { return String(p.id) === String(pid); }); })
+      .filter(Boolean);
+  }
+
+  function catBridgePriceOk(json) {
+    if (!json || json.ok !== true || json.result?.error) return false;
+    const response = json.result?.response || json.response || {};
+    const failureList = response.failure_list || response.failed_list || json.result?.failure_list || [];
+    return !Array.isArray(failureList) || failureList.length === 0;
+  }
+
+  function catBridgePriceMessage(json, fallback) {
+    const response = json?.result?.response || json?.response || {};
+    const failureList = response.failure_list || response.failed_list || json?.result?.failure_list || [];
+    if (Array.isArray(failureList) && failureList.length) return JSON.stringify(failureList.slice(0, 3));
+    return bridgeResultMessage(json || {}) || fallback || 'unknown';
+  }
+
+  async function catFetchShopeeModelIndex(region, itemId) {
+    const qs = new URLSearchParams({ region: region, item_id: String(itemId) });
+    const response = await fetch(SHOPEE_BRIDGE + '/shop_model_list?' + qs.toString(), { headers: AUTH_HEADERS });
+    const json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
+    if (!response.ok || !json.ok || json.result?.error) {
+      return { ok: false, error: catBridgePriceMessage(json, 'HTTP ' + response.status) };
+    }
+    const modelList = json.result?.response?.model || json.result?.response?.model_list || json.response?.model || [];
+    const modelIds = new Set(
+      modelList.map(function(m) { return Number(m && m.model_id); })
+        .filter(function(v) { return Number.isFinite(v) && v > 0; })
+    );
+    return { ok: true, hasModel: modelIds.size > 0, modelIds: modelIds };
+  }
+
+  async function catPreflightShopeePayloads(payloads) {
+    const cache = new Map();
+    const valid = [];
+    const blocked = [];
+
+    for (const p of payloads) {
+      const key = p.region + ':' + p.itemId;
+      if (!cache.has(key)) {
+        cache.set(key, await catFetchShopeeModelIndex(p.region, p.itemId));
+      }
+      const info = cache.get(key);
+      if (!info || !info.ok) {
+        blocked.push(Object.assign({}, p, { reason: 'preflight failed: ' + ((info && info.error) || 'unknown') }));
+        continue;
+      }
+      if (info.hasModel && !p.modelId) {
+        blocked.push(Object.assign({}, p, { reason: 'item has models but shop_model_id mapping is missing' }));
+        continue;
+      }
+      if (!info.hasModel && p.modelId) {
+        blocked.push(Object.assign({}, p, { reason: 'item has no models but mapping has shop_model_id' }));
+        continue;
+      }
+      if (p.modelId && !info.modelIds.has(Number(p.modelId))) {
+        blocked.push(Object.assign({}, p, { reason: 'model_id ' + p.modelId + ' not found for item ' + p.itemId }));
+        continue;
+      }
+      valid.push(p);
+    }
+
+    return { valid: valid, blocked: blocked };
+  }
+
+  function catApplyShopeeListingCache(payload, nowIso) {
+    if (!_catCache) return;
+    let row = (_catCache.listings || []).find(function(l) {
+      return String(l.product_id) === String(payload.productId) && String(l.region) === String(payload.region);
+    });
+    if (!row) {
+      row = { product_id: payload.productId, region: payload.region };
+      _catCache.listings.push(row);
+    }
+    Object.assign(row, {
+      shop_item_id: payload.itemId,
+      shop_model_id: payload.modelId || null,
+      last_synced_price: payload.price,
+      last_synced_at: nowIso,
+      status: row.status || 'mapped',
+    });
+  }
+
+  async function catInsertShopeePriceLog(payload, status, responseJson, errorMsg) {
+    try {
+      const liveHash = 'live:' + String(payload.payloadHash || '').replace(/^dry:/, '');
+      const { error } = await db.from('shopee_mutation_log').insert({
+        actor: 'v2-catalog',
+        action: 'update_price',
+        region: payload.region,
+        target_shop_item_id: payload.itemId || null,
+        payload_hash: liveHash,
+        request_payload: payload.payload,
+        response: responseJson || null,
+        status: status,
+        error_msg: errorMsg || null,
+        rollback_policy: 'no_auto_rollback_resume_only',
+      });
+      if (error && !/duplicate key/i.test(error.message || '')) {
+        console.warn('[CAT live] mutation_log insert error:', error.message);
+      }
+    } catch (e) {
+      console.warn('[CAT live] mutation_log unavailable:', e.message || e);
+    }
+  }
+
+  async function catExecuteShopeeLive() {
+    const { payloads } = catBuildPriceSyncPayloads();
+    if (!payloads.length) {
+      showToast('Shopee 실호출 대상이 없습니다. 매핑된 행을 선택하고 cost를 확인하세요.', 'err');
+      return;
+    }
+    if (!confirm('Shopee 가격을 실동기화합니다.\n\n대상 payload: ' + payloads.length + '건\n부분 실패 시 자동 rollback은 없습니다. 진행할까요?')) return;
+
+    const btn = document.getElementById('cat-live-btn');
+    const oldText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Shopee 동기화 중...'; }
+    showToast('Shopee preflight 확인 중...', '');
+
+    const now = new Date().toISOString();
+    let okCount = 0;
+    const errors = [];
+    const costPersisted = new Set();
+
+    try {
+      const preflight = await catPreflightShopeePayloads(payloads);
+      for (const blocked of preflight.blocked) {
+        errors.push(blocked.sku + ' ' + blocked.region + ': ' + blocked.reason);
+      }
+
+      for (const p of preflight.valid) {
+        let json = null;
+        let ok = false;
+        let errorMsg = null;
+        try {
+          const response = await fetch(p.bridgeUrl, {
+            method: 'POST',
+            headers: AUTH_HEADERS,
+            body: JSON.stringify(p.payload),
+          });
+          json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
+          ok = response.ok && catBridgePriceOk(json);
+          if (!ok) errorMsg = catBridgePriceMessage(json, 'HTTP ' + response.status);
+        } catch (e) {
+          errorMsg = e.message || String(e);
+        }
+
+        await catInsertShopeePriceLog(p, ok ? 'ok' : 'error', json, errorMsg);
+
+        if (!ok) {
+          errors.push(p.sku + ' ' + p.region + ': ' + errorMsg);
+          continue;
+        }
+
+        const { error: upsertErr } = await db.from('product_shopee_listings').upsert({
+          product_id: p.productId,
+          region: p.region,
+          shop_item_id: p.itemId,
+          shop_model_id: p.modelId || null,
+          last_synced_price: p.price,
+          last_synced_at: now,
+          status: p.listing?.status || 'mapped',
+        }, { onConflict: 'product_id,region' });
+        if (upsertErr) {
+          errors.push(p.sku + ' ' + p.region + ': DB listing update ' + upsertErr.message);
+          continue;
+        }
+
+        if (!costPersisted.has(String(p.productId))) {
+          const persisted = await catPersistProductCost(p.productId, p.newCost, now);
+          if (!persisted.ok) {
+            errors.push(p.sku + ': cost update ' + persisted.error);
+          } else {
+            costPersisted.add(String(p.productId));
+          }
+        }
+
+        catApplyShopeeListingCache(p, now);
+        okCount++;
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = oldText; }
+    }
+
+    applyAndRenderCatalog();
+    if (errors.length) {
+      console.warn('[CAT live] errors:', errors);
+      showToast('Shopee 일부 실패: ' + errors[0], 'err');
+    } else {
+      showToast('Shopee 가격 동기화 완료 (' + okCount + '건)', 'ok');
+    }
+  }
+
+  async function catExecuteJoomSync() {
+    const products = catSelectedProducts();
+    if (!products.length) {
+      showToast('Joom 동기화 대상 행을 선택하세요.', 'err');
+      return;
+    }
+    if (!confirm('Joom 가격을 실동기화합니다.\n\n대상 상품: ' + products.length + '건\nJoom lookup-sku 후 update-price를 호출합니다. 진행할까요?')) return;
+
+    const btn = document.getElementById('cat-joom-btn');
+    const oldText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Joom 동기화 중...'; }
+
+    const JOOM_BRIDGE = SHOPEE_BRIDGE.replace('/shopee-bridge', '/joom-bridge');
+    const sgSettings = catCountrySettings('SG');
+    const now = new Date().toISOString();
+    let lookupOk = 0;
+    let priceOk = 0;
+    const errors = [];
+
+    try {
+      for (const product of products) {
+        const productId = String(product.id);
+        const sku = product.sku || productId;
+        const newCost = productId in pendingCostEdits ? pendingCostEdits[productId] : Number(product.cost_krw || 0);
+        const calc = calculateJoomPrice({
+          costKrw: newCost,
+          weightG: product.weight_g,
+          countrySettings: sgSettings,
+        });
+        if (!calc.ok || !Number.isFinite(calc.joomPrice) || calc.joomPrice <= 0) {
+          errors.push(sku + ': Joom price calculation failed');
+          continue;
+        }
+
+        let lookup = null;
+        try {
+          const lookupResp = await fetch(JOOM_BRIDGE + '/lookup-sku?sku=' + encodeURIComponent(sku), { headers: AUTH_HEADERS });
+          lookup = await lookupResp.json().catch(function() { return { ok: false, error: 'HTTP ' + lookupResp.status }; });
+        } catch (e) {
+          lookup = { ok: false, error: e.message || String(e) };
+        }
+
+        if (!lookup || !lookup.ok) {
+          const msg = lookup?.error || 'lookup failed';
+          errors.push(sku + ': lookup ' + msg);
+          await db.from('products').update({
+            joom_mapping_status: 'mapping_failed',
+            joom_mapping_error: msg,
+          }).eq('id', product.id);
+          continue;
+        }
+        lookupOk++;
+
+        await db.from('products').update({
+          joom_product_id: lookup.joom_product_id,
+          joom_variant_id: lookup.joom_variant_id,
+          joom_currency: lookup.joom_currency,
+          joom_mapping_status: 'mapped',
+          joom_mapping_error: null,
+        }).eq('id', product.id);
+
+        let updateJson = null;
+        let updateOk = false;
+        try {
+          const updateResp = await fetch(JOOM_BRIDGE + '/update-price', {
+            method: 'POST',
+            headers: AUTH_HEADERS,
+            body: JSON.stringify({
+              productId: lookup.joom_product_id,
+              sku: sku,
+              price: calc.joomPrice,
+            }),
+          });
+          updateJson = await updateResp.json().catch(function() { return { ok: false, error: 'HTTP ' + updateResp.status }; });
+          updateOk = updateResp.ok && updateJson && updateJson.ok;
+        } catch (e) {
+          updateJson = { ok: false, error: e.message || String(e) };
+        }
+
+        if (!updateOk) {
+          errors.push(sku + ': update-price ' + (updateJson?.error || updateJson?.message || 'failed'));
+          continue;
+        }
+
+        const persisted = await catPersistProductCost(product.id, newCost, now);
+        if (!persisted.ok) errors.push(sku + ': cost update ' + persisted.error);
+
+        const { error: productErr } = await db.from('products').update({
+          joom_product_id: lookup.joom_product_id,
+          joom_variant_id: lookup.joom_variant_id,
+          joom_currency: lookup.joom_currency,
+          joom_mapping_status: 'mapped',
+          joom_mapping_error: null,
+          joom_last_synced_price: calc.joomPrice,
+          joom_last_synced_at: now,
+        }).eq('id', product.id);
+        if (productErr) {
+          errors.push(sku + ': products update ' + productErr.message);
+          continue;
+        }
+
+        Object.assign(product, {
+          joom_product_id: lookup.joom_product_id,
+          joom_variant_id: lookup.joom_variant_id,
+          joom_currency: lookup.joom_currency,
+          joom_mapping_status: 'mapped',
+          joom_mapping_error: null,
+          joom_last_synced_price: calc.joomPrice,
+          joom_last_synced_at: now,
+        });
+        priceOk++;
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = oldText; }
+    }
+
+    applyAndRenderCatalog();
+    if (errors.length) {
+      console.warn('[CAT joom] errors:', errors);
+      showToast('Joom 일부 실패: ' + errors[0], 'err');
+    } else {
+      showToast('Joom 가격 동기화 완료 (lookup ' + lookupOk + ', price ' + priceOk + ')', 'ok');
+    }
   }
 
   // ── Region filter checkboxes ────────────────────────────────────
@@ -9295,8 +9600,11 @@ LEGACY END -->
     const dryBtn = document.getElementById('cat-dry-btn');
     if (dryBtn) dryBtn.addEventListener('click', catShowDryRunModal);
 
-    // 실호출 button: permanently disabled (system busy — see cat-api-banner)
-    // No listener needed — button has disabled attribute in HTML.
+    const liveBtn = document.getElementById('cat-live-btn');
+    if (liveBtn) liveBtn.addEventListener('click', catExecuteShopeeLive);
+
+    const joomBtn = document.getElementById('cat-joom-btn');
+    if (joomBtn) joomBtn.addEventListener('click', catExecuteJoomSync);
 
     const selectAll = document.getElementById('cat-select-all');
     if (selectAll) {

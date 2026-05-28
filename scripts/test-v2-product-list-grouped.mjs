@@ -37,6 +37,7 @@ assert(productView.includes('<table class="pl-table">'), 'product list table mus
 assert(html.includes('.pl-group-row'), 'group row styling must exist');
 assert(html.includes('.pl-option-row'), 'option row styling must exist');
 assert(html.includes('productListCollapsedGroups: new Set()'), 'collapsed group state must be tracked');
+assert(html.includes('productListSelectedIds: new Set()'), 'product list selected IDs must be tracked outside the DOM');
 
 for (const token of [
   'function plBuildProductGroups(rows)',
@@ -44,6 +45,8 @@ for (const token of [
   'function renderProductOptionRow(p, groupKey, isGroupChild)',
   'function plParentSku(rows)',
   'function plProductName(product)',
+  'function plSetProductSelected(productId, selected)',
+  'function plVisibleRenderedProductIds()',
   'function plGroupPlatformCell(rows, platform)',
   'openProductMasterEditModal',
   'data-group-toggle',
@@ -82,10 +85,17 @@ assert(
   productList.includes('class="pl-shopee-cell"')
     && productList.includes('class="primary pl-shopee-register"')
     && productList.includes('aria-label="Shopee 등록"')
-    && productList.includes('>🛒</button>')
+    && productList.includes('<svg viewBox="0 0 24 24"')
     && !productList.includes('class="primary pl-shopee-register">Shopee 등록</button>')
     && productList.includes('<td class="pl-platform-cell">'),
   'Shopee group register button must be an icon-only button inside the Shopee platform cell',
+);
+assert(
+  productList.includes('data-product-ids="${text(productIds.join(\',\'))}"')
+    && productList.includes('plProductIdsFromDataset(cb.dataset.productIds).forEach((id) => plSetProductSelected(id, cb.checked))')
+    && bulkDeleteUi.includes('const visibleIds = plVisibleRenderedProductIds()')
+    && bulkDeleteUi.includes('state.productListSelectedIds?.has(String(id))'),
+  'collapsed group checkbox selection must select option product IDs even when child rows are not rendered',
 );
 assert(
   productList.includes("isGroupChild\n      ? `<div style=\"font-weight:700;color:#523563;\">${text(optionDisplay || '옵션')}</div>`")

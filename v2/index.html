@@ -229,6 +229,15 @@
       justify-content: center;
       font-size: 15px;
       line-height: 1.2;
+      background: var(--gradient-accent);
+      border-color: transparent;
+      color: #fff;
+    }
+    .pl-shopee-register svg {
+      width: 15px;
+      height: 15px;
+      display: block;
+      stroke: currentColor;
     }
     .pl-master-title-row {
       display: flex;
@@ -3198,6 +3207,7 @@ LEGACY END -->
     rswModalAction: null,     // function to call on modal confirm
     rswRunId: null,           // run_id for this transition session
     productListCollapsedGroups: new Set(),
+    productListSelectedIds: new Set(),
   };
 
   /** Preselect state: set by openReadyStockWizard() before renderReadyStockView() runs */
@@ -3403,6 +3413,12 @@ LEGACY END -->
     if (listingsRes.error) throw listingsRes.error;
     state.products = productsRes.data || [];
     state.listings = listingsRes.data || [];
+    {
+      const liveIds = new Set(state.products.map((p) => String(p.id)));
+      state.productListSelectedIds = new Set(
+        Array.from(state.productListSelectedIds || []).filter((id) => liveIds.has(String(id)))
+      );
+    }
     // Codex P1 #7 (review 2026-05-20): surface rollup fetch failures instead
     // of falling through to all-grey LEDs which look like "nothing listed".
     if (rollupsRes && rollupsRes.error) {
@@ -3469,14 +3485,14 @@ LEGACY END -->
       btn.addEventListener('click', () => deleteOneMasterProduct(btn));
     });
     els.productBody.querySelectorAll('.pl-row-check').forEach((cb) => {
-      cb.addEventListener('change', updateBulkDeleteUi);
+      cb.addEventListener('change', () => {
+        plSetProductSelected(cb.dataset.id, cb.checked);
+        updateBulkDeleteUi();
+      });
     });
     els.productBody.querySelectorAll('.pl-group-check').forEach((cb) => {
       cb.addEventListener('change', () => {
-        const groupKey = cb.dataset.groupKey || '';
-        document.querySelectorAll('.pl-row-check').forEach((rowCb) => {
-          if (rowCb.dataset.groupKey === groupKey) rowCb.checked = cb.checked;
-        });
+        plProductIdsFromDataset(cb.dataset.productIds).forEach((id) => plSetProductSelected(id, cb.checked));
         updateBulkDeleteUi();
       });
     });
@@ -3517,6 +3533,37 @@ LEGACY END -->
 
   function plProductName(product) {
     return cleanProductName(product?.product_name, product?.sku || '');
+  }
+
+  function plProductIdsFromDataset(value) {
+    return String(value || '')
+      .split(',')
+      .map((id) => id.trim())
+      .filter(Boolean);
+  }
+
+  function plSetProductSelected(productId, selected) {
+    const id = String(productId || '').trim();
+    if (!id) return;
+    if (!state.productListSelectedIds) state.productListSelectedIds = new Set();
+    if (selected) state.productListSelectedIds.add(id);
+    else state.productListSelectedIds.delete(id);
+  }
+
+  function plProductById(productId) {
+    const id = String(productId || '');
+    return (state.products || []).find((p) => String(p.id) === id);
+  }
+
+  function plVisibleRenderedProductIds() {
+    const ids = new Set();
+    document.querySelectorAll('.pl-row-check').forEach((cb) => {
+      if (cb.dataset.id) ids.add(String(cb.dataset.id));
+    });
+    document.querySelectorAll('.pl-group-check').forEach((cb) => {
+      plProductIdsFromDataset(cb.dataset.productIds).forEach((id) => ids.add(String(id)));
+    });
+    return Array.from(ids);
   }
 
   function plTierSortKey(product) {
@@ -3622,9 +3669,10 @@ LEGACY END -->
     const shownOptions = options.slice(0, 4).map(text).join(', ');
     const more = options.length > 4 ? ` 외 ${options.length - 4}개` : '';
     const productName = plProductName(first);
+    const productIds = rows.map((p) => String(p.id || '')).filter(Boolean);
     const groupHtml = `
       <tr class="pl-group-row" data-product-group-key="${text(group.key)}">
-        <td><input type="checkbox" class="pl-group-check" data-group-key="${text(group.key)}" title="이 묶음 옵션 전체 선택"></td>
+        <td><input type="checkbox" class="pl-group-check" data-group-key="${text(group.key)}" data-product-ids="${text(productIds.join(','))}" title="이 묶음 옵션 전체 선택"></td>
         <td class="pl-sku-cell">
           <div>${text(plParentSku(rows))}</div>
           <div class="muted">${rows.length} options</div>
@@ -3646,7 +3694,13 @@ LEGACY END -->
         <td class="pl-platform-cell">
           <div class="pl-shopee-cell">
             ${plGroupPlatformCell(rows, 'shopee')}
-            <button type="button" data-open-shopee-group="${text(first.product_group_id || '')}" class="primary pl-shopee-register" title="Shopee 등록" aria-label="Shopee 등록">🛒</button>
+            <button type="button" data-open-shopee-group="${text(first.product_group_id || '')}" class="primary pl-shopee-register" title="Shopee 등록" aria-label="Shopee 등록">
+              <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+                <circle cx="8" cy="21" r="1"></circle>
+                <circle cx="19" cy="21" r="1"></circle>
+                <path d="M2.5 3h2.2l2.2 12.4a2 2 0 0 0 2 1.6h8.7a2 2 0 0 0 1.9-1.4L21 8H6"></path>
+              </svg>
+            </button>
           </div>
         </td>
         <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'joom')}</td>
@@ -3672,7 +3726,7 @@ LEGACY END -->
         : text(productName));
     return `
       <tr class="${isGroupChild ? 'pl-option-row' : ''}" data-product-id="${text(p.id)}" data-product-group-key="${text(groupKey)}">
-        <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}" data-group-key="${text(groupKey)}"></td>
+        <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}" data-group-key="${text(groupKey)}" ${state.productListSelectedIds?.has(String(p.id)) ? 'checked' : ''}></td>
         <td class="pl-sku-cell pl-edit" data-field="sku" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;">${text(p.sku || '')}</td>
         <td class="pl-product-cell">
           <div class="${isVariantRow ? '' : 'pl-edit'}" data-field="product_name" data-id="${text(p.id)}" title="${isVariantRow ? '옵션 묶음 상품 - 새 등록 화면에서 편집' : '더블클릭하여 편집'}" style="cursor:${isVariantRow ? 'default' : 'text'};">${nameDisplay}</div>
@@ -3895,6 +3949,7 @@ LEGACY END -->
       // Drop from state + DOM immediately so a fast double-click can't resend.
       const stateIdx = state.products.findIndex((p) => String(p.id) === String(productId));
       if (stateIdx >= 0) state.products.splice(stateIdx, 1);
+      plSetProductSelected(productId, false);
       const tr = btn.closest('tr');
       if (tr) tr.remove();
       if (typeof window.loadData === 'function') {
@@ -3911,11 +3966,12 @@ LEGACY END -->
   }
 
   function selectedProductIds() {
-    const ids = [];
-    document.querySelectorAll('.pl-row-check:checked').forEach((cb) => {
-      ids.push({ id: cb.dataset.id, sku: cb.dataset.sku || '(no sku)' });
-    });
-    return ids;
+    return Array.from(state.productListSelectedIds || [])
+      .map((id) => {
+        const product = plProductById(id);
+        return product ? { id: String(product.id), sku: product.sku || '(no sku)' } : null;
+      })
+      .filter(Boolean);
   }
 
   function updateBulkDeleteUi() {
@@ -3924,19 +3980,21 @@ LEGACY END -->
     if (countEl) countEl.textContent = `선택 ${ids.length}건`;
     const btn = document.getElementById('pl-bulk-delete');
     if (btn) btn.disabled = ids.length === 0;
+    document.querySelectorAll('.pl-row-check').forEach((cb) => {
+      cb.checked = state.productListSelectedIds?.has(String(cb.dataset.id || '')) || false;
+    });
     const allCb = document.getElementById('pl-check-all');
     if (allCb) {
-      const total = document.querySelectorAll('.pl-row-check').length;
-      allCb.checked = total > 0 && ids.length === total;
-      allCb.indeterminate = ids.length > 0 && ids.length < total;
+      const visibleIds = plVisibleRenderedProductIds();
+      const checked = visibleIds.filter((id) => state.productListSelectedIds?.has(String(id))).length;
+      allCb.checked = visibleIds.length > 0 && checked === visibleIds.length;
+      allCb.indeterminate = checked > 0 && checked < visibleIds.length;
     }
     document.querySelectorAll('.pl-group-check').forEach((groupCb) => {
-      const groupKey = groupCb.dataset.groupKey || '';
-      const checks = Array.from(document.querySelectorAll('.pl-row-check'))
-        .filter((cb) => cb.dataset.groupKey === groupKey);
-      const checked = checks.filter((cb) => cb.checked).length;
-      groupCb.checked = checks.length > 0 && checked === checks.length;
-      groupCb.indeterminate = checked > 0 && checked < checks.length;
+      const groupIds = plProductIdsFromDataset(groupCb.dataset.productIds);
+      const checked = groupIds.filter((id) => state.productListSelectedIds?.has(String(id))).length;
+      groupCb.checked = groupIds.length > 0 && checked === groupIds.length;
+      groupCb.indeterminate = checked > 0 && checked < groupIds.length;
     });
   }
 
@@ -3959,6 +4017,7 @@ LEGACY END -->
         if (error) throw error;
         okCount += 1;
         succeededIds.add(id);
+        plSetProductSelected(id, false);
         // Drop from in-memory state immediately so stale UI can't resend.
         const stateIdx = state.products.findIndex((p) => String(p.id) === String(id));
         if (stateIdx >= 0) state.products.splice(stateIdx, 1);
@@ -3984,7 +4043,7 @@ LEGACY END -->
     let n = 0;
     document.querySelectorAll('.pl-row-check').forEach((cb) => {
       const sku = (cb.dataset.sku || '').trim();
-      if (!sku) { cb.checked = true; n += 1; }
+      if (!sku) { plSetProductSelected(cb.dataset.id, true); n += 1; }
     });
     updateBulkDeleteUi();
     if (n === 0) alert('빈 SKU 행이 없습니다.');
@@ -5086,7 +5145,7 @@ LEGACY END -->
     catch (e) { els.productBody.innerHTML = `<tr><td colspan="7" class="empty">${text(e.message || e)}</td></tr>`; }
   });
   document.getElementById('pl-check-all')?.addEventListener('change', (e) => {
-    document.querySelectorAll('.pl-row-check').forEach((cb) => { cb.checked = e.target.checked; });
+    plVisibleRenderedProductIds().forEach((id) => plSetProductSelected(id, e.target.checked));
     updateBulkDeleteUi();
   });
   document.getElementById('pl-bulk-delete')?.addEventListener('click', bulkDeleteSelectedProducts);

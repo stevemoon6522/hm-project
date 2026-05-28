@@ -30,7 +30,10 @@ assert(html.includes('id="rsh-product-name" type="text"'), 'Shopee modal must al
 assert(html.includes('id="rsh-desc-reset"'), 'Shopee modal must allow regenerating the Seller Center description');
 assert(html.includes('Sales Information · Variations'), 'Shopee modal must include Seller Center sales information section');
 assert(html.includes('id="rsh-variation-name"'), 'Shopee modal must expose the Variation1 name field');
-assert(html.includes('id="rsh-var-bulk-price"') && html.includes('id="rsh-var-bulk-stock"'), 'Shopee modal must expose bulk variant price/stock inputs');
+assert(
+  html.includes('id="rsh-var-bulk-sourcing"') && html.includes('id="rsh-var-bulk-price"') && html.includes('id="rsh-var-bulk-stock"'),
+  'Shopee modal must expose bulk sourcing/settlement/stock inputs',
+);
 assert(html.includes('id="rsh-ship-weight-kg"'), 'Shopee modal must expose Shipping weight in kg');
 assert(html.includes('id="rsh-others-section"'), 'Shopee modal must include Others/Condition section');
 assert(productList.includes('data-open-shopee-group'), 'master group row must expose a Shopee register button');
@@ -45,12 +48,14 @@ for (const token of [
   'rshReadProductName',
   'rshReadBrandObject',
   'rshReadVariantInputs',
+  'rshComputeRegionPrice',
+  'rshBuildSingleRegionPrices',
   'rshBuildTierVariation',
   'rshBuildGroupRegisterPayload',
   'rshRegisterGroupViaCbsc',
   '/register_cbsc',
   'variation: {',
-  'tier_variation: rshBuildTierVariation(products)',
+  'tier_variation: tierVariation',
   'condition: rshReadCondition()',
   'persistMappings(json, payload)',
 ]) {
@@ -76,10 +81,18 @@ assert(
   'Shopee description must include COD policy and extracted components when available',
 );
 assert(
-  html.includes('Global SKU Price')
+  html.includes('도매가 KRW')
+    && html.includes('정산가 KRW')
     && rshModal.includes('model_sku: String(v.sku')
     && rshModal.includes('stock: Number(v.stock || 0)'),
-  'group modal must transmit visible option price/stock/SKU fields',
+  'group modal must transmit visible option sourcing/settlement/stock/SKU fields',
+);
+assert(
+  rshModal.includes('calculateShopeePrice')
+    && rshModal.includes('modelForRegion(region)')
+    && rshModal.includes('price: calc.originalPrice')
+    && rshModal.includes('region_prices: rshBuildSingleRegionPrices'),
+  'Shopee registration must calculate and send V1-derived per-region prices',
 );
 assert(
   rshModal.includes('shopee_extra_image_ids: extraImageIds')

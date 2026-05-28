@@ -684,6 +684,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // (KRSC requires images live in the target region's image space) and
         // BR needs at least 2 images. Adapter passes through to bridge.
         region_image_ids: (body as any).region_image_ids || {},
+        region_prices: (body as any).region_prices || {},
       } as any);
     } catch (e) {
       adapterResult = {

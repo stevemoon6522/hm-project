@@ -1716,6 +1716,11 @@ function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
     logistic: logistics,
     pre_order: { is_pre_order: isPreOrder, days_to_ship: dts },
   };
+  const publishVariation = normalizeVariation(target.variation || body.variation);
+  if (publishVariation) {
+    item.tier_variation = publishVariation.tier_variation;
+    item.model = buildPublishModels(publishVariation, price);
+  }
   return item;
 }
 

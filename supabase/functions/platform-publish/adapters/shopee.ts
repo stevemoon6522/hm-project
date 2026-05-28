@@ -323,10 +323,14 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   // back to master.shopee_image_id (still works for SG-style same-region
   // upload) but BR will fail at publish_task if only 1 image provided.
   const regionImageIds: Record<string, string[]> = (ctx as any).region_image_ids || {};
+  const regionPrices: Record<string, number> = (ctx as any).region_prices || {};
   const targets = regions.map((r: string) => {
     const ids = Array.isArray(regionImageIds[r]) && regionImageIds[r].length ? regionImageIds[r] : null;
+    const computedPrice = Number(regionPrices[r]);
+    const targetPrice = Number.isFinite(computedPrice) && computedPrice > 0 ? computedPrice : cost_krw;
     return {
       region: r,
+      price: targetPrice,
       price_krw: cost_krw,
       days_to_ship: dtsSection[r] ?? 2,
       ...(ids ? { image_id_list: ids } : {}),

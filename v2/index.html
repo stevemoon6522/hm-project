@@ -368,7 +368,7 @@
     }
     .rsh-variation-toolbar {
       display: grid;
-      grid-template-columns: minmax(160px, 1fr) 130px 110px auto;
+      grid-template-columns: minmax(160px, 1fr) 130px 130px 110px auto;
       gap: 10px;
       align-items: end;
     }
@@ -381,7 +381,7 @@
       width: 100%;
       border-collapse: collapse;
       font-size: 12px;
-      min-width: 760px;
+      min-width: 1220px;
     }
     .rsh-variation-table th,
     .rsh-variation-table td {
@@ -406,6 +406,18 @@
       background: #fff7fd;
       font-weight: 700;
       color: #4a275f;
+    }
+    .rsh-price-preview {
+      font-family: var(--mono);
+      font-size: 11px;
+      text-align: right;
+      white-space: nowrap;
+      color: #374151;
+    }
+    .rsh-price-preview.missing {
+      color: var(--red);
+      font-family: inherit;
+      text-align: center;
     }
     .rsh-shipping-grid {
       display: grid;
@@ -2903,7 +2915,7 @@
             <label>Global item SKU</label>
             <div id="rsh-sku" class="rsh-readbox mono"></div>
           </div>
-          <div class="field span-6">
+          <div class="field span-4">
             <label>Category</label>
             <select id="rsh-category">
               <option value="100740">Hobbies &amp; Collections &gt; CD, DVD &amp; Bluray (100740)</option>
@@ -2912,7 +2924,11 @@
             <div id="rsh-category-hint" style="font-size:11px;color:var(--muted);margin-top:3px;display:none;">변경 사항은 Register 클릭 시 저장됩니다.</div>
           </div>
           <div class="field span-2">
-            <label for="rsh-cost-krw">Base Price KRW</label>
+            <label for="rsh-sourcing-price-krw">도매가 KRW</label>
+            <input id="rsh-sourcing-price-krw" type="number" min="0" step="1">
+          </div>
+          <div class="field span-2">
+            <label for="rsh-cost-krw">정산가 KRW</label>
             <input id="rsh-cost-krw" type="number" min="1" step="1">
           </div>
           <div class="field span-2">
@@ -2949,7 +2965,7 @@
         <section id="rsh-variant-section" class="rsh-seller-section" style="display:none;">
           <div class="rsh-section-title">
             <span>Sales Information · Variations</span>
-            <small>옵션별 가격/재고/SKU가 그대로 전송됩니다.</small>
+            <small>도매가 × 1.30 정산가를 기준으로 V1 지역 가격식을 적용합니다.</small>
           </div>
           <div class="rsh-variation-toolbar">
             <div class="field">
@@ -2957,7 +2973,11 @@
               <input id="rsh-variation-name" type="text" maxlength="14" value="VERSION">
             </div>
             <div class="field">
-              <label for="rsh-var-bulk-price">Global SKU Price</label>
+              <label for="rsh-var-bulk-sourcing">도매가 KRW</label>
+              <input id="rsh-var-bulk-sourcing" type="number" min="0" step="1" placeholder="도매가">
+            </div>
+            <div class="field">
+              <label for="rsh-var-bulk-price">정산가 KRW</label>
               <input id="rsh-var-bulk-price" type="number" min="1" step="1" placeholder="가격">
             </div>
             <div class="field">
@@ -2972,7 +2992,14 @@
                 <tr>
                   <th style="text-align:left;width:170px;">VERSION</th>
                   <th style="text-align:left;width:120px;">Image</th>
-                  <th style="text-align:left;width:120px;">Global SKU Price</th>
+                  <th style="text-align:left;width:110px;">도매가</th>
+                  <th style="text-align:left;width:110px;">정산가</th>
+                  <th style="text-align:right;width:78px;">SG</th>
+                  <th style="text-align:right;width:78px;">TW</th>
+                  <th style="text-align:right;width:78px;">TH</th>
+                  <th style="text-align:right;width:78px;">MY</th>
+                  <th style="text-align:right;width:78px;">PH</th>
+                  <th style="text-align:right;width:78px;">BR</th>
                   <th style="text-align:left;width:90px;">Stock</th>
                   <th style="text-align:left;">SKU</th>
                   <th style="text-align:right;width:80px;">Wt g</th>
@@ -7444,11 +7471,13 @@ LEGACY END -->
   // ════════════════════════════════════════════════════════════════
 
   // Operating regions for Shopee (VN/MX intentionally out of scope).
-  const RSH_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+  const RSH_REGIONS = PRICE_SYNC_REGIONS.slice();
+  const RSH_SETTLEMENT_MULTIPLIER = 1.30;
 
   // Platform-publish base URL (same Supabase project as the dashboard).
   const PLATFORM_PUBLISH_URL = `${SUPABASE_URL}/functions/v1/platform-publish`;
   const STARONE_CRAWL_URL = `${SUPABASE_URL}/functions/v1/starone-crawl`;
+  let _rshCountrySettingsByRegion = new Map();
 
   // Per-modal state — reset on each openRegisterShopeeModal() call.
   let _rsh = {
@@ -7473,6 +7502,76 @@ LEGACY END -->
 
   /** Quick DOM helper for rsh- prefixed IDs. */
   function $rsh(id) { return document.getElementById('rsh-' + id); }
+
+  async function rshEnsureCountrySettings(forceRefresh = false) {
+    if (!forceRefresh && _rshCountrySettingsByRegion.size) return _rshCountrySettingsByRegion;
+    const map = new Map();
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/country_settings?select=*`, { headers: AUTH_HEADERS });
+      if (res.ok) {
+        const rows = await res.json();
+        if (Array.isArray(rows)) {
+          rows.forEach((row) => {
+            const code = String(row.region || row.country_code || '').toUpperCase();
+            if (code) map.set(code, normalizeCountrySettings(row, code));
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[rsh] country_settings load failed; using price-engine defaults:', e);
+    }
+    _rshCountrySettingsByRegion = map;
+    return map;
+  }
+
+  function rshCountrySettings(region) {
+    return _rshCountrySettingsByRegion.get(String(region || '').toUpperCase()) || null;
+  }
+
+  function rshRoundKrw(value) {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+  }
+
+  function rshSettlementFromSourcing(sourcingPrice) {
+    const sourcing = rshRoundKrw(sourcingPrice);
+    return sourcing > 0 ? Math.round(sourcing * RSH_SETTLEMENT_MULTIPLIER) : 0;
+  }
+
+  function rshDefaultSourcingPrice(product) {
+    return rshRoundKrw(product?.sourcing_price) || rshRoundKrw(product?.cost_krw);
+  }
+
+  function rshDefaultSettlementPrice(product) {
+    const sourcing = rshDefaultSourcingPrice(product);
+    if (sourcing > 0) return rshSettlementFromSourcing(sourcing);
+    return rshRoundKrw(product?.cost_krw);
+  }
+
+  function rshComputeRegionPrice(costKrw, weightG, region) {
+    const calc = calculateShopeePrice({
+      costKrw,
+      weightG,
+      region,
+      countrySettings: rshCountrySettings(region),
+    });
+    return calc.ok && calc.originalPrice != null ? calc : null;
+  }
+
+  function rshFormatRegionPrice(region, costKrw, weightG) {
+    const calc = rshComputeRegionPrice(costKrw, weightG, region);
+    return calc ? formatPriceForRegion(region, calc.originalPrice) : '-';
+  }
+
+  function rshBuildSingleRegionPrices(regions, costKrw, weightG) {
+    const out = {};
+    (regions || []).forEach((region) => {
+      const calc = rshComputeRegionPrice(costKrw, weightG, region);
+      if (!calc) throw new Error(`${region} 가격 계산 실패: 정산가/무게/country_settings를 확인하세요.`);
+      out[region] = calc.originalPrice;
+    });
+    return out;
+  }
 
   function rshFormatShopeeProductName(name, sku = '', lifecycleState = 'ready_stock') {
     let title = cleanProductName(name, sku).replace(/^\[PRE\s*ORDER\]\s*/i, '').trim();
@@ -7996,7 +8095,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   const RSH_PRODUCT_SELECT =
-    'id, sku, product_name, option_name, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, main_image, extra_images, components_extracted_en, components_extracted_at, components_approved, product_group_id, variation_tier_names, variation_option_names, variation_tier_index';
+    'id, sku, product_name, option_name, sourcing_price, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, main_image, extra_images, components_extracted_en, components_extracted_at, components_approved, product_group_id, variation_tier_names, variation_option_names, variation_tier_index';
 
   function rshSortedProducts(rows) {
     return (rows || []).slice().sort((a, b) => plTierSortKey(a).localeCompare(plTierSortKey(b)));
@@ -8039,16 +8138,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   function rshReadVariantInputs(products = _rsh.products) {
     const rows = rshSortedProducts(products || []);
     return rows.map((p, index) => {
+      const sourcingEl = document.getElementById(rshVariantInputId('sourcing', index));
       const priceEl = document.getElementById(rshVariantInputId('price', index));
       const stockEl = document.getElementById(rshVariantInputId('stock', index));
       const skuEl = document.getElementById(rshVariantInputId('sku', index));
-      const price = Number(priceEl?.value || p.cost_krw || 0);
+      const sourcing = Number(sourcingEl?.value || rshDefaultSourcingPrice(p) || 0);
+      const price = Number(priceEl?.value || rshDefaultSettlementPrice(p) || 0);
       const stock = Number(stockEl?.value || rshDefaultVariantStock(p));
       const sku = stripNonMarketplaceText(skuEl?.value || p.sku || '').trim();
       return {
         product: p,
         option: rshOptionName(p),
         sku,
+        sourcing_price: Number.isFinite(sourcing) ? sourcing : 0,
         price: Number.isFinite(price) ? price : 0,
         stock: Number.isFinite(stock) ? stock : 0,
         weight_g: Number(p.weight_g || 0),
@@ -8056,15 +8158,38 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     });
   }
 
+  function rshRefreshVariantRegionPrices(index) {
+    const rows = rshSortedProducts(_rsh.products || []);
+    const p = rows[index] || {};
+    const costKrw = Number(document.getElementById(rshVariantInputId('price', index))?.value || 0);
+    const weightG = Number(p.weight_g || 0);
+    RSH_REGIONS.forEach((region) => {
+      const el = document.getElementById(rshVariantInputId(`region-${region}`, index));
+      if (!el) return;
+      const label = rshFormatRegionPrice(region, costKrw, weightG);
+      el.textContent = label;
+      el.className = `rsh-price-preview${label === '-' ? ' missing' : ''}`;
+    });
+  }
+
+  function rshRefreshAllVariantRegionPrices() {
+    rshSortedProducts(_rsh.products || []).forEach((_, index) => rshRefreshVariantRegionPrices(index));
+  }
+
   function rshApplyVariantBulkInputs() {
+    const sourcing = document.getElementById('rsh-var-bulk-sourcing')?.value;
     const price = document.getElementById('rsh-var-bulk-price')?.value;
     const stock = document.getElementById('rsh-var-bulk-stock')?.value;
     const rows = rshSortedProducts(_rsh.products || []);
     rows.forEach((_, index) => {
+      const sourcingEl = document.getElementById(rshVariantInputId('sourcing', index));
       const priceEl = document.getElementById(rshVariantInputId('price', index));
       const stockEl = document.getElementById(rshVariantInputId('stock', index));
+      if (sourcingEl && sourcing !== '') sourcingEl.value = sourcing;
+      if (priceEl && sourcing !== '') priceEl.value = String(rshSettlementFromSourcing(sourcing));
       if (priceEl && price !== '') priceEl.value = price;
       if (stockEl && stock !== '') stockEl.value = stock;
+      rshRefreshVariantRegionPrices(index);
     });
     rshCheckSubmitEnabled();
   }
@@ -8089,15 +8214,21 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     body.innerHTML = rows.map((p, index) => {
       const option = rshOptionName(p);
-      const price = Number(p.cost_krw || 0);
+      const sourcing = rshDefaultSourcingPrice(p);
+      const price = rshDefaultSettlementPrice(p);
       const stock = rshDefaultVariantStock(p);
       const sku = stripNonMarketplaceText(p.sku || '').trim();
       const weight = Number(p.weight_g || 0);
+      const regionCells = RSH_REGIONS.map((region) => (
+        `<td id="${rshVariantInputId(`region-${region}`, index)}" class="rsh-price-preview">${text(rshFormatRegionPrice(region, price, weight))}</td>`
+      )).join('');
       return `
       <tr>
         <td><span class="rsh-option-chip">${text(option)}</span></td>
         <td style="color:${p.main_image ? 'var(--green)' : 'var(--red)'};">${p.main_image ? '있음' : '이미지 필요'}</td>
+        <td><input id="${rshVariantInputId('sourcing', index)}" type="number" min="0" step="1" value="${text(String(sourcing || ''))}"></td>
         <td><input id="${rshVariantInputId('price', index)}" type="number" min="1" step="1" value="${text(String(price || ''))}"></td>
+        ${regionCells}
         <td><input id="${rshVariantInputId('stock', index)}" type="number" min="0" step="1" value="${text(String(stock))}"></td>
         <td><input id="${rshVariantInputId('sku', index)}" type="text" maxlength="100" value="${text(sku)}"></td>
         <td style="text-align:right;font-family:var(--mono);">${text(weight ? weight.toLocaleString() : '0')}</td>
@@ -8105,11 +8236,24 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     `;
     }).join('');
     rows.forEach((_, index) => {
+      const sourcingEl = document.getElementById(rshVariantInputId('sourcing', index));
+      if (sourcingEl) {
+        sourcingEl.addEventListener('input', () => {
+          const priceEl = document.getElementById(rshVariantInputId('price', index));
+          if (priceEl) priceEl.value = String(rshSettlementFromSourcing(sourcingEl.value) || '');
+          rshRefreshVariantRegionPrices(index);
+          rshCheckSubmitEnabled();
+        });
+      }
       ['price', 'stock', 'sku'].forEach((fieldName) => {
         const el = document.getElementById(rshVariantInputId(fieldName, index));
-        if (el) el.addEventListener('input', rshCheckSubmitEnabled);
+        if (el) el.addEventListener('input', () => {
+          if (fieldName === 'price') rshRefreshVariantRegionPrices(index);
+          rshCheckSubmitEnabled();
+        });
       });
     });
+    rshRefreshAllVariantRegionPrices();
     section.style.display = '';
   }
 
@@ -8290,8 +8434,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
     if (catBlockedEl) catBlockedEl.style.display = is101390Blocked ? 'block' : 'none';
 
+    await rshEnsureCountrySettings();
+
+    const sourcingEl = document.getElementById('rsh-sourcing-price-krw');
     const costEl = document.getElementById('rsh-cost-krw');
-    if (costEl) costEl.value = String(Number(master.cost_krw) || '');
+    if (sourcingEl) sourcingEl.value = String(rshDefaultSourcingPrice(master) || '');
+    if (costEl) costEl.value = String(rshDefaultSettlementPrice(master) || '');
 
     const weightEl = $rsh('weight');
     if (weightEl) {
@@ -8319,7 +8467,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       };
     }
 
-    // Listen for cost change to re-check submit
+    if (sourcingEl) {
+      sourcingEl.addEventListener('input', () => {
+        if (costEl) costEl.value = String(rshSettlementFromSourcing(sourcingEl.value) || '');
+        rshCheckSubmitEnabled();
+      });
+    }
     if (costEl) costEl.addEventListener('input', rshCheckSubmitEnabled);
 
     // Description
@@ -8745,6 +8898,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       ? _rsh.regionImageIds.SG.filter(Boolean)
       : [imageId].concat(_rsh.cachedExtraIds || master.shopee_extra_image_ids || []).filter(Boolean);
     const brandObj = rshReadBrandObject();
+    const tierVariation = rshBuildTierVariation(products);
 
     const model = variantInputs.map((v, index) => {
       const p = v.product || {};
@@ -8756,6 +8910,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         original_price: price,
         global_original_price: price,
         stock: Number(v.stock || 0),
+        weight_g: Number(v.weight_g || 0),
       };
     });
     const totalStock = model.reduce((sum, m) => sum + (Number(m.stock) || 0), 0);
@@ -8763,12 +8918,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const packageWidth = Number(document.getElementById('rsh-package-width')?.value || 20);
     const packageHeight = Number(document.getElementById('rsh-package-height')?.value || 5);
 
+    const modelForRegion = (region) => variantInputs.map((v, index) => {
+      const p = v.product || {};
+      const settlementKrw = Number(v.price || basePrice);
+      const calc = rshComputeRegionPrice(settlementKrw, Number(v.weight_g || maxWeight), region);
+      if (!calc) {
+        throw new Error(`${region} ${v.sku || p.sku || index + 1} 가격 계산 실패: 정산가/무게/country_settings를 확인하세요.`);
+      }
+      return {
+        tier_index: Array.isArray(p.variation_tier_index) && p.variation_tier_index.length ? p.variation_tier_index : [index],
+        global_model_sku: String(v.sku || p.sku || '').trim(),
+        model_sku: String(v.sku || p.sku || '').trim(),
+        original_price: calc.originalPrice,
+        global_original_price: settlementKrw,
+        stock: Number(v.stock || 0),
+        weight_g: Number(v.weight_g || 0),
+      };
+    });
+
     const targets = activeRegions.map((region) => {
       const imageIds = Array.isArray(_rsh.regionImageIds?.[region]) ? _rsh.regionImageIds[region].filter(Boolean) : [];
+      const calc = rshComputeRegionPrice(basePrice, maxWeight, region);
+      if (!calc) throw new Error(`${region} 대표 가격 계산 실패: 정산가/무게/country_settings를 확인하세요.`);
       return {
         region,
-        price: basePrice,
+        price: calc.originalPrice,
         days_to_ship: dtsValues[region] || 2,
+        variation: {
+          tier_variation: tierVariation,
+          model: modelForRegion(region),
+        },
         ...(imageIds.length ? { image_id_list: imageIds } : {}),
       };
     });
@@ -8794,7 +8973,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       lifecycle_state: lifecycle,
       is_pre_order: lifecycle === 'pre_order',
       variation: {
-        tier_variation: rshBuildTierVariation(products),
+        tier_variation: tierVariation,
         model,
       },
       source_product_id: master.id,
@@ -8999,7 +9178,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const dtsValues = rshReadDts();
     const lifecycle = _rsh.master.lifecycle_state || 'ready_stock';
 
-    // Read cost override from the form
+    // Read sourcing/settlement overrides from the form
+    const sourcingOverride = Number(document.getElementById('rsh-sourcing-price-krw')?.value) || Number(_rsh.master.sourcing_price || 0);
     const costOverride = Number(document.getElementById('rsh-cost-krw')?.value) || Number(_rsh.master.cost_krw);
 
     // Fix2+Fix3: persist all Stage 1 edits before dispatching.
@@ -9018,7 +9198,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         shopee_extra_attributes: rshReadSpecAttributes(liveCatId) || _rsh.master.shopee_extra_attributes,
         shopee_days_to_ship: updatedDts,
       };
-      if (_rsh.mode !== 'group') stage1Updates.cost_krw = costOverride;
+      if (_rsh.mode !== 'group') {
+        stage1Updates.sourcing_price = sourcingOverride;
+        stage1Updates.cost_krw = costOverride;
+        stage1Updates.cost_updated_at = new Date().toISOString();
+      }
       const productIds = rshProductIds();
       let stage1Query = db.from('products').update(stage1Updates);
       stage1Query = productIds.length > 1 ? stage1Query.in('id', productIds) : stage1Query.eq('id', _rsh.productId);
@@ -9030,6 +9214,30 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         rshShowStage2Buttons(false);
         return;
       }
+
+      if (_rsh.mode === 'group') {
+        const variantInputs = rshReadVariantInputs(_rsh.products);
+        for (const variant of variantInputs) {
+          if (!variant.product?.id) continue;
+          const { error: pricePersistErr } = await db
+            .from('products')
+            .update({
+              sourcing_price: Number(variant.sourcing_price || 0),
+              cost_krw: Number(variant.price || 0),
+              cost_updated_at: new Date().toISOString(),
+            })
+            .eq('id', variant.product.id);
+          if (pricePersistErr) {
+            _rsh.publishInFlight = false;
+            if (errorEl) { errorEl.textContent = `옵션 가격 저장 실패: ${pricePersistErr.message} — 등록이 취소되었습니다.`; errorEl.style.display = 'block'; }
+            activeRegions.forEach((r) => { const el = document.getElementById(`rsh-status-${r}`); if (el) { el.textContent = '대기'; el.style.color = '#94a3b8'; } });
+            rshShowStage2Buttons(false);
+            return;
+          }
+          variant.product.sourcing_price = Number(variant.sourcing_price || 0);
+          variant.product.cost_krw = Number(variant.price || 0);
+        }
+      }
     }
 
     if (_rsh.mode === 'group') {
@@ -9040,6 +9248,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Call platform-publish dispatcher with activeRegions (full list or failed-only on retry)
     let dispatchResult;
     try {
+      const singleWeightKg = Number(document.getElementById('rsh-ship-weight-kg')?.value || 0);
+      const singleWeightG = singleWeightKg > 0 ? Math.round(singleWeightKg * 1000) : Number(_rsh.master.weight_g || 0);
       const body = {
         platform: 'shopee',
         master_product_id: _rsh.productId,
@@ -9048,6 +9258,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         publish_request_id: _rsh.publishRequestId,
         lifecycle_state: lifecycle,
         region_image_ids: _rsh.regionImageIds || {},
+        region_prices: rshBuildSingleRegionPrices(activeRegions, costOverride, singleWeightG),
       };
       const resp = await fetch(PLATFORM_PUBLISH_URL, {
         method: 'POST',
@@ -13325,7 +13536,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           r.source_record_id = hit.source_record_id;
           r.observed = hit.observed_values || {};
           r.deduped = !!hit.deduped;
-          r.cost_krw = (r.observed && Number.isFinite(Number(r.observed.price_krw))) ? Number(r.observed.price_krw) : 0;
+          r.sourcing_price = (r.observed && Number.isFinite(Number(r.observed.price_krw))) ? Number(r.observed.price_krw) : 0;
+          r.cost_krw = rshSettlementFromSourcing(r.sourcing_price);
+          r._sourcing_price = r.sourcing_price;
+          r._cost_krw = r.cost_krw;
           const derived = mrDeriveFromTitle(r.observed.title || '');
           r.artist = derived.artist;
           r.album = derived.album;
@@ -13554,10 +13768,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
         // Artist/Album/Version fields (card-level, shared across options)
         if (firstRow.cost_krw == null) {
-          firstRow.cost_krw = (firstRow.observed && Number.isFinite(Number(firstRow.observed.price_krw))) ? Number(firstRow.observed.price_krw) : 0;
+          const observedPrice = (firstRow.observed && Number.isFinite(Number(firstRow.observed.price_krw))) ? Number(firstRow.observed.price_krw) : 0;
+          firstRow.sourcing_price = observedPrice;
+          firstRow.cost_krw = rshSettlementFromSourcing(observedPrice);
         }
-        const initialDefaultCost = Number(firstRow.cost_krw || firstRow._cost_krw || 0);
+        const initialDefaultSourcing = Number(firstRow.sourcing_price || firstRow._sourcing_price || firstRow.observed?.price_krw || 0);
+        const initialDefaultCost = Number(firstRow.cost_krw || firstRow._cost_krw || rshSettlementFromSourcing(initialDefaultSourcing) || 0);
         group.rows.forEach(row => {
+          if (!(Number(row.sourcing_price) > 0)) row.sourcing_price = initialDefaultSourcing;
+          if (!(Number(row._sourcing_price) > 0)) row._sourcing_price = Number(row.sourcing_price || initialDefaultSourcing || 0);
           if (!(Number(row.cost_krw) > 0)) row.cost_krw = initialDefaultCost;
           if (!(Number(row._cost_krw) > 0)) row._cost_krw = Number(row.cost_krw || initialDefaultCost || 0);
         });
@@ -13580,12 +13799,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         fieldGrid.appendChild(mkCardField('Version', 'version'));
         infoCol.appendChild(fieldGrid);
 
-        // Default 매입가/무게 (prefill for new option rows)
+        // Default 도매가/정산가/무게 (prefill for new option rows)
         const defaultsRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
         defaultsRow.appendChild(el('span', { style: 'color:var(--muted);' }, '기본값:'));
 
+        const defSourcingLab = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
+        defSourcingLab.appendChild(el('span', { style: 'color:var(--muted);' }, '도매가(KRW)'));
+        const defSourcingInp = el('input', { type: 'number', min: '0', step: '1', style: 'font-size:12px;padding:3px 6px;width:100px;text-align:right;', value: String(firstRow.sourcing_price || firstRow._sourcing_price || 0) });
+        defSourcingInp.addEventListener('input', (e) => {
+          const nextSourcing = Number(e.target.value) || 0;
+          const nextCost = rshSettlementFromSourcing(nextSourcing);
+          const previousDefaultCost = Number(firstRow.cost_krw || firstRow._cost_krw || 0);
+          group.rows.forEach(row => {
+            row.sourcing_price = nextSourcing;
+            row._sourcing_price = nextSourcing;
+            if (!row._costTouched || !(Number(row._cost_krw) > 0) || Number(row._cost_krw) === previousDefaultCost) {
+              row.cost_krw = nextCost;
+              row._cost_krw = nextCost;
+              const costInput = card.querySelector(`[data-cost-row-key="${mrRowKey(row)}"]`);
+              if (costInput) costInput.value = nextCost ? String(nextCost) : '';
+            }
+            const sourcingInput = card.querySelector(`[data-sourcing-row-key="${mrRowKey(row)}"]`);
+            if (sourcingInput) sourcingInput.value = nextSourcing ? String(nextSourcing) : '';
+          });
+          defCostInp.value = nextCost ? String(nextCost) : '';
+        });
+        defSourcingLab.appendChild(defSourcingInp);
+        defaultsRow.appendChild(defSourcingLab);
+
         const defCostLab = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
-        defCostLab.appendChild(el('span', { style: 'color:var(--muted);' }, '매입가(KRW)'));
+        defCostLab.appendChild(el('span', { style: 'color:var(--muted);' }, '정산가(KRW)'));
         const defCostInp = el('input', { type: 'number', min: '0', step: '1', style: 'font-size:12px;padding:3px 6px;width:100px;text-align:right;', value: String(firstRow.cost_krw || 0) });
         defCostInp.addEventListener('input', (e) => {
           const previousDefault = Number(firstRow.cost_krw || firstRow._cost_krw || 0);
@@ -13896,6 +14139,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           if (row._opt1 == null) row._opt1 = '';
           row.member = row._opt0 || row.member || '';
           row._sku = mrComputeSku(row);
+          if (!(Number(row._sourcing_price) > 0)) row._sourcing_price = Number(row.sourcing_price || firstRow.sourcing_price || firstRow._sourcing_price || 0);
           if (!(Number(row._cost_krw) > 0)) row._cost_krw = Number(row.cost_krw || firstRow.cost_krw || firstRow._cost_krw || 0);
           if (row._weight_g == null) row._weight_g = row.weight_g || 0;
           if (row._main_image == null) row._main_image = '';
@@ -13963,7 +14207,20 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           skuWr.appendChild(skuInp);
           optRow.appendChild(skuWr);
 
-          const costField = mkNumField('매입가(KRW)', row._cost_krw, (v) => { row._cost_krw = v; row._costTouched = true; }, 90);
+          const sourcingField = mkNumField('도매가(KRW)', row._sourcing_price, (v) => {
+            row._sourcing_price = v;
+            row.sourcing_price = v;
+            if (!row._costTouched) {
+              row._cost_krw = rshSettlementFromSourcing(v);
+              const costInput = optRow.querySelector(`[data-cost-row-key="${rowKey}"]`);
+              if (costInput) costInput.value = row._cost_krw ? String(row._cost_krw) : '';
+            }
+          }, 90);
+          const sourcingInput = sourcingField.querySelector('input[type="number"]');
+          if (sourcingInput) sourcingInput.dataset.sourcingRowKey = rowKey;
+          optRow.appendChild(sourcingField);
+
+          const costField = mkNumField('정산가(KRW)', row._cost_krw, (v) => { row._cost_krw = v; row._costTouched = true; }, 90);
           const costInput = costField.querySelector('input[type="number"]');
           if (costInput) costInput.dataset.costRowKey = rowKey;
           optRow.appendChild(costField);
@@ -14084,6 +14341,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               _opt1: '',
               _sku: '',
               _rowKey: crypto.randomUUID(),
+              _sourcing_price: firstRow.sourcing_price || firstRow._sourcing_price || 0,
               _cost_krw: firstRow.cost_krw || firstRow._cost_krw || 0,
               _weight_g: firstRow.weight_g || firstRow._weight_g || 0,
               _main_image: '',
@@ -14456,6 +14714,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         // Build variation_options array
         const variationOptions = activeRows.map(r => ({
           sku:            (r._sku || '').trim(),
+          sourcing_price: Number(r._sourcing_price || r.sourcing_price || 0),
           cost_krw:       r._cost_krw || 0,
           weight_g:       r._weight_g || 0,
           main_image:     r._main_image || '',
@@ -14495,6 +14754,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 .update(Object.assign({
                   main_image: vOpt.main_image || null,
                   extra_images: vOpt.extra_images || [],
+                  sourcing_price: vOpt.sourcing_price || 0,
                   cost_krw: vOpt.cost_krw || 0,
                 }, mrMasterPatchForGroup(group)))
                 .eq('id', row.product_id);
@@ -14532,6 +14792,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               if (!rpcRow) row.error = 'RPC 응답에 SKU 없음';
             }
             await mrPatchCreatedProducts(activeRows.map(r => r.product_id).filter(Boolean), group);
+            for (const row of activeRows) {
+              if (!row.product_id) continue;
+              await db.from('products')
+                .update({
+                  sourcing_price: Number(row._sourcing_price || row.sourcing_price || 0),
+                  cost_krw: Number(row._cost_krw || row.cost_krw || 0),
+                  cost_updated_at: new Date().toISOString(),
+                })
+                .eq('id', row.product_id);
+            }
             mrRenderPreviewCards();
 
             if (MR_MASTER_ONLY_MODE) {

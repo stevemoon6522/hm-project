@@ -30,8 +30,13 @@ assert(masterRegister.includes('const MR_MASTER_ONLY_MODE = true'), 'master regi
 assert(masterRegister.includes('function mrComputeSku(row)'), 'master register must define automatic SKU assembly');
 assert(masterRegister.includes('mrSlug(row.artist, 8)'), 'SKU must include Artist');
 assert(masterRegister.includes('mrSlug(row.album, 12)'), 'SKU must include Album');
-assert(masterRegister.includes('mrSlug(row.version, 8)'), 'SKU must include Version');
+assert(masterRegister.includes('mrSlug(row.version, 12)'), 'SKU must include full Version text such as PHOTOBOOK');
 assert(masterRegister.includes('mrSlug(member, 12)'), 'SKU must include member/option name');
+assert(
+  masterRegister.includes('if (!(Number(row._cost_krw) > 0)) row._cost_krw')
+    && masterRegister.includes('initialDefaultCost'),
+  'first option cost must fall back to the default purchase cost',
+);
 assert(masterRegister.includes('SKU (자동 생성)'), 'SKU input must be labeled as auto-generated');
 assert(masterRegister.includes("readonly: 'readonly'"), 'SKU input must be read-only');
 assert(!masterRegister.includes('SKU (수동 입력)'), 'manual SKU wording must be removed from master register');

@@ -11251,7 +11251,7 @@ LEGACY END -->
         mrSlug(loc, 8) || 'PO',
         mrSlug(row.artist, 8),
         mrSlug(row.album, 12),
-        mrSlug(row.version, 8),
+        mrSlug(row.version, 12),
         mrSlug(member, 12),
         mrSlug(row._opt1 || '', 8),
       ].filter(Boolean).join('-');
@@ -11698,6 +11698,11 @@ LEGACY END -->
         if (firstRow.cost_krw == null) {
           firstRow.cost_krw = (firstRow.observed && Number.isFinite(Number(firstRow.observed.price_krw))) ? Number(firstRow.observed.price_krw) : 0;
         }
+        const initialDefaultCost = Number(firstRow.cost_krw || firstRow._cost_krw || 0);
+        group.rows.forEach(row => {
+          if (!(Number(row.cost_krw) > 0)) row.cost_krw = initialDefaultCost;
+          if (!(Number(row._cost_krw) > 0)) row._cost_krw = Number(row.cost_krw || initialDefaultCost || 0);
+        });
 
         const fieldGrid = el('div', { style: 'display:grid;grid-template-columns:repeat(3,1fr);gap:6px;' });
         const mkCardField = (label, key) => {
@@ -11725,11 +11730,11 @@ LEGACY END -->
         defCostLab.appendChild(el('span', { style: 'color:var(--muted);' }, '매입가(KRW)'));
         const defCostInp = el('input', { type: 'number', min: '0', step: '1', style: 'font-size:12px;padding:3px 6px;width:100px;text-align:right;', value: String(firstRow.cost_krw || 0) });
         defCostInp.addEventListener('input', (e) => {
-          const previousDefault = Number(firstRow.cost_krw) || 0;
+          const previousDefault = Number(firstRow.cost_krw || firstRow._cost_krw || 0);
           const nextDefault = Number(e.target.value) || 0;
           group.rows.forEach(row => {
             row.cost_krw = nextDefault;
-            if (!row._costTouched || row._cost_krw == null || Number(row._cost_krw) === previousDefault) {
+            if (!row._costTouched || !(Number(row._cost_krw) > 0) || Number(row._cost_krw) === previousDefault) {
               row._cost_krw = nextDefault;
               const costInput = card.querySelector(`[data-cost-row-key="${mrRowKey(row)}"]`);
               if (costInput) costInput.value = nextDefault ? String(nextDefault) : '';
@@ -12006,7 +12011,7 @@ LEGACY END -->
           if (row._opt1 == null) row._opt1 = '';
           row.member = row._opt0 || row.member || '';
           row._sku = mrComputeSku(row);
-          if (row._cost_krw == null) row._cost_krw = row.cost_krw || firstRow.cost_krw || 0;
+          if (!(Number(row._cost_krw) > 0)) row._cost_krw = Number(row.cost_krw || firstRow.cost_krw || firstRow._cost_krw || 0);
           if (row._weight_g == null) row._weight_g = row.weight_g || 0;
           if (row._main_image == null) row._main_image = '';
           if (row._extra_images == null) row._extra_images = [];
@@ -12073,9 +12078,10 @@ LEGACY END -->
           skuWr.appendChild(skuInp);
           optRow.appendChild(skuWr);
 
-          optRow.appendChild(mkNumField('매입가(KRW)', row._cost_krw, (v) => { row._cost_krw = v; row._costTouched = true; }, 90));
-          const costInput = optRow.querySelector('input[type="number"]');
+          const costField = mkNumField('매입가(KRW)', row._cost_krw, (v) => { row._cost_krw = v; row._costTouched = true; }, 90);
+          const costInput = costField.querySelector('input[type="number"]');
           if (costInput) costInput.dataset.costRowKey = rowKey;
+          optRow.appendChild(costField);
           optRow.appendChild(mkNumField('무게(g)', row._weight_g, (v) => { row._weight_g = v; }, 70));
 
           // Product/option image: exactly one operator-created attachment.

@@ -65,9 +65,9 @@ assert(
   'group modal must load variation metadata from products',
 );
 assert(
-  rshModal.includes('master.main_image')
-    && rshModal.includes('rshUseDirectImage(master.main_image'),
-  'group modal must use attached master images without requiring StarOneMall crawl',
+  rshModal.includes('await rshCrawlImages(master.staronemall_url)')
+    && rshModal.indexOf('if (master.staronemall_url)') < rshModal.indexOf('} else if (_rsh.cachedImageId'),
+  'group modal must prefer StarOneMall layered cover over stale cached/raw master images',
 );
 assert(
   rshModal.includes('COD Policy')
@@ -82,10 +82,22 @@ assert(
   'group modal must transmit visible option price/stock/SKU fields',
 );
 assert(
-  rshModal.includes('update({ shopee_image_id: coverImageId })')
+  rshModal.includes('shopee_extra_image_ids: extraImageIds')
     && rshModal.includes('updateQuery.in')
     && rshModal.includes('rshProductIds()'),
-  'image upload cache must be saved back to every product in the option group',
+  'image upload cache must save cover and detail image IDs back to every product in the option group',
+);
+assert(
+  rshModal.includes('rshBuildLayeredCoverDataUrl')
+    && rshModal.includes('rshBuildDetailUploadRefs')
+    && rshModal.includes('STARONEMALL_LAYER_VERSION'),
+  'group modal must build a shop-layer cover and upload StarOneMall detail images after it',
+);
+assert(
+  rshModal.includes('rshUploadOptionImages')
+    && rshModal.includes('entry.image = { image_id: optionImageId }')
+    && rshModal.includes('globalOptionImageIds'),
+  'group modal must upload master option images and attach them to Shopee variation options',
 );
 assert(
   rshModal.includes("if (_rsh.mode === 'group')")

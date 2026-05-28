@@ -140,6 +140,28 @@ function isJpg(url: string): boolean {
   }
 }
 
+function isRasterImageUrl(url: string): boolean {
+  try {
+    const p = new URL(url).pathname.toLowerCase();
+    return /\.(jpe?g|png|webp)(\?|$)/i.test(p);
+  } catch {
+    return /\.(jpe?g|png|webp)(\?|$)/i.test(url);
+  }
+}
+
+function isLikelyDetailImageUrl(url: string): boolean {
+  const u = (url || "").toLowerCase();
+  if (!u || !isRasterImageUrl(u)) return false;
+  if (!(u.includes("wisacdn.com") || u.includes("staronemall.com"))) return false;
+  return (
+    u.includes("/attach/") ||
+    u.includes("/editor/") ||
+    u.includes("/detail") ||
+    u.includes("/contents/") ||
+    u.includes("/goods/")
+  );
+}
+
 function dedupArr<T>(arr: T[]): T[] {
   const seen = new Set<T>();
   const out: T[] = [];
@@ -381,18 +403,36 @@ function extractDetailImages(doc, maxN = 20): string[] {
   const imgObjList = doc.querySelectorAll('img[class^="img_obj_"]');
   for (const img of imgObjList) {
     const src = getImgSrc(img);
-    if (src && isJpg(src)) urls.push(src);
+    if (src && isRasterImageUrl(src)) urls.push(src);
+  }
+  const detailContainers = [
+    "#detail",
+    "#contents",
+    "#product_detail",
+    ".goods_detail",
+    ".detail",
+    ".detail_cont",
+    ".detail-img",
+    ".prd-detail",
+    ".view",
+    ".description",
+    ".item_detail",
+  ];
+  for (const selector of detailContainers) {
+    const containers = doc.querySelectorAll(selector);
+    for (const container of containers) {
+      const imgs = container.querySelectorAll("img");
+      for (const img of imgs) {
+        const src = getImgSrc(img);
+        if (src && isLikelyDetailImageUrl(src)) urls.push(src);
+      }
+    }
   }
   if (urls.length === 0) {
     const imgs = doc.querySelectorAll("img");
     for (const img of imgs) {
       const src = getImgSrc(img);
-      if (
-        src &&
-        src.includes("wisacdn.com") &&
-        src.includes("/attach/") &&
-        isJpg(src)
-      ) {
+      if (src && isLikelyDetailImageUrl(src)) {
         urls.push(src);
       }
     }

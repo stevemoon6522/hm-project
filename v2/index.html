@@ -2752,7 +2752,7 @@
 
 <!-- 상품 목록: 마스터 상품 빠른 수정 -->
 <div class="modal-overlay" id="pl-master-edit-modal" aria-hidden="true">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pl-master-edit-title" style="width:min(720px,100%);">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pl-master-edit-title" style="width:min(1120px,100%);">
     <div class="modal-header">
       <div>
         <h2 id="pl-master-edit-title">마스터 상품 수정</h2>
@@ -2760,21 +2760,62 @@
       </div>
       <button type="button" id="pl-master-edit-close">닫기</button>
     </div>
-    <div class="modal-body">
-      <div class="field">
+    <div class="modal-body" style="max-height:76vh;overflow-y:auto;">
+      <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:10px;">
+      <div class="field" style="grid-column:span 8;">
         <label for="pl-master-edit-name">마스터 상품명</label>
         <input id="pl-master-edit-name" type="text" placeholder="영문 상품명">
         <div class="subhead">저장 시 한글/CJK 문자는 자동 제외됩니다.</div>
       </div>
-      <div class="field">
+      <div class="field" style="grid-column:span 4;">
+        <label for="pl-master-edit-lifecycle">Lifecycle</label>
+        <select id="pl-master-edit-lifecycle">
+          <option value="ready_stock">Ready Stock</option>
+          <option value="pre_order">Pre Order</option>
+        </select>
+      </div>
+      <div class="field" style="grid-column:span 12;">
+        <label for="pl-master-edit-staronemall-url">StarOneMall URL</label>
+        <input id="pl-master-edit-staronemall-url" type="url" placeholder="https://www.staronemall.com/...">
+      </div>
+      <div class="field" style="grid-column:span 6;">
+        <label for="pl-master-edit-category">Shopee category ID</label>
+        <input id="pl-master-edit-category" type="number" min="1" step="1" placeholder="100740">
+      </div>
+      <div class="field" style="grid-column:span 4;">
+        <label for="pl-master-edit-brand-name">Shopee brand</label>
+        <input id="pl-master-edit-brand-name" type="text" placeholder="No Brand">
+      </div>
+      <div class="field" style="grid-column:span 2;">
+        <label for="pl-master-edit-brand-id">Brand ID</label>
+        <input id="pl-master-edit-brand-id" type="number" min="0" step="1" placeholder="0">
+      </div>
+      <div class="field" style="grid-column:span 12;">
         <label for="pl-master-edit-components">상품 구성품</label>
         <textarea id="pl-master-edit-components" rows="6" placeholder="예: CD, Photobook, Photocard..."></textarea>
       </div>
-      <div class="field">
-        <label>옵션</label>
-        <div id="pl-master-edit-options" class="pl-master-option-list"></div>
+      <div class="field" style="grid-column:span 12;">
+        <label for="pl-master-edit-description">Shopee description 초안</label>
+        <textarea id="pl-master-edit-description" rows="8" placeholder="Shopee 상품 설명"></textarea>
       </div>
-      <div id="pl-master-edit-error" class="notice error" style="display:none;"></div>
+      <div class="field" style="grid-column:span 6;">
+        <label for="pl-master-edit-days">Shopee DTS JSON</label>
+        <textarea id="pl-master-edit-days" rows="5" spellcheck="false" style="font-family:var(--mono);font-size:11px;"></textarea>
+      </div>
+      <div class="field" style="grid-column:span 6;">
+        <label for="pl-master-edit-attrs">Shopee extra attributes JSON</label>
+        <textarea id="pl-master-edit-attrs" rows="5" spellcheck="false" style="font-family:var(--mono);font-size:11px;"></textarea>
+      </div>
+      <div class="field" style="grid-column:span 12;">
+        <label>등록/이미지 초안</label>
+        <div id="pl-master-edit-image-summary" class="pl-master-option-list"></div>
+      </div>
+      <div class="field" style="grid-column:span 12;">
+        <label>옵션 초안</label>
+        <div id="pl-master-edit-options" style="overflow-x:auto;"></div>
+      </div>
+      <div id="pl-master-edit-error" class="notice error" style="display:none;grid-column:span 12;"></div>
+      </div>
     </div>
     <div class="modal-footer">
       <button type="button" id="pl-master-edit-cancel">취소</button>
@@ -3924,33 +3965,180 @@ LEGACY END -->
     overlay.dataset.productGroupId = '';
   }
 
-  function openProductMasterEditModal(productGroupId) {
-    const rows = plGroupRowsById(productGroupId);
+  function plMasterEditJsonText(value, fallback) {
+    const v = value == null ? fallback : value;
+    try {
+      return JSON.stringify(v == null ? fallback : v, null, 2);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function plMasterEditReadJson(id, fallback, label) {
+    const raw = String(document.getElementById(id)?.value || '').trim();
+    if (!raw) return fallback;
+    try {
+      return JSON.parse(raw);
+    } catch (e) {
+      throw new Error(`${label} JSON 형식이 올바르지 않습니다: ${e.message || e}`);
+    }
+  }
+
+  function plMasterEditRenderImageSummary(rows) {
+    const el = document.getElementById('pl-master-edit-image-summary');
+    if (!el) return;
+    const first = rows[0] || {};
+    const optionImageCount = rows.filter((row) => String(row.main_image || '').trim()).length;
+    const extraIds = Array.isArray(first.shopee_extra_image_ids) ? first.shopee_extra_image_ids : [];
+    const chips = [
+      `StarOneMall: ${first.staronemall_url ? '있음' : '없음'}`,
+      `Shopee 대표 image_id: ${first.shopee_image_id ? String(first.shopee_image_id).slice(0, 24) + '...' : '없음'}`,
+      `Shopee 상세 image_id: ${extraIds.length}개`,
+      `옵션 첨부 이미지: ${optionImageCount}/${rows.length}`,
+      `그룹: ${first.product_group_id || '없음'}`,
+    ];
+    el.innerHTML = chips.map((chip) => `<span class="pill">${text(chip)}</span>`).join('');
+  }
+
+  function plMasterEditRenderOptions(rows) {
+    const optionsEl = document.getElementById('pl-master-edit-options');
+    if (!optionsEl) return;
+    optionsEl.innerHTML = `
+      <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:980px;">
+        <thead>
+          <tr style="background:var(--surface2,#f8f9fa);">
+            <th style="text-align:left;padding:6px;border-bottom:1px solid var(--border);">옵션명</th>
+            <th style="text-align:left;padding:6px;border-bottom:1px solid var(--border);">SKU</th>
+            <th style="text-align:right;padding:6px;border-bottom:1px solid var(--border);">매입가</th>
+            <th style="text-align:right;padding:6px;border-bottom:1px solid var(--border);">무게(g)</th>
+            <th style="text-align:left;padding:6px;border-bottom:1px solid var(--border);">옵션 이미지 URL</th>
+            <th style="text-align:left;padding:6px;border-bottom:1px solid var(--border);">추가 이미지</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.map((row) => {
+            const extras = Array.isArray(row.extra_images) ? row.extra_images.filter(Boolean).join('\n') : '';
+            return `
+              <tr data-product-id="${text(row.id)}">
+                <td style="padding:6px;border-bottom:1px solid var(--border);">
+                  <input data-field="option_name" type="text" value="${text(plOptionDisplay(row) || row.option_name || '')}" style="width:120px;font-size:12px;padding:4px 6px;">
+                </td>
+                <td style="padding:6px;border-bottom:1px solid var(--border);">
+                  <input data-field="sku" type="text" value="${text(row.sku || '')}" style="width:260px;font-family:var(--mono);font-size:12px;padding:4px 6px;">
+                </td>
+                <td style="padding:6px;border-bottom:1px solid var(--border);text-align:right;">
+                  <input data-field="cost_krw" type="number" min="0" step="1" value="${text(String(Number(row.cost_krw || 0) || ''))}" style="width:90px;text-align:right;font-size:12px;padding:4px 6px;">
+                </td>
+                <td style="padding:6px;border-bottom:1px solid var(--border);text-align:right;">
+                  <input data-field="weight_g" type="number" min="1" step="1" value="${text(String(Number(row.weight_g || 0) || ''))}" style="width:80px;text-align:right;font-size:12px;padding:4px 6px;">
+                </td>
+                <td style="padding:6px;border-bottom:1px solid var(--border);">
+                  <input data-field="main_image" type="url" value="${text(row.main_image || '')}" placeholder="https://..." style="width:260px;font-size:12px;padding:4px 6px;">
+                </td>
+                <td style="padding:6px;border-bottom:1px solid var(--border);">
+                  <textarea data-field="extra_images" rows="2" placeholder="한 줄에 URL 1개" style="width:220px;font-size:11px;padding:4px 6px;">${text(extras)}</textarea>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    `;
+  }
+
+  async function openProductMasterEditModal(productGroupId) {
+    const groupId = String(productGroupId || '').trim();
+    let rows = plGroupRowsById(groupId);
     if (!rows.length) {
       showToast('수정할 마스터 상품 묶음을 찾지 못했습니다.', 'err');
       return;
     }
     const overlay = document.getElementById('pl-master-edit-modal');
     if (!overlay) return;
+    try {
+      const { data, error } = await db
+        .from('products')
+        .select(RSH_PRODUCT_SELECT)
+        .eq('product_group_id', groupId);
+      if (error) throw error;
+      if (Array.isArray(data) && data.length) {
+        rows = rshSortedProducts(data);
+        const byId = new Map(state.products.map((p) => [String(p.id), p]));
+        rows.forEach((row) => {
+          const current = byId.get(String(row.id));
+          if (current) Object.assign(current, row);
+        });
+      }
+    } catch (e) {
+      console.warn('[pl-master-edit] full draft fetch failed, using list cache:', e);
+    }
     const first = rows[0] || {};
-    overlay.dataset.productGroupId = String(productGroupId || '');
+    overlay.dataset.productGroupId = groupId;
     const subtitle = document.getElementById('pl-master-edit-subtitle');
     if (subtitle) subtitle.textContent = `${plParentSku(rows)} / ${rows.length} options`;
     const nameInput = document.getElementById('pl-master-edit-name');
     if (nameInput) nameInput.value = plProductName(first);
+    const lifecycleInput = document.getElementById('pl-master-edit-lifecycle');
+    if (lifecycleInput) lifecycleInput.value = first.lifecycle_state || 'ready_stock';
+    const staroneInput = document.getElementById('pl-master-edit-staronemall-url');
+    if (staroneInput) staroneInput.value = first.staronemall_url || '';
+    const categoryInput = document.getElementById('pl-master-edit-category');
+    if (categoryInput) categoryInput.value = first.shopee_category_id ? String(first.shopee_category_id) : '';
+    const brandNameInput = document.getElementById('pl-master-edit-brand-name');
+    if (brandNameInput) brandNameInput.value = first.shopee_brand_name || 'No Brand';
+    const brandIdInput = document.getElementById('pl-master-edit-brand-id');
+    if (brandIdInput) brandIdInput.value = String(Number(first.shopee_brand_id || 0));
     const componentsInput = document.getElementById('pl-master-edit-components');
     if (componentsInput) componentsInput.value = first.components_extracted_en || '';
-    const optionsEl = document.getElementById('pl-master-edit-options');
-    if (optionsEl) {
-      optionsEl.innerHTML = rows
-        .map((row) => `<span class="pill">${text(plOptionDisplay(row) || row.sku || '옵션')}</span>`)
-        .join('');
-    }
+    const descInput = document.getElementById('pl-master-edit-description');
+    if (descInput) descInput.value = first.shopee_description || '';
+    const daysInput = document.getElementById('pl-master-edit-days');
+    if (daysInput) daysInput.value = plMasterEditJsonText(first.shopee_days_to_ship, {});
+    const attrsInput = document.getElementById('pl-master-edit-attrs');
+    if (attrsInput) attrsInput.value = plMasterEditJsonText(first.shopee_extra_attributes, []);
+    plMasterEditRenderImageSummary(rows);
+    plMasterEditRenderOptions(rows);
     const err = document.getElementById('pl-master-edit-error');
     if (err) { err.textContent = ''; err.style.display = 'none'; }
     overlay.classList.add('show');
     overlay.setAttribute('aria-hidden', 'false');
     if (nameInput) nameInput.focus();
+  }
+
+  function plMasterEditReadOptionPatches(rows) {
+    const byId = new Map(rows.map((row) => [String(row.id), row]));
+    return Array.from(document.querySelectorAll('#pl-master-edit-options tr[data-product-id]')).map((tr) => {
+      const id = String(tr.dataset.productId || '');
+      const existing = byId.get(id) || {};
+      const field = (name) => tr.querySelector(`[data-field="${name}"]`);
+      const sku = stripNonMarketplaceText(field('sku')?.value || '').trim();
+      if (!sku) throw new Error('옵션 SKU는 비울 수 없습니다.');
+      if (hasNonMarketplaceText(sku)) throw new Error(`SKU는 영문/숫자만 허용됩니다: ${sku}`);
+      const optionName = stripNonMarketplaceText(field('option_name')?.value || '').trim();
+      const cost = Number(field('cost_krw')?.value || 0);
+      const weight = Number(field('weight_g')?.value || 0);
+      if (!(cost >= 0)) throw new Error(`${sku} 매입가가 올바르지 않습니다.`);
+      if (!(weight > 0)) throw new Error(`${sku} 무게는 1g 이상이어야 합니다.`);
+      const extraImages = String(field('extra_images')?.value || '')
+        .split(/\r?\n|,/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const prevNames = Array.isArray(existing.variation_option_names) ? existing.variation_option_names.slice() : [];
+      const nextNames = prevNames.length ? prevNames : [optionName || existing.option_name || ''];
+      if (optionName) nextNames[0] = optionName;
+      return {
+        id,
+        patch: {
+          sku,
+          option_name: optionName || null,
+          variation_option_names: nextNames.filter(Boolean),
+          cost_krw: cost,
+          weight_g: weight,
+          main_image: String(field('main_image')?.value || '').trim() || null,
+          extra_images: extraImages,
+        },
+      };
+    });
   }
 
   async function saveProductMasterEditModal() {
@@ -3967,15 +4155,29 @@ LEGACY END -->
       return;
     }
     const components = String(document.getElementById('pl-master-edit-components')?.value || '').trim();
-    const patch = {
-      product_name: productName,
-      components_extracted_en: components || null,
-      components_extracted_at: components ? new Date().toISOString() : null,
-      components_approved: components ? 1 : 0,
-    };
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '저장 중...'; }
     if (err) { err.textContent = ''; err.style.display = 'none'; }
     try {
+      const categoryRaw = String(document.getElementById('pl-master-edit-category')?.value || '').trim();
+      const categoryId = categoryRaw ? Number(categoryRaw) : null;
+      if (categoryId && ![100740, 101390].includes(categoryId)) {
+        throw new Error('Shopee category ID는 현재 100740 또는 101390만 허용됩니다.');
+      }
+      const optionPatches = plMasterEditReadOptionPatches(rows);
+      const patch = {
+        product_name: productName,
+        lifecycle_state: document.getElementById('pl-master-edit-lifecycle')?.value || rows[0]?.lifecycle_state || 'ready_stock',
+        staronemall_url: String(document.getElementById('pl-master-edit-staronemall-url')?.value || '').trim() || null,
+        shopee_category_id: categoryId,
+        shopee_brand_id: Number(document.getElementById('pl-master-edit-brand-id')?.value || 0) || 0,
+        shopee_brand_name: stripNonMarketplaceText(document.getElementById('pl-master-edit-brand-name')?.value || '').trim() || 'No Brand',
+        shopee_description: String(document.getElementById('pl-master-edit-description')?.value || '').trim() || null,
+        shopee_days_to_ship: plMasterEditReadJson('pl-master-edit-days', {}, 'Shopee DTS'),
+        shopee_extra_attributes: plMasterEditReadJson('pl-master-edit-attrs', [], 'Shopee attributes'),
+        components_extracted_en: components || null,
+        components_extracted_at: components ? new Date().toISOString() : null,
+        components_approved: components ? 1 : 0,
+      };
       const { data, error } = await db
         .from('products')
         .update(patch)
@@ -3985,9 +4187,20 @@ LEGACY END -->
       if (!Array.isArray(data) || data.length === 0) {
         throw new Error('업데이트 권한 없음 또는 대상 행 없음');
       }
+      for (const item of optionPatches) {
+        const { error: rowErr } = await db
+          .from('products')
+          .update(item.patch)
+          .eq('id', item.id);
+        if (rowErr) throw rowErr;
+      }
       const ids = new Set(rows.map((p) => String(p.id)));
       state.products.forEach((p) => {
         if (ids.has(String(p.id))) Object.assign(p, patch);
+      });
+      optionPatches.forEach((item) => {
+        const p = state.products.find((row) => String(row.id) === item.id);
+        if (p) Object.assign(p, item.patch);
       });
       closeProductMasterEditModal();
       renderProducts();
@@ -7244,11 +7457,15 @@ LEGACY END -->
     mode: 'single',
     master: null,            // full product row fetched on open
     products: [],            // option rows when opening a grouped master product
-    selectedImages: [],      // [{ src: url, idx: number }] — single cover image (P0-1: radio-style)
+    selectedImages: [],      // [{ src/dataUrl, idx, kind }] — first image is Shopee cover
     cachedImageId: null,     // shopee_image_id from master (already on Shopee CDN)
     cachedExtraIds: [],      // shopee_extra_image_ids from master (read-only in Phase B)
     uploadMode: false,       // true if user chose new images (overrides cache)
     crawledImages: [],       // images array from starone-crawl observed_values
+    crawledImageRefs: [],    // rendered image metadata, preserving data URLs and source URLs
+    detailImageSources: [],  // StarOneMall detail images; uploaded after cover
+    regionImageIds: {},      // product image_id_list per target region
+    globalOptionImageIds: {},// option SKU -> SG image_id for Shopee variation option image
     publishRequestId: null,  // UUID generated at Stage 2 start; fresh UUID on retry (P0-2)
     dtsOverrides: {},        // { region: number } — user-edited DTS values
     publishInFlight: false,  // P1-2: true while fetch is in-flight — blocks modal close
@@ -7555,6 +7772,116 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return out;
   }
 
+  function rshNormalizeImageUrl(rawUrl, baseUrl) {
+    return _normalizeShopeeImageUrl(rawUrl, baseUrl || _rsh.master?.staronemall_url || window.location.href);
+  }
+
+  function rshDataUrlToBase64(dataUrl) {
+    const value = String(dataUrl || '');
+    const commaIdx = value.indexOf(',');
+    return commaIdx >= 0 ? value.slice(commaIdx + 1) : value;
+  }
+
+  async function rshBlobToDataUrl(blob) {
+    return await new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onloadend = () => resolve(String(fr.result || ''));
+      fr.onerror = () => reject(new Error('FileReader failed'));
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  async function rshFetchImageDataUrl(src) {
+    const value = String(src || '').trim();
+    if (!value) throw new Error('이미지 URL이 비어 있습니다.');
+    if (/^data:/i.test(value)) return value;
+    const fetchCandidates = [value];
+    if (/^https?:\/\//i.test(value)) {
+      fetchCandidates.push(SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(value));
+    }
+    let lastErr = null;
+    for (const url of fetchCandidates) {
+      try {
+        const resp = await fetch(url, /^https?:\/\//i.test(url) && url.includes('/proxy_image?') ? { headers: AUTH_HEADERS } : undefined);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return await rshBlobToDataUrl(await resp.blob());
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw new Error(`이미지 다운로드 실패: ${lastErr?.message || lastErr || value}`);
+  }
+
+  async function rshBuildLayeredCoverDataUrl(mainImageUrl) {
+    if (typeof mrCompositeMainImage === 'function') {
+      const b64 = await mrCompositeMainImage(mainImageUrl);
+      return `data:image/png;base64,${b64}`;
+    }
+    const proxyUrl = SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(mainImageUrl);
+    return await applyShopLayer(proxyUrl);
+  }
+
+  async function rshCanvasToJpegDataUrl(canvas, quality = 0.9) {
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob((blob) => {
+        if (!blob) { reject(new Error('canvas.toBlob 실패')); return; }
+        rshBlobToDataUrl(blob).then(resolve, reject);
+      }, 'image/jpeg', quality);
+    });
+  }
+
+  async function rshSplitDetailImageRef(ref, maxPieces) {
+    if (maxPieces <= 0) return [];
+    const sourceUrl = ref.sourceUrl || ref.src || '';
+    const dataUrl = await rshFetchImageDataUrl(ref.src || sourceUrl);
+    const img = await _loadImage(dataUrl, null);
+    const rawWidth = Math.max(1, img.naturalWidth || img.width || 1);
+    const rawHeight = Math.max(1, img.naturalHeight || img.height || 1);
+    const targetWidth = Math.min(1200, Math.max(300, rawWidth));
+    const scale = targetWidth / rawWidth;
+    const scaledHeight = Math.max(300, Math.round(rawHeight * scale));
+    const shouldSplit = scaledHeight > 1800 && maxPieces > 1;
+    const pieceCount = shouldSplit ? Math.min(maxPieces, Math.ceil(scaledHeight / 1600)) : 1;
+    const refs = [];
+    for (let i = 0; i < pieceCount; i++) {
+      const scaledY = Math.round((scaledHeight / pieceCount) * i);
+      const scaledNextY = i === pieceCount - 1 ? scaledHeight : Math.round((scaledHeight / pieceCount) * (i + 1));
+      const pieceHeight = Math.max(300, scaledNextY - scaledY);
+      const canvas = document.createElement('canvas');
+      canvas.width = targetWidth;
+      canvas.height = Math.min(4096, pieceHeight);
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      const sourceY = scaledY / scale;
+      const sourceH = Math.min(rawHeight - sourceY, canvas.height / scale);
+      ctx.drawImage(img, 0, sourceY, rawWidth, sourceH, 0, 0, targetWidth, Math.round(sourceH * scale));
+      refs.push({
+        src: await rshCanvasToJpegDataUrl(canvas, 0.9),
+        dataUrl: null,
+        sourceUrl,
+        kind: pieceCount > 1 ? 'detail-slice' : 'detail',
+        label: pieceCount > 1 ? `상세 ${i + 1}/${pieceCount}` : '상세',
+      });
+    }
+    return refs.slice(0, maxPieces);
+  }
+
+  async function rshBuildDetailUploadRefs(maxCount) {
+    const refs = [];
+    const detailSources = Array.isArray(_rsh.detailImageSources) ? _rsh.detailImageSources : [];
+    for (const detail of detailSources) {
+      if (refs.length >= maxCount) break;
+      try {
+        const pieces = await rshSplitDetailImageRef(detail, maxCount - refs.length);
+        refs.push(...pieces);
+      } catch (e) {
+        console.warn('[rsh] detail image split/upload prep failed:', detail?.src || detail, e);
+      }
+    }
+    return refs.slice(0, maxCount);
+  }
+
   // Render crawled image grid (4-column, click to select).
   function rshRenderImageGrid(images) {
     const grid = $rsh('img-grid');
@@ -7586,7 +7913,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       _rsh.selectedImages = [];
     } else {
       // Replace any existing selection with the new one (radio behaviour)
-      _rsh.selectedImages = [{ src: _rsh.crawledImages[idx], idx }];
+      const ref = (_rsh.crawledImageRefs || [])[idx] || { src: _rsh.crawledImages[idx] };
+      _rsh.selectedImages = [{ ...ref, src: ref.src || ref.dataUrl, idx }];
     }
     // CRITICAL FIX: mark that the user selected a fresh image so Stage 2 actually
     // uploads it. Without this, rshProceedToStage2's `if (_rsh.uploadMode && ...)`
@@ -7621,7 +7949,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   function rshUpdateImageCount() {
     // P0-1: No N/9 count — single-select only; show "선택됨" when one is picked
     const countEl = $rsh('img-count');
-    if (countEl) countEl.textContent = _rsh.selectedImages.length > 0 ? '선택됨' : '';
+    if (countEl) {
+      const detailCount = Array.isArray(_rsh.detailImageSources) ? _rsh.detailImageSources.length : 0;
+      countEl.textContent = _rsh.selectedImages.length > 0
+        ? `대표 선택됨${detailCount ? ` · 상세 ${detailCount}장` : ''}`
+        : '';
+    }
   }
 
   // Determine whether all required fields are present → enable Register button.
@@ -7784,7 +8117,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const src = String(url || '').trim();
     if (!src) return;
     _rsh.crawledImages = [src];
-    _rsh.selectedImages = [{ src, idx: 0 }];
+    _rsh.crawledImageRefs = [{ src, sourceUrl: src, idx: 0, kind: 'direct-cover', label }];
+    _rsh.selectedImages = [{ src, sourceUrl: src, idx: 0, kind: 'direct-cover', label }];
+    _rsh.detailImageSources = [];
     _rsh.uploadMode = true;
     const imgMissing = $rsh('img-missing');
     if (imgMissing) imgMissing.style.display = 'none';
@@ -7856,6 +8191,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       cachedExtraIds: [],
       uploadMode: false,
       crawledImages: [],
+      crawledImageRefs: [],
+      detailImageSources: [],
+      regionImageIds: {},
+      globalOptionImageIds: {},
       publishRequestId: null,
       dtsOverrides: {},
       publishInFlight: false,
@@ -8044,7 +8383,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const manualUrlSection = $rsh('manual-url-section');
     if (manualUrlSection) manualUrlSection.style.display = 'none';
 
-    if (_rsh.cachedImageId && !_rsh.uploadMode) {
+    if (master.staronemall_url) {
+      // StarOneMall products must use the shop-layer composited representative
+      // image as the cover. Existing Shopee image_id cache may be from an older
+      // raw upload, so crawl/rebuild by default and save the fresh IDs on publish.
+      if (imgMissing) imgMissing.style.display = 'block';
+      await rshCrawlImages(master.staronemall_url);
+      if (reuploadBtn) {
+        reuploadBtn.style.display = 'inline-flex';
+        reuploadBtn.onclick = () => rshStartImageReupload(master);
+      }
+    } else if (_rsh.cachedImageId && !_rsh.uploadMode) {
       // Cached path: show badge + re-upload button
       if (imgCached) imgCached.style.display = 'block';
       rshShowCachedImages(master);
@@ -8054,10 +8403,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
     } else if (master.main_image) {
       rshUseDirectImage(master.main_image, '첨부 이미지');
-    } else if (master.staronemall_url) {
-      // No cache, but has StarOneMall URL — crawl automatically
-      if (imgMissing) imgMissing.style.display = 'block';
-      await rshCrawlImages(master.staronemall_url);
     } else {
       // P1-4a: No cache, no staronemall_url — show red banner, disable Register, no image grid
       if (noStaronemallBanner) noStaronemallBanner.style.display = 'block';
@@ -8098,15 +8443,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
 
       const observed = json.results[0].observed_values || {};
-      // Combine main + detail images, dedup, max 20
-      const allImages = [
-        ...(observed.main_image_urls || []),
-        ...(observed.detail_image_urls || []),
-      ].filter((u, i, arr) => u && arr.indexOf(u) === i).slice(0, 20);
+      const mainImages = (observed.main_image_urls || [])
+        .map((u) => rshNormalizeImageUrl(u, staronemallUrl))
+        .filter(Boolean)
+        .filter((u, i, arr) => arr.indexOf(u) === i);
+      const detailImages = (observed.detail_image_urls || [])
+        .map((u) => rshNormalizeImageUrl(u, staronemallUrl))
+        .filter(Boolean)
+        .filter((u) => !mainImages.includes(u))
+        .filter((u, i, arr) => arr.indexOf(u) === i);
 
       if (imgCrawlLoading) imgCrawlLoading.style.display = 'none';
 
-      if (!allImages.length) {
+      if (!mainImages.length && !detailImages.length) {
         // P1-4b: crawl returned 0 images → show manual URL fallback input
         if (imgCrawlError) {
           imgCrawlError.textContent = 'staronemall 페이지에서 이미지를 찾을 수 없습니다. 직접 URL을 입력해 주세요.';
@@ -8120,10 +8469,61 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         return;
       }
 
-      _rsh.crawledImages = allImages;
-      _rsh.selectedImages = [];
-      rshRenderImageGrid(allImages);
+      let coverRef = null;
+      if (mainImages[0]) {
+        if (imgCrawlLoading) {
+          imgCrawlLoading.textContent = 'StarOneMall 대표이미지 레이어 합성 중...';
+          imgCrawlLoading.style.display = 'block';
+        }
+        try {
+          const dataUrl = await rshBuildLayeredCoverDataUrl(mainImages[0]);
+          coverRef = {
+            src: dataUrl,
+            dataUrl,
+            sourceUrl: mainImages[0],
+            staronemallUrl,
+            idx: 0,
+            kind: 'layered-cover',
+            label: '레이어 대표',
+          };
+        } catch (layerErr) {
+          console.warn('[rsh] layered cover failed, falling back to raw main image:', layerErr);
+          coverRef = {
+            src: mainImages[0],
+            sourceUrl: mainImages[0],
+            staronemallUrl,
+            idx: 0,
+            kind: 'raw-cover-fallback',
+            label: '대표 원본',
+          };
+          if (imgCrawlError) {
+            imgCrawlError.textContent = `대표이미지 레이어 합성 실패: ${layerErr.message || layerErr}. 원본 대표이미지로 대체 표시 중입니다.`;
+            imgCrawlError.style.display = 'block';
+          }
+        } finally {
+          if (imgCrawlLoading) imgCrawlLoading.style.display = 'none';
+        }
+      }
+
+      const displayRefs = [];
+      if (coverRef) displayRefs.push(coverRef);
+      detailImages.slice(0, 7).forEach((src) => {
+        displayRefs.push({ src, sourceUrl: src, staronemallUrl, kind: 'detail-preview', label: '상세' });
+      });
+
+      _rsh.crawledImageRefs = displayRefs.map((ref, idx) => ({ ...ref, idx }));
+      _rsh.crawledImages = _rsh.crawledImageRefs.map((ref) => ref.src);
+      _rsh.detailImageSources = detailImages.slice(0, REGISTER_MAX_IMAGE_IDS - 1)
+        .map((src) => ({ src, sourceUrl: src, staronemallUrl, kind: 'detail' }));
+      _rsh.selectedImages = coverRef ? [{ ...coverRef, idx: 0 }] : [];
+      _rsh.uploadMode = !!coverRef;
+      rshRenderImageGrid(_rsh.crawledImages);
+      rshUpdateImageBadges();
+      rshUpdateImageCount();
+      const imgMissing = $rsh('img-missing');
+      if (imgMissing && coverRef) imgMissing.style.display = 'none';
       if (imgGrid) imgGrid.style.display = '';
+      rshCheckSubmitEnabled();
     } catch (e) {
       if (imgCrawlLoading) imgCrawlLoading.style.display = 'none';
       if (imgCrawlError) { imgCrawlError.textContent = `이미지 크롤링 오류: ${e.message || e}`; imgCrawlError.style.display = 'block'; }
@@ -8145,7 +8545,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!url) { showToast('이미지 URL을 입력해 주세요.', 'err'); return; }
       // Treat the pasted URL as a single crawled image
       _rsh.crawledImages = [url];
-      _rsh.selectedImages = [{ src: url, idx: 0 }];
+      _rsh.crawledImageRefs = [{ src: url, sourceUrl: url, idx: 0, kind: 'manual-cover', label: '수동 이미지' }];
+      _rsh.selectedImages = [{ src: url, sourceUrl: url, idx: 0, kind: 'manual-cover', label: '수동 이미지' }];
+      _rsh.detailImageSources = [];
       _rsh.uploadMode = true;
       // Render a 1-cell grid showing the URL image
       rshRenderImageGrid([url]);
@@ -8177,12 +8579,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     rshCheckSubmitEnabled();
   }
 
-  // Upload the cover image to Shopee CDN per region. KRSC requires images to
-  // live in the target region's image space — uploading to SG and reusing the
-  // image_id in TW/BR triggers cross-upload validation failures. BR also needs
-  // at least 2 images, so we upload the same source twice for BR and assemble
-  // image_id_list with two distinct IDs.
-  // Returns { regionImageIds: { SG: [id], TW: [id], ..., BR: [id1, id2] }, coverImageId }.
+  // Upload product images to Shopee CDN per region. The first image is always
+  // the representative cover; StarOneMall detail images follow it in the
+  // image_id_list. KRSC requires target-region image IDs, and BR needs 2+ IDs.
+  // Returns { regionImageIds: { SG: [cover, detail...], ... }, coverImageId, extraImageIds }.
   async function rshUploadImages(session, regions) {
     const SHOPEE_BRIDGE_UPLOAD = `${SUPABASE_URL}/functions/v1/shopee-bridge/upload_image`;
     const uploadHeaders = {
@@ -8194,50 +8594,68 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const imgRef = _rsh.selectedImages[0];
     if (!imgRef) throw new Error('선택된 이미지가 없습니다.');
 
-    let imgResp;
-    try {
-      imgResp = await fetch(imgRef.src);
-    } catch (e) {
-      throw new Error(`이미지 다운로드 실패 (CORS 또는 네트워크): ${e.message || e}`);
+    const detailRefs = await rshBuildDetailUploadRefs(REGISTER_MAX_IMAGE_IDS - 1);
+    const uploadRefs = [imgRef, ...detailRefs].slice(0, REGISTER_MAX_IMAGE_IDS);
+    const preparedRefs = [];
+    for (let i = 0; i < uploadRefs.length; i++) {
+      const ref = uploadRefs[i];
+      const dataUrl = ref.dataUrl || (/^data:/i.test(ref.src || '') ? ref.src : await rshFetchImageDataUrl(ref.src || ref.sourceUrl));
+      const b64 = rshDataUrlToBase64(dataUrl);
+      preparedRefs.push({
+        ...ref,
+        dataUrl,
+        b64,
+        outputHash: await sha256TextHex(b64),
+        isCover: i === 0,
+      });
     }
-    if (!imgResp.ok) throw new Error(`이미지 다운로드 실패 (HTTP ${imgResp.status})`);
-    const blob = await imgResp.blob();
-    const dataUrl = await new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onloadend = () => resolve(String(fr.result || ''));
-      fr.onerror = () => reject(new Error('FileReader failed'));
-      fr.readAsDataURL(blob);
-    });
-    const commaIdx = dataUrl.indexOf(',');
-    const b64 = commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl;
+
+    async function uploadPrepared(region, ref, duplicateIndex = 0) {
+      const body = {
+        region,
+        image_base64: ref.b64,
+        source_url: ref.sourceUrl || ref.src || '',
+      };
+      if (ref.isCover && ref.kind === 'layered-cover') {
+        body.main_image_url = ref.sourceUrl || '';
+        body.layer_version = STARONEMALL_LAYER_VERSION;
+        body.output_hash = ref.outputHash;
+      }
+      if (duplicateIndex > 0) body.output_hash = `${ref.outputHash || ''}:dup${duplicateIndex}`;
+      const resp = await fetch(SHOPEE_BRIDGE_UPLOAD, {
+        method: 'POST',
+        headers: uploadHeaders,
+        body: JSON.stringify(body),
+      });
+      const json = await resp.json();
+      if (!json.ok || !json.image_id) {
+        throw new Error(`${region} 이미지 업로드 실패: ${json.error || json.message || '알 수 없는 오류'}`);
+      }
+      return json.image_id;
+    }
 
     const targetRegions = Array.isArray(regions) && regions.length ? regions : ['SG'];
     const regionImageIds = {};
     let coverImageId = null;
     for (const r of targetRegions) {
-      const count = r === 'BR' ? 2 : 1;
       const ids = [];
-      for (let i = 0; i < count; i++) {
-        const resp = await fetch(SHOPEE_BRIDGE_UPLOAD, {
-          method: 'POST',
-          headers: uploadHeaders,
-          body: JSON.stringify({ region: r, image_base64: b64, source_url: imgRef.src }),
-        });
-        const json = await resp.json();
-        if (!json.ok || !json.image_id) {
-          throw new Error(`${r} 이미지 업로드 실패: ${json.error || json.message || '알 수 없는 오류'}`);
-        }
-        ids.push(json.image_id);
-        if (r === 'SG' && !coverImageId) coverImageId = json.image_id;
+      for (const ref of preparedRefs) {
+        ids.push(await uploadPrepared(r, ref));
+        if (r === 'SG' && !coverImageId) coverImageId = ids[0];
       }
-      regionImageIds[r] = ids;
+      if (r === 'BR' && ids.length === 1 && preparedRefs[0]) {
+        ids.push(await uploadPrepared(r, preparedRefs[0], 1));
+      }
+      regionImageIds[r] = ids.slice(0, REGISTER_MAX_IMAGE_IDS);
     }
     if (!coverImageId) coverImageId = regionImageIds[targetRegions[0]][0];
+    const primaryRegionIds = regionImageIds.SG || regionImageIds[targetRegions[0]] || [];
+    const extraImageIds = primaryRegionIds.slice(1);
 
     const productIds = rshProductIds();
     let updateQuery = db
       .from('products')
-      .update({ shopee_image_id: coverImageId });
+      .update({ shopee_image_id: coverImageId, shopee_extra_image_ids: extraImageIds });
     updateQuery = productIds.length > 1
       ? updateQuery.in('id', productIds)
       : updateQuery.eq('id', _rsh.productId);
@@ -8246,8 +8664,44 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       throw new Error(`이미지 ID 저장 실패: ${updateErr.message}`);
     }
     _rsh.cachedImageId = coverImageId;
+    _rsh.cachedExtraIds = extraImageIds;
 
-    return { coverImageId, regionImageIds };
+    return { coverImageId, extraImageIds, regionImageIds };
+  }
+
+  async function rshUploadOptionImages(session, regions) {
+    if (_rsh.mode !== 'group') return {};
+    const rows = rshSortedProducts(_rsh.products || []);
+    const uploadRegion = (Array.isArray(regions) && regions.includes('SG')) ? 'SG' : ((regions || [])[0] || 'SG');
+    const uploadHeaders = {
+      Authorization: `Bearer ${session.access_token}`,
+      apikey: SUPABASE_ANON,
+      'Content-Type': 'application/json',
+    };
+    const out = {};
+    for (const row of rows) {
+      const sku = String(row.sku || '').trim();
+      const src = String(row.main_image || '').trim();
+      if (!sku || !src) continue;
+      const dataUrl = await rshFetchImageDataUrl(src);
+      const resp = await fetch(`${SUPABASE_URL}/functions/v1/shopee-bridge/upload_image`, {
+        method: 'POST',
+        headers: uploadHeaders,
+        body: JSON.stringify({
+          region: uploadRegion,
+          image_base64: rshDataUrlToBase64(dataUrl),
+          source_url: src,
+          actor: 'v2-rsh-option-image',
+        }),
+      });
+      const json = await resp.json();
+      if (!json.ok || !json.image_id) {
+        throw new Error(`${sku} 옵션 이미지 업로드 실패: ${json.error || json.message || '알 수 없는 오류'}`);
+      }
+      out[sku] = json.image_id;
+    }
+    _rsh.globalOptionImageIds = out;
+    return out;
   }
 
   function rshBuildTierVariation(products) {
@@ -8259,7 +8713,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const key = raw.toLowerCase();
       if (!raw || seen.has(key)) return;
       seen.add(key);
-      optionList.push({ option: raw });
+      const sku = String(row.sku || '').trim();
+      const optionImageId = sku ? _rsh.globalOptionImageIds?.[sku] : '';
+      const entry = { option: raw };
+      if (optionImageId) entry.image = { image_id: optionImageId };
+      optionList.push(entry);
     });
     return optionList.length ? [{ name: rshReadVariationName(rows), option_list: optionList }] : [];
   }
@@ -8283,6 +8741,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const productName = rshReadProductName()
       || rshFormatShopeeProductName(master.product_name || products[0]?.product_name, parentSku, lifecycle);
     const imageId = _rsh.cachedImageId || master.shopee_image_id || '';
+    const globalImageIds = Array.isArray(_rsh.regionImageIds?.SG)
+      ? _rsh.regionImageIds.SG.filter(Boolean)
+      : [imageId].concat(_rsh.cachedExtraIds || master.shopee_extra_image_ids || []).filter(Boolean);
     const brandObj = rshReadBrandObject();
 
     const model = variantInputs.map((v, index) => {
@@ -8326,6 +8787,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       price: basePrice,
       stock: totalStock,
       description: document.getElementById('rsh-description')?.value || master.shopee_description || productName || parentSku,
+      image_id_list: globalImageIds.length ? globalImageIds.slice(0, REGISTER_MAX_IMAGE_IDS) : undefined,
       attribute_list: rshReadSpecAttributes(categoryId),
       condition: rshReadCondition(),
       targets,
@@ -8496,6 +8958,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       try {
         const uploadResult = await rshUploadImages(session, activeRegions);
         _rsh.regionImageIds = uploadResult.regionImageIds || {};
+        _rsh.uploadMode = false;
       } catch (uploadErr) {
         _rsh.publishInFlight = false;
         // Fix1: preserve selectedImages so retry can re-use them without reopening the modal
@@ -8504,6 +8967,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         // Show the upload-retry button so operator can retry without closing the modal
         const uploadRetryBtn = document.getElementById('rsh-upload-retry-btn');
         if (uploadRetryBtn) uploadRetryBtn.style.display = 'inline-flex';
+        rshShowStage2Buttons(false);
+        return;
+      }
+    }
+
+    if (!regionsOverride && _rsh.mode === 'group') {
+      activeRegions.forEach((r) => { const el = document.getElementById(`rsh-status-${r}`); if (el) { el.textContent = '옵션 이미지 업로드 중...'; el.style.color = '#6610d4'; } });
+      try {
+        await rshUploadOptionImages(session, activeRegions);
+      } catch (optionUploadErr) {
+        _rsh.publishInFlight = false;
+        if (errorEl) { errorEl.textContent = `옵션 이미지 업로드 실패: ${optionUploadErr.message || optionUploadErr}`; errorEl.style.display = 'block'; }
+        activeRegions.forEach((r) => { const el = document.getElementById(`rsh-status-${r}`); if (el) { el.textContent = '대기'; el.style.color = '#94a3b8'; } });
         rshShowStage2Buttons(false);
         return;
       }
@@ -8761,6 +9237,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       try {
         const uploadResult = await rshUploadImages(session, RSH_REGIONS);
         _rsh.regionImageIds = uploadResult.regionImageIds || {};
+        _rsh.uploadMode = false;
       } catch (uploadErr) {
         _rsh.publishInFlight = false;
         if (errorEl) { errorEl.textContent = `이미지 업로드 재시도 실패: ${uploadErr.message || uploadErr}`; errorEl.style.display = 'block'; }

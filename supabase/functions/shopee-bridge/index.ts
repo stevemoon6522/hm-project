@@ -1441,6 +1441,34 @@ function buildGlobalModels(variation: any, fallbackPrice: number, fallbackStock:
   });
 }
 
+function normalizeGlobalModelForAdd(model: any) {
+  const stock = Number(model?.seller_stock?.[0]?.stock ?? model?.stock ?? model?.normal_stock ?? 0);
+  const out: any = {
+    tier_index: Array.isArray(model?.tier_index) ? model.tier_index.map((x: any) => Number(x)) : [],
+    original_price: Number(model?.global_original_price ?? model?.original_price ?? 0),
+    seller_stock: [{ stock }],
+  };
+  const sku = String(model?.global_model_sku || model?.model_sku || '').trim();
+  if (sku) out.global_model_sku = sku;
+  if (model?.image_id) out.image_id = String(model.image_id);
+  return out;
+}
+
+function buildAddGlobalModelPayload(global_item_id: number, models: any[], body: any = {}, target: any = {}) {
+  const dts = clampDaysToShip(target?.days_to_ship ?? body?.days_to_ship ?? body?.pre_order?.days_to_ship ?? 10);
+  const payload: any = {
+    global_item_id,
+    global_model: models.map(normalizeGlobalModelForAdd),
+    days_to_ship: dts,
+    package_length: Number(body.package_length_cm ?? body.package_length ?? body.dimension?.package_length) || 20,
+    package_width: Number(body.package_width_cm ?? body.package_width ?? body.dimension?.package_width) || 15,
+    package_height: Number(body.package_height_cm ?? body.package_height ?? body.dimension?.package_height) || 5,
+  };
+  const weightKg = Number(body.weight ?? body.weight_kg ?? 0);
+  if (weightKg > 0) payload.weight = weightKg;
+  return payload;
+}
+
 function buildPublishModels(variation: any, fallbackPrice: number) {
   const normalized = normalizeVariation(variation);
   if (!normalized) return [];
@@ -2280,12 +2308,13 @@ Deno.serve(async (req) => {
       if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
       if (!model_list.length) return jsonResp({ ok: false, error: 'model_list required' }, 400);
       return withPublishRequestId(action, r, null, body, async () => {
+        const addModelPayload = buildAddGlobalModelPayload(global_item_id, model_list, body, body);
         const result = await merchantApiCall(r, '/api/v2/global_product/add_global_model', {
           method: 'POST',
-          body: { global_item_id, model_list },
+          body: addModelPayload,
         });
-        if (result.error) return jsonResp({ ok: false, region: r, error: result.error, message: result.message, raw: result }, 502);
-        return jsonResp({ ok: true, region: r, global_item_id, sent_model_list: model_list, raw: result });
+        if (result.error) return jsonResp({ ok: false, region: r, error: result.error, message: result.message, sent: addModelPayload, raw: result }, 502);
+        return jsonResp({ ok: true, region: r, global_item_id, sent: addModelPayload, sent_model_list: addModelPayload.global_model, raw: result });
       });
     }
     // POST /create_publish_task: publish one global item to one shop/region.
@@ -2625,9 +2654,10 @@ Deno.serve(async (req) => {
         }
         stage_logs.push(`init_tier_variation ok: 1/${globalModels.length} models`);
         if (globalModels.length > 1) {
+          const addModelPayload = buildAddGlobalModelPayload(global_item_id, globalModels.slice(1), body, targetInputs[0] || {});
           const addModelRes = await merchantApiCall(r, '/api/v2/global_product/add_global_model', {
             method: 'POST',
-            body: { global_item_id, model_list: globalModels.slice(1) },
+            body: addModelPayload,
           });
           if (addModelRes.error) {
             // §6-1: add_global_model failure — partial state. No auto cleanup (dangerous).

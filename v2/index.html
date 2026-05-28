@@ -145,6 +145,71 @@
       background: #fff6fc;
       margin: 1px 3px 1px 0;
     }
+    .pl-table {
+      table-layout: fixed;
+      white-space: normal;
+    }
+    .pl-table th,
+    .pl-table td {
+      overflow-wrap: anywhere;
+    }
+    .pl-table th {
+      white-space: nowrap;
+      overflow-wrap: normal;
+      word-break: normal;
+    }
+    .pl-sku-cell {
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.35;
+      word-break: break-word;
+    }
+    .pl-product-cell {
+      min-width: 0;
+      line-height: 1.35;
+    }
+    .pl-group-row td {
+      background: #fff9fd;
+      border-top: 1px solid var(--border);
+    }
+    .pl-option-row td {
+      background: #fff;
+    }
+    .pl-option-row td:first-child {
+      padding-left: 18px;
+    }
+    .pl-group-main {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      min-width: 0;
+    }
+    .pl-group-toggle {
+      width: 24px;
+      height: 24px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      box-shadow: none;
+      flex-shrink: 0;
+      font-size: 13px;
+    }
+    .pl-option-summary {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .pl-group-led {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 2px;
+      min-width: 34px;
+      font-size: 15px;
+      line-height: 1;
+    }
     .empty {
       padding: 36px 18px;
       text-align: center;
@@ -1715,11 +1780,11 @@
         <button id="pl-bulk-delete" type="button" style="font-size:12px;padding:6px 12px;background:#fee2e2;color:#991b1b;" disabled>🗑 선택 삭제</button>
       </div>
       <div class="panel">
-        <table style="white-space:nowrap;">
+        <table class="pl-table">
           <thead>
             <tr>
               <th style="width:34px;"><input type="checkbox" id="pl-check-all"></th>
-              <th style="width:220px;">SKU</th>
+              <th style="width:280px;">SKU</th>
               <th>Product</th>
               <th style="width:90px;">Cost</th>
               <th style="width:60px;">Wt g</th>
@@ -3039,6 +3104,7 @@ LEGACY END -->
     rswDryRunDone: false,     // unlocks live button after dry-run
     rswModalAction: null,     // function to call on modal confirm
     rswRunId: null,           // run_id for this transition session
+    productListCollapsedGroups: new Set(),
   };
 
   /** Preselect state: set by openReadyStockWizard() before renderReadyStockView() runs */
@@ -3276,37 +3342,9 @@ LEGACY END -->
       updateBulkDeleteUi();
       return;
     }
-    els.productBody.innerHTML = rows.map((p) => {
-      // §9-6 display rule: variation rows show product_name + "—" + option names.
-      const isVariantRow = Array.isArray(p.variation_tier_names) && p.variation_tier_names.length > 0;
-      const optionDisplay = isVariantRow && Array.isArray(p.variation_option_names)
-        ? p.variation_option_names.join(' / ')
-        : (p.option_name || '');
-      const nameDisplay = isVariantRow && optionDisplay
-        ? `${text(p.product_name || '')} <span style="color:var(--muted);">— ${text(optionDisplay)}</span>`
-        : text(p.product_name || '');
-      return `
-      <tr data-product-id="${text(p.id)}">
-        <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}"></td>
-        <td class="mono pl-edit" data-field="sku" data-id="${text(p.id)}" title="더블클릭하여 편집" style="white-space:nowrap;cursor:text;">${text(p.sku || '')}</td>
-        <td style="white-space:normal;">
-          <div class="${isVariantRow ? '' : 'pl-edit'}" data-field="product_name" data-id="${text(p.id)}" title="${isVariantRow ? '옵션 묶음 상품 — 새 등록 화면에서 편집' : '더블클릭하여 편집'}" style="cursor:${isVariantRow ? 'default' : 'text'};">${nameDisplay}</div>
-          ${isVariantRow ? `<div style="font-size:10px;color:var(--muted);">📦 옵션 묶음${p.product_group_id ? ' · 그룹 ' + text(p.product_group_id.slice(0,8)) + '…' : ''}</div>` : `<div class="muted pl-edit" data-field="option_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;font-size:11px;">${text(p.option_name || '') || '<i style="color:#cbd5e1;">(no option)</i>'}</div>`}
-        </td>
-        <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.cost_krw || 0).toLocaleString()}</td>
-        <td class="mono pl-edit" data-field="weight_g" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.weight_g || 0).toLocaleString()}</td>
-        <td style="text-align:center;">${platformLedCell(p.id, 'shopee')}</td>
-        <td style="text-align:center;">${platformLedCell(p.id, 'joom')}</td>
-        <td style="text-align:center;">${platformLedCell(p.id, 'qoo10')}</td>
-        <td style="text-align:center;">${platformLedCell(p.id, 'ebay')}</td>
-        <td style="text-align:center;">${platformLedCell(p.id, 'alibaba')}</td>
-        <td style="white-space:nowrap;">
-          <button type="button" data-open="${text(p.id)}" class="primary" style="font-size:11px;padding:4px 8px;">Register</button>
-          <button type="button" data-delete="${text(p.id)}" data-sku="${text(p.sku || '')}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">🗑</button>
-        </td>
-      </tr>
-    `;
-    }).join('');
+    els.productBody.innerHTML = plBuildProductGroups(rows).map((group) => (
+      group.isGrouped ? renderProductGroup(group) : renderProductOptionRow(group.rows[0], group.key, false)
+    )).join('');
     els.productBody.querySelectorAll('[data-open]').forEach((btn) => {
       // Phase B: route to new 2-stage modal; legacy openModal kept below for reference
       btn.addEventListener('click', () => openRegisterShopeeModal(btn.dataset.open));
@@ -3317,6 +3355,27 @@ LEGACY END -->
     els.productBody.querySelectorAll('.pl-row-check').forEach((cb) => {
       cb.addEventListener('change', updateBulkDeleteUi);
     });
+    els.productBody.querySelectorAll('.pl-group-check').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const groupKey = cb.dataset.groupKey || '';
+        document.querySelectorAll('.pl-row-check').forEach((rowCb) => {
+          if (rowCb.dataset.groupKey === groupKey) rowCb.checked = cb.checked;
+        });
+        updateBulkDeleteUi();
+      });
+    });
+    els.productBody.querySelectorAll('[data-group-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const groupKey = btn.dataset.groupKey || '';
+        if (!groupKey) return;
+        if (state.productListCollapsedGroups.has(groupKey)) {
+          state.productListCollapsedGroups.delete(groupKey);
+        } else {
+          state.productListCollapsedGroups.add(groupKey);
+        }
+        renderProducts();
+      });
+    });
     els.productBody.querySelectorAll('.pl-edit').forEach((cell) => {
       cell.addEventListener('dblclick', () => beginEditCell(cell));
     });
@@ -3324,6 +3383,184 @@ LEGACY END -->
       btn.addEventListener('click', (e) => { e.stopPropagation(); showLedPopover(btn); });
     });
     updateBulkDeleteUi();
+  }
+
+  function plIsGroupedVariant(product) {
+    return !!product?.product_group_id
+      && Array.isArray(product.variation_tier_names)
+      && product.variation_tier_names.length > 0;
+  }
+
+  function plOptionDisplay(product) {
+    if (Array.isArray(product?.variation_option_names)) {
+      const values = product.variation_option_names.map((v) => String(v || '').trim()).filter(Boolean);
+      if (values.length) return values.join(' / ');
+    }
+    return String(product?.option_name || '').trim();
+  }
+
+  function plTierSortKey(product) {
+    const idx = Array.isArray(product?.variation_tier_index) ? product.variation_tier_index : [];
+    const tier = idx.map((n) => String(Number(n) || 0).padStart(4, '0')).join('.');
+    return `${tier}|${String(product?.sku || '')}`;
+  }
+
+  function plBuildProductGroups(rows) {
+    const groups = [];
+    const grouped = new Map();
+    rows.forEach((product, index) => {
+      if (!plIsGroupedVariant(product)) {
+        groups.push({ key: `single:${product.id}`, isGrouped: false, rows: [product], firstIndex: index });
+        return;
+      }
+      const key = `group:${product.product_group_id}`;
+      if (!grouped.has(key)) {
+        const group = { key, isGrouped: true, rows: [], firstIndex: index };
+        grouped.set(key, group);
+        groups.push(group);
+      }
+      grouped.get(key).rows.push(product);
+    });
+    groups.forEach((group) => {
+      if (group.isGrouped) group.rows.sort((a, b) => plTierSortKey(a).localeCompare(plTierSortKey(b)));
+    });
+    return groups.sort((a, b) => a.firstIndex - b.firstIndex);
+  }
+
+  function plParentSku(rows) {
+    const skus = rows.map((p) => String(p.sku || '').trim()).filter(Boolean);
+    if (!skus.length) return '';
+    let prefix = skus[0];
+    for (let i = 1; i < skus.length; i += 1) {
+      while (prefix && !skus[i].startsWith(prefix)) prefix = prefix.slice(0, -1);
+      if (!prefix) break;
+    }
+    return (prefix || skus[0]).replace(/[-_]+$/, '');
+  }
+
+  function plNumberRange(rows, field) {
+    const values = Array.from(new Set(
+      rows.map((p) => Number(p[field] || 0)).filter((n) => Number.isFinite(n))
+    )).sort((a, b) => a - b);
+    if (!values.length) return '0';
+    if (values.length === 1) return values[0].toLocaleString();
+    return `${values[0].toLocaleString()}-${values[values.length - 1].toLocaleString()}`;
+  }
+
+  function plGroupPlatformCell(rows, platform) {
+    let totalTargets = 0;
+    let listedTargets = 0;
+    let pendingTargets = 0;
+    let errorTargets = 0;
+    let activeOptions = 0;
+    let listedOptions = 0;
+    rows.forEach((row) => {
+      const rollup = rollupFor(row.id, platform);
+      const total = Number(rollup?.total_count || 0);
+      const listed = Number(rollup?.listed_count || 0);
+      const pending = Number(rollup?.pending_count || 0);
+      const errored = Number(rollup?.error_count || 0);
+      totalTargets += total;
+      listedTargets += listed;
+      pendingTargets += pending;
+      errorTargets += errored;
+      if (total > 0) activeOptions += 1;
+      if (total > 0 && listed >= total && errored === 0) listedOptions += 1;
+    });
+    let glyph = '○';
+    let color = '#94a3b8';
+    let label = `미등록 (옵션 ${rows.length}개)`;
+    if (errorTargets > 0) {
+      glyph = '■';
+      color = '#dc2626';
+      label = `오류 ${errorTargets}건 · 옵션 ${activeOptions}/${rows.length}`;
+    } else if (totalTargets > 0 && listedTargets >= totalTargets) {
+      glyph = '●';
+      color = '#16a34a';
+      label = `전체 등록 (${listedTargets}/${totalTargets}) · 옵션 ${listedOptions}/${rows.length}`;
+    } else if (listedTargets > 0) {
+      glyph = '◐';
+      color = '#f59e0b';
+      label = `부분 등록 (${listedTargets}/${totalTargets}) · 옵션 ${activeOptions}/${rows.length}`;
+    } else if (pendingTargets > 0) {
+      glyph = '▲';
+      color = '#f59e0b';
+      label = `진행 중 ${pendingTargets}건 · 옵션 ${activeOptions}/${rows.length}`;
+    } else if (totalTargets > 0) {
+      glyph = '○';
+      color = '#64748b';
+      label = `비활성 ${totalTargets}건 · 옵션 ${activeOptions}/${rows.length}`;
+    }
+    return `<span class="pl-group-led" title="${text(label)}" style="color:${color};">${glyph}<span style="font-size:10px;color:var(--muted);">${activeOptions}/${rows.length}</span></span>`;
+  }
+
+  function renderProductGroup(group) {
+    const rows = group.rows;
+    const first = rows[0] || {};
+    const collapsed = state.productListCollapsedGroups.has(group.key);
+    const options = rows.map(plOptionDisplay).filter(Boolean);
+    const shownOptions = options.slice(0, 4).map(text).join(', ');
+    const more = options.length > 4 ? ` 외 ${options.length - 4}개` : '';
+    const groupHtml = `
+      <tr class="pl-group-row" data-product-group-key="${text(group.key)}">
+        <td><input type="checkbox" class="pl-group-check" data-group-key="${text(group.key)}" title="이 묶음 옵션 전체 선택"></td>
+        <td class="pl-sku-cell">
+          <div>${text(plParentSku(rows))}</div>
+          <div class="muted">${rows.length} options</div>
+        </td>
+        <td class="pl-product-cell">
+          <div class="pl-group-main">
+            <button type="button" class="pl-group-toggle" data-group-toggle="1" data-group-key="${text(group.key)}" title="${collapsed ? '옵션 펼치기' : '옵션 접기'}">${collapsed ? '▸' : '▾'}</button>
+            <div style="min-width:0;">
+              <div style="font-weight:700;">${text(first.product_name || '')}</div>
+              <div class="pl-option-summary">옵션 묶음 · ${text(rows.length)}개${shownOptions ? ` · ${shownOptions}${text(more)}` : ''}</div>
+            </div>
+          </div>
+        </td>
+        <td class="mono">${plNumberRange(rows, 'cost_krw')}</td>
+        <td class="mono">${plNumberRange(rows, 'weight_g')}</td>
+        <td style="text-align:center;">${plGroupPlatformCell(rows, 'shopee')}</td>
+        <td style="text-align:center;">${plGroupPlatformCell(rows, 'joom')}</td>
+        <td style="text-align:center;">${plGroupPlatformCell(rows, 'qoo10')}</td>
+        <td style="text-align:center;">${plGroupPlatformCell(rows, 'ebay')}</td>
+        <td style="text-align:center;">${plGroupPlatformCell(rows, 'alibaba')}</td>
+        <td><span class="muted" style="font-size:11px;">마스터</span></td>
+      </tr>`;
+    if (collapsed) return groupHtml;
+    return groupHtml + rows.map((row) => renderProductOptionRow(row, group.key, true)).join('');
+  }
+
+  function renderProductOptionRow(p, groupKey, isGroupChild) {
+    const isVariantRow = plIsGroupedVariant(p);
+    const optionDisplay = plOptionDisplay(p);
+    const nameDisplay = isGroupChild
+      ? `<div style="font-weight:700;color:#523563;">${text(optionDisplay || '옵션')}</div><div class="muted" style="font-size:10px;">${text(p.product_name || '')}</div>`
+      : (isVariantRow && optionDisplay
+        ? `${text(p.product_name || '')} <span style="color:var(--muted);">- ${text(optionDisplay)}</span>`
+        : text(p.product_name || ''));
+    return `
+      <tr class="${isGroupChild ? 'pl-option-row' : ''}" data-product-id="${text(p.id)}" data-product-group-key="${text(groupKey)}">
+        <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}" data-group-key="${text(groupKey)}"></td>
+        <td class="pl-sku-cell pl-edit" data-field="sku" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;">${text(p.sku || '')}</td>
+        <td class="pl-product-cell">
+          <div class="${isVariantRow ? '' : 'pl-edit'}" data-field="product_name" data-id="${text(p.id)}" title="${isVariantRow ? '옵션 묶음 상품 - 새 등록 화면에서 편집' : '더블클릭하여 편집'}" style="cursor:${isVariantRow ? 'default' : 'text'};">${nameDisplay}</div>
+          ${isVariantRow
+            ? `<div style="font-size:10px;color:var(--muted);">옵션 SKU${p.product_group_id ? ' · 그룹 ' + text(String(p.product_group_id).slice(0, 8)) + '...' : ''}</div>`
+            : `<div class="muted pl-edit" data-field="option_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;font-size:11px;">${text(p.option_name || '') || '<i style="color:#cbd5e1;">(no option)</i>'}</div>`}
+        </td>
+        <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.cost_krw || 0).toLocaleString()}</td>
+        <td class="mono pl-edit" data-field="weight_g" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.weight_g || 0).toLocaleString()}</td>
+        <td style="text-align:center;">${platformLedCell(p.id, 'shopee')}</td>
+        <td style="text-align:center;">${platformLedCell(p.id, 'joom')}</td>
+        <td style="text-align:center;">${platformLedCell(p.id, 'qoo10')}</td>
+        <td style="text-align:center;">${platformLedCell(p.id, 'ebay')}</td>
+        <td style="text-align:center;">${platformLedCell(p.id, 'alibaba')}</td>
+        <td style="white-space:nowrap;">
+          ${isVariantRow ? '<span class="muted" style="font-size:11px;">옵션</span>' : `<button type="button" data-open="${text(p.id)}" class="primary" style="font-size:11px;padding:4px 8px;">Register</button>`}
+          <button type="button" data-delete="${text(p.id)}" data-sku="${text(p.sku || '')}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">🗑</button>
+        </td>
+      </tr>
+    `;
   }
 
   function beginEditCell(cell) {
@@ -3467,6 +3704,14 @@ LEGACY END -->
       allCb.checked = total > 0 && ids.length === total;
       allCb.indeterminate = ids.length > 0 && ids.length < total;
     }
+    document.querySelectorAll('.pl-group-check').forEach((groupCb) => {
+      const groupKey = groupCb.dataset.groupKey || '';
+      const checks = Array.from(document.querySelectorAll('.pl-row-check'))
+        .filter((cb) => cb.dataset.groupKey === groupKey);
+      const checked = checks.filter((cb) => cb.checked).length;
+      groupCb.checked = checks.length > 0 && checked === checks.length;
+      groupCb.indeterminate = checked > 0 && checked < checks.length;
+    });
   }
 
   async function bulkDeleteSelectedProducts() {

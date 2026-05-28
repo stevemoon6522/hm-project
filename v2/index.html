@@ -327,6 +327,91 @@
     .span-6 { grid-column: span 6; }
     .span-8 { grid-column: span 8; }
     .span-12 { grid-column: span 12; }
+    .rsh-seller-section {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+    .rsh-section-title {
+      font-size: 13px;
+      font-weight: 800;
+      color: #111827;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .rsh-section-title small {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .rsh-readbox,
+    .rsh-muted-box {
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #f9f9fb;
+      min-height: 35px;
+    }
+    .rsh-readbox.mono {
+      font-family: var(--mono);
+      font-size: 12px;
+    }
+    .rsh-muted-box {
+      color: var(--muted);
+      font-size: 12px;
+      border-style: dashed;
+    }
+    .rsh-variation-toolbar {
+      display: grid;
+      grid-template-columns: minmax(160px, 1fr) 130px 110px auto;
+      gap: 10px;
+      align-items: end;
+    }
+    .rsh-table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .rsh-variation-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      min-width: 760px;
+    }
+    .rsh-variation-table th,
+    .rsh-variation-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid #f0d9ec;
+      vertical-align: middle;
+    }
+    .rsh-variation-table thead tr { background: #faeef8; }
+    .rsh-variation-table tbody tr:last-child td { border-bottom: 0; }
+    .rsh-variation-table input {
+      width: 100%;
+      font-size: 12px;
+      padding: 6px 8px;
+    }
+    .rsh-option-chip {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 9px;
+      border: 1px solid #ead0e6;
+      border-radius: 999px;
+      background: #fff7fd;
+      font-weight: 700;
+      color: #4a275f;
+    }
+    .rsh-shipping-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(90px, 1fr));
+      gap: 10px;
+    }
     .required::after { content: " *"; color: var(--red); }
     .error-text {
       color: var(--red);
@@ -426,6 +511,8 @@
       main { padding: 12px; }
       .grid { grid-template-columns: 1fr; }
       .span-2, .span-3, .span-4, .span-6, .span-8, .span-12 { grid-column: span 1; }
+      .rsh-variation-toolbar,
+      .rsh-shipping-grid { grid-template-columns: 1fr; }
       .region-grid { grid-template-columns: 56px 1fr; }
       .region-grid .row-error { grid-column: 1 / -1; }
       .ready-summary { grid-template-columns: repeat(2, minmax(120px, 1fr)); }
@@ -2703,7 +2790,7 @@
      openRegisterShopeeModal(productId) is the entry point.
      ═══════════════════════════════════════════════════════════════════ -->
 <div class="modal-overlay" id="register-shopee-modal" aria-hidden="true">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rsh-title" style="width:min(760px,100%);">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rsh-title" style="width:min(1080px,100%);">
 
     <!-- Stage 1: Preview -->
     <div id="rsh-stage1">
@@ -2740,68 +2827,10 @@
           </div>
         </div>
 
-        <!-- Basic info -->
-        <section class="grid" id="rsh-info-section" style="display:none;">
-          <div class="field span-8">
-            <label>상품명</label>
-            <div id="rsh-product-name" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:#f9f9fb;font-weight:600;"></div>
-          </div>
-          <div class="field span-4">
-            <label>SKU</label>
-            <div id="rsh-sku" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:#f9f9fb;font-family:var(--mono);font-size:12px;"></div>
-          </div>
-          <div class="field span-3">
-            <label>카테고리</label>
-            <select id="rsh-category">
-              <option value="100740">100740 (K-Pop Album)</option>
-              <option value="101390">101390 (Idol Collectibles — Phase C에서 지원 예정)</option>
-            </select>
-            <!-- Fix4: hint that inline change is persisted on Register click -->
-            <div id="rsh-category-hint" style="font-size:11px;color:var(--muted);margin-top:3px;display:none;">변경 사항은 Register 클릭 시 저장됩니다.</div>
-          </div>
-          <div class="field span-3">
-            <label>매입가 KRW</label>
-            <input id="rsh-cost-krw" type="number" min="1" step="1">
-          </div>
-          <div class="field span-3">
-            <label>무게 (g)</label>
-            <div id="rsh-weight" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:#f9f9fb;font-family:var(--mono);font-size:12px;"></div>
-          </div>
-          <div class="field span-3">
-            <label>라이프사이클</label>
-            <div id="rsh-lifecycle" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;background:#f9f9fb;"></div>
-          </div>
-        </section>
-
-        <!-- Variant options -->
-        <section id="rsh-variant-section" style="display:none;">
-          <div style="font-weight:700;font-size:13px;margin-bottom:8px;">옵션 구성</div>
-          <table style="width:100%;border-collapse:collapse;font-size:12px;">
-            <thead>
-              <tr style="background:#faeef8;">
-                <th style="padding:6px 8px;text-align:left;">옵션</th>
-                <th style="padding:6px 8px;text-align:left;">SKU</th>
-                <th style="padding:6px 8px;text-align:right;width:90px;">매입가</th>
-                <th style="padding:6px 8px;text-align:right;width:70px;">무게</th>
-                <th style="padding:6px 8px;text-align:left;width:80px;">이미지</th>
-              </tr>
-            </thead>
-            <tbody id="rsh-variant-body"></tbody>
-          </table>
-        </section>
-
-        <!-- Specification attributes -->
-        <section id="rsh-spec-section" style="display:none;">
-          <div style="font-weight:700;font-size:13px;margin-bottom:8px;">Specification (필수 속성)</div>
-          <div class="grid" id="rsh-spec-grid">
-            <!-- Populated by JS based on category -->
-          </div>
-        </section>
-
-        <!-- Image section -->
-        <section id="rsh-image-section" style="display:none;">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;">
-            <span style="font-weight:700;font-size:13px;">이미지</span>
+        <!-- Basic Information: media + core fields in Shopee Seller Center order -->
+        <section id="rsh-image-section" class="rsh-seller-section" style="display:none;">
+          <div class="rsh-section-title">
+            <span>Basic Information · Product Images</span>
             <div style="display:flex;gap:8px;align-items:center;">
               <span id="rsh-img-count" class="muted" style="font-size:12px;"></span>
               <button type="button" id="rsh-reupload-btn" style="font-size:11px;padding:3px 8px;display:none;">이미지 재업로드</button>
@@ -2817,17 +2846,131 @@
           <div id="rsh-img-grid" style="display:none;margin-top:8px;">
             <!-- 4-column thumbnail grid, rendered by JS -->
           </div>
+          <div class="rsh-muted-box">Product Video: 미사용</div>
+        </section>
+
+        <section class="rsh-seller-section grid" id="rsh-info-section" style="display:none;">
+          <div class="rsh-section-title span-12">
+            <span>Basic Information</span>
+            <small>Shopee Global SKU 기본 입력값</small>
+          </div>
+          <div class="field span-8">
+            <label for="rsh-product-name">Product Name</label>
+            <input id="rsh-product-name" type="text" maxlength="180" placeholder="[PRE ORDER] ARTIST - ALBUM">
+          </div>
+          <div class="field span-4">
+            <label>Global item SKU</label>
+            <div id="rsh-sku" class="rsh-readbox mono"></div>
+          </div>
+          <div class="field span-6">
+            <label>Category</label>
+            <select id="rsh-category">
+              <option value="100740">Hobbies &amp; Collections &gt; CD, DVD &amp; Bluray (100740)</option>
+              <option value="101390">Hobbies &amp; Collections &gt; Idol Collectibles (101390 · Phase C)</option>
+            </select>
+            <div id="rsh-category-hint" style="font-size:11px;color:var(--muted);margin-top:3px;display:none;">변경 사항은 Register 클릭 시 저장됩니다.</div>
+          </div>
+          <div class="field span-2">
+            <label for="rsh-cost-krw">Base Price KRW</label>
+            <input id="rsh-cost-krw" type="number" min="1" step="1">
+          </div>
+          <div class="field span-2">
+            <label>Weight</label>
+            <div id="rsh-weight" class="rsh-readbox mono"></div>
+          </div>
+          <div class="field span-2">
+            <label>Lifecycle</label>
+            <div id="rsh-lifecycle" class="rsh-readbox"></div>
+          </div>
         </section>
 
         <!-- Description -->
-        <section id="rsh-desc-section" style="display:none;">
-          <div style="font-weight:700;font-size:13px;margin-bottom:6px;">설명 (Description)</div>
-          <textarea id="rsh-description" rows="8" style="width:100%;"></textarea>
+        <section id="rsh-desc-section" class="rsh-seller-section" style="display:none;">
+          <div class="rsh-section-title">
+            <span>Basic Information · Product Description</span>
+            <button type="button" id="rsh-desc-reset" style="font-size:11px;padding:3px 8px;">기본 설명 재생성</button>
+          </div>
+          <textarea id="rsh-description" rows="14" style="width:100%;"></textarea>
         </section>
 
-        <!-- DTS table -->
-        <section id="rsh-dts-section" style="display:none;">
-          <div style="font-weight:700;font-size:13px;margin-bottom:8px;">지역별 Days-to-Ship</div>
+        <!-- Specification attributes -->
+        <section id="rsh-spec-section" class="rsh-seller-section" style="display:none;">
+          <div class="rsh-section-title">
+            <span>Specification</span>
+            <small>필수값 중심 · 100740 기준</small>
+          </div>
+          <div class="grid" id="rsh-spec-grid">
+            <!-- Populated by JS based on category -->
+          </div>
+        </section>
+
+        <!-- Sales Information -->
+        <section id="rsh-variant-section" class="rsh-seller-section" style="display:none;">
+          <div class="rsh-section-title">
+            <span>Sales Information · Variations</span>
+            <small>옵션별 가격/재고/SKU가 그대로 전송됩니다.</small>
+          </div>
+          <div class="rsh-variation-toolbar">
+            <div class="field">
+              <label for="rsh-variation-name">Variation1 name</label>
+              <input id="rsh-variation-name" type="text" maxlength="14" value="VERSION">
+            </div>
+            <div class="field">
+              <label for="rsh-var-bulk-price">Global SKU Price</label>
+              <input id="rsh-var-bulk-price" type="number" min="1" step="1" placeholder="가격">
+            </div>
+            <div class="field">
+              <label for="rsh-var-bulk-stock">Stock</label>
+              <input id="rsh-var-bulk-stock" type="number" min="0" step="1" placeholder="5">
+            </div>
+            <button type="button" id="rsh-apply-variants" class="primary" style="height:35px;">Apply To All</button>
+          </div>
+          <div class="rsh-table-wrap">
+            <table class="rsh-variation-table">
+              <thead>
+                <tr>
+                  <th style="text-align:left;width:170px;">VERSION</th>
+                  <th style="text-align:left;width:120px;">Image</th>
+                  <th style="text-align:left;width:120px;">Global SKU Price</th>
+                  <th style="text-align:left;width:90px;">Stock</th>
+                  <th style="text-align:left;">SKU</th>
+                  <th style="text-align:right;width:80px;">Wt g</th>
+                </tr>
+              </thead>
+              <tbody id="rsh-variant-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Shipping + region pre-order/DTS -->
+        <section id="rsh-dts-section" class="rsh-seller-section" style="display:none;">
+          <div class="rsh-section-title">
+            <span>Shipping</span>
+            <small>지역별 pre-order/DTS는 기존 V2 입력값 유지</small>
+          </div>
+          <div class="rsh-shipping-grid">
+            <div class="field">
+              <label for="rsh-ship-weight-kg">Weight (kg)</label>
+              <input id="rsh-ship-weight-kg" type="number" min="0.01" step="0.01">
+            </div>
+            <div class="field">
+              <label for="rsh-package-width">Width (cm)</label>
+              <input id="rsh-package-width" type="number" min="0" step="0.1" placeholder="20">
+            </div>
+            <div class="field">
+              <label for="rsh-package-length">Length (cm)</label>
+              <input id="rsh-package-length" type="number" min="0" step="0.1" placeholder="15">
+            </div>
+            <div class="field">
+              <label for="rsh-package-height">Height (cm)</label>
+              <input id="rsh-package-height" type="number" min="0" step="0.1" placeholder="5">
+            </div>
+            <div class="field">
+              <label>Different weight</label>
+              <div class="rsh-readbox">OFF</div>
+            </div>
+          </div>
+          <div style="font-weight:700;font-size:13px;margin-top:2px;">Region Pre-order / Days-to-Ship</div>
           <table style="width:100%;border-collapse:collapse;font-size:13px;">
             <thead>
               <tr style="background:#faeef8;">
@@ -2838,6 +2981,22 @@
             </thead>
             <tbody id="rsh-dts-body"></tbody>
           </table>
+        </section>
+
+        <!-- Others -->
+        <section id="rsh-others-section" class="rsh-seller-section" style="display:none;">
+          <div class="rsh-section-title">
+            <span>Others</span>
+          </div>
+          <div class="grid">
+            <div class="field span-4">
+              <label for="rsh-condition">Condition</label>
+              <select id="rsh-condition">
+                <option value="NEW" selected>New</option>
+                <option value="USED">Used</option>
+              </select>
+            </div>
+          </div>
         </section>
 
       </div>
@@ -7098,10 +7257,51 @@ LEGACY END -->
   /** Quick DOM helper for rsh- prefixed IDs. */
   function $rsh(id) { return document.getElementById('rsh-' + id); }
 
-  // P1-5: Two separate description templates — no partial token substitution.
-  // Pick based on lifecycle_state so shipping block is fully correct for each case.
+  function rshFormatShopeeProductName(name, sku = '', lifecycleState = 'ready_stock') {
+    let title = cleanProductName(name, sku).replace(/^\[PRE\s*ORDER\]\s*/i, '').trim();
+    title = title.replace(/\b(\d+)(st|nd|rd|th)\b/gi, (_, n, suffix) => `${n}${suffix.toUpperCase()}`);
+    title = title.toUpperCase().replace(/\s+/g, ' ').trim();
+    if (!/\s-\s/.test(title)) {
+      const albumMatch = title.match(/^(.+?)\s+((?:\d+(?:ST|ND|RD|TH)\s+)?(?:MINI|FULL|STUDIO|SINGLE|SPECIAL|DIGITAL|THE\s+\d+TH|ALBUM|EP|OST).*)$/i);
+      if (albumMatch) title = `${albumMatch[1].trim()} - ${albumMatch[2].trim()}`;
+    }
+    if (lifecycleState === 'pre_order' && !/^\[PRE\s*ORDER\]/i.test(title)) {
+      title = `[PRE ORDER] ${title}`;
+    }
+    return title.slice(0, 180);
+  }
 
-  const READY_STOCK_DESC_TEMPLATE = (productName) => `${productName || ''}
+  function rshFormatComponentsBlock(components) {
+    const lines = String(components || '')
+      .replace(/\r\n?/g, '\n')
+      .split('\n')
+      .map((line) => stripNonMarketplaceText(line).trim())
+      .filter(Boolean);
+    if (!lines.length) return '';
+    return lines.map((line) => {
+      const cleaned = line.replace(/^[\-*•]\s*/, '').trim();
+      return cleaned ? `- ${cleaned}` : '';
+    }).filter(Boolean).join('\n');
+  }
+
+  function rshGuessBrandName(master, productName = '') {
+    const existing = stripNonMarketplaceText(master?.shopee_brand_name || '').trim();
+    if (existing && !/^no brand$/i.test(existing)) return existing;
+    const haystack = `${productName} ${master?.sku || ''}`.toUpperCase();
+    if (/\b(BOYNEXTDOOR|BTS|TXT|TOMORROW X TOGETHER|ENHYPEN|LE SSERAFIM|NEWJEANS|SEVENTEEN|ILLIT)\b/.test(haystack)) {
+      return 'Hybe Labels';
+    }
+    return existing || 'No Brand';
+  }
+
+  function rshReadProductName() {
+    const el = document.getElementById('rsh-product-name');
+    return stripNonMarketplaceText(el?.value || '').slice(0, 180).trim();
+  }
+
+  // P1-5: Description template now mirrors the Seller Center text captured in
+  // the operator video, with optional component extraction and COD policy.
+  const READY_STOCK_DESC_TEMPLATE = (productName, components = '') => `${productName || ''}
 
 100% Official & Authentic K-POP Album
 - Brand new, sealed, and sourced directly from the official distributor
@@ -7114,14 +7314,18 @@ LEGACY END -->
 - Ships from Korea with tracking
 - Safely packed with bubble wrap and a sturdy box
 - Items labeled [READY STOCK], [ON HAND], or [FAST DELIVERY] are dispatched within 1 business day
+${components ? `\nContents\n${components}\n` : ''}
 
 ⚠️ Important Notice
 - The outer box is for protection and may have minor dents, scratches, or creases.
 - The outer vinyl wrap may have slight tears or marks due to shipping.
 - These are not considered defects and are not grounds for return or refund.
-- Please purchase only if you agree to the above conditions.`;
+- Please purchase only if you agree to the above conditions.
 
-  const PRE_ORDER_DESC_TEMPLATE = (productName) => `${productName || ''}
+COD Policy
+Cash on Delivery (COD) is available only for buyers with: 10 or more completed ratings or Perfect 5.0 rating score`;
+
+  const PRE_ORDER_DESC_TEMPLATE = (productName, components = '') => `${productName || ''}
 
 100% Official & Authentic K-POP Album
 - Brand new, sealed, and sourced directly from the official distributor
@@ -7135,17 +7339,26 @@ LEGACY END -->
 - Items will be shipped sequentially after the official release date.
 - Pre-order may take 2-8 weeks depending on supply.
 
+📦 Fast & Secure Shipping
+- Ships from Korea with tracking
+- Safely packed with bubble wrap and a sturdy box
+${components ? `\nContents\n${components}\n` : ''}
+
 ⚠️ Important Notice
 - The outer box is for protection and may have minor dents, scratches, or creases.
 - The outer vinyl wrap may have slight tears or marks due to shipping.
 - These are not considered defects and are not grounds for return or refund.
-- Please purchase only if you agree to the above conditions.`;
+- Please purchase only if you agree to the above conditions.
+
+COD Policy
+Cash on Delivery (COD) is available only for buyers with: 10 or more completed ratings or Perfect 5.0 rating score`;
 
   // Pick the correct block-level template based on lifecycle_state.
-  function rshDescriptionTemplate(productName, lifecycleState) {
+  function rshDescriptionTemplate(productName, lifecycleState, components = '') {
+    const componentBlock = rshFormatComponentsBlock(components);
     return lifecycleState === 'pre_order'
-      ? PRE_ORDER_DESC_TEMPLATE(productName)
-      : READY_STOCK_DESC_TEMPLATE(productName);
+      ? PRE_ORDER_DESC_TEMPLATE(productName, componentBlock)
+      : READY_STOCK_DESC_TEMPLATE(productName, componentBlock);
   }
 
   // Specification attributes per category (static mapping, plan §D).
@@ -7162,22 +7375,26 @@ LEGACY END -->
       return a?.attribute_value_list?.[0]?.original_value_name || '';
     }
 
-    // Brand field (attribute_id 100012) — pre-fill from shopee_brand_name
+    const productName = rshReadProductName() || rshFormatShopeeProductName(master.product_name, master.sku, master.lifecycle_state);
+    const brandName = rshGuessBrandName(master, productName);
+
+    // Brand field (attribute_id 100012) — sent via top-level brand object.
     const brandHtml = `
       <div class="field span-4">
         <label>Brand</label>
-        <input id="rsh-attr-brand" type="text" value="${text(master.shopee_brand_name || 'No Brand')}">
+        <input id="rsh-attr-brand" type="text" value="${text(brandName)}">
         <input type="hidden" id="rsh-attr-brand-id" value="${text(String(master.shopee_brand_id ?? 0))}">
       </div>`;
 
     // Region of Origin (attribute_id 100037 on most Shopee categories)
-    const originVal = extraVal(100037) || 'South Korea';
+    let originVal = extraVal(100037) || 'Korea';
+    if (originVal === 'South Korea') originVal = 'Korea';
     const originHtml = `
       <div class="field span-4">
         <label>Region of Origin</label>
         <select id="rsh-attr-origin">
+          <option value="Korea"${originVal === 'Korea' ? ' selected' : ''}>Korea</option>
           <option value="South Korea"${originVal === 'South Korea' ? ' selected' : ''}>South Korea</option>
-          <option value="Korea"${originVal === 'Korea' ? ' selected' : ''}>Korea (generic)</option>
           <option value="Japan"${originVal === 'Japan' ? ' selected' : ''}>Japan</option>
           <option value="Other"${!['South Korea','Korea','Japan'].includes(originVal) ? ' selected' : ''}>Other</option>
         </select>
@@ -7189,17 +7406,43 @@ LEGACY END -->
       const typeVal = extraVal(100039) || 'Music & Concerts';
       extra100740 = `
         <div class="field span-4">
-          <label>Type</label>
+          <label>CD, DVD &amp; Bluray Type</label>
           <select id="rsh-attr-type">
             <option value="Music & Concerts"${typeVal === 'Music & Concerts' ? ' selected' : ''}>Music & Concerts</option>
             <option value="Album"${typeVal === 'Album' ? ' selected' : ''}>Album</option>
           </select>
         </div>
         <div class="field span-4">
+          <label>NCC</label>
+          <input id="rsh-attr-ncc" type="text" placeholder="Please input">
+        </div>
+        <div class="field span-4">
           <label>Adult products</label>
           <select id="rsh-attr-adult">
             <option value="NA" selected>NA</option>
           </select>
+        </div>
+        <div class="field span-4">
+          <label>Warranty Type</label>
+          <select id="rsh-attr-warranty">
+            <option value="No Warranty" selected>No Warranty</option>
+          </select>
+        </div>
+        <div class="field span-4">
+          <label>Condition</label>
+          <div class="rsh-readbox">New</div>
+        </div>
+        <div class="field span-4">
+          <label>Age Group</label>
+          <input id="rsh-attr-age-group" type="text" placeholder="Please select">
+        </div>
+        <div class="field span-4">
+          <label>Language</label>
+          <input id="rsh-attr-language" type="text" placeholder="Please select">
+        </div>
+        <div class="field span-4">
+          <label>Movie Genre</label>
+          <input id="rsh-attr-movie-genre" type="text" placeholder="Please select">
         </div>`;
     }
 
@@ -7218,7 +7461,7 @@ LEGACY END -->
   // is mandatory required" because the actual id (100693) was never sent.
   const SHOPEE_ATTR_VALUE_MAP_100740 = {
     region: { 'South Korea': 48, 'Korea': 48, 'Korea (generic)': 48, 'Japan': 1, 'Taiwan': 112, 'Other': 93 },
-    type: { 'Music & Concerts': 3574, 'Movies': 3559, 'TV Series': 3596, 'Others': 3581 },
+    type: { 'Music & Concerts': 3574, 'Album': 3574, 'Movies': 3559, 'TV Series': 3596, 'Others': 3581 },
     adult: { 'NA': 11441, 'No': 11441, 'Yes': 5788 },
   };
   function rshReadSpecAttributes(categoryId) {
@@ -7258,6 +7501,18 @@ LEGACY END -->
       });
     }
     return attrs;
+  }
+
+  function rshReadBrandObject() {
+    const brandName = stripNonMarketplaceText(document.getElementById('rsh-attr-brand')?.value || '').trim() || 'No Brand';
+    const brandId = Number(document.getElementById('rsh-attr-brand-id')?.value || 0);
+    return brandId > 0
+      ? { brand_id: brandId, original_brand_name: brandName }
+      : { brand_id: 0, original_brand_name: brandName };
+  }
+
+  function rshReadCondition() {
+    return document.getElementById('rsh-condition')?.value || 'NEW';
   }
 
   // Render DTS table rows (one per region).
@@ -7377,11 +7632,15 @@ LEGACY END -->
 
     const hasImage = _rsh.cachedImageId || _rsh.selectedImages.length > 0;
     const rows = _rsh.products && _rsh.products.length ? _rsh.products : [_rsh.master].filter(Boolean);
+    const variantInputs = _rsh.mode === 'group' ? rshReadVariantInputs(rows) : [];
     const hasCost = _rsh.mode === 'group'
-      ? rows.every((p) => Number(p.cost_krw || 0) > 0)
+      ? variantInputs.every((v) => Number(v.price || 0) > 0)
       : Number(document.getElementById('rsh-cost-krw')?.value) > 0;
     const hasWeight = rows.every((p) => Number(p.weight_g || 0) > 0);
-    const hasSku = rows.every((p) => String(p.sku || '').trim());
+    const hasSku = _rsh.mode === 'group'
+      ? variantInputs.every((v) => String(v.sku || '').trim())
+      : rows.every((p) => String(p.sku || '').trim());
+    const hasProductName = !!rshReadProductName();
 
     // P1-3: block if master category was 101390 (banner already shown)
     const catBlocked = $rsh('cat-blocked') && $rsh('cat-blocked').style.display !== 'none';
@@ -7389,7 +7648,7 @@ LEGACY END -->
     // P1-4a: block if staronemall URL is missing (banner already shown)
     const staronemallMissing = $rsh('no-staronemall') && $rsh('no-staronemall').style.display !== 'none';
 
-    btn.disabled = !hasImage || !hasCost || !hasWeight || !hasSku || catBlocked || staronemallMissing;
+    btn.disabled = !hasImage || !hasCost || !hasWeight || !hasSku || !hasProductName || catBlocked || staronemallMissing;
   }
 
   // Show cached image preview strip.
@@ -7429,6 +7688,54 @@ LEGACY END -->
     return plOptionDisplay(product) || product?.option_name || product?.sku || '옵션';
   }
 
+  function rshDefaultVariantStock(product) {
+    const inventory = Number(product?.inventory || 0);
+    return Number.isFinite(inventory) && inventory > 0 ? inventory : 5;
+  }
+
+  function rshReadVariationName(products = _rsh.products) {
+    const fromInput = stripNonMarketplaceText(document.getElementById('rsh-variation-name')?.value || '').trim();
+    if (fromInput) return fromInput.slice(0, 14);
+    return 'VERSION';
+  }
+
+  function rshVariantInputId(prefix, index) {
+    return `rsh-var-${prefix}-${index}`;
+  }
+
+  function rshReadVariantInputs(products = _rsh.products) {
+    const rows = rshSortedProducts(products || []);
+    return rows.map((p, index) => {
+      const priceEl = document.getElementById(rshVariantInputId('price', index));
+      const stockEl = document.getElementById(rshVariantInputId('stock', index));
+      const skuEl = document.getElementById(rshVariantInputId('sku', index));
+      const price = Number(priceEl?.value || p.cost_krw || 0);
+      const stock = Number(stockEl?.value || rshDefaultVariantStock(p));
+      const sku = stripNonMarketplaceText(skuEl?.value || p.sku || '').trim();
+      return {
+        product: p,
+        option: rshOptionName(p),
+        sku,
+        price: Number.isFinite(price) ? price : 0,
+        stock: Number.isFinite(stock) ? stock : 0,
+        weight_g: Number(p.weight_g || 0),
+      };
+    });
+  }
+
+  function rshApplyVariantBulkInputs() {
+    const price = document.getElementById('rsh-var-bulk-price')?.value;
+    const stock = document.getElementById('rsh-var-bulk-stock')?.value;
+    const rows = rshSortedProducts(_rsh.products || []);
+    rows.forEach((_, index) => {
+      const priceEl = document.getElementById(rshVariantInputId('price', index));
+      const stockEl = document.getElementById(rshVariantInputId('stock', index));
+      if (priceEl && price !== '') priceEl.value = price;
+      if (stockEl && stock !== '') stockEl.value = stock;
+    });
+    rshCheckSubmitEnabled();
+  }
+
   function rshRenderVariantSection() {
     const section = $rsh('variant-section');
     const body = $rsh('variant-body');
@@ -7439,15 +7746,37 @@ LEGACY END -->
       body.innerHTML = '';
       return;
     }
-    body.innerHTML = rows.map((p) => `
+    const tierNameInput = document.getElementById('rsh-variation-name');
+    if (tierNameInput) {
+      tierNameInput.value = 'VERSION';
+      tierNameInput.oninput = rshCheckSubmitEnabled;
+    }
+    const applyBtn = document.getElementById('rsh-apply-variants');
+    if (applyBtn) applyBtn.onclick = rshApplyVariantBulkInputs;
+
+    body.innerHTML = rows.map((p, index) => {
+      const option = rshOptionName(p);
+      const price = Number(p.cost_krw || 0);
+      const stock = rshDefaultVariantStock(p);
+      const sku = stripNonMarketplaceText(p.sku || '').trim();
+      const weight = Number(p.weight_g || 0);
+      return `
       <tr>
-        <td style="padding:6px 8px;font-weight:700;">${text(rshOptionName(p))}</td>
-        <td style="padding:6px 8px;font-family:var(--mono);font-size:11px;">${text(p.sku || '')}</td>
-        <td style="padding:6px 8px;text-align:right;font-family:var(--mono);">${Number(p.cost_krw || 0).toLocaleString()}</td>
-        <td style="padding:6px 8px;text-align:right;font-family:var(--mono);">${Number(p.weight_g || 0).toLocaleString()}</td>
-        <td style="padding:6px 8px;color:${p.main_image ? 'var(--green)' : 'var(--red)'};">${p.main_image ? '있음' : '필요'}</td>
+        <td><span class="rsh-option-chip">${text(option)}</span></td>
+        <td style="color:${p.main_image ? 'var(--green)' : 'var(--red)'};">${p.main_image ? '있음' : '이미지 필요'}</td>
+        <td><input id="${rshVariantInputId('price', index)}" type="number" min="1" step="1" value="${text(String(price || ''))}"></td>
+        <td><input id="${rshVariantInputId('stock', index)}" type="number" min="0" step="1" value="${text(String(stock))}"></td>
+        <td><input id="${rshVariantInputId('sku', index)}" type="text" maxlength="100" value="${text(sku)}"></td>
+        <td style="text-align:right;font-family:var(--mono);">${text(weight ? weight.toLocaleString() : '0')}</td>
       </tr>
-    `).join('');
+    `;
+    }).join('');
+    rows.forEach((_, index) => {
+      ['price', 'stock', 'sku'].forEach((fieldName) => {
+        const el = document.getElementById(rshVariantInputId(fieldName, index));
+        if (el) el.addEventListener('input', rshCheckSubmitEnabled);
+      });
+    });
     section.style.display = '';
   }
 
@@ -7550,6 +7879,7 @@ LEGACY END -->
     $rsh('image-section').style.display = 'none';
     $rsh('desc-section').style.display = 'none';
     $rsh('dts-section').style.display = 'none';
+    $rsh('others-section').style.display = 'none';
     const submitBtn = $rsh('submit1');
     if (submitBtn) submitBtn.disabled = true;
 
@@ -7595,7 +7925,15 @@ LEGACY END -->
 
     // Populate info fields
     const nameEl = $rsh('product-name');
-    if (nameEl) nameEl.textContent = cleanProductName(master.product_name, master.sku) || master.sku || '(이름 없음)';
+    const formattedShopeeName = rshFormatShopeeProductName(master.product_name, master.sku, master.lifecycle_state || 'ready_stock');
+    if (nameEl) {
+      nameEl.value = formattedShopeeName || master.sku || '';
+      nameEl.oninput = () => {
+        const cleaned = rshReadProductName();
+        if (cleaned !== nameEl.value) nameEl.value = cleaned;
+        rshCheckSubmitEnabled();
+      };
+    }
     const skuEl = $rsh('sku');
     if (skuEl) skuEl.textContent = _rsh.mode === 'group' ? rshParentSku(_rsh.products) : (master.sku || '');
 
@@ -7647,12 +7985,44 @@ LEGACY END -->
 
     // Description
     const descEl = document.getElementById('rsh-description');
+    const generatedDesc = rshDescriptionTemplate(
+      rshReadProductName() || formattedShopeeName || master.sku,
+      master.lifecycle_state,
+      master.components_extracted_en,
+    );
     if (descEl) {
-      descEl.value = master.shopee_description || rshDescriptionTemplate(cleanProductName(master.product_name, master.sku) || master.sku, master.lifecycle_state);
+      descEl.value = master.shopee_description && /COD Policy/i.test(master.shopee_description)
+        ? master.shopee_description
+        : generatedDesc;
+      descEl.dataset.generated = generatedDesc;
+    }
+    const descResetBtn = document.getElementById('rsh-desc-reset');
+    if (descResetBtn) {
+      descResetBtn.onclick = () => {
+        const fresh = rshDescriptionTemplate(
+          rshReadProductName() || formattedShopeeName || master.sku,
+          master.lifecycle_state,
+          master.components_extracted_en,
+        );
+        if (descEl) {
+          descEl.value = fresh;
+          descEl.dataset.generated = fresh;
+        }
+      };
     }
 
     // DTS table
     rshRenderDtsTable(master);
+
+    const productWeights = (_rsh.products || []).map((p) => Number(p.weight_g || 0)).filter((n) => Number.isFinite(n) && n > 0);
+    const maxWeight = productWeights.length ? Math.max(...productWeights) : Number(master.weight_g || 0);
+    const weightKgEl = document.getElementById('rsh-ship-weight-kg');
+    if (weightKgEl) weightKgEl.value = maxWeight ? (maxWeight / 1000).toFixed(2) : '';
+    const packageDefaults = { width: 20, length: 15, height: 5 };
+    Object.entries(packageDefaults).forEach(([key, val]) => {
+      const el = document.getElementById(`rsh-package-${key}`);
+      if (el && !el.value) el.placeholder = String(val);
+    });
 
     // Image section
     const imgSection = $rsh('image-section');
@@ -7699,6 +8069,7 @@ LEGACY END -->
     if (imgSection) imgSection.style.display = '';
     $rsh('desc-section').style.display = '';
     $rsh('dts-section').style.display = '';
+    $rsh('others-section').style.display = '';
 
     rshCheckSubmitEnabled();
   }
@@ -7881,22 +8252,16 @@ LEGACY END -->
 
   function rshBuildTierVariation(products) {
     const rows = rshSortedProducts(products);
-    const tierNames = Array.isArray(rows[0]?.variation_tier_names) && rows[0].variation_tier_names.length
-      ? rows[0].variation_tier_names
-      : ['Option'];
-    return tierNames.map((name, axisIdx) => {
-      const seen = new Set();
-      const optionList = [];
-      rows.forEach((row) => {
-        const values = Array.isArray(row.variation_option_names) ? row.variation_option_names : [row.option_name || row.sku || 'Option'];
-        const raw = String(values[axisIdx] || '').trim();
-        const key = raw.toLowerCase();
-        if (!raw || seen.has(key)) return;
-        seen.add(key);
-        optionList.push({ option: raw });
-      });
-      return { name: String(name || `Option ${axisIdx + 1}`), option_list: optionList };
-    }).filter((tier) => tier.option_list.length > 0);
+    const seen = new Set();
+    const optionList = [];
+    rows.forEach((row) => {
+      const raw = stripNonMarketplaceText(rshOptionName(row)).trim();
+      const key = raw.toLowerCase();
+      if (!raw || seen.has(key)) return;
+      seen.add(key);
+      optionList.push({ option: raw });
+    });
+    return optionList.length ? [{ name: rshReadVariationName(rows), option_list: optionList }] : [];
   }
 
   function rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle) {
@@ -7905,23 +8270,37 @@ LEGACY END -->
     const categoryId = Number(document.getElementById('rsh-category')?.value) || Number(master.shopee_category_id) || 100740;
     const productCosts = products.map((p) => Number(p.cost_krw || 0)).filter((n) => Number.isFinite(n) && n > 0);
     const productWeights = products.map((p) => Number(p.weight_g || 0)).filter((n) => Number.isFinite(n) && n > 0);
-    const basePrice = productCosts[0] || Number(document.getElementById('rsh-cost-krw')?.value) || Number(master.cost_krw || 0);
-    const maxWeight = productWeights.length ? Math.max(...productWeights) : Number(master.weight_g || 100);
+    const variantInputs = rshReadVariantInputs(products);
+    const basePrice = variantInputs.find((v) => Number(v.price || 0) > 0)?.price
+      || productCosts[0]
+      || Number(document.getElementById('rsh-cost-krw')?.value)
+      || Number(master.cost_krw || 0);
+    const weightKg = Number(document.getElementById('rsh-ship-weight-kg')?.value || 0);
+    const maxWeight = weightKg > 0
+      ? Math.round(weightKg * 1000)
+      : (productWeights.length ? Math.max(...productWeights) : Number(master.weight_g || 100));
     const parentSku = rshParentSku(products) || `${products[0]?.sku || master.sku || 'V2-SHOPEE'}-P`;
-    const productName = cleanProductName(master.product_name || products[0]?.product_name, parentSku);
+    const productName = rshReadProductName()
+      || rshFormatShopeeProductName(master.product_name || products[0]?.product_name, parentSku, lifecycle);
     const imageId = _rsh.cachedImageId || master.shopee_image_id || '';
-    const brandObj = master.shopee_brand_id === 0 || master.shopee_brand_id == null
-      ? { brand_id: 0, original_brand_name: 'No Brand' }
-      : { brand_id: Number(master.shopee_brand_id), original_brand_name: master.shopee_brand_name || 'No Brand' };
+    const brandObj = rshReadBrandObject();
 
-    const model = products.map((p, index) => ({
-      tier_index: Array.isArray(p.variation_tier_index) && p.variation_tier_index.length ? p.variation_tier_index : [index],
-      global_model_sku: String(p.sku || '').trim(),
-      model_sku: String(p.sku || '').trim(),
-      original_price: Number(p.cost_krw || basePrice),
-      global_original_price: Number(p.cost_krw || basePrice),
-      stock: Number(p.inventory || 0),
-    }));
+    const model = variantInputs.map((v, index) => {
+      const p = v.product || {};
+      const price = Number(v.price || basePrice);
+      return {
+        tier_index: Array.isArray(p.variation_tier_index) && p.variation_tier_index.length ? p.variation_tier_index : [index],
+        global_model_sku: String(v.sku || p.sku || '').trim(),
+        model_sku: String(v.sku || p.sku || '').trim(),
+        original_price: price,
+        global_original_price: price,
+        stock: Number(v.stock || 0),
+      };
+    });
+    const totalStock = model.reduce((sum, m) => sum + (Number(m.stock) || 0), 0);
+    const packageLength = Number(document.getElementById('rsh-package-length')?.value || 15);
+    const packageWidth = Number(document.getElementById('rsh-package-width')?.value || 20);
+    const packageHeight = Number(document.getElementById('rsh-package-height')?.value || 5);
 
     const targets = activeRegions.map((region) => {
       const imageIds = Array.isArray(_rsh.regionImageIds?.[region]) ? _rsh.regionImageIds[region].filter(Boolean) : [];
@@ -7941,10 +8320,14 @@ LEGACY END -->
       brand: brandObj,
       image_id: imageId,
       weight_g: maxWeight,
+      package_length_cm: packageLength,
+      package_width_cm: packageWidth,
+      package_height_cm: packageHeight,
       price: basePrice,
-      stock: Number(master.inventory || 0),
+      stock: totalStock,
       description: document.getElementById('rsh-description')?.value || master.shopee_description || productName || parentSku,
       attribute_list: rshReadSpecAttributes(categoryId),
+      condition: rshReadCondition(),
       targets,
       lifecycle_state: lifecycle,
       is_pre_order: lifecycle === 'pre_order',
@@ -8150,8 +8533,11 @@ LEGACY END -->
       const existingDts = _rsh.master.shopee_days_to_ship || {};
       const updatedDts = { ...existingDts, [lifecycle]: dtsValues };
       const liveCatId = Number(document.getElementById('rsh-category')?.value) || _rsh.master.shopee_category_id;
+      const liveBrand = rshReadBrandObject();
       const stage1Updates = {
         shopee_category_id: liveCatId,
+        shopee_brand_id: liveBrand.brand_id,
+        shopee_brand_name: liveBrand.original_brand_name,
         shopee_description: document.getElementById('rsh-description')?.value || _rsh.master.shopee_description,
         shopee_extra_attributes: rshReadSpecAttributes(liveCatId) || _rsh.master.shopee_extra_attributes,
         shopee_days_to_ship: updatedDts,

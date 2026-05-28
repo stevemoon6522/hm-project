@@ -25,6 +25,14 @@ const rshModal = sliceBetween(
 
 assert(html.includes('id="rsh-variant-section"'), 'Shopee modal must show grouped option rows');
 assert(html.includes('id="rsh-variant-body"'), 'Shopee modal must have a variant tbody');
+assert(html.includes('Basic Information · Product Images'), 'Shopee modal must mirror Seller Center basic image section');
+assert(html.includes('id="rsh-product-name" type="text"'), 'Shopee modal must allow editing the Shopee product name');
+assert(html.includes('id="rsh-desc-reset"'), 'Shopee modal must allow regenerating the Seller Center description');
+assert(html.includes('Sales Information · Variations'), 'Shopee modal must include Seller Center sales information section');
+assert(html.includes('id="rsh-variation-name"'), 'Shopee modal must expose the Variation1 name field');
+assert(html.includes('id="rsh-var-bulk-price"') && html.includes('id="rsh-var-bulk-stock"'), 'Shopee modal must expose bulk variant price/stock inputs');
+assert(html.includes('id="rsh-ship-weight-kg"'), 'Shopee modal must expose Shipping weight in kg');
+assert(html.includes('id="rsh-others-section"'), 'Shopee modal must include Others/Condition section');
 assert(productList.includes('data-open-shopee-group'), 'master group row must expose a Shopee register button');
 assert(productList.includes('openRegisterShopeeGroupModal'), 'group register button must open the Shopee modal');
 
@@ -33,12 +41,17 @@ for (const token of [
   'async function openRegisterShopeeGroupModal(productGroupId)',
   "mode: 'group'",
   'rshRenderVariantSection',
+  'rshFormatShopeeProductName',
+  'rshReadProductName',
+  'rshReadBrandObject',
+  'rshReadVariantInputs',
   'rshBuildTierVariation',
   'rshBuildGroupRegisterPayload',
   'rshRegisterGroupViaCbsc',
   '/register_cbsc',
   'variation: {',
   'tier_variation: rshBuildTierVariation(products)',
+  'condition: rshReadCondition()',
   'persistMappings(json, payload)',
 ]) {
   assert(rshModal.includes(token), `group Shopee modal missing token: ${token}`);
@@ -55,6 +68,18 @@ assert(
   rshModal.includes('master.main_image')
     && rshModal.includes('rshUseDirectImage(master.main_image'),
   'group modal must use attached master images without requiring StarOneMall crawl',
+);
+assert(
+  rshModal.includes('COD Policy')
+    && rshModal.includes('components_extracted_en')
+    && rshModal.includes('rshDescriptionTemplate'),
+  'Shopee description must include COD policy and extracted components when available',
+);
+assert(
+  html.includes('Global SKU Price')
+    && rshModal.includes('model_sku: String(v.sku')
+    && rshModal.includes('stock: Number(v.stock || 0)'),
+  'group modal must transmit visible option price/stock/SKU fields',
 );
 assert(
   rshModal.includes('update({ shopee_image_id: coverImageId })')

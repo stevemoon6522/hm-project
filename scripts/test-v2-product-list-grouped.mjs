@@ -83,12 +83,18 @@ assert(
 );
 assert(
   productList.includes('class="pl-shopee-cell"')
-    && productList.includes('class="primary pl-shopee-register"')
+    && productList.includes('class="pl-shopee-register"')
     && productList.includes('aria-label="Shopee 등록"')
-    && productList.includes('<svg viewBox="0 0 24 24"')
+    && productList.includes('>📤</button>')
+    && !productList.includes('<svg viewBox="0 0 24 24"')
+    && !productList.includes('class="primary pl-shopee-register"')
     && !productList.includes('class="primary pl-shopee-register">Shopee 등록</button>')
     && productList.includes('<td class="pl-platform-cell">'),
-  'Shopee group register button must be an icon-only button inside the Shopee platform cell',
+  'Shopee group register button must be a neutral emoji-only button inside the Shopee platform cell',
+);
+assert(
+  productList.includes('state.products.filter((p) => !isPreOrderProduct(p)).filter((p) =>'),
+  'product list must exclude PRE ORDER products; they belong in the PRE ORDER tab',
 );
 assert(
   productList.includes('data-product-ids="${text(productIds.join(\',\'))}"')

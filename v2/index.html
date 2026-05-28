@@ -229,15 +229,15 @@
       justify-content: center;
       font-size: 15px;
       line-height: 1.2;
-      background: var(--gradient-accent);
-      border-color: transparent;
-      color: #fff;
+      background: #f8fafc;
+      border-color: #cbd5e1;
+      color: #334155;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
     }
-    .pl-shopee-register svg {
-      width: 15px;
-      height: 15px;
-      display: block;
-      stroke: currentColor;
+    .pl-shopee-register:hover {
+      background: #eef2f7;
+      border-color: #94a3b8;
+      color: #1e293b;
     }
     .pl-master-title-row {
       display: flex;
@@ -557,11 +557,23 @@
       padding: 48px 24px; text-align: center; color: var(--muted);
       border: 1px dashed var(--border); border-radius: 8px;
     }
-    #view-pre-order .placeholder-view,
-    #view-ready-stock .placeholder-view { display: none; }
-    #view-pre-order > .toolbar:nth-of-type(2),
-    #po-loading,
-    #po-table-wrap { display: none !important; }
+    #view-pre-order .placeholder-view { display: none; }
+    .po-ready-stock-open {
+      background: #f8fafc;
+      border-color: #cbd5e1;
+      color: #334155;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, .06);
+    }
+    .po-ready-stock-open:hover {
+      background: #eef2f7;
+      border-color: #94a3b8;
+      color: #1e293b;
+    }
+    .po-ready-stock-panel {
+      margin-top: 14px;
+      padding: 14px;
+      overflow: visible;
+    }
     .placeholder-view h3 { font-size: 16px; margin-bottom: 8px; color: var(--text); }
 
     /* ── Wizard steps (plan §5-1-A) ── */
@@ -1345,7 +1357,6 @@
       <button class="nav-tab" onclick="showView('view-register')">📦 상품 등록</button>
       <button class="nav-tab" onclick="showView('view-products')">📋 상품 목록</button>
       <button class="nav-tab" onclick="showView('view-pre-order')">🔖 PRE ORDER</button>
-      <button class="nav-tab" onclick="showView('view-ready-stock')">🔄 READY STOCK 전환</button>
       <button class="nav-tab" onclick="showView('view-price-sync')">💰 가격 동기화</button>
       <button class="nav-tab" onclick="showView('view-coverage')">🧭 플랫폼 커버리지</button>
       <button class="nav-tab" onclick="showView('view-daily-close')">🌙 일일 마감</button>
@@ -1970,6 +1981,7 @@
           <option value="unpublished">Region 미발행 많은 순</option>
         </select>
         <button id="po-refresh" type="button">새로고침</button>
+        <button id="po-ready-stock-open" type="button" class="po-ready-stock-open">READY STOCK 전환</button>
         <span id="po-count" style="font-size:12px;font-weight:600;color:var(--accent);white-space:nowrap;"></span>
         <span id="po-error" class="status err" style="display:none;"></span>
       </div>
@@ -2000,13 +2012,12 @@
           </tbody>
         </table>
       </div>
-    </div>
 
     <!-- ═══════════════════════════════════════════════
-         VIEW: READY STOCK 전환 마법사 (plan §5-2 Phase B)
+         PRE ORDER 내부: READY STOCK 전환 마법사 (plan §5-2 Phase B)
          4-step wizard: select → weight → actions → preview
          ═══════════════════════════════════════════════ -->
-    <div id="view-ready-stock" class="view">
+      <div id="po-ready-stock-panel" class="panel po-ready-stock-panel" style="display:none;">
 
       <!-- wizard header -->
       <div class="rsw-header">
@@ -2138,7 +2149,8 @@
         </div>
       </div>
 
-    </div><!-- /view-ready-stock -->
+      </div><!-- /po-ready-stock-panel -->
+    </div><!-- /view-pre-order -->
 
     <!-- ═══════════════════════════════════════════════
          VIEW: 상품 조회 + 매입가 동기화 (plan §5-7, Phase C)
@@ -3357,6 +3369,8 @@ LEGACY END -->
     poSearch: document.getElementById('po-search'),
     poSort: document.getElementById('po-sort'),
     poRefresh: document.getElementById('po-refresh'),
+    poReadyStockOpen: document.getElementById('po-ready-stock-open'),
+    poReadyStockPanel: document.getElementById('po-ready-stock-panel'),
     poCount: document.getElementById('po-count'),
     poError: document.getElementById('po-error'),
     poLoading: document.getElementById('po-loading'),
@@ -3686,12 +3700,12 @@ LEGACY END -->
 
   function renderProducts() {
     const q = els.search.value.trim().toLowerCase();
-    const rows = state.products.filter((p) => {
+    const rows = state.products.filter((p) => !isPreOrderProduct(p)).filter((p) => {
       if (!q) return true;
       return `${p.sku || ''} ${p.product_name || ''} ${p.option_name || ''}`.toLowerCase().includes(q);
     });
     if (!rows.length) {
-      els.productBody.innerHTML = '<tr><td colspan="11" class="empty">No products found.</td></tr>';
+      els.productBody.innerHTML = '<tr><td colspan="11" class="empty">READY STOCK / 운영 상품이 없습니다. PRE ORDER 상품은 PRE ORDER 탭에서 확인하세요.</td></tr>';
       updateBulkDeleteUi();
       return;
     }
@@ -3921,13 +3935,7 @@ LEGACY END -->
         <td class="pl-platform-cell">
           <div class="pl-shopee-cell">
             ${plGroupPlatformCell(rows, 'shopee')}
-            <button type="button" data-open-shopee-group="${text(first.product_group_id || '')}" class="primary pl-shopee-register" title="Shopee 등록" aria-label="Shopee 등록">
-              <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-                <circle cx="8" cy="21" r="1"></circle>
-                <circle cx="19" cy="21" r="1"></circle>
-                <path d="M2.5 3h2.2l2.2 12.4a2 2 0 0 0 2 1.6h8.7a2 2 0 0 0 1.9-1.4L21 8H6"></path>
-              </svg>
-            </button>
+            <button type="button" data-open-shopee-group="${text(first.product_group_id || '')}" class="pl-shopee-register" title="Shopee 등록" aria-label="Shopee 등록">📤</button>
           </div>
         </td>
         <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'joom')}</td>
@@ -4615,9 +4623,14 @@ LEGACY END -->
 
 
   function movePreOrderSelectionToReady() {
-    state.readyProductIds = new Set(state.selectedPreOrderIds);
-    window.showView('view-ready-stock');
-    renderReadyTransition();
+    const ids = Array.from(state.selectedPreOrderIds || []).map(String);
+    state.rswSelectedIds = new Set(ids);
+    state.rswWeights = {};
+    state.rswSkus = {};
+    pendingPreselect = null;
+    window.showView('view-pre-order');
+    setPoReadyStockPanelVisible(true);
+    renderReadyStockView();
   }
 
   function selectedReadyProducts() {
@@ -9705,12 +9718,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const dateCell = '<td style="font-size:12px;">' + fmtDatePo(p.created_at) + '</td>';
       const ageCell = '<td style="font-size:12px;color:var(--muted);">' + daysSincePo(p.created_at) + '</td>';
       const actionCell = '<td>'
-        + '<button type="button" style="font-size:12px;padding:5px 8px;white-space:nowrap;"'
-        + ' onclick="openReadyStockWizard(' + JSON.stringify(String(p.id)) + ')">'
+        + '<button type="button" data-po-ready-id="' + text(String(p.id)) + '" style="font-size:12px;padding:5px 8px;white-space:nowrap;">'
         + '🔄 READY STOCK 전환</button></td>';
       return '<tr><td>' + nameLine + '</td>' + skuCell + itemCell + regionCells
         + costCell + wtCell + dateCell + ageCell + actionCell + '</tr>';
     }).join('');
+    els.poBody.querySelectorAll('[data-po-ready-id]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        openReadyStockWizard(btn.dataset.poReadyId || '');
+      });
+    });
   }
 
   /** Main render function — called from loadData() and from tab click. */
@@ -9739,13 +9756,31 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   /** Alias called from existing loadData() so backward compat is preserved. */
   function renderPreOrderList() { renderPreOrderView(false); }
 
+  function setPoReadyStockPanelVisible(visible) {
+    const panel = els.poReadyStockPanel || document.getElementById('po-ready-stock-panel');
+    if (!panel) return;
+    panel.style.display = visible ? '' : 'none';
+  }
+
   /**
-   * Called by the "READY STOCK 전환" action button in each PRE ORDER row.
-   * Phase B: navigate to the wizard view and preselect the given product.
+   * Called by the READY STOCK buttons inside the PRE ORDER tab.
+   * Opens the embedded wizard and optionally preselects one PRE ORDER product.
    */
   function openReadyStockWizard(productId) {
-    pendingPreselect = String(productId);
-    window.showView('view-ready-stock');
+    const id = String(productId || '').trim();
+    state.rswSelectedIds = id ? new Set([id]) : new Set();
+    state.rswWeights = {};
+    state.rswSkus = {};
+    pendingPreselect = id || null;
+    window.showView('view-pre-order');
+    setPoReadyStockPanelVisible(true);
+    renderReadyStockView();
+    setTimeout(function() {
+      const panel = els.poReadyStockPanel || document.getElementById('po-ready-stock-panel');
+      if (panel && typeof panel.scrollIntoView === 'function') {
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }, 0);
   }
   window.openReadyStockWizard = openReadyStockWizard;
 
@@ -9753,16 +9788,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (els.poSearch) els.poSearch.addEventListener('input', applyPoFilter);
     if (els.poSort) els.poSort.addEventListener('change', applyPoFilter);
     if (els.poRefresh) els.poRefresh.addEventListener('click', function() { renderPreOrderView(true); });
+    if (els.poReadyStockOpen) els.poReadyStockOpen.addEventListener('click', function() { openReadyStockWizard(''); });
   }
 
   // Patch showView so clicking the PRE ORDER nav tab triggers a fresh fetch
-  // and clicking the READY STOCK tab initialises the wizard.
+  // and the READY STOCK wizard stays embedded inside that tab.
   (function patchShowView() {
     const _origSV = window.showView;
     window.showView = function(viewId) {
       _origSV(viewId);
       if (viewId === 'view-pre-order') renderPreOrderView(false);
-      if (viewId === 'view-ready-stock') renderReadyStockView();
+      if (viewId !== 'view-pre-order') setPoReadyStockPanelVisible(false);
     };
   }());
 
@@ -9771,7 +9807,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
      ═══════════════════════════════════════════════════════════════ */
 
   /**
-   * Entry point — called when the READY STOCK tab becomes active.
+   * Entry point — called when the embedded READY STOCK panel opens.
    * Reads pendingPreselect, resets wizard to step 1, loads PRE ORDER data.
    */
   function renderReadyStockView() {

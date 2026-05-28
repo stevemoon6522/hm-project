@@ -17,7 +17,8 @@ for (const id of [
   'po-region-filters',
   'po-body',
   'po-refresh',
-  'view-ready-stock',
+  'po-ready-stock-open',
+  'po-ready-stock-panel',
   'rsw-search',
   'rsw-product-list',
   'rsw-selection-summary',
@@ -30,9 +31,14 @@ for (const id of [
   assert(html.includes(`id="${id}"`), `${id} is missing from v2 UI`);
 }
 
+assert(!html.includes('id="view-ready-stock"'), 'READY STOCK must be embedded in PRE ORDER, not a separate view');
+assert(!html.includes("showView('view-ready-stock')"), 'READY STOCK routing must stay inside the PRE ORDER tab');
+assert(!html.includes('onclick="openReadyStockWizard('), 'PRE ORDER row actions must pass product IDs via data attributes');
+
 for (const token of [
   'renderPreOrderList',
   'openReadyStockWizard',
+  'data-po-ready-id',
   'renderReadyStockView',
   'isPreOrderProduct',
   'buildReadyTransitionPlan',

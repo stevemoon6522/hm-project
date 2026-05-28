@@ -81,8 +81,11 @@ assert(
 assert(
   productList.includes('class="pl-shopee-cell"')
     && productList.includes('class="primary pl-shopee-register"')
+    && productList.includes('aria-label="Shopee 등록"')
+    && productList.includes('>🛒</button>')
+    && !productList.includes('class="primary pl-shopee-register">Shopee 등록</button>')
     && productList.includes('<td class="pl-platform-cell">'),
-  'Shopee group register button must sit inside the Shopee platform cell',
+  'Shopee group register button must be an icon-only button inside the Shopee platform cell',
 );
 assert(
   productList.includes("isGroupChild\n      ? `<div style=\"font-weight:700;color:#523563;\">${text(optionDisplay || '옵션')}</div>`")

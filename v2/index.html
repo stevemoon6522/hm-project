@@ -221,8 +221,13 @@
       gap: 8px;
     }
     .pl-shopee-register {
-      font-size: 11px;
-      padding: 4px 8px;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
       line-height: 1.2;
     }
     .pl-master-title-row {
@@ -3641,7 +3646,7 @@ LEGACY END -->
         <td class="pl-platform-cell">
           <div class="pl-shopee-cell">
             ${plGroupPlatformCell(rows, 'shopee')}
-            <button type="button" data-open-shopee-group="${text(first.product_group_id || '')}" class="primary pl-shopee-register">Shopee 등록</button>
+            <button type="button" data-open-shopee-group="${text(first.product_group_id || '')}" class="primary pl-shopee-register" title="Shopee 등록" aria-label="Shopee 등록">🛒</button>
           </div>
         </td>
         <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'joom')}</td>

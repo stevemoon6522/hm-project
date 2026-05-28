@@ -210,6 +210,44 @@
       font-size: 15px;
       line-height: 1;
     }
+    .pl-platform-cell {
+      text-align: center;
+      white-space: nowrap;
+    }
+    .pl-shopee-cell {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .pl-shopee-register {
+      font-size: 11px;
+      padding: 4px 8px;
+      line-height: 1.2;
+    }
+    .pl-master-title-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      flex-wrap: wrap;
+    }
+    .pl-master-title {
+      font-weight: 700;
+      min-width: 0;
+    }
+    .pl-master-edit {
+      font-size: 11px;
+      padding: 2px 7px;
+      box-shadow: none;
+      line-height: 1.2;
+    }
+    .pl-master-option-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      font-size: 12px;
+    }
     .empty {
       padding: 36px 18px;
       text-align: center;
@@ -1788,12 +1826,12 @@
               <th>Product</th>
               <th style="width:90px;">Cost</th>
               <th style="width:60px;">Wt g</th>
-              <th style="width:62px;text-align:center;" title="Shopee SG/TW/TH/MY/PH/BR">Shopee</th>
-              <th style="width:48px;text-align:center;">Joom</th>
-              <th style="width:48px;text-align:center;">Qoo10</th>
-              <th style="width:48px;text-align:center;">eBay</th>
-              <th style="width:54px;text-align:center;">Alibaba</th>
-              <th style="width:120px;"></th>
+              <th style="width:150px;text-align:center;" title="Shopee SG/TW/TH/MY/PH/BR">Shopee</th>
+              <th style="width:72px;text-align:center;">Joom</th>
+              <th style="width:72px;text-align:center;">Qoo10</th>
+              <th style="width:72px;text-align:center;">eBay</th>
+              <th style="width:82px;text-align:center;">Alibaba</th>
+              <th style="width:70px;"></th>
             </tr>
           </thead>
           <tbody id="product-body">
@@ -2611,6 +2649,39 @@
   </div>
 </div>
 
+<!-- 상품 목록: 마스터 상품 빠른 수정 -->
+<div class="modal-overlay" id="pl-master-edit-modal" aria-hidden="true">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pl-master-edit-title" style="width:min(720px,100%);">
+    <div class="modal-header">
+      <div>
+        <h2 id="pl-master-edit-title">마스터 상품 수정</h2>
+        <div id="pl-master-edit-subtitle" class="subhead"></div>
+      </div>
+      <button type="button" id="pl-master-edit-close">닫기</button>
+    </div>
+    <div class="modal-body">
+      <div class="field">
+        <label for="pl-master-edit-name">마스터 상품명</label>
+        <input id="pl-master-edit-name" type="text" placeholder="영문 상품명">
+        <div class="subhead">저장 시 한글/CJK 문자는 자동 제외됩니다.</div>
+      </div>
+      <div class="field">
+        <label for="pl-master-edit-components">상품 구성품</label>
+        <textarea id="pl-master-edit-components" rows="6" placeholder="예: CD, Photobook, Photocard..."></textarea>
+      </div>
+      <div class="field">
+        <label>옵션</label>
+        <div id="pl-master-edit-options" class="pl-master-option-list"></div>
+      </div>
+      <div id="pl-master-edit-error" class="notice error" style="display:none;"></div>
+    </div>
+    <div class="modal-footer">
+      <button type="button" id="pl-master-edit-cancel">취소</button>
+      <button type="button" id="pl-master-edit-save" class="primary">저장</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <!-- ═══════════════════════════════════════════════════════════════════
@@ -3147,6 +3218,23 @@ LEGACY END -->
     }[c]));
   }
 
+  function stripNonMarketplaceText(value) {
+    return String(value == null ? '' : value)
+      .replace(/[가-힯㄰-㆏ᄀ-ᇿ぀-ゟ゠-ヿ一-鿿\u200b-\u200f\ufeff]+/g, '')
+      .replace(/\(\s*\)/g, '')
+      .replace(/\[\s*\]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function hasNonMarketplaceText(value) {
+    return /[가-힯㄰-㆏ᄀ-ᇿ぀-ゟ゠-ヿ一-鿿]/.test(String(value || ''));
+  }
+
+  function cleanProductName(value, fallback = '') {
+    return stripNonMarketplaceText(value) || stripNonMarketplaceText(fallback) || String(fallback || '').trim();
+  }
+
   function numberOrNull(value) {
     if (value === '' || value == null) return null;
     const n = Number(value);
@@ -3292,7 +3380,7 @@ LEGACY END -->
     // Fallback to no-variation select if schema cache misses on new columns.
     let [productsRes, listingsRes, rollupsRes] = await Promise.all([
       db.from('products')
-        .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at, product_group_id, variation_tier_names, variation_option_names, variation_tier_index')
+        .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, components_extracted_en, components_extracted_at, components_approved')
         .order('product_group_id', { ascending: true, nullsFirst: false })
         .order('variation_tier_index', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false }),
@@ -3369,6 +3457,9 @@ LEGACY END -->
     els.productBody.querySelectorAll('[data-open-shopee-group]').forEach((btn) => {
       btn.addEventListener('click', () => openRegisterShopeeGroupModal(btn.dataset.openShopeeGroup));
     });
+    els.productBody.querySelectorAll('[data-edit-master]').forEach((btn) => {
+      btn.addEventListener('click', () => openProductMasterEditModal(btn.dataset.editMaster));
+    });
     els.productBody.querySelectorAll('[data-delete]').forEach((btn) => {
       btn.addEventListener('click', () => deleteOneMasterProduct(btn));
     });
@@ -3417,6 +3508,10 @@ LEGACY END -->
       if (values.length) return values.join(' / ');
     }
     return String(product?.option_name || '').trim();
+  }
+
+  function plProductName(product) {
+    return cleanProductName(product?.product_name, product?.sku || '');
   }
 
   function plTierSortKey(product) {
@@ -3521,6 +3616,7 @@ LEGACY END -->
     const options = rows.map(plOptionDisplay).filter(Boolean);
     const shownOptions = options.slice(0, 4).map(text).join(', ');
     const more = options.length > 4 ? ` 외 ${options.length - 4}개` : '';
+    const productName = plProductName(first);
     const groupHtml = `
       <tr class="pl-group-row" data-product-group-key="${text(group.key)}">
         <td><input type="checkbox" class="pl-group-check" data-group-key="${text(group.key)}" title="이 묶음 옵션 전체 선택"></td>
@@ -3532,20 +3628,28 @@ LEGACY END -->
           <div class="pl-group-main">
             <button type="button" class="pl-group-toggle" data-group-toggle="1" data-group-key="${text(group.key)}" title="${collapsed ? '옵션 펼치기' : '옵션 접기'}">${collapsed ? '▸' : '▾'}</button>
             <div style="min-width:0;">
-              <div style="font-weight:700;">${text(first.product_name || '')}</div>
+              <div class="pl-master-title-row">
+                <span class="pl-master-title">${text(productName)}</span>
+                <button type="button" class="pl-master-edit" data-edit-master="${text(first.product_group_id || '')}" title="마스터 상품 데이터 수정">수정</button>
+              </div>
               <div class="pl-option-summary">옵션 묶음 · ${text(rows.length)}개${shownOptions ? ` · ${shownOptions}${text(more)}` : ''}</div>
             </div>
           </div>
         </td>
         <td class="mono">${plNumberRange(rows, 'cost_krw')}</td>
         <td class="mono">${plNumberRange(rows, 'weight_g')}</td>
-        <td style="text-align:center;">${plGroupPlatformCell(rows, 'shopee')}</td>
-        <td style="text-align:center;">${plGroupPlatformCell(rows, 'joom')}</td>
-        <td style="text-align:center;">${plGroupPlatformCell(rows, 'qoo10')}</td>
-        <td style="text-align:center;">${plGroupPlatformCell(rows, 'ebay')}</td>
-        <td style="text-align:center;">${plGroupPlatformCell(rows, 'alibaba')}</td>
+        <td class="pl-platform-cell">
+          <div class="pl-shopee-cell">
+            ${plGroupPlatformCell(rows, 'shopee')}
+            <button type="button" data-open-shopee-group="${text(first.product_group_id || '')}" class="primary pl-shopee-register">Shopee 등록</button>
+          </div>
+        </td>
+        <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'joom')}</td>
+        <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'qoo10')}</td>
+        <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'ebay')}</td>
+        <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'alibaba')}</td>
         <td style="white-space:nowrap;">
-          <button type="button" data-open-shopee-group="${text(first.product_group_id || '')}" class="primary" style="font-size:11px;padding:4px 8px;">Shopee 등록</button>
+          <span class="muted" style="font-size:11px;">마스터</span>
         </td>
       </tr>`;
     if (collapsed) return groupHtml;
@@ -3555,11 +3659,12 @@ LEGACY END -->
   function renderProductOptionRow(p, groupKey, isGroupChild) {
     const isVariantRow = plIsGroupedVariant(p);
     const optionDisplay = plOptionDisplay(p);
+    const productName = plProductName(p);
     const nameDisplay = isGroupChild
-      ? `<div style="font-weight:700;color:#523563;">${text(optionDisplay || '옵션')}</div><div class="muted" style="font-size:10px;">${text(p.product_name || '')}</div>`
+      ? `<div style="font-weight:700;color:#523563;">${text(optionDisplay || '옵션')}</div>`
       : (isVariantRow && optionDisplay
-        ? `${text(p.product_name || '')} <span style="color:var(--muted);">- ${text(optionDisplay)}</span>`
-        : text(p.product_name || ''));
+        ? `${text(productName)} <span style="color:var(--muted);">- ${text(optionDisplay)}</span>`
+        : text(productName));
     return `
       <tr class="${isGroupChild ? 'pl-option-row' : ''}" data-product-id="${text(p.id)}" data-product-group-key="${text(groupKey)}">
         <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}" data-group-key="${text(groupKey)}"></td>
@@ -3567,7 +3672,7 @@ LEGACY END -->
         <td class="pl-product-cell">
           <div class="${isVariantRow ? '' : 'pl-edit'}" data-field="product_name" data-id="${text(p.id)}" title="${isVariantRow ? '옵션 묶음 상품 - 새 등록 화면에서 편집' : '더블클릭하여 편집'}" style="cursor:${isVariantRow ? 'default' : 'text'};">${nameDisplay}</div>
           ${isVariantRow
-            ? `<div style="font-size:10px;color:var(--muted);">옵션 SKU${p.product_group_id ? ' · 그룹 ' + text(String(p.product_group_id).slice(0, 8)) + '...' : ''}</div>`
+            ? ''
             : `<div class="muted pl-edit" data-field="option_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;font-size:11px;">${text(p.option_name || '') || '<i style="color:#cbd5e1;">(no option)</i>'}</div>`}
         </td>
         <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.cost_krw || 0).toLocaleString()}</td>
@@ -3583,6 +3688,97 @@ LEGACY END -->
         </td>
       </tr>
     `;
+  }
+
+  function plGroupRowsById(productGroupId) {
+    const groupId = String(productGroupId || '').trim();
+    if (!groupId) return [];
+    return (state.products || [])
+      .filter((p) => String(p.product_group_id || '') === groupId)
+      .sort((a, b) => plTierSortKey(a).localeCompare(plTierSortKey(b)));
+  }
+
+  function closeProductMasterEditModal() {
+    const overlay = document.getElementById('pl-master-edit-modal');
+    if (!overlay) return;
+    overlay.classList.remove('show');
+    overlay.setAttribute('aria-hidden', 'true');
+    overlay.dataset.productGroupId = '';
+  }
+
+  function openProductMasterEditModal(productGroupId) {
+    const rows = plGroupRowsById(productGroupId);
+    if (!rows.length) {
+      showToast('수정할 마스터 상품 묶음을 찾지 못했습니다.', 'err');
+      return;
+    }
+    const overlay = document.getElementById('pl-master-edit-modal');
+    if (!overlay) return;
+    const first = rows[0] || {};
+    overlay.dataset.productGroupId = String(productGroupId || '');
+    const subtitle = document.getElementById('pl-master-edit-subtitle');
+    if (subtitle) subtitle.textContent = `${plParentSku(rows)} / ${rows.length} options`;
+    const nameInput = document.getElementById('pl-master-edit-name');
+    if (nameInput) nameInput.value = plProductName(first);
+    const componentsInput = document.getElementById('pl-master-edit-components');
+    if (componentsInput) componentsInput.value = first.components_extracted_en || '';
+    const optionsEl = document.getElementById('pl-master-edit-options');
+    if (optionsEl) {
+      optionsEl.innerHTML = rows
+        .map((row) => `<span class="pill">${text(plOptionDisplay(row) || row.sku || '옵션')}</span>`)
+        .join('');
+    }
+    const err = document.getElementById('pl-master-edit-error');
+    if (err) { err.textContent = ''; err.style.display = 'none'; }
+    overlay.classList.add('show');
+    overlay.setAttribute('aria-hidden', 'false');
+    if (nameInput) nameInput.focus();
+  }
+
+  async function saveProductMasterEditModal() {
+    const overlay = document.getElementById('pl-master-edit-modal');
+    const groupId = overlay?.dataset.productGroupId || '';
+    const rows = plGroupRowsById(groupId);
+    const err = document.getElementById('pl-master-edit-error');
+    const saveBtn = document.getElementById('pl-master-edit-save');
+    if (!rows.length) return;
+    const rawName = document.getElementById('pl-master-edit-name')?.value || '';
+    const productName = cleanProductName(rawName, rows[0]?.sku || '');
+    if (!productName) {
+      if (err) { err.textContent = '마스터 상품명을 입력해주세요.'; err.style.display = 'block'; }
+      return;
+    }
+    const components = String(document.getElementById('pl-master-edit-components')?.value || '').trim();
+    const patch = {
+      product_name: productName,
+      components_extracted_en: components || null,
+      components_extracted_at: components ? new Date().toISOString() : null,
+      components_approved: components ? 1 : 0,
+    };
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '저장 중...'; }
+    if (err) { err.textContent = ''; err.style.display = 'none'; }
+    try {
+      const { data, error } = await db
+        .from('products')
+        .update(patch)
+        .in('id', rows.map((p) => p.id))
+        .select('id');
+      if (error) throw error;
+      if (!Array.isArray(data) || data.length === 0) {
+        throw new Error('업데이트 권한 없음 또는 대상 행 없음');
+      }
+      const ids = new Set(rows.map((p) => String(p.id)));
+      state.products.forEach((p) => {
+        if (ids.has(String(p.id))) Object.assign(p, patch);
+      });
+      closeProductMasterEditModal();
+      renderProducts();
+      showToast('마스터 상품 수정 완료', 'ok');
+    } catch (e) {
+      if (err) { err.textContent = e?.message || String(e); err.style.display = 'block'; }
+    } finally {
+      if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = '저장'; }
+    }
   }
 
   function beginEditCell(cell) {
@@ -3621,9 +3817,12 @@ LEGACY END -->
         newVal = n;
       } else {
         newVal = String(newVal).trim();
+        if (field === 'product_name') {
+          newVal = cleanProductName(newVal, original);
+        }
         if (field === 'sku') {
           if (!newVal) { alert('SKU는 비울 수 없습니다.'); cell.textContent = original; return; }
-          if (/[가-힯㄰-㆏ᄀ-ᇿ぀-ゟ゠-ヿ一-鿿]/.test(newVal)) {
+          if (hasNonMarketplaceText(newVal)) {
             alert('SKU는 영문/숫자만 허용됩니다.');
             cell.textContent = original;
             return;
@@ -4887,6 +5086,12 @@ LEGACY END -->
   });
   document.getElementById('pl-bulk-delete')?.addEventListener('click', bulkDeleteSelectedProducts);
   document.getElementById('pl-select-empty-sku')?.addEventListener('click', selectEmptySkuRows);
+  document.getElementById('pl-master-edit-close')?.addEventListener('click', closeProductMasterEditModal);
+  document.getElementById('pl-master-edit-cancel')?.addEventListener('click', closeProductMasterEditModal);
+  document.getElementById('pl-master-edit-save')?.addEventListener('click', saveProductMasterEditModal);
+  document.getElementById('pl-master-edit-modal')?.addEventListener('click', (e) => {
+    if (e.target && e.target.id === 'pl-master-edit-modal') closeProductMasterEditModal();
+  });
   // Step 0 (plan v2.2): real Supabase auth gate. Replaces the prior anon-JWT
   // bypass — every Edge Function mutating route now requires a signed-in
   // session JWT. The signIn/signOut helpers already exist (search above).
@@ -7321,12 +7526,12 @@ LEGACY END -->
     if (subtitleEl) {
       subtitleEl.textContent = _rsh.mode === 'group'
         ? `${rshParentSku(_rsh.products)} / ${_rsh.products.length} options`
-        : [master.sku, master.product_name, master.option_name].filter(Boolean).join(' / ');
+        : [master.sku, cleanProductName(master.product_name, master.sku), master.option_name].filter(Boolean).join(' / ');
     }
 
     // Populate info fields
     const nameEl = $rsh('product-name');
-    if (nameEl) nameEl.textContent = master.product_name || master.sku || '(이름 없음)';
+    if (nameEl) nameEl.textContent = cleanProductName(master.product_name, master.sku) || master.sku || '(이름 없음)';
     const skuEl = $rsh('sku');
     if (skuEl) skuEl.textContent = _rsh.mode === 'group' ? rshParentSku(_rsh.products) : (master.sku || '');
 
@@ -7379,7 +7584,7 @@ LEGACY END -->
     // Description
     const descEl = document.getElementById('rsh-description');
     if (descEl) {
-      descEl.value = master.shopee_description || rshDescriptionTemplate(master.product_name || master.sku, master.lifecycle_state);
+      descEl.value = master.shopee_description || rshDescriptionTemplate(cleanProductName(master.product_name, master.sku) || master.sku, master.lifecycle_state);
     }
 
     // DTS table
@@ -7639,6 +7844,7 @@ LEGACY END -->
     const basePrice = productCosts[0] || Number(document.getElementById('rsh-cost-krw')?.value) || Number(master.cost_krw || 0);
     const maxWeight = productWeights.length ? Math.max(...productWeights) : Number(master.weight_g || 100);
     const parentSku = rshParentSku(products) || `${products[0]?.sku || master.sku || 'V2-SHOPEE'}-P`;
+    const productName = cleanProductName(master.product_name || products[0]?.product_name, parentSku);
     const imageId = _rsh.cachedImageId || master.shopee_image_id || '';
     const brandObj = master.shopee_brand_id === 0 || master.shopee_brand_id == null
       ? { brand_id: 0, original_brand_name: 'No Brand' }
@@ -7665,7 +7871,7 @@ LEGACY END -->
 
     return {
       region: activeRegions[0] || 'SG',
-      name: master.product_name || products[0]?.product_name || parentSku,
+      name: productName || parentSku,
       sku: parentSku,
       category_id: categoryId,
       brand: brandObj,
@@ -7673,7 +7879,7 @@ LEGACY END -->
       weight_g: maxWeight,
       price: basePrice,
       stock: Number(master.inventory || 0),
-      description: document.getElementById('rsh-description')?.value || master.shopee_description || master.product_name || parentSku,
+      description: document.getElementById('rsh-description')?.value || master.shopee_description || productName || parentSku,
       attribute_list: rshReadSpecAttributes(categoryId),
       targets,
       lifecycle_state: lifecycle,
@@ -7800,7 +8006,7 @@ LEGACY END -->
     if (s2) s2.style.display = '';
 
     const subtitleEl2 = $rsh('stage2-subtitle');
-    if (subtitleEl2) subtitleEl2.textContent = [_rsh.master?.sku, _rsh.master?.product_name].filter(Boolean).join(' / ');
+    if (subtitleEl2) subtitleEl2.textContent = [_rsh.master?.sku, cleanProductName(_rsh.master?.product_name, _rsh.master?.sku)].filter(Boolean).join(' / ');
 
     const errorEl = $rsh('stage2-error');
     if (errorEl) errorEl.style.display = 'none';
@@ -11987,17 +12193,10 @@ LEGACY END -->
       }
     }
     function mrStripNonAscii(s) {
-      // Remove Hangul + Hiragana/Katakana + CJK Han + Hangul Jamo + zero-width.
-      return (s || '')
-        .replace(/[가-힯㄰-㆏ᄀ-ᇿ぀-ゟ゠-ヿ一-鿿​-‏﻿]+/g, '')
-        .replace(/\(\s*\)/g, '')
-        .replace(/\[\s*\]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
+      return stripNonMarketplaceText(s);
     }
     function mrHasNonAscii(s) {
-      // Detects Hangul/Hiragana/Katakana/CJK in operator-edited fields.
-      return /[가-힯㄰-㆏ᄀ-ᇿ぀-ゟ゠-ヿ一-鿿]/.test(s || '');
+      return hasNonMarketplaceText(s);
     }
     function mrDeriveFromTitle(title) {
       // Operator-supplied extraction rule (2026-05-20 msg #483):
@@ -12156,6 +12355,7 @@ LEGACY END -->
           r.album = derived.album;
           r.version = derived.version;
           r.member = '';
+          r._product_name = mrMasterProductName(r);
           r.collisionMode = 'reuse';
           r.status = 'preview';
         }
@@ -12221,6 +12421,102 @@ LEGACY END -->
     // Used in both mrRenderPreviewCards and mrPromoteAll.
     const CROSS_SKU_INACTIVE = new Set(['rejected', 'skipped', 'crawling']);
 
+    function mrMasterProductName(row) {
+      const title = row?.observed?.title || row?.product_name || row?.name || '';
+      const derived = [
+        row?.artist || '',
+        row?.album ? `[${row.album}]` : '',
+        row?.version || '',
+      ].filter(Boolean).join(' ');
+      return cleanProductName(title, derived || row?.artist || row?._sku || 'UNKNOWN');
+    }
+
+    function mrGroupComponents(group) {
+      const row = (group?.rows || []).find(r => r._components_en != null);
+      return String(row?._components_en || '').trim();
+    }
+
+    function mrSetGroupComponents(group, componentsEn) {
+      (group?.rows || []).forEach(row => { row._components_en = componentsEn || ''; });
+    }
+
+    function mrSetGroupComponentsStatus(group, status, isError = false) {
+      (group?.rows || []).forEach(row => {
+        row._componentsStatus = status || '';
+        row._componentsStatusIsError = !!isError;
+      });
+    }
+
+    async function mrExtractComponentsForGroup(group, textarea, statusEl, buttonEl) {
+      const firstRow = group?.rows?.[0] || {};
+      const url = firstRow.url || '';
+      if (!url || !isValidStaronemallUrl(url)) {
+        const msg = 'StarOneMall URL이 있어야 이미지에서 구성품을 추출할 수 있습니다.';
+        mrSetGroupComponentsStatus(group, msg, true);
+        if (statusEl) { statusEl.textContent = msg; statusEl.style.color = 'var(--red)'; }
+        return;
+      }
+
+      if (buttonEl) { buttonEl.disabled = true; buttonEl.textContent = '추출 중...'; }
+      const loadingMsg = '이미지에서 구성품 추출 중...';
+      mrSetGroupComponentsStatus(group, loadingMsg, false);
+      if (statusEl) { statusEl.textContent = loadingMsg; statusEl.style.color = 'var(--muted)'; }
+
+      try {
+        const cached = _componentsCache.get(url);
+        if (cached?.components_en) {
+          mrSetGroupComponents(group, cached.components_en);
+          mrSetGroupComponentsStatus(group, '캐시된 구성품을 적용했습니다.', false);
+          if (textarea) textarea.value = cached.components_en;
+          if (statusEl) { statusEl.textContent = '캐시된 구성품을 적용했습니다.'; statusEl.style.color = 'var(--green)'; }
+          return;
+        }
+        const resp = await fetch(`${STARONEMALL_VISION_URL}/extract`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON },
+          body: JSON.stringify({ master_row_id: 0, staronemall_url: url }),
+        });
+        const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+        if (!resp.ok || !json.ok) {
+          throw new Error(json.error || json.message || `HTTP ${resp.status}`);
+        }
+        const componentsEn = String(json.components_en || '').trim();
+        if (!componentsEn) throw new Error('추출된 구성품 텍스트가 비어 있습니다.');
+        _componentsCache.set(url, { components_en: componentsEn, masterId: 0, approved: false });
+        mrSetGroupComponents(group, componentsEn);
+        mrSetGroupComponentsStatus(group, '이미지에서 구성품을 추출했습니다.', false);
+        if (textarea) textarea.value = componentsEn;
+        if (statusEl) { statusEl.textContent = '이미지에서 구성품을 추출했습니다.'; statusEl.style.color = 'var(--green)'; }
+      } catch (e) {
+        const msg = e?.message || String(e);
+        mrSetGroupComponentsStatus(group, msg, true);
+        if (statusEl) { statusEl.textContent = msg; statusEl.style.color = 'var(--red)'; }
+      } finally {
+        if (buttonEl) { buttonEl.disabled = false; buttonEl.textContent = '이미지에서 추출'; }
+      }
+    }
+
+    function mrMasterPatchForGroup(group) {
+      const firstRow = group?.rows?.[0] || {};
+      const components = mrGroupComponents(group);
+      return {
+        product_name: mrMasterProductName(firstRow),
+        components_extracted_en: components || null,
+        components_extracted_at: components ? new Date().toISOString() : null,
+        components_approved: components ? 1 : 0,
+      };
+    }
+
+    async function mrPatchCreatedProducts(productIds, group) {
+      const ids = (productIds || []).filter(Boolean);
+      if (!ids.length) return;
+      const { error } = await db
+        .from('products')
+        .update(mrMasterPatchForGroup(group))
+        .in('id', ids);
+      if (error) throw error;
+    }
+
     function mrRenderPreviewCards() {
       const wrap = $('mr-preview-cards');
       wrap.innerHTML = '';
@@ -12242,6 +12538,7 @@ LEGACY END -->
           if (row._opt1 == null) row._opt1 = '';
           row.member = row._opt0 || row.member || '';
           row._sku = mrComputeSku(row);
+          row._product_name = mrMasterProductName(row);
         });
         const cardStatus = group.rows.every(r => r.status === 'done') ? 'done'
           : group.rows.some(r => r.status === 'failed') ? 'failed'
@@ -12276,7 +12573,7 @@ LEGACY END -->
         }
         infoCol.appendChild(cardTop);
 
-        const titleDiv = el('div', { style: 'font-weight:600;font-size:13px;' }, (firstRow.observed && firstRow.observed.title) || '(제목 없음)');
+        const titleDiv = el('div', { style: 'font-weight:600;font-size:13px;' }, mrMasterProductName(firstRow) || '(제목 없음)');
         infoCol.appendChild(titleDiv);
 
         // Artist/Album/Version fields (card-level, shared across options)
@@ -12337,6 +12634,33 @@ LEGACY END -->
         defaultsRow.appendChild(defWLab);
 
         infoCol.appendChild(defaultsRow);
+
+        // 상품 구성품: manual input plus image-to-text extraction from StarOneMall detail image.
+        if (firstRow._components_en == null) mrSetGroupComponents(group, firstRow.components_extracted_en || '');
+        const componentsWrap = el('div', { style: 'display:flex;flex-direction:column;gap:4px;margin-top:4px;' });
+        const componentsTop = el('div', { style: 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;' });
+        componentsTop.appendChild(el('label', { style: 'font-size:11px;color:var(--muted);font-weight:700;' }, '상품 구성품'));
+        const compBtn = el('button', { type: 'button', style: 'font-size:11px;padding:3px 8px;' }, '이미지에서 추출');
+        const compStatus = el('span', {
+          style: `font-size:11px;color:${firstRow._componentsStatusIsError ? 'var(--red)' : 'var(--muted)'};`,
+        }, firstRow._componentsStatus || '');
+        componentsTop.appendChild(compBtn);
+        componentsTop.appendChild(compStatus);
+        const compText = el('textarea', {
+          rows: '3',
+          placeholder: '예: CD, Photobook, Photocard...',
+          style: 'width:100%;font-size:12px;padding:6px 8px;',
+        }, mrGroupComponents(group));
+        compText.addEventListener('input', (e) => {
+          mrSetGroupComponents(group, e.target.value);
+          mrSetGroupComponentsStatus(group, '직접 입력됨', false);
+          compStatus.textContent = '직접 입력됨';
+          compStatus.style.color = 'var(--muted)';
+        });
+        compBtn.addEventListener('click', () => mrExtractComponentsForGroup(group, compText, compStatus, compBtn));
+        componentsWrap.appendChild(componentsTop);
+        componentsWrap.appendChild(compText);
+        infoCol.appendChild(componentsWrap);
 
         if (!MR_MASTER_ONLY_MODE) {
           // Shopee 발행 필드 (category_id / days_to_ship — card level, required for register_cbsc)
@@ -13192,11 +13516,11 @@ LEGACY END -->
             row.product_id = result && result.product_id;
             if (row.product_id) {
               await db.from('products')
-                .update({
+                .update(Object.assign({
                   main_image: vOpt.main_image || null,
                   extra_images: vOpt.extra_images || [],
                   cost_krw: vOpt.cost_krw || 0,
-                })
+                }, mrMasterPatchForGroup(group)))
                 .eq('id', row.product_id);
             }
             row.status = 'done';
@@ -13231,6 +13555,7 @@ LEGACY END -->
               row.status     = rpcRow ? 'done' : 'failed';
               if (!rpcRow) row.error = 'RPC 응답에 SKU 없음';
             }
+            await mrPatchCreatedProducts(activeRows.map(r => r.product_id).filter(Boolean), group);
             mrRenderPreviewCards();
 
             if (MR_MASTER_ONLY_MODE) {
@@ -13396,7 +13721,7 @@ LEGACY END -->
               const tierVariation = buildTierVariation(pathAEnabled);
 
               // 5. Title / description from observed
-              const cbscTitle = (firstRow.observed && firstRow.observed.title) || firstRow.artist || 'UNKNOWN';
+              const cbscTitle = mrMasterProductName(firstRow) || firstRow.artist || 'UNKNOWN';
               const cbscDesc  = (firstRow.observed && firstRow.observed.description_html) || cbscTitle;
 
               // 5b. Auto-generate global_item_sku (parent SKU) from option SKUs' common prefix.
@@ -13904,7 +14229,7 @@ LEGACY END -->
       const payload = {
         row: { sku: parentSku, cost: Number(firstRow._cost_krw || firstRow.cost_krw || 0), weight: Number(firstRow._weight_g || firstRow.weight_g || 0) },
         scrapedAssets: {
-          name: (firstRow.observed && firstRow.observed.title) || firstRow.product_name || '',
+          name: mrMasterProductName(firstRow),
           mainImage: mainImageUrl,
           extraImages: (firstRow._extra_images || []).filter(Boolean),
           detailImages: [],
@@ -13915,7 +14240,7 @@ LEGACY END -->
         namePrefix: '[PRE ORDER]',
         artist: firstRow.artist || '',
         album: firstRow.album || '',
-        contents: '',
+        contents: mrGroupComponents(group),
         brand: firstRow._joomBrand || firstRow.artist || '',
       };
 
@@ -14037,7 +14362,7 @@ LEGACY END -->
       const title = (() => {
         const artist = (firstRow.artist || '').trim();
         const album = (firstRow.album || '').trim();
-        const name = (firstRow.observed && firstRow.observed.title) || firstRow.product_name || '';
+        const name = mrMasterProductName(firstRow);
         if (artist && album) return `${artist} - ${album} Official K-Pop Album CD`;
         return name.slice(0, 80);
       })();
@@ -14256,6 +14581,7 @@ LEGACY END -->
             r.deduped = !!hit.deduped;
             const derived = mrDeriveFromTitle(r.observed.title || '');
             r.artist = derived.artist; r.album = derived.album; r.version = derived.version; r.member = '';
+            r._product_name = mrMasterProductName(r);
             r.status = 'preview';
           }
         } catch (e) {

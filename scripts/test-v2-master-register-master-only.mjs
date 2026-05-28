@@ -32,6 +32,8 @@ assert(masterRegister.includes('mrSlug(row.artist, 8)'), 'SKU must include Artis
 assert(masterRegister.includes('mrSlug(row.album, 12)'), 'SKU must include Album');
 assert(masterRegister.includes('mrSlug(row.version, 12)'), 'SKU must include full Version text such as PHOTOBOOK');
 assert(masterRegister.includes('mrSlug(member, 12)'), 'SKU must include member/option name');
+assert(masterRegister.includes('function mrMasterProductName(row)'), 'master register must build sanitized master product names');
+assert(masterRegister.includes('cleanProductName(title'), 'master product names must exclude Korean/CJK text before saving');
 assert(
   masterRegister.includes('if (!(Number(row._cost_krw) > 0)) row._cost_krw')
     && masterRegister.includes('initialDefaultCost'),
@@ -47,6 +49,12 @@ assert(masterRegister.includes("accept: 'image/*'"), 'image input must accept im
 assert(masterRegister.includes('메인/옵션 이미지 첨부 (1장)'), 'UI must communicate single option image attachment');
 assert(!masterRegister.includes('+ 추가 이미지'), 'master register must not render multiple extra image slots');
 assert(!masterRegister.includes('while (row._extra_images.length < 2)'), 'master register must not require two extra images');
+assert(masterRegister.includes('상품 구성품'), 'master register must expose a product components field');
+assert(masterRegister.includes('이미지에서 추출'), 'master register must expose image-to-text components extraction');
+assert(masterRegister.includes('mrExtractComponentsForGroup'), 'master register must call the Vision extraction helper');
+assert(masterRegister.includes('STARONEMALL_VISION_URL'), 'components extraction must reuse the staronemall-vision function');
+assert(masterRegister.includes('components_extracted_en'), 'components must be persisted into products');
+assert(masterRegister.includes('components_approved: components ? 1 : 0'), 'operator-entered components must be saved as approved');
 
 assert(masterRegister.includes('if (!MR_MASTER_ONLY_MODE) {'), 'platform-only UI/validation must be gated off');
 assert(masterRegister.includes('if (MR_MASTER_ONLY_MODE)'), 'multi-option promotion must short-circuit after master creation');

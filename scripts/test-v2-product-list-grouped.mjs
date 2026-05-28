@@ -43,8 +43,11 @@ for (const token of [
   'function renderProductGroup(group)',
   'function renderProductOptionRow(p, groupKey, isGroupChild)',
   'function plParentSku(rows)',
+  'function plProductName(product)',
   'function plGroupPlatformCell(rows, platform)',
+  'openProductMasterEditModal',
   'data-group-toggle',
+  'data-edit-master',
   'class="pl-group-check"',
   'class="pl-row-check"',
 ]) {
@@ -74,6 +77,23 @@ assert(
   productList.includes("isVariantRow ? '<span class=\"muted\"")
     && productList.includes('data-open="${text(p.id)}"'),
   'variant option rows must not show the legacy Register button',
+);
+assert(
+  productList.includes('class="pl-shopee-cell"')
+    && productList.includes('class="primary pl-shopee-register"')
+    && productList.includes('<td class="pl-platform-cell">'),
+  'Shopee group register button must sit inside the Shopee platform cell',
+);
+assert(
+  productList.includes("isGroupChild\n      ? `<div style=\"font-weight:700;color:#523563;\">${text(optionDisplay || '옵션')}</div>`")
+    && productList.includes("isVariantRow\n            ? ''"),
+  'grouped child option rows must display only the option name without repeated product/group metadata',
+);
+assert(
+  html.includes('id="pl-master-edit-modal"')
+    && html.includes('id="pl-master-edit-components"')
+    && productList.includes('components_extracted_en'),
+  'product list must expose a master edit modal with components fields',
 );
 assert(
   bulkDeleteUi.includes("document.querySelectorAll('.pl-group-check')")

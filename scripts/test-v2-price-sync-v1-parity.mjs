@@ -75,5 +75,10 @@ assert(!v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/update_global_price'"), 'V2 pr
 assert(v2.includes('shop_model_id,status,published_at,last_synced_price'), 'V2 listings fetch must include shop_model_id for variant price updates');
 assert(v2.includes("JOOM_BRIDGE + '/lookup-sku?sku='"), 'V2 Joom sync must resolve SKU before update-price');
 assert(v2.includes("JOOM_BRIDGE + '/update-price'"), 'V2 Joom sync must call update-price');
+assert(v2.includes('id="cat-platform-tabs"'), 'V2 price sync toolbar must expose platform tabs');
+for (const platform of ['shopee', 'joom', 'qoo10', 'alibaba', 'ebay']) {
+  assert(v2.includes(`data-cat-platform="${platform}"`), `V2 price sync toolbar must include ${platform} platform tab`);
+}
+assert(v2.includes("chip.className = 'cat-market-chip active'"), 'Shopee markets must render as compact chips instead of loose checkboxes');
 
 console.log('v2 price sync V1 parity checks passed');

@@ -564,6 +564,63 @@
     .cat-market-filters {
       min-height: 34px;
     }
+    .coverage-summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .coverage-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fffdfd;
+      padding: 10px 12px;
+    }
+    .coverage-card strong {
+      display: block;
+      font-size: 13px;
+      color: #3c1d57;
+      margin-bottom: 6px;
+    }
+    .coverage-metric {
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .coverage-table {
+      table-layout: auto;
+      min-width: 1120px;
+    }
+    .coverage-cell {
+      min-width: 110px;
+      white-space: nowrap;
+    }
+    .coverage-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border-radius: 999px;
+      border: 1px solid #ead8e8;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      background: #fff;
+    }
+    .coverage-chip.mapped { color: #15803d; border-color: #bbf7d0; background: #f0fdf4; }
+    .coverage-chip.missing { color: #9f1239; border-color: #fecdd3; background: #fff1f2; }
+    .coverage-chip.pending { color: #92400e; border-color: #fde68a; background: #fffbeb; }
+    .coverage-chip.error { color: #b91c1c; border-color: #fecaca; background: #fef2f2; }
+    .coverage-detail {
+      display: block;
+      max-width: 150px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--muted);
+      font-size: 10px;
+      margin-top: 3px;
+    }
 
     /* ── Confirm modal (payload preview) ── */
     #wiz-modal-overlay {
@@ -1074,6 +1131,7 @@
       <button class="nav-tab" onclick="showView('view-pre-order')">🔖 PRE ORDER</button>
       <button class="nav-tab" onclick="showView('view-ready-stock')">🔄 READY STOCK 전환</button>
       <button class="nav-tab" onclick="showView('view-price-sync')">💰 가격 동기화</button>
+      <button class="nav-tab" onclick="showView('view-coverage')">🧭 플랫폼 커버리지</button>
       <button class="nav-tab" onclick="showView('view-daily-close')">🌙 일일 마감</button>
       <button class="nav-tab" onclick="showView('view-probe')">🔬 Probe</button>
       <button class="nav-tab" onclick="showView('view-ingest')">📥 수집 검토</button>
@@ -1936,6 +1994,60 @@
       <div id="cat-loading" style="display:none;padding:18px;text-align:center;color:var(--muted);">로딩 중…</div>
 
     </div><!-- /view-price-sync -->
+
+    <!-- ═══════════════════════════════════════════════
+         VIEW: 플랫폼 커버리지
+         Existing remote listings → V2 master mapping → missing-platform expansion.
+         ═══════════════════════════════════════════════ -->
+    <div id="view-coverage" class="view">
+      <div class="cat-banner" style="margin-bottom:12px;">
+        이미 플랫폼에 올라간 상품은 재발행하지 않고 V2 master에 연결합니다. missing 플랫폼만 확장 발행 후보로 봅니다.
+      </div>
+
+      <div class="toolbar" style="margin-bottom:10px;gap:8px;">
+        <input id="coverage-search" type="search" placeholder="SKU / 상품명 / 옵션 검색" style="min-width:260px;flex:1;max-width:520px;">
+        <select id="coverage-platform-filter" style="min-width:150px;">
+          <option value="">전체 플랫폼</option>
+          <option value="shopee">Shopee</option>
+          <option value="joom">Joom</option>
+          <option value="qoo10">Qoo10</option>
+          <option value="alibaba">Alibaba</option>
+          <option value="ebay">eBay</option>
+        </select>
+        <select id="coverage-status-filter" style="min-width:150px;">
+          <option value="">전체 상태</option>
+          <option value="mapped">mapped</option>
+          <option value="missing">missing</option>
+          <option value="pending">pending</option>
+          <option value="error">error</option>
+        </select>
+        <button id="coverage-refresh" type="button">새로고침</button>
+        <span id="coverage-count" class="status"></span>
+      </div>
+
+      <div id="coverage-banner" class="notice" style="display:none;margin-bottom:10px;"></div>
+      <div id="coverage-loading" style="display:none;font-size:12px;color:var(--muted);margin-bottom:8px;">로드 중…</div>
+      <div id="coverage-summary" class="coverage-summary"></div>
+
+      <div class="panel" style="overflow:auto;">
+        <table class="coverage-table">
+          <thead>
+            <tr>
+              <th style="min-width:180px;">SKU / 상품</th>
+              <th class="coverage-cell">Shopee</th>
+              <th class="coverage-cell">Joom</th>
+              <th class="coverage-cell">Qoo10</th>
+              <th class="coverage-cell">Alibaba</th>
+              <th class="coverage-cell">eBay</th>
+              <th style="min-width:190px;">다음 액션</th>
+            </tr>
+          </thead>
+          <tbody id="coverage-body">
+            <tr><td colspan="7" class="empty">로드 중…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /view-coverage -->
 
     <!-- ═══════════════════════════════════════════════
          VIEW: 일일 마감
@@ -9756,6 +9868,7 @@ LEGACY END -->
     window.showView = function(viewId) {
       _origSV2(viewId);
       if (viewId === 'view-price-sync') renderCatalogView(false);
+      if (viewId === 'view-coverage') renderCoverageView(false);
       if (viewId === 'view-daily-close') renderDailyClose(false);
       if (viewId === 'view-probe')   renderProbeView();
       if (viewId === 'view-history') renderHistoryView(false);
@@ -10563,6 +10676,287 @@ LEGACY END -->
         t.classList.remove('hist-expanded');
       });
     });
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // PLATFORM COVERAGE VIEW — existing listings absorption dashboard
+  // ════════════════════════════════════════════════════════════════
+  const COVERAGE_PLATFORMS = ['shopee', 'joom', 'qoo10', 'alibaba', 'ebay'];
+  const COVERAGE_LABELS = {
+    shopee: 'Shopee',
+    joom: 'Joom',
+    qoo10: 'Qoo10',
+    alibaba: 'Alibaba',
+    ebay: 'eBay',
+  };
+  const coverageState = {
+    initialized: false,
+    rows: [],
+    usingView: false,
+  };
+
+  async function renderCoverageView(forceRefresh) {
+    if (!coverageState.initialized) {
+      initCoverageListeners();
+      coverageState.initialized = true;
+    }
+    if (forceRefresh || !coverageState.rows.length) {
+      await coverageFetch();
+    } else {
+      coverageRender();
+    }
+  }
+
+  async function coverageFetch() {
+    const loading = document.getElementById('coverage-loading');
+    const banner = document.getElementById('coverage-banner');
+    if (loading) loading.style.display = 'block';
+    if (banner) banner.style.display = 'none';
+
+    try {
+      coverageState.rows = await coverageFetchFromView();
+      coverageState.usingView = true;
+    } catch (err) {
+      console.warn('[coverage] platform_listing_coverage unavailable, using client fallback:', err?.message || err);
+      coverageState.rows = await coverageFetchFallback();
+      coverageState.usingView = false;
+      if (banner) {
+        banner.style.display = 'block';
+        banner.textContent = 'DB coverage view가 아직 없어서 products/listings fallback으로 표시 중입니다. migration 적용 후 snapshot/match 상태까지 보입니다.';
+      }
+    } finally {
+      if (loading) loading.style.display = 'none';
+    }
+
+    coverageRender();
+  }
+
+  async function coverageFetchFromView() {
+    const url = SUPABASE_URL + '/rest/v1/platform_listing_coverage'
+      + '?select=product_id,sku,product_name,option_name,lifecycle_state,platform,listed_count,pending_count,error_count,total_count,coverage_status,per_shop_detail'
+      + '&order=sku.asc.nullslast,platform.asc';
+    const res = await fetch(url, { headers: AUTH_HEADERS });
+    if (!res.ok) throw new Error('platform_listing_coverage HTTP ' + res.status);
+    const rows = await res.json();
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async function coverageFetchFallback() {
+    const [productsRes, shopeeRes, platformRes] = await Promise.all([
+      db.from('products')
+        .select('id,sku,product_name,option_name,lifecycle_state,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,joom_published_at,updated_at')
+        .order('sku', { ascending: true }),
+      db.from('product_shopee_listings').select('product_id,region,shop_item_id,shop_model_id,status,last_synced_price,last_synced_at'),
+      db.from('platform_listings').select('master_product_id,platform,shop_id,country,platform_item_id,listing_status,last_sync_at,error_msg'),
+    ]);
+
+    if (productsRes.error) throw productsRes.error;
+    if (shopeeRes.error) throw shopeeRes.error;
+
+    const products = productsRes.data || [];
+    const shopeeRows = shopeeRes.data || [];
+    const platformRows = platformRes.error ? [] : (platformRes.data || []);
+    const byProductPlatform = new Map();
+    const key = function(productId, platform) {
+      return String(productId) + ':' + platform;
+    };
+    const pushRow = function(productId, platform, row) {
+      const mapKey = key(productId, platform);
+      if (!byProductPlatform.has(mapKey)) byProductPlatform.set(mapKey, []);
+      byProductPlatform.get(mapKey).push(row);
+    };
+
+    shopeeRows.forEach(function(row) {
+      pushRow(row.product_id, 'shopee', row);
+    });
+    const importedPlatformKeys = new Set();
+    platformRows.forEach(function(row) {
+      importedPlatformKeys.add(key(row.master_product_id, row.platform));
+      pushRow(row.master_product_id, row.platform, row);
+    });
+    products.forEach(function(product) {
+      if (!product.joom_product_id || importedPlatformKeys.has(key(product.id, 'joom'))) return;
+      pushRow(product.id, 'joom', {
+        platform: 'joom',
+        country: 'GLOBAL',
+        platform_item_id: product.joom_product_id,
+        external_variant_id: product.joom_variant_id,
+        external_sku: product.sku,
+        listing_status: product.joom_mapping_status === 'mapping_failed' ? 'error' : 'listed',
+        mapping_status: product.joom_mapping_status || 'mapped',
+        currency: product.joom_currency,
+        remote_price: product.joom_last_synced_price,
+        last_sync_at: product.joom_last_synced_at || product.joom_published_at || product.updated_at,
+        error_msg: product.joom_mapping_error,
+      });
+    });
+
+    const rows = [];
+    products.forEach(function(product) {
+      COVERAGE_PLATFORMS.forEach(function(platform) {
+        const items = byProductPlatform.get(key(product.id, platform)) || [];
+        const listed = platform === 'shopee'
+          ? items.filter((r) => r.shop_item_id && ['mapped', 'listed'].includes(String(r.status || 'mapped'))).length
+          : items.filter((r) => ['listed', 'paused'].includes(String(r.listing_status || ''))).length;
+        const pending = platform === 'shopee'
+          ? items.filter((r) => ['pending', 'draft'].includes(String(r.status || ''))).length
+          : items.filter((r) => ['pending', 'draft'].includes(String(r.listing_status || ''))).length;
+        const errors = platform === 'shopee'
+          ? items.filter((r) => String(r.status || '') === 'error').length
+          : items.filter((r) => ['error', 'rejected'].includes(String(r.listing_status || ''))).length;
+        const detail = {};
+        items.forEach(function(row, index) {
+          const detailKey = platform === 'shopee'
+            ? (row.region || String(index))
+            : (row.shop_id || row.country || String(index));
+          detail[detailKey] = row;
+        });
+        rows.push({
+          product_id: product.id,
+          sku: product.sku,
+          product_name: product.product_name,
+          option_name: product.option_name,
+          lifecycle_state: product.lifecycle_state,
+          platform,
+          listed_count: listed,
+          pending_count: pending,
+          error_count: errors,
+          total_count: items.length,
+          coverage_status: listed > 0 ? 'mapped' : pending > 0 ? 'pending' : errors > 0 ? 'error' : 'missing',
+          per_shop_detail: detail,
+        });
+      });
+    });
+    return rows;
+  }
+
+  function coverageGroupRows() {
+    const map = new Map();
+    coverageState.rows.forEach(function(row) {
+      const productId = String(row.product_id);
+      if (!map.has(productId)) {
+        map.set(productId, {
+          product_id: row.product_id,
+          sku: row.sku || '',
+          product_name: row.product_name || '',
+          option_name: row.option_name || '',
+          lifecycle_state: row.lifecycle_state || '',
+          platforms: {},
+        });
+      }
+      map.get(productId).platforms[row.platform] = row;
+    });
+    return Array.from(map.values());
+  }
+
+  function coverageRenderSummary(groups) {
+    const el = document.getElementById('coverage-summary');
+    if (!el) return;
+    el.innerHTML = COVERAGE_PLATFORMS.map(function(platform) {
+      let mapped = 0;
+      let missing = 0;
+      let pending = 0;
+      let error = 0;
+      groups.forEach(function(group) {
+        const status = group.platforms[platform]?.coverage_status || 'missing';
+        if (status === 'mapped') mapped++;
+        else if (status === 'pending') pending++;
+        else if (status === 'error') error++;
+        else missing++;
+      });
+      return '<div class="coverage-card">'
+        + '<strong>' + text(COVERAGE_LABELS[platform]) + '</strong>'
+        + '<div class="coverage-metric"><span>mapped</span><b>' + mapped + '</b></div>'
+        + '<div class="coverage-metric"><span>missing</span><b>' + missing + '</b></div>'
+        + (pending ? '<div class="coverage-metric"><span>pending</span><b>' + pending + '</b></div>' : '')
+        + (error ? '<div class="coverage-metric"><span>error</span><b>' + error + '</b></div>' : '')
+        + '</div>';
+    }).join('');
+  }
+
+  function coverageDetail(row) {
+    const detail = row?.per_shop_detail || {};
+    const keys = Object.keys(detail).filter(Boolean);
+    if (!keys.length) return '';
+    return keys.slice(0, 3).join(', ') + (keys.length > 3 ? ' +' + (keys.length - 3) : '');
+  }
+
+  function coverageCell(row) {
+    const status = row?.coverage_status || 'missing';
+    const count = Number(row?.listed_count || row?.total_count || 0);
+    const label = status === 'mapped' && count > 1 ? 'mapped ' + count : status;
+    const glyph = status === 'mapped' ? '●' : status === 'pending' ? '◐' : status === 'error' ? '!' : '○';
+    const detail = coverageDetail(row);
+    return '<td class="coverage-cell">'
+      + '<span class="coverage-chip ' + text(status) + '">' + glyph + ' ' + text(label) + '</span>'
+      + (detail ? '<span class="coverage-detail">' + text(detail) + '</span>' : '')
+      + '</td>';
+  }
+
+  function coverageActionCell(group) {
+    const missing = COVERAGE_PLATFORMS.filter(function(platform) {
+      return (group.platforms[platform]?.coverage_status || 'missing') === 'missing';
+    });
+    const mapped = COVERAGE_PLATFORMS.filter(function(platform) {
+      return group.platforms[platform]?.coverage_status === 'mapped';
+    });
+    if (!mapped.length) return '<span class="muted">먼저 기존 listing import/mapping 필요</span>';
+    if (!missing.length) return '<span class="coverage-chip mapped">전체 커버됨</span>';
+    return '<span class="muted">확장 후보: ' + text(missing.map((p) => COVERAGE_LABELS[p]).join(', ')) + '</span>';
+  }
+
+  function coverageRender() {
+    const body = document.getElementById('coverage-body');
+    const count = document.getElementById('coverage-count');
+    if (!body) return;
+
+    const search = (document.getElementById('coverage-search')?.value || '').trim().toLowerCase();
+    const platformFilter = document.getElementById('coverage-platform-filter')?.value || '';
+    const statusFilter = document.getElementById('coverage-status-filter')?.value || '';
+    let groups = coverageGroupRows();
+
+    if (search) {
+      groups = groups.filter(function(group) {
+        return (group.sku + ' ' + group.product_name + ' ' + group.option_name).toLowerCase().includes(search);
+      });
+    }
+    if (platformFilter || statusFilter) {
+      groups = groups.filter(function(group) {
+        const platforms = platformFilter ? [platformFilter] : COVERAGE_PLATFORMS;
+        return platforms.some(function(platform) {
+          const status = group.platforms[platform]?.coverage_status || 'missing';
+          return statusFilter ? status === statusFilter : true;
+        });
+      });
+    }
+
+    coverageRenderSummary(groups);
+    if (count) count.textContent = groups.length + '개 master';
+    if (!groups.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty">표시할 상품이 없습니다.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = groups.map(function(group) {
+      const option = group.option_name
+        ? '<div class="muted" style="font-size:11px;">' + text(group.option_name) + '</div>'
+        : '';
+      return '<tr>'
+        + '<td><div class="mono" style="font-size:12px;font-weight:700;">' + text(group.sku || '—') + '</div>'
+        + '<div>' + text(group.product_name || '—') + '</div>' + option + '</td>'
+        + COVERAGE_PLATFORMS.map((platform) => coverageCell(group.platforms[platform])).join('')
+        + '<td>' + coverageActionCell(group) + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  function initCoverageListeners() {
+    document.getElementById('coverage-refresh')?.addEventListener('click', function() {
+      coverageFetch();
+    });
+    document.getElementById('coverage-search')?.addEventListener('input', coverageRender);
+    document.getElementById('coverage-platform-filter')?.addEventListener('change', coverageRender);
+    document.getElementById('coverage-status-filter')?.addEventListener('change', coverageRender);
   }
 
   // ════════════════════════════════════════════════════════════════

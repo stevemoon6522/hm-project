@@ -13000,6 +13000,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         .map(r => (r._sku || '').trim())
         .filter(Boolean);
       if (!allSkus.length) return '';
+      if (allSkus.length === 1) return allSkus[0];
       let prefix = allSkus[0];
       for (let i = 1; i < allSkus.length; i++) {
         while (!allSkus[i].startsWith(prefix)) {
@@ -13011,6 +13012,54 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       prefix = prefix.replace(/[-_]+$/, '');
       if (!prefix || allSkus.includes(prefix)) prefix = allSkus[0] + '-P';
       return prefix;
+    }
+
+    function mrJoomParentSku(group, rows) {
+      const activeRows = (rows || group.rows || [])
+        .filter(r => !CROSS_SKU_INACTIVE.has(r.status));
+      if (activeRows.length === 1) return (activeRows[0]._sku || '').trim();
+      return group._cachedParentSku || mrPreviewParentSku({ rows: activeRows });
+    }
+
+    function mrJoomNormalizeImageList(urls, baseUrl) {
+      const seen = new Set();
+      const out = [];
+      (urls || []).forEach((url) => {
+        const normalized = _normalizeShopeeImageUrl(url, baseUrl || window.location.href);
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        out.push(normalized);
+      });
+      return out;
+    }
+
+    async function mrJoomLoadDetailImages(group) {
+      const firstRow = group.rows[0] || {};
+      const sourceUrl = firstRow.url || firstRow.staronemall_url || '';
+      const observed = firstRow.observed || {};
+      let details = mrJoomNormalizeImageList(observed.detail_image_urls || [], sourceUrl);
+      if (details.length || !sourceUrl) return details.slice(0, 9);
+
+      const session = (await db.auth.getSession()).data.session;
+      if (!session) throw new Error('로그인이 만료되었습니다. 다시 로그인해주세요.');
+      const resp = await fetch(STAR_CRAWL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ urls: [sourceUrl], write_to_source_records: false }),
+      });
+      const textBody = await resp.text();
+      let body;
+      try { body = JSON.parse(textBody); } catch { body = { ok: false, error: textBody }; }
+      if (!resp.ok || body?.ok === false) {
+        throw new Error(body?.error || body?.message || `StarOneMall 상세 이미지 크롤 실패 (HTTP ${resp.status})`);
+      }
+      const hit = Array.isArray(body.results) ? body.results.find(x => x.url === sourceUrl) || body.results[0] : null;
+      const nextObserved = hit?.observed_values || {};
+      if (nextObserved && Object.keys(nextObserved).length) {
+        firstRow.observed = Object.assign({}, observed, nextObserved);
+      }
+      details = mrJoomNormalizeImageList(nextObserved.detail_image_urls || [], sourceUrl);
+      return details.slice(0, 9);
     }
 
     function mrRefreshGroupAutoSkus(card, group) {
@@ -15071,17 +15120,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     async function mrPromoteJoom(group) {
       const firstRow = group.rows[0];
       if (!firstRow) { showToast('카드 행이 없습니다.'); return; }
+      const activeRows = group.rows.filter(r => !CROSS_SKU_INACTIVE.has(r.status));
+      if (!activeRows.length) { showToast('Joom 발행할 활성 옵션이 없습니다.'); return; }
 
       // Determine parent SKU
-      const allSkus = group.rows.filter(r => !CROSS_SKU_INACTIVE.has(r.status)).map(r => (r._sku || '').trim()).filter(Boolean);
-      function _commonPrefix(strs) {
-        if (!strs.length) return '';
-        let p = strs[0];
-        for (let i = 1; i < strs.length; i++) { while (!strs[i].startsWith(p)) { p = p.slice(0, -1); if (!p) return ''; } }
-        return p.replace(/[-_]+$/, '');
-      }
-      let parentSku = group._cachedParentSku || _commonPrefix(allSkus);
-      if (!parentSku || allSkus.includes(parentSku)) parentSku = allSkus[0] ? allSkus[0] + '-P' : ('JOOM-' + (group.source_record_id || '').slice(0, 8));
+      let parentSku = mrJoomParentSku(group, activeRows);
+      if (!parentSku) parentSku = 'JOOM-' + (group.source_record_id || '').slice(0, 8);
 
       // P0 #3: square main image validation (via shopee-bridge proxy_image for CORS safety — P1 #4)
       const mainImageUrl = firstRow._joomMainImageOverride || firstRow._main_image || '';
@@ -15124,7 +15168,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       try { sgCountry = await _v2LoadSgCountry(); } catch (e) { showToast('SG country_settings 로드 실패: ' + (e.message || e), 'err'); return; }
       let variantsConfig;
       try {
-        variantsConfig = group.rows.map((r) => {
+        variantsConfig = activeRows.map((r) => {
           if (!r._sku) throw new Error('옵션 SKU 가 비어 있습니다. 모든 옵션에 SKU를 입력하세요.');
           const optParts = [];
           if (r._opt0) optParts.push(r._opt0);
@@ -15146,10 +15190,20 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             currency: 'USD',
             inventory: 50,
             enabled: true,
+            weight: weightG,
+            image: r._main_image || '',
           };
         });
       } catch (e) {
         showToast(e.message || String(e));
+        return;
+      }
+
+      let detailImages = [];
+      try {
+        detailImages = await mrJoomLoadDetailImages(group);
+      } catch (e) {
+        showToast(e.message || String(e), 'err');
         return;
       }
 
@@ -15159,7 +15213,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           name: mrMasterProductName(firstRow),
           mainImage: mainImageUrl,
           extraImages: (firstRow._extra_images || []).filter(Boolean),
-          detailImages: [],
+          detailImages,
         },
         variantsConfig,
         categoryId: firstRow._joomCategory || 'music_albums',

@@ -189,10 +189,108 @@ function buildDescription(opts: { artist?: string; album?: string; contents?: st
 // Requires CLOUDINARY_* env vars to host the split tiles.
 // ---------------------------------------------------------------------------
 
+function readImageDimensions(buf: Uint8Array): { width: number; height: number } | null {
+  if (buf.length >= 24 &&
+      buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
+    const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    return { width: view.getUint32(16), height: view.getUint32(20) };
+  }
+
+  if (buf.length < 4 || buf[0] !== 0xFF || buf[1] !== 0xD8) return null;
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let offset = 2;
+  while (offset + 9 < buf.length) {
+    if (buf[offset] !== 0xFF) { offset++; continue; }
+    const marker = buf[offset + 1];
+    offset += 2;
+    if (marker === 0xD8 || marker === 0xD9) continue;
+    if (offset + 2 > buf.length) return null;
+    const length = view.getUint16(offset);
+    if (length < 2 || offset + length > buf.length) return null;
+    const isSof =
+      (marker >= 0xC0 && marker <= 0xC3) ||
+      (marker >= 0xC5 && marker <= 0xC7) ||
+      (marker >= 0xC9 && marker <= 0xCB) ||
+      (marker >= 0xCD && marker <= 0xCF);
+    if (isSof && length >= 7) {
+      return {
+        height: view.getUint16(offset + 3),
+        width: view.getUint16(offset + 5),
+      };
+    }
+    offset += length;
+  }
+  return null;
+}
+
+async function buildCloudinaryFetchTiles(
+  imageUrl: string,
+  width: number,
+  height: number,
+  cloudName: string,
+): Promise<string[] | null> {
+  if (!cloudName || !width || !height || height <= width * 1.5) return null;
+
+  const tileSize = width;
+  const numTiles = Math.min(Math.ceil(height / tileSize), 9);
+  const encodedSource = encodeURIComponent(imageUrl);
+  const tiles: string[] = [];
+
+  for (let i = 0; i < numTiles; i++) {
+    const y = i * tileSize;
+    const h = Math.min(tileSize, height - y);
+    const transform = [
+      `c_crop,w_${width},h_${h},x_0,y_${y}`,
+      `b_white,c_pad,w_${width},h_${width}`,
+      "c_scale,w_1800",
+      "f_jpg,q_auto",
+    ].join("/");
+    tiles.push(`https://res.cloudinary.com/${cloudName}/image/fetch/${transform}/${encodedSource}`);
+  }
+
+  try {
+    const probe = await fetch(tiles[0], { method: "GET", signal: AbortSignal.timeout(15000) });
+    await probe.body?.cancel();
+    if (!probe.ok) {
+      console.warn("[joom-bridge] cloudinary fetch probe failed:", probe.status);
+      return null;
+    }
+    return tiles;
+  } catch (e) {
+    console.warn("[joom-bridge] cloudinary fetch probe threw:", e);
+    return null;
+  }
+}
+
+async function uploadTileToProductStorage(imageData: Uint8Array): Promise<string | null> {
+  try {
+    const path = [
+      "joom-tiles",
+      new Date().toISOString().slice(0, 10),
+      `${crypto.randomUUID()}.jpg`,
+    ].join("/");
+    const { error } = await supabase.storage
+      .from("product-images")
+      .upload(path, new Blob([imageData], { type: "image/jpeg" }), {
+        cacheControl: "31536000",
+        contentType: "image/jpeg",
+        upsert: false,
+      });
+    if (error) {
+      console.warn("[joom-bridge] storage tile upload failed:", error.message || error);
+      return null;
+    }
+    const { data } = supabase.storage.from("product-images").getPublicUrl(path);
+    return data?.publicUrl || null;
+  } catch (e) {
+    console.warn("[joom-bridge] storage tile upload threw:", e);
+    return null;
+  }
+}
+
 async function processDetailImage(imageUrl: string): Promise<string[]> {
   // @ts-ignore
   const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
-  if (!cloudName) return [imageUrl]; // skip if Cloudinary not configured
 
   try {
     const resp = await fetch(imageUrl, {
@@ -201,6 +299,11 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
     });
     if (!resp.ok) return [imageUrl];
     const buf = new Uint8Array(await resp.arrayBuffer());
+    const dims = readImageDimensions(buf);
+    if (dims && dims.height > dims.width * 1.5) {
+      const fetchTiles = await buildCloudinaryFetchTiles(imageUrl, dims.width, dims.height, cloudName);
+      if (fetchTiles?.length) return fetchTiles;
+    }
 
     // @ts-ignore
     const { Image } = await import("https://deno.land/x/imagescript@1.3.0/mod.ts");
@@ -210,13 +313,14 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
     if (img.height <= img.width * 1.5) return [imageUrl];
 
     const tileSize = img.width;
-    const numTiles = Math.min(Math.ceil(img.height / tileSize), 4); // cap at 4 tiles
+    const numTiles = Math.min(Math.ceil(img.height / tileSize), 9); // Joom allows up to 9 extra images
     const tiles: string[] = [];
 
     for (let i = 0; i < numTiles; i++) {
       const y = i * tileSize;
       const h = Math.min(tileSize, img.height - y);
-      const tile = img.clone().crop(0, y, img.width, h);
+      const tile = img.clone();
+      tile.crop(0, y, img.width, h);
 
       // Pad shorter last tile to square with white background
       let square;
@@ -228,8 +332,8 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
         square = tile;
       }
 
-      const encoded: Uint8Array = await square.encode(2); // JPEG
-      const url = await uploadTileToCloudinary(encoded);
+      const encoded: Uint8Array = await square.encodeJPEG(90);
+      const url = await uploadTileToProductStorage(encoded) || await uploadTileToCloudinary(encoded);
       if (url) tiles.push(url);
     }
 
@@ -252,13 +356,20 @@ async function buildPayload(opts: any): Promise<any> {
   if (!productSku) throw new Error("row.sku required");
 
   const listing = calcListingUSD(row.cost);
-  const configs = (variantsConfig && variantsConfig.length) ? variantsConfig : [{ name: "DEFAULT", sku: productSku, inventory: 0 }];
+  const hasExplicitVariants = Array.isArray(variantsConfig) && variantsConfig.length > 0;
+  const configs = hasExplicitVariants ? variantsConfig : [{ name: "DEFAULT", sku: productSku, inventory: 0 }];
+  if (hasExplicitVariants && configs.length === 1) {
+    const onlySku = String(configs[0]?.sku || "").trim();
+    if (onlySku && onlySku !== productSku) {
+      throw new Error("single variant product sku must equal option sku");
+    }
+  }
   const defaultWeightKg = gramsToKg(row.weight || 0);
   const seenSkus = new Set<string>();
 
   const variants = configs.map((cfg: any, idx: number) => {
     const vName = (cfg.name || "DEFAULT").trim();
-    const vSku = String(cfg.sku || (vName.toUpperCase() === "DEFAULT" ? productSku : "")).trim();
+    const vSku = String(cfg.sku || (!hasExplicitVariants && vName.toUpperCase() === "DEFAULT" ? productSku : "")).trim();
     if (!vSku) throw new Error(`variant SKU required: ${vName || idx + 1}`);
     if (seenSkus.has(vSku)) throw new Error(`duplicate variant SKU: ${vSku}`);
     seenSkus.add(vSku);
@@ -285,8 +396,8 @@ async function buildPayload(opts: any): Promise<any> {
 
   // Process detail images: split tall portraits into square tiles
   const rawExtras: string[] = [
-    ...(scrapedAssets.extraImages || []),
     ...(scrapedAssets.detailImages || []),
+    ...(scrapedAssets.extraImages || []),
   ].slice(0, 9);
 
   const processedExtras: string[] = [];

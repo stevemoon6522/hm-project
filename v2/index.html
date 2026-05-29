@@ -1354,6 +1354,88 @@
     }
     .fee-save-status.ok { color: var(--green); font-weight: 600; }
     .fee-save-status.err { color: var(--red); font-weight: 600; }
+
+
+    /* Register split workbench — design option 2 */
+    .register-workbench {
+      display: grid;
+      grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .register-page-title {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .register-page-title h2 { font-size: 22px; margin: 0; letter-spacing: -.02em; }
+    .register-page-title p { margin: 4px 0 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .register-method {
+      padding: 16px;
+      border-radius: 16px;
+      position: sticky;
+      top: 82px;
+    }
+    .register-method h3 { margin: 0 0 6px; font-size: 15px; color: #2f1646; }
+    .register-method-copy { margin: 0 0 14px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .register-choice {
+      width: 100%;
+      display: grid;
+      gap: 3px;
+      text-align: left;
+      border-radius: 14px;
+      padding: 13px 14px;
+      margin-bottom: 10px;
+      background: #fff;
+      border-color: #ead0e6;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, .04);
+      white-space: normal;
+    }
+    .register-choice strong { font-size: 13px; color: #111827; }
+    .register-choice span { font-size: 11px; color: var(--muted); line-height: 1.35; }
+    .register-choice.is-active {
+      border-color: var(--accent-2);
+      background: #f7f1ff;
+      box-shadow: 0 8px 22px rgba(102, 16, 212, .12);
+    }
+    .register-choice.is-active strong { color: #3b0764; }
+    .register-work-panel {
+      border-radius: 16px;
+      overflow: hidden;
+    }
+    .register-work-panel[hidden] { display: none !important; }
+    .register-panel-head {
+      padding: 18px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      align-items: flex-start;
+      background: #fff;
+    }
+    .register-panel-title { font-size: 18px; font-weight: 900; color: #28133a; }
+    .register-panel-copy { margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .register-panel-body { padding: 16px; }
+    .register-form-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .register-form-row input[type="search"] { min-width: 260px; flex: 1; max-width: 540px; }
+    .register-statusline { margin-top: 8px; font-size: 11px; color: var(--muted); }
+    .register-method-foot {
+      margin-top: 14px;
+      padding-top: 12px;
+      border-top: 1px solid #f0d9ec;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+    @media (max-width: 920px) {
+      .register-workbench { grid-template-columns: 1fr; }
+      .register-method { position: static; }
+      .register-choice { margin-bottom: 8px; }
+    }
+
   </style>
 </head>
 <body>
@@ -1413,96 +1495,159 @@
          ═══════════════════════════════════════════════ -->
     <div id="view-register" class="view active">
 
-      <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px;">
-        <h2 style="font-size:18px;margin:0;">상품 등록 (마스터 데이터 일괄 생성)</h2>
-        <span style="font-size:12px;color:var(--muted);">URL + 무게 입력 또는 Shopee Global Product 검색 → 마스터 등록</span>
+      <div class="register-page-title">
+        <div>
+          <h2>상품 등록 워크벤치</h2>
+          <p>왼쪽에서 등록 방식을 선택하고, 오른쪽에서 해당 작업만 집중해서 완료합니다.</p>
+        </div>
+        <span class="pill">Global Product API only</span>
       </div>
 
-      <div class="panel" id="sg-import-panel" style="padding:14px;margin-bottom:16px;">
-        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
-          <div>
-            <div style="font-weight:800;color:#3c1d57;">Shopee Global Product → Master DB</div>
-            <div style="font-size:12px;color:var(--muted);line-height:1.45;">키워드로 Global Product를 불러와 model SKU를 canonical SKU로 사용합니다. 옵션 이미지, option/model IDs, raw JSON을 함께 저장합니다.</div>
+      <div class="register-workbench">
+        <aside class="panel register-method" aria-label="상품 등록 방식 선택">
+          <h3>등록 방식</h3>
+          <p class="register-method-copy">작업 목적에 맞는 흐름을 선택하세요. 기존 기능은 유지하면서 화면만 선택한 작업 중심으로 정리했습니다.</p>
+          <button type="button" class="register-choice is-active" data-register-workbench-target="global" aria-pressed="true" onclick="sdRegisterWorkbenchActivate('global')">
+            <strong>Shopee Global Product</strong>
+            <span>키워드 검색 후 선택 항목을 Master DB로 등록</span>
+          </button>
+          <button type="button" class="register-choice" data-register-workbench-target="url" aria-pressed="false" onclick="sdRegisterWorkbenchActivate('url')">
+            <strong>URL 일괄 등록</strong>
+            <span>URL + 무게 입력 후 크롤 미리보기로 상품 생성</span>
+          </button>
+          <button type="button" class="register-choice" data-register-workbench-target="retry" aria-pressed="false" onclick="sdRegisterWorkbenchActivate('retry')">
+            <strong>최근 실패 재시도</strong>
+            <span>크롤 실패/등록 실패 항목을 확인한 뒤 재시도</span>
+          </button>
+          <div class="register-method-foot">기본 추천: Global Product 검색 → Master 등록. Staronemall URL 대량 작업은 URL 일괄 등록을 선택하세요.</div>
+        </aside>
+
+        <section class="panel register-work-panel" id="sg-import-panel" data-register-workbench-panel="global">
+          <div class="register-panel-head">
+            <div>
+              <div class="register-panel-title">Global Product 검색</div>
+              <div class="register-panel-copy">CORTIS처럼 키워드로 검색하고, 선택한 상품을 PRE ORDER 또는 READY STOCK으로 보냅니다. model SKU를 canonical SKU로 사용합니다.</div>
+            </div>
+            <button type="button" id="sg-mock-btn">Dry-run mock</button>
           </div>
-          <span class="pill">SKU 생성/치환 없음</span>
-        </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
-          <input type="search" id="sg-keyword" placeholder="Shopee global product keyword (예: photocard)" style="min-width:280px;flex:1;max-width:520px;">
-          <select id="sg-region" style="width:110px;" aria-label="Global Product search scope"><option value="GLOBAL">Global</option></select>
-          <button type="button" id="sg-search-btn">Global 검색</button>
-          <button type="button" id="sg-mock-btn">Dry-run mock</button>
-          <button type="button" id="sg-import-btn" class="primary" disabled>선택 항목 Master 등록</button>
-          <span id="sg-status" style="font-size:12px;color:var(--muted);"></span>
-        </div>
-        <div id="sg-lifecycle-choice" class="notice" style="display:none;margin-bottom:10px;">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <strong>Master 등록 위치 선택</strong>
-            <span style="color:var(--muted);font-size:12px;">선택된 Global Product를 어느 상품 흐름으로 보낼까요?</span>
-            <button type="button" id="sg-import-pre-order" class="primary" style="margin-left:auto;">PRE ORDER로 등록</button>
-            <button type="button" id="sg-import-ready-stock">READY STOCK으로 등록</button>
-            <button type="button" id="sg-import-cancel">취소</button>
+          <div class="register-panel-body">
+            <div class="register-form-row">
+              <input type="search" id="sg-keyword" placeholder="Shopee global product keyword (예: CORTIS)">
+              <select id="sg-region" style="width:110px;" aria-label="Global Product search scope"><option value="GLOBAL">Global</option></select>
+              <button type="button" id="sg-search-btn" class="primary">Global 검색</button>
+              <button type="button" id="sg-import-btn" disabled>선택 항목 Master 등록</button>
+            </div>
+            <div class="register-statusline">
+              <span class="pill">SKU 생성/치환 없음</span>
+              <span id="sg-status" style="margin-left:8px;"></span>
+            </div>
+            <div id="sg-lifecycle-choice" class="notice" style="display:none;margin-top:12px;margin-bottom:10px;">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <strong>Master 등록 위치 선택</strong>
+                <span style="color:var(--muted);font-size:12px;">선택된 Global Product를 어느 상품 흐름으로 보낼까요?</span>
+                <button type="button" id="sg-import-pre-order" class="primary" style="margin-left:auto;">PRE ORDER로 등록</button>
+                <button type="button" id="sg-import-ready-stock">READY STOCK으로 등록</button>
+                <button type="button" id="sg-import-cancel">취소</button>
+              </div>
+            </div>
+            <div id="sg-results" class="result-list" style="display:none;max-height:420px;overflow:auto;margin-top:12px;"></div>
+            <div id="sg-log" class="notice" style="display:none;margin-top:10px;"></div>
           </div>
-        </div>
-        <div id="sg-results" class="result-list" style="display:none;max-height:360px;overflow:auto;"></div>
-        <div id="sg-log" class="notice" style="display:none;margin-top:10px;"></div>
+        </section>
+
+        <section class="panel register-work-panel" data-register-workbench-panel="url" hidden>
+          <div class="register-panel-head">
+            <div>
+              <div class="register-panel-title">URL + 무게 일괄 등록</div>
+              <div class="register-panel-copy">Staronemall URL을 여러 줄로 입력하고, 기본 무게를 적용한 뒤 크롤 미리보기에서 최종 확인합니다.</div>
+            </div>
+            <span class="pill">대상: StarOneMall</span>
+          </div>
+          <div class="register-panel-body">
+            <!-- Stage 1: URL+weight bulk input -->
+            <div id="mr-stage1" class="register-stage">
+
+              <div class="register-form-row" style="margin-bottom:10px;font-size:12px;">
+                <label><input type="radio" name="mr-lifecycle" value="pre_order" checked> PRE ORDER (위치=PO)</label>
+                <label><input type="radio" name="mr-lifecycle" value="ready_stock"> READY STOCK</label>
+                <input type="text" id="mr-location" placeholder="위치 코드 (READY STOCK 시 필수, 예: B1)" style="font-size:12px;padding:5px 8px;width:240px;" disabled>
+              </div>
+
+              <div class="register-form-row" style="margin-bottom:10px;font-size:12px;">
+                <label>기본 무게(g): <input type="number" id="mr-bulk-weight" placeholder="예: 200" style="width:90px;font-size:12px;padding:4px 6px;" min="0" step="1"></label>
+                <button type="button" id="mr-apply-bulk-weight" style="font-size:12px;padding:5px 10px;">전체 적용</button>
+                <button type="button" id="mr-csv-import" style="font-size:12px;padding:5px 10px;">📁 CSV 가져오기</button>
+                <input type="file" id="mr-csv-file" accept=".csv,.txt" style="display:none;">
+                <span id="registerPanelDefaultWeight" style="color:var(--muted);font-size:11px;">CSV: 첫 컬럼=URL, 둘째 컬럼=무게(g)</span>
+              </div>
+
+              <div class="panel" style="margin-bottom:10px;padding:0;box-shadow:none;">
+                <table id="mr-input-table" style="table-layout:fixed;width:100%;margin:0;">
+                  <thead>
+                    <tr>
+                      <th style="width:46px;">#</th>
+                      <th>URL</th>
+                      <th style="width:110px;">무게 (g)</th>
+                      <th style="width:90px;">상태</th>
+                      <th style="width:46px;"></th>
+                    </tr>
+                  </thead>
+                  <tbody id="mr-input-body"></tbody>
+                </table>
+              </div>
+
+              <div class="register-form-row" style="font-size:12px;">
+                <button type="button" id="mr-add-row" style="font-size:12px;padding:5px 12px;">+ 행 추가</button>
+                <button type="button" id="mr-clear-rows" style="font-size:12px;padding:5px 12px;">행 비우기</button>
+                <span id="mr-stage1-summary" style="color:var(--muted);"></span>
+                <button type="button" id="mr-preview-btn" class="primary" style="font-size:13px;padding:6px 14px;margin-left:auto;">크롤 미리보기 →</button>
+              </div>
+
+              <div id="mr-stage1-error" class="notice" style="display:none;margin-top:10px;"></div>
+            </div>
+
+            <!-- Stage 2: crawl preview + SKU edit + final register -->
+            <div id="mr-stage2" class="register-stage" style="display:none;">
+              <div class="register-form-row" style="margin-bottom:12px;">
+                <button type="button" id="mr-back-btn" style="font-size:12px;padding:5px 12px;">← 입력으로 돌아가기</button>
+                <span style="font-size:12px;color:var(--muted);" id="mr-stage2-summary"></span>
+                <button type="button" id="mr-retry-failed-btn" style="font-size:12px;padding:5px 12px;margin-left:auto;display:none;">↻ 크롤 실패 재크롤</button>
+                <button type="button" id="mr-promote-btn" class="primary" style="font-size:13px;padding:6px 14px;">전체 등록 → 상품 목록</button>
+              </div>
+
+              <div id="mr-preview-cards" style="display:flex;flex-direction:column;gap:12px;"></div>
+
+              <div id="mr-stage2-error" class="notice" style="display:none;margin-top:10px;"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="panel register-work-panel" data-register-workbench-panel="retry" hidden>
+          <div class="register-panel-head">
+            <div>
+              <div class="register-panel-title">최근 실패 재시도</div>
+              <div class="register-panel-copy">현재 버전에서는 URL 일괄 등록의 크롤 실패 항목을 미리보기 단계에서 재시도합니다.</div>
+            </div>
+            <button type="button" data-register-workbench-target="url" onclick="sdRegisterWorkbenchActivate('url')">URL 작업 열기</button>
+          </div>
+          <div class="register-panel-body">
+            <div class="empty">재시도할 항목은 URL 일괄 등록에서 <strong>크롤 미리보기</strong>를 실행한 뒤 표시됩니다.</div>
+          </div>
+        </section>
       </div>
-
-      <!-- Stage 1: URL+weight bulk input -->
-      <div id="mr-stage1" class="register-stage">
-
-        <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;font-size:12px;flex-wrap:wrap;">
-          <label><input type="radio" name="mr-lifecycle" value="pre_order" checked> PRE ORDER (위치=PO)</label>
-          <label><input type="radio" name="mr-lifecycle" value="ready_stock"> READY STOCK</label>
-          <input type="text" id="mr-location" placeholder="위치 코드 (READY STOCK 시 필수, 예: B1)" style="font-size:12px;padding:5px 8px;width:240px;" disabled>
-          <span style="color:var(--muted);font-size:11px;margin-left:auto;">대상 사이트: StarOneMall (Yes24/Weverse 추후)</span>
-        </div>
-
-        <div style="display:flex;gap:8px;margin-bottom:8px;font-size:12px;align-items:center;flex-wrap:wrap;">
-          <label>일괄 무게(g): <input type="number" id="mr-bulk-weight" placeholder="예: 200" style="width:90px;font-size:12px;padding:4px 6px;" min="0" step="1"></label>
-          <button type="button" id="mr-apply-bulk-weight" style="font-size:12px;padding:5px 10px;">전체 행에 적용</button>
-          <button type="button" id="mr-csv-import" style="font-size:12px;padding:5px 10px;">📁 CSV 가져오기</button>
-          <input type="file" id="mr-csv-file" accept=".csv,.txt" style="display:none;">
-          <span style="color:var(--muted);font-size:11px;">CSV: 첫 컬럼=URL, 둘째 컬럼=무게(g) · 또는 텍스트 영역에 드래그 드롭</span>
-        </div>
-
-        <div class="panel" style="margin-bottom:10px;padding:0;">
-          <table id="mr-input-table" style="table-layout:fixed;width:100%;margin:0;">
-            <thead>
-              <tr>
-                <th style="width:46px;">#</th>
-                <th>URL</th>
-                <th style="width:110px;">무게 (g)</th>
-                <th style="width:90px;">상태</th>
-                <th style="width:46px;"></th>
-              </tr>
-            </thead>
-            <tbody id="mr-input-body"></tbody>
-          </table>
-        </div>
-
-        <div style="display:flex;gap:8px;align-items:center;font-size:12px;flex-wrap:wrap;">
-          <button type="button" id="mr-add-row" style="font-size:12px;padding:5px 12px;">+ 행 추가</button>
-          <button type="button" id="mr-clear-rows" style="font-size:12px;padding:5px 12px;">행 비우기</button>
-          <span id="mr-stage1-summary" style="color:var(--muted);"></span>
-          <button type="button" id="mr-preview-btn" class="primary" style="font-size:13px;padding:6px 14px;margin-left:auto;">크롤 미리보기 →</button>
-        </div>
-
-        <div id="mr-stage1-error" class="notice" style="display:none;margin-top:10px;"></div>
-      </div>
-
-      <!-- Stage 2: crawl preview + SKU edit + final register -->
-      <div id="mr-stage2" class="register-stage" style="display:none;">
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
-          <button type="button" id="mr-back-btn" style="font-size:12px;padding:5px 12px;">← 입력으로 돌아가기</button>
-          <span style="font-size:12px;color:var(--muted);" id="mr-stage2-summary"></span>
-          <button type="button" id="mr-retry-failed-btn" style="font-size:12px;padding:5px 12px;margin-left:auto;display:none;">↻ 크롤 실패 재크롤</button>
-          <button type="button" id="mr-promote-btn" class="primary" style="font-size:13px;padding:6px 14px;">전체 등록 → 상품 목록</button>
-        </div>
-
-        <div id="mr-preview-cards" style="display:flex;flex-direction:column;gap:12px;"></div>
-
-        <div id="mr-stage2-error" class="notice" style="display:none;margin-top:10px;"></div>
-      </div>
+      <script>
+        window.sdRegisterWorkbenchActivate = function(target) {
+          document.querySelectorAll('[data-register-workbench-target]').forEach(function(btn) {
+            var selectable = btn.classList.contains('register-choice');
+            var active = selectable && btn.dataset.registerWorkbenchTarget === target;
+            btn.classList.toggle('is-active', active);
+            if (selectable) btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+          });
+          document.querySelectorAll('[data-register-workbench-panel]').forEach(function(panel) {
+            panel.hidden = panel.dataset.registerWorkbenchPanel !== target;
+          });
+        };
+      </script>
     </div>
 
     <div id="view-register-legacy" class="view" style="display:none;">
@@ -16513,9 +16658,31 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
     // ── end mrPromoteEbay ──────────────────────────────────────────────────
 
+    function initRegisterWorkbench() {
+      const buttons = Array.from(document.querySelectorAll('[data-register-workbench-target]'));
+      const panels = Array.from(document.querySelectorAll('[data-register-workbench-panel]'));
+      if (!buttons.length || !panels.length) return;
+      const activate = (target) => {
+        buttons.forEach((btn) => {
+          const selectable = btn.classList.contains('register-choice');
+          const active = selectable && btn.dataset.registerWorkbenchTarget === target;
+          btn.classList.toggle('is-active', active);
+          if (selectable) btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+        });
+        panels.forEach((panel) => {
+          panel.hidden = panel.dataset.registerWorkbenchPanel !== target;
+        });
+      };
+      buttons.forEach((btn) => {
+        btn.addEventListener('click', () => activate(btn.dataset.registerWorkbenchTarget));
+      });
+      activate('global');
+    }
+
     function mrInit() {
       if (!$('view-register') || $('view-register').dataset.mrInited === '1') return;
       $('view-register').dataset.mrInited = '1';
+      initRegisterWorkbench();
 
       // start with 3 empty rows for typing
       for (let i = 0; i < 3; i++) mrAddRow();

@@ -2189,7 +2189,7 @@
           </div>
         </div>
         <button id="refresh">Refresh</button>
-        <button id="pl-sync-shopee-leds" type="button" style="font-size:12px;padding:6px 10px;" title="Shopee Global import 매핑을 다시 읽어 Shopee 신호등 상태를 갱신">🟢 Shopee 신호등 동기화</button>
+        <button id="pl-sync-platform-skus" type="button" style="font-size:12px;padding:6px 10px;" title="Shopee/Joom/Qoo10/eBay SKU 등록 여부를 다시 확인하고 플랫폼 신호등을 갱신">🔁 플랫폼 SKU 동기화</button>
         <button id="pl-select-empty-sku" type="button" style="font-size:12px;padding:6px 10px;" title="SKU가 비어있는 모든 행을 선택">∅ 빈 SKU 선택</button>
         <span style="margin-left:auto;font-size:12px;color:var(--muted);" id="pl-selected-count">선택 0건</span>
         <button id="pl-bulk-delete" type="button" style="font-size:12px;padding:6px 12px;background:#fee2e2;color:#991b1b;" disabled>🗑 선택 삭제</button>
@@ -5294,29 +5294,97 @@ LEGACY END -->
     if (n === 0) alert('빈 SKU 행이 없습니다.');
   }
 
-  async function syncShopeeTrafficLights() {
-    const btn = document.getElementById('pl-sync-shopee-leds');
+  async function refreshPlatformLedSources() {
+    const [listingsRes, rollupsRes] = await Promise.all([
+      db.from('product_shopee_listings').select('*'),
+      db.from('platform_listing_rollups').select('master_product_id, platform, listed_count, pending_count, error_count, total_count, per_shop_detail'),
+    ]);
+    if (listingsRes.error) throw listingsRes.error;
+    if (rollupsRes.error) throw rollupsRes.error;
+    state.listings = listingsRes.data || [];
+    state.rollups = rollupsRes.data || [];
+  }
+
+  function platformSkuSyncGroups() {
+    return (state.products || []).filter((p) => String(p?.sku || '').trim());
+  }
+
+  async function syncPlatformSkus() {
+    const btn = document.getElementById('pl-sync-platform-skus');
     const original = btn?.textContent || '';
-    if (btn) { btn.disabled = true; btn.textContent = '동기화 중…'; }
+    const targetPlatforms = ['joom', 'qoo10', 'ebay'];
+    const groups = platformSkuSyncGroups();
+    let found = 0;
+    let alreadyMapped = 0;
+    let missing = 0;
+    let skipped = 0;
+    let errors = 0;
+
+    if (!groups.length) {
+      setStatus('플랫폼 SKU 동기화: 확인할 SKU가 없습니다.', 'err');
+      if (typeof showToast === 'function') showToast('확인할 SKU가 없습니다.', 'err');
+      return;
+    }
+
+    if (btn) { btn.disabled = true; btn.textContent = 'SKU 확인 중…'; }
+    setStatus(`플랫폼 SKU 동기화: ${groups.length}개 SKU 확인 준비 중…`, 'ok');
     try {
-      const [listingsRes, rollupsRes] = await Promise.all([
-        db.from('product_shopee_listings').select('*'),
-        db.from('platform_listing_rollups').select('master_product_id, platform, listed_count, pending_count, error_count, total_count, per_shop_detail'),
-      ]);
-      if (listingsRes.error) throw listingsRes.error;
-      if (rollupsRes.error) throw rollupsRes.error;
-      state.listings = listingsRes.data || [];
-      state.rollups = rollupsRes.data || [];
+      await refreshPlatformLedSources();
       renderProducts();
-      const shopeeMapped = (state.rollups || []).filter((r) => r.platform === 'shopee' && rollupListedCountForLed(r, 'shopee') > 0).length;
-      setStatus(`Shopee 신호등 동기화 완료 · mapped ${shopeeMapped}건`, 'ok');
-      if (typeof showToast === 'function') showToast('Shopee 신호등 동기화 완료', 'ok');
+
+      const healthChecks = await Promise.all(targetPlatforms.map(coverageCheckPlatformHealth));
+      const available = Object.fromEntries(healthChecks.map((h) => [h.platform, h.ok]));
+      const unavailableLabels = healthChecks
+        .filter((h) => !h.ok)
+        .map((h) => `${COVERAGE_LABELS[h.platform] || h.platform}${h.error ? ' (' + h.error + ')' : ''}`);
+      if (unavailableLabels.length) {
+        setStatus(`플랫폼 SKU 동기화: ${unavailableLabels.join(', ')} 스킵 · 나머지 확인 중…`, 'err');
+      }
+
+      for (const group of groups) {
+        const sku = String(group.sku || '').trim();
+        for (const platform of targetPlatforms) {
+          const rollup = rollupFor(group.id, platform);
+          if (rollupListedCountForLed(rollup, platform) > 0) {
+            alreadyMapped += 1;
+            continue;
+          }
+          if (!available[platform]) {
+            skipped += 1;
+            continue;
+          }
+          try {
+            const hit = await coverageLookupPlatformBySku(platform, sku, group.id);
+            if (hit.found) {
+              if (platform === 'qoo10') await coverageAbsorbLookupHit(group.id, hit);
+              found += 1;
+            } else if (hit.unsupported) {
+              skipped += 1;
+            } else if (hit.notFound) {
+              missing += 1;
+            } else {
+              errors += 1;
+              console.warn('[product list platform sku sync] lookup blocked', { sku, platform, hit });
+            }
+          } catch (err) {
+            errors += 1;
+            console.warn('[product list platform sku sync] failed', { sku, platform, error: err?.message || err });
+          }
+        }
+      }
+
+      await refreshPlatformLedSources();
+      renderProducts();
+      const mappedByPlatform = ['shopee', ...targetPlatforms]
+        .map((platform) => `${COVERAGE_LABELS[platform] || platform} ${(state.rollups || []).filter((r) => r.platform === platform && rollupListedCountForLed(r, platform) > 0).length}`)
+        .join(' · ');
+      setStatus(`플랫폼 SKU 동기화 완료 · 신규/재확인 ${found}건 · 기존 ${alreadyMapped}건 · 미등록 ${missing}건 · 스킵 ${skipped}건 · 오류 ${errors}건 · ${mappedByPlatform}`, errors ? 'err' : 'ok');
+      if (typeof showToast === 'function') showToast('플랫폼 SKU 동기화 완료', errors ? 'err' : 'ok');
     } catch (e) {
-      setStatus(`Shopee 신호등 동기화 실패: ${e.message || e}`, 'err');
-      if (typeof showToast === 'function') showToast(`Shopee 신호등 동기화 실패: ${e.message || e}`, 'err');
-      else alert(`Shopee 신호등 동기화 실패: ${e.message || e}`);
+      setStatus(`플랫폼 SKU 동기화 실패: ${e.message || e}`, 'err');
+      if (typeof showToast === 'function') showToast(`플랫폼 SKU 동기화 실패: ${e.message || e}`, 'err');
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = original || '🟢 Shopee 신호등 동기화'; }
+      if (btn) { btn.disabled = false; btn.textContent = original || '🔁 플랫폼 SKU 동기화'; }
     }
   }
 
@@ -6468,7 +6536,7 @@ LEGACY END -->
   });
   document.getElementById('pl-bulk-delete')?.addEventListener('click', bulkDeleteSelectedProducts);
   document.getElementById('pl-select-empty-sku')?.addEventListener('click', selectEmptySkuRows);
-  document.getElementById('pl-sync-shopee-leds')?.addEventListener('click', syncShopeeTrafficLights);
+  document.getElementById('pl-sync-platform-skus')?.addEventListener('click', syncPlatformSkus);
   document.getElementById('pl-master-edit-close')?.addEventListener('click', closeProductMasterEditModal);
   document.getElementById('pl-master-edit-cancel')?.addEventListener('click', closeProductMasterEditModal);
   document.getElementById('pl-master-edit-save')?.addEventListener('click', saveProductMasterEditModal);

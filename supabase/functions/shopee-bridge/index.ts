@@ -3006,6 +3006,7 @@ Deno.serve(async (req) => {
       return jsonResp({ ok: !result.error, region, sent: shop_sync_list, result });
     }
     if (action === 'global_items') {
+      const merchantRegion = String(region || '').toUpperCase() === 'GLOBAL' ? 'SG' : region;
       const page_size = parseInt(url.searchParams.get('page_size') || '50');
       const offset = url.searchParams.get('offset') || '';
       const update_time_from = url.searchParams.get('update_time_from');
@@ -3024,13 +3025,14 @@ Deno.serve(async (req) => {
       if (update_time_from) query.update_time_from = update_time_from;
       if (update_time_to) query.update_time_to = update_time_to;
       else if (update_time_from) query.update_time_to = String(Math.floor(Date.now() / 1000));
-      const result = await merchantApiCall(region, '/api/v2/global_product/get_global_item_list', { query });
+      const result = await merchantApiCall(merchantRegion, '/api/v2/global_product/get_global_item_list', { query });
       return jsonResp({ ok: !result.error, region, query, keyword: keyword || null, result });
     }
     if (action === 'global_item_info') {
+      const merchantRegion = String(region || '').toUpperCase() === 'GLOBAL' ? 'SG' : region;
       const ids = url.searchParams.getAll('global_item_id').map(s => parseInt(s)).filter(n => Number.isFinite(n));
       if (ids.length === 0) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
-      const result = await merchantApiCall(region, '/api/v2/global_product/get_global_item_info', { query: { global_item_id_list: ids.join(',') } });
+      const result = await merchantApiCall(merchantRegion, '/api/v2/global_product/get_global_item_info', { query: { global_item_id_list: ids.join(',') } });
       return jsonResp({ ok: !result.error, region, global_item_id_list: ids, result });
     }
     if (action === 'global_item_dts_limit') {
@@ -3090,9 +3092,10 @@ Deno.serve(async (req) => {
       });
     }
     if (action === 'global_model_list') {
+      const merchantRegion = String(region || '').toUpperCase() === 'GLOBAL' ? 'SG' : region;
       const global_item_id = parseInt(url.searchParams.get('global_item_id') || '0');
       if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
-      const result = await merchantApiCall(region, '/api/v2/global_product/get_global_model_list', { query: { global_item_id } });
+      const result = await merchantApiCall(merchantRegion, '/api/v2/global_product/get_global_model_list', { query: { global_item_id } });
       return jsonResp({ ok: !result.error, region, global_item_id, result });
     }
     if (action === 'v2_failed_mutations') {

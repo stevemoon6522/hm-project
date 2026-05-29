@@ -1392,7 +1392,7 @@
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
           <input type="search" id="sg-keyword" placeholder="Shopee global product keyword (예: photocard)" style="min-width:280px;flex:1;max-width:520px;">
-          <select id="sg-region" style="width:90px;"><option value="SG">SG</option></select>
+          <select id="sg-region" style="width:110px;" aria-label="Global Product search scope"><option value="GLOBAL">Global</option></select>
           <button type="button" id="sg-search-btn">Global 검색</button>
           <button type="button" id="sg-mock-btn">Dry-run mock</button>
           <button type="button" id="sg-import-btn" class="primary" disabled>선택 항목 Master 등록</button>
@@ -1956,6 +1956,11 @@
     <div id="view-products" class="view">
       <div class="toolbar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <input id="search" type="search" placeholder="SKU or product name">
+        <select id="pl-lifecycle-filter" style="font-size:12px;padding:6px 10px;">
+          <option value="all">전체 상품</option>
+          <option value="pre_order">PRE ORDER</option>
+          <option value="ready_stock">READY STOCK</option>
+        </select>
         <button id="refresh">Refresh</button>
         <button id="pl-select-empty-sku" type="button" style="font-size:12px;padding:6px 10px;" title="SKU가 비어있는 모든 행을 선택">∅ 빈 SKU 선택</button>
         <span style="margin-left:auto;font-size:12px;color:var(--muted);" id="pl-selected-count">선택 0건</span>
@@ -3370,6 +3375,7 @@ LEGACY END -->
     logout: document.getElementById('logout'),
     productBody: document.getElementById('product-body'),
     search: document.getElementById('search'),
+    plLifecycleFilter: document.getElementById('pl-lifecycle-filter'),
     refresh: document.getElementById('refresh'),
     sgKeyword: document.getElementById('sg-keyword'),
     sgRegion: document.getElementById('sg-region'),
@@ -3620,6 +3626,10 @@ LEGACY END -->
     return sgFirstArray(response.global_model, response.global_model_list, response.model, response.model_list, response.models);
   }
 
+  function sgSelectedSearchRegion() {
+    return String(els.sgRegion?.value || 'GLOBAL').toUpperCase();
+  }
+
   function sgMakeMockRows() {
     const item = {
       global_item_id: 900000000001,
@@ -3710,7 +3720,7 @@ LEGACY END -->
         return;
       }
       const keyword = String(els.sgKeyword?.value || '').trim();
-      const region = String(els.sgRegion?.value || 'SG');
+      const region = sgSelectedSearchRegion();
       const params = new URLSearchParams({ region, page_size: '50' });
       if (keyword) params.set('keyword', keyword);
       const json = await fetch(`${SHOPEE_BRIDGE}/global_items?${params}`, { headers: AUTH_HEADERS }).then((r) => r.json());
@@ -3780,7 +3790,7 @@ LEGACY END -->
     }
     const listingPayload = {
       product_id: product.id,
-      region: String(els.sgRegion?.value || 'SG'),
+      region: sgSelectedSearchRegion(),
       shop_id: null,
       shop_item_id: null,
       shop_model_id: null,
@@ -4032,12 +4042,19 @@ LEGACY END -->
 
   function renderProducts() {
     const q = els.search.value.trim().toLowerCase();
-    const rows = state.products.filter((p) => !isPreOrderProduct(p)).filter((p) => {
+    const lifecycleFilter = String(els.plLifecycleFilter?.value || 'all');
+    const rows = state.products.filter((p) => {
+      const lifecycle = productLifecycleFilterKey(p);
+      return lifecycleFilter === 'all' || lifecycle === lifecycleFilter;
+    }).filter((p) => {
       if (!q) return true;
       return `${p.sku || ''} ${p.product_name || ''} ${p.option_name || ''}`.toLowerCase().includes(q);
     });
     if (!rows.length) {
-      els.productBody.innerHTML = '<tr><td colspan="11" class="empty">READY STOCK / 운영 상품이 없습니다. PRE ORDER 상품은 PRE ORDER 탭에서 확인하세요.</td></tr>';
+      const emptyLabel = lifecycleFilter === 'pre_order'
+        ? 'PRE ORDER 상품이 없습니다.'
+        : (lifecycleFilter === 'ready_stock' ? 'READY STOCK 상품이 없습니다.' : '마스터 상품이 없습니다.');
+      els.productBody.innerHTML = `<tr><td colspan="11" class="empty">${text(emptyLabel)}</td></tr>`;
       updateBulkDeleteUi();
       return;
     }
@@ -4106,6 +4123,18 @@ LEGACY END -->
 
   function plProductName(product) {
     return cleanProductName(product?.product_name, product?.sku || '');
+  }
+
+  function productLifecycleFilterKey(product) {
+    return isPreOrderProduct(product) ? 'pre_order' : 'ready_stock';
+  }
+
+  function productLifecycleBadge(product) {
+    const isPreOrder = productLifecycleFilterKey(product) === 'pre_order';
+    const label = isPreOrder ? 'PRE ORDER' : 'READY STOCK';
+    const bg = isPreOrder ? '#fef3c7' : '#dcfce7';
+    const color = isPreOrder ? '#92400e' : '#166534';
+    return `<span style="display:inline-flex;align-items:center;margin-left:6px;padding:1px 6px;border-radius:999px;background:${bg};color:${color};font-size:10px;font-weight:700;vertical-align:middle;">${label}</span>`;
   }
 
   function plProductIdsFromDataset(value) {
@@ -4255,7 +4284,7 @@ LEGACY END -->
             <button type="button" class="pl-group-toggle" data-group-toggle="1" data-group-key="${text(group.key)}" title="${collapsed ? '옵션 펼치기' : '옵션 접기'}">${collapsed ? '▸' : '▾'}</button>
             <div style="min-width:0;">
               <div class="pl-master-title-row">
-                <span class="pl-master-title">${text(productName)}</span>
+                <span class="pl-master-title">${text(productName)}</span>${productLifecycleBadge(first)}
                 <button type="button" class="pl-master-edit" data-edit-master="${text(first.product_group_id || '')}" title="마스터 상품 데이터 수정">수정</button>
               </div>
               <div class="pl-option-summary">옵션 묶음 · ${text(rows.length)}개${shownOptions ? ` · ${shownOptions}${text(more)}` : ''}</div>
@@ -4296,7 +4325,7 @@ LEGACY END -->
         <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}" data-group-key="${text(groupKey)}" ${state.productListSelectedIds?.has(String(p.id)) ? 'checked' : ''}></td>
         <td class="pl-sku-cell pl-edit" data-field="sku" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;">${text(p.sku || '')}</td>
         <td class="pl-product-cell">
-          <div class="${isVariantRow ? '' : 'pl-edit'}" data-field="product_name" data-id="${text(p.id)}" title="${isVariantRow ? '옵션 묶음 상품 - 새 등록 화면에서 편집' : '더블클릭하여 편집'}" style="cursor:${isVariantRow ? 'default' : 'text'};">${nameDisplay}</div>
+          <div class="${isVariantRow ? '' : 'pl-edit'}" data-field="product_name" data-id="${text(p.id)}" title="${isVariantRow ? '옵션 묶음 상품 - 새 등록 화면에서 편집' : '더블클릭하여 편집'}" style="cursor:${isVariantRow ? 'default' : 'text'};">${nameDisplay}${isGroupChild ? '' : productLifecycleBadge(p)}</div>
           ${isVariantRow
             ? ''
             : `<div class="muted pl-edit" data-field="option_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;font-size:11px;">${text(p.option_name || '') || '<i style="color:#cbd5e1;">(no option)</i>'}</div>`}
@@ -5884,6 +5913,7 @@ LEGACY END -->
   }
 
   els.search.addEventListener('input', renderProducts);
+  els.plLifecycleFilter?.addEventListener('change', renderProducts);
   els.refresh.addEventListener('click', async () => {
     try { await loadData(); }
     catch (e) { els.productBody.innerHTML = `<tr><td colspan="7" class="empty">${text(e.message || e)}</td></tr>`; }

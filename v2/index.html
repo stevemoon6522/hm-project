@@ -183,6 +183,7 @@
     }
     .pl-table {
       table-layout: fixed;
+      min-width: 1260px;
       white-space: normal;
     }
     .pl-table th,
@@ -205,6 +206,8 @@
       line-height: 1.35;
       padding-top: 10px;
       padding-bottom: 10px;
+      overflow-wrap: normal;
+      word-break: keep-all;
     }
     .pl-group-row td {
       background: #fff9fd;
@@ -226,6 +229,7 @@
       min-width: 0;
       display: grid;
       gap: 5px;
+      max-width: 100%;
     }
     .pl-group-toggle {
       width: 24px;
@@ -293,7 +297,7 @@
       font-weight: 700;
       min-width: 0;
       line-height: 1.28;
-      overflow-wrap: anywhere;
+      overflow-wrap: break-word;
       word-break: keep-all;
     }
     .pl-master-meta-row {
@@ -313,7 +317,7 @@
       display: block;
       font-weight: 700;
       line-height: 1.28;
-      overflow-wrap: anywhere;
+      overflow-wrap: break-word;
       word-break: keep-all;
     }
     .pl-option-title {
@@ -2190,13 +2194,13 @@
         <span style="margin-left:auto;font-size:12px;color:var(--muted);" id="pl-selected-count">선택 0건</span>
         <button id="pl-bulk-delete" type="button" style="font-size:12px;padding:6px 12px;background:#fee2e2;color:#991b1b;" disabled>🗑 선택 삭제</button>
       </div>
-      <div class="panel">
+      <div class="panel table-scroll">
         <table class="pl-table">
           <thead>
             <tr>
               <th style="width:34px;"><input type="checkbox" id="pl-check-all"></th>
               <th style="width:280px;">SKU</th>
-              <th>Product</th>
+              <th style="width:360px;">Product</th>
               <th style="width:90px;">Cost</th>
               <th style="width:60px;">Wt g</th>
               <th style="width:150px;text-align:center;" title="Shopee SG/TW/TH/MY/PH/BR">Shopee</th>

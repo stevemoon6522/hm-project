@@ -3071,16 +3071,8 @@
         <textarea id="pl-master-edit-components" rows="6" placeholder="예: CD, Photobook, Photocard..."></textarea>
       </div>
       <div class="field" style="grid-column:span 12;">
-        <label for="pl-master-edit-description">Shopee description 초안</label>
-        <textarea id="pl-master-edit-description" rows="8" placeholder="Shopee 상품 설명"></textarea>
-      </div>
-      <div class="field" style="grid-column:span 6;">
-        <label for="pl-master-edit-days">Shopee DTS JSON</label>
-        <textarea id="pl-master-edit-days" rows="5" spellcheck="false" style="font-family:var(--mono);font-size:11px;"></textarea>
-      </div>
-      <div class="field" style="grid-column:span 6;">
-        <label for="pl-master-edit-attrs">Shopee extra attributes JSON</label>
-        <textarea id="pl-master-edit-attrs" rows="5" spellcheck="false" style="font-family:var(--mono);font-size:11px;"></textarea>
+        <label for="pl-master-edit-description">Description 초안</label>
+        <textarea id="pl-master-edit-description" rows="8" placeholder="상품 설명"></textarea>
       </div>
       <div class="field" style="grid-column:span 12;">
         <label>등록/이미지 초안</label>
@@ -4938,6 +4930,23 @@ LEGACY END -->
     }
   }
 
+  function plMasterEditImageThumb(url, label) {
+    const safeUrl = text(url);
+    const safeLabel = text(label || '이미지');
+    return `
+      <a href="${safeUrl}" target="_blank" rel="noopener" title="${safeLabel}: ${safeUrl}" style="display:inline-flex;flex-direction:column;gap:4px;width:92px;color:inherit;text-decoration:none;">
+        <img src="${safeUrl}" alt="${safeLabel}" loading="lazy" referrerpolicy="no-referrer" style="width:92px;height:92px;object-fit:cover;border:1px solid var(--border);border-radius:8px;background:#f8fafc;" onerror="this.style.display='none';this.nextElementSibling.textContent='이미지 로드 실패';">
+        <span class="muted" style="font-size:10px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${safeLabel}</span>
+      </a>
+    `;
+  }
+
+  function plMasterEditRenderImagePreview(urls, emptyText = '이미지 URL 없음') {
+    const clean = Array.from(new Set((urls || []).map((url) => String(url || '').trim()).filter((url) => /^https?:\/\//i.test(url))));
+    if (!clean.length) return `<span class="muted" style="font-size:11px;">${text(emptyText)}</span>`;
+    return `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;">${clean.map((url, idx) => plMasterEditImageThumb(url, `이미지 ${idx + 1}`)).join('')}</div>`;
+  }
+
   function plMasterEditRenderImageSummary(rows) {
     const el = document.getElementById('pl-master-edit-image-summary');
     if (!el) return;
@@ -4951,7 +4960,21 @@ LEGACY END -->
       `옵션 첨부 이미지: ${optionImageCount}/${rows.length}`,
       `그룹: ${first.product_group_id || '없음'}`,
     ];
-    el.innerHTML = chips.map((chip) => `<span class="pill">${text(chip)}</span>`).join('');
+    const mainUrls = rows.map((row) => row.main_image).filter(Boolean);
+    const extraUrls = rows.flatMap((row) => Array.isArray(row.extra_images) ? row.extra_images : []).filter(Boolean);
+    el.innerHTML = `
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${chips.map((chip) => `<span class="pill">${text(chip)}</span>`).join('')}</div>
+      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;">
+        <div>
+          <div style="font-weight:700;font-size:12px;margin-bottom:6px;">대표 이미지 미리보기</div>
+          ${plMasterEditRenderImagePreview(mainUrls, '대표 이미지 URL 없음')}
+        </div>
+        <div>
+          <div style="font-weight:700;font-size:12px;margin-bottom:6px;">상세 이미지 미리보기</div>
+          ${plMasterEditRenderImagePreview(extraUrls, '상세 이미지 URL 없음')}
+        </div>
+      </div>
+    `;
   }
 
   function plMasterEditRenderOptions(rows) {
@@ -4988,9 +5011,11 @@ LEGACY END -->
                 </td>
                 <td style="padding:6px;border-bottom:1px solid var(--border);">
                   <input data-field="main_image" type="url" value="${text(row.main_image || '')}" placeholder="https://..." style="width:260px;font-size:12px;padding:4px 6px;">
+                  <div style="margin-top:6px;">${plMasterEditRenderImagePreview(row.main_image ? [row.main_image] : [], '옵션 이미지 URL 없음')}</div>
                 </td>
                 <td style="padding:6px;border-bottom:1px solid var(--border);">
                   <textarea data-field="extra_images" rows="2" placeholder="한 줄에 URL 1개" style="width:220px;font-size:11px;padding:4px 6px;">${text(extras)}</textarea>
+                  <div style="margin-top:6px;">${plMasterEditRenderImagePreview(Array.isArray(row.extra_images) ? row.extra_images : [], '추가 이미지 URL 없음')}</div>
                 </td>
               </tr>
             `;
@@ -5046,10 +5071,6 @@ LEGACY END -->
     if (componentsInput) componentsInput.value = first.components_extracted_en || '';
     const descInput = document.getElementById('pl-master-edit-description');
     if (descInput) descInput.value = first.shopee_description || '';
-    const daysInput = document.getElementById('pl-master-edit-days');
-    if (daysInput) daysInput.value = plMasterEditJsonText(first.shopee_days_to_ship, {});
-    const attrsInput = document.getElementById('pl-master-edit-attrs');
-    if (attrsInput) attrsInput.value = plMasterEditJsonText(first.shopee_extra_attributes, []);
     plMasterEditRenderImageSummary(rows);
     plMasterEditRenderOptions(rows);
     const err = document.getElementById('pl-master-edit-error');
@@ -5126,8 +5147,6 @@ LEGACY END -->
         shopee_brand_id: Number(document.getElementById('pl-master-edit-brand-id')?.value || 0) || 0,
         shopee_brand_name: stripNonMarketplaceText(document.getElementById('pl-master-edit-brand-name')?.value || '').trim() || 'No Brand',
         shopee_description: String(document.getElementById('pl-master-edit-description')?.value || '').trim() || null,
-        shopee_days_to_ship: plMasterEditReadJson('pl-master-edit-days', {}, 'Shopee DTS'),
-        shopee_extra_attributes: plMasterEditReadJson('pl-master-edit-attrs', [], 'Shopee attributes'),
         components_extracted_en: components || null,
         components_extracted_at: components ? new Date().toISOString() : null,
         components_approved: components ? 1 : 0,

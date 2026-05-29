@@ -3950,6 +3950,80 @@ LEGACY END -->
     return { json, items: sgExtractItemList(json), nextOffset: sgExtractNextOffset(json, offset, pageSize) };
   }
 
+  const SG_SEARCH_CACHE_DB = 'sd-shopee-global-search-cache-v1';
+  const SG_SEARCH_CACHE_STORE = 'searches';
+  const SG_SEARCH_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  const SG_SEARCH_CACHE_VERSION = 2;
+
+  function sgSearchCacheKey(region, keyword) {
+    return `${SG_SEARCH_CACHE_VERSION}:${String(region || 'GLOBAL').toUpperCase()}:${String(keyword || '').trim().toLowerCase()}`;
+  }
+
+  function sgOpenSearchCacheDb() {
+    if (!window.indexedDB) return Promise.resolve(null);
+    return new Promise((resolve) => {
+      const req = indexedDB.open(SG_SEARCH_CACHE_DB, 1);
+      req.onupgradeneeded = () => {
+        const dbi = req.result;
+        if (!dbi.objectStoreNames.contains(SG_SEARCH_CACHE_STORE)) dbi.createObjectStore(SG_SEARCH_CACHE_STORE, { keyPath: 'key' });
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    });
+  }
+
+  async function sgReadSearchCache(region, keyword) {
+    const key = sgSearchCacheKey(region, keyword);
+    try {
+      const dbi = await sgOpenSearchCacheDb();
+      if (dbi) {
+        const hit = await new Promise((resolve) => {
+          const tx = dbi.transaction(SG_SEARCH_CACHE_STORE, 'readonly');
+          const req = tx.objectStore(SG_SEARCH_CACHE_STORE).get(key);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        });
+        dbi.close();
+        if (hit && Date.now() - Number(hit.savedAt || 0) < SG_SEARCH_CACHE_TTL_MS && Array.isArray(hit.rows)) return hit;
+      }
+    } catch (e) { /* cache is best-effort */ }
+    try {
+      const raw = localStorage.getItem(`sd:sg-search:${key}`);
+      const hit = raw ? JSON.parse(raw) : null;
+      if (hit && Date.now() - Number(hit.savedAt || 0) < SG_SEARCH_CACHE_TTL_MS && Array.isArray(hit.rows)) return hit;
+    } catch (e) { /* ignore quota / JSON issues */ }
+    return null;
+  }
+
+  async function sgWriteSearchCache(region, keyword, payload) {
+    const entry = {
+      key: sgSearchCacheKey(region, keyword),
+      savedAt: Date.now(),
+      region,
+      keyword,
+      rows: payload.rows || [],
+      scanned: payload.scanned || 0,
+      pagesRead: payload.pagesRead || 0,
+    };
+    try {
+      const dbi = await sgOpenSearchCacheDb();
+      if (dbi) {
+        await new Promise((resolve) => {
+          const tx = dbi.transaction(SG_SEARCH_CACHE_STORE, 'readwrite');
+          tx.objectStore(SG_SEARCH_CACHE_STORE).put(entry);
+          tx.oncomplete = () => resolve(true);
+          tx.onerror = () => resolve(false);
+          tx.onabort = () => resolve(false);
+        });
+        dbi.close();
+        return;
+      }
+    } catch (e) { /* cache is best-effort */ }
+    try { localStorage.setItem(`sd:sg-search:${entry.key}`, JSON.stringify(entry)); }
+    catch (e) { /* localStorage may be too small for Global Product payloads */ }
+  }
+
   async function sgBuildRowsForItems(region, items, { includeModelsForAll = false } = {}) {
     const ids = items.map(sgItemId).filter(Boolean);
     const details = ids.length ? await sgFetchItemDetails(region, ids).catch(() => []) : [];
@@ -3965,6 +4039,19 @@ LEGACY END -->
     return rows;
   }
 
+  async function sgEnsureModelsForRows(region, rows) {
+    const pending = rows.filter((row) => sgItemId(row.item || {}) && !row.models?.length);
+    const batchSize = 5;
+    for (let i = 0; i < pending.length; i += batchSize) {
+      const batch = pending.slice(i, i + batchSize);
+      await Promise.all(batch.map(async (row) => {
+        const globalItemId = sgItemId(row.item || {});
+        row.models = await sgFetchModels(region, globalItemId).catch(() => []);
+        if (row.raw) row.raw.models = row.models;
+      }));
+    }
+  }
+
   async function searchShopeeGlobalProducts(useMock = false) {
     try {
       sgLog('');
@@ -3977,53 +4064,49 @@ LEGACY END -->
       }
       const keyword = String(els.sgKeyword?.value || '').trim();
       const region = sgSelectedSearchRegion();
+      const cached = await sgReadSearchCache(region, keyword);
+      if (cached) {
+        sgRenderResults(cached.rows || []);
+        const savedAt = cached.savedAt ? new Date(cached.savedAt).toLocaleString() : '이전 검색';
+        sgSetStatus(keyword
+          ? `캐시 ${cached.rows.length}개 즉시 로드됨 (키워드 '${keyword}', ${cached.scanned || 0}개 확인, ${savedAt})`
+          : `캐시 ${cached.rows.length}개 즉시 로드됨 (${savedAt})`);
+        return;
+      }
       const pageSize = 50;
-      const maxPages = keyword ? 8 : 1;
-      const targetRows = keyword ? 20 : 20;
       const rows = [];
+      const seenItemIds = new Set();
+      const seenOffsets = new Set(['']);
       let offset = '';
       let pagesRead = 0;
       let scanned = 0;
-      while (pagesRead < maxPages && rows.length < targetRows) {
+      while (true) {
         const page = await sgFetchGlobalItemPage(region, keyword, offset, pageSize);
         pagesRead += 1;
         scanned += page.items.length;
         if (!page.items.length) break;
         const pageRows = await sgBuildRowsForItems(region, page.items.slice(0, pageSize));
-        let matches = keyword ? pageRows.filter((row) => sgRowMatchesKeyword(row, keyword)) : pageRows;
-        // Normal Global Product list rows can be ID-only. Enrich first, filter by
-        // detail text, then fetch models only for matched candidates so a keyword
-        // search (e.g. CORTIS) does not trigger hundreds of model-list calls.
+        const matches = keyword ? pageRows.filter((row) => sgRowMatchesKeyword(row, keyword)) : pageRows;
+        await sgEnsureModelsForRows(region, matches);
         for (const row of matches) {
-          if (!row.models?.length) {
-            const globalItemId = sgItemId(row.item || {});
-            if (globalItemId) row.models = await sgFetchModels(region, globalItemId).catch(() => []);
-          }
+          const itemId = String(sgItemId(row.item || '') || `row-${pagesRead}-${rows.length}`);
+          if (seenItemIds.has(itemId)) continue;
+          seenItemIds.add(itemId);
           rows.push(row);
-          if (rows.length >= targetRows) break;
         }
-        if (keyword && !matches.length && pagesRead <= 2) {
-          const modelProbeRows = [];
-          for (const row of pageRows.slice(0, 8)) {
-            const globalItemId = sgItemId(row.item || {});
-            if (globalItemId) row.models = await sgFetchModels(region, globalItemId).catch(() => []);
-            if (sgRowMatchesKeyword(row, keyword)) modelProbeRows.push(row);
-          }
-          for (const row of modelProbeRows) {
-            rows.push(row);
-            if (rows.length >= targetRows) break;
-          }
-        }
-        if (!page.nextOffset || page.nextOffset === offset) break;
-        offset = page.nextOffset;
-        sgSetStatus(keyword ? `검색 중... ${scanned}개 확인, ${rows.length}개 매칭` : `검색 중... ${rows.length}개 로드`);
+        sgSetStatus(keyword ? `검색 중... ${scanned}개 확인, ${rows.length}개 매칭` : `검색 중... ${scanned}개 확인, ${rows.length}개 로드`);
+        const nextOffset = page.nextOffset || '';
+        if (!nextOffset || nextOffset === offset || seenOffsets.has(String(nextOffset))) break;
+        seenOffsets.add(String(nextOffset));
+        offset = nextOffset;
       }
       sgRenderResults(rows);
       sgSetStatus(keyword
-        ? `${rows.length}개 로드됨 (키워드 '${keyword}', ${scanned}개 확인)`
-        : `${rows.length}개 로드됨`);
+        ? `${rows.length}개 로드됨 (키워드 '${keyword}', 전체 ${scanned}개 확인)`
+        : `${rows.length}개 로드됨 (전체 ${scanned}개 확인)`);
+      await sgWriteSearchCache(region, keyword, { rows, scanned, pagesRead });
       if (keyword && !rows.length) {
-        sgLog(`Shopee Global Product API에 키워드 '${text(keyword)}'로 직접 조회했고, 상세 정보까지 ${scanned}개 확인했지만 매칭 결과가 없습니다.`, 'error');
+        sgLog(`Shopee Global Product API에 키워드 '${text(keyword)}'로 직접 조회했고, 상세 정보까지 전체 ${scanned}개 확인했지만 매칭 결과가 없습니다.`, 'error');
       }
     } catch (e) {
       sgSetStatus(e.message || String(e), true);

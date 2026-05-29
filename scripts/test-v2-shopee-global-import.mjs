@@ -26,6 +26,10 @@ assert(html.includes('shopee_global_raw_payload') && html.includes('shopee_globa
 assert(html.includes('product_shopee_listings') && html.includes('global_item_id') && html.includes('global_model_id'), 'V2 maps master products to Shopee listing/global IDs');
 assert(html.includes("els.sgSearchBtn?.addEventListener('click'") && html.includes("els.sgKeyword?.addEventListener('keydown'") && html.includes("els.sgImportBtn?.addEventListener('click'"), 'V2 Shopee Global event handlers are wired');
 assert(html.includes('sgMakeMockRows') && html.includes("searchShopeeGlobalProducts(true)"), 'V2 supports dry-run/mock import path');
+assert(!html.includes('const maxPages = keyword ? 8 : 1'), 'V2 Shopee Global search no longer stops after the first 400 checked products');
+assert(!html.includes('rows.length < targetRows'), 'V2 Shopee Global search no longer stops after an arbitrary result target');
+assert(html.includes('function sgSearchCacheKey') && html.includes('async function sgReadSearchCache') && html.includes('async function sgWriteSearchCache'), 'V2 caches completed Shopee Global searches for fast reload');
+assert(html.includes('seenOffsets') && html.includes('while (true)'), 'V2 Shopee Global search paginates until Shopee returns no next offset');
 
 for (const col of ['shopee_global_raw_payload', 'shopee_global_model_raw_payload', 'shopee_option_image_url', 'shopee_global_item_sku', 'shopee_global_model_sku', 'joom_category_id']) {
   assert(migration.includes(`add column if not exists ${col}`), `migration adds products.${col}`);

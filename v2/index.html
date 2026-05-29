@@ -65,6 +65,42 @@
       flex: 1;
       max-width: 420px;
     }
+    .pl-search-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex: 1;
+      min-width: 260px;
+      max-width: 420px;
+    }
+    .toolbar .pl-search-stack input { max-width: none; width: 100%; }
+    .pl-lifecycle-buttons {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #fff;
+      width: fit-content;
+    }
+    .pl-lifecycle-btn {
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      line-height: 1.2;
+      border-color: transparent;
+      background: transparent;
+      box-shadow: none;
+      color: var(--muted);
+    }
+    .pl-lifecycle-btn:hover { background: #fff3fa; }
+    .pl-lifecycle-btn.is-active {
+      background: var(--gradient-accent);
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 1px 6px rgba(255, 45, 143, .22);
+    }
     input, textarea, select {
       border: 1px solid var(--border);
       border-radius: 6px;
@@ -1955,12 +1991,15 @@
          ═══════════════════════════════════════════════ -->
     <div id="view-products" class="view">
       <div class="toolbar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-        <input id="search" type="search" placeholder="SKU or product name">
-        <select id="pl-lifecycle-filter" style="font-size:12px;padding:6px 10px;">
-          <option value="all">전체 상품</option>
-          <option value="pre_order">PRE ORDER</option>
-          <option value="ready_stock">READY STOCK</option>
-        </select>
+        <div class="pl-search-stack">
+          <input id="search" type="search" placeholder="SKU or product name">
+          <input id="pl-lifecycle-filter" type="hidden" value="all">
+          <div class="pl-lifecycle-buttons" role="group" aria-label="상품 lifecycle 필터">
+            <button type="button" class="pl-lifecycle-btn is-active" data-pl-lifecycle="all" aria-pressed="true">전체</button>
+            <button type="button" class="pl-lifecycle-btn" data-pl-lifecycle="pre_order" aria-pressed="false">PRE ORDER</button>
+            <button type="button" class="pl-lifecycle-btn" data-pl-lifecycle="ready_stock" aria-pressed="false">READY STOCK</button>
+          </div>
+        </div>
         <button id="refresh">Refresh</button>
         <button id="pl-select-empty-sku" type="button" style="font-size:12px;padding:6px 10px;" title="SKU가 비어있는 모든 행을 선택">∅ 빈 SKU 선택</button>
         <span style="margin-left:auto;font-size:12px;color:var(--muted);" id="pl-selected-count">선택 0건</span>
@@ -4043,6 +4082,7 @@ LEGACY END -->
   function renderProducts() {
     const q = els.search.value.trim().toLowerCase();
     const lifecycleFilter = String(els.plLifecycleFilter?.value || 'all');
+    syncProductLifecycleButtons(lifecycleFilter);
     const rows = state.products.filter((p) => {
       const lifecycle = productLifecycleFilterKey(p);
       return lifecycleFilter === 'all' || lifecycle === lifecycleFilter;
@@ -4135,6 +4175,14 @@ LEGACY END -->
     const bg = isPreOrder ? '#fef3c7' : '#dcfce7';
     const color = isPreOrder ? '#92400e' : '#166534';
     return `<span style="display:inline-flex;align-items:center;margin-left:6px;padding:1px 6px;border-radius:999px;background:${bg};color:${color};font-size:10px;font-weight:700;vertical-align:middle;">${label}</span>`;
+  }
+
+  function syncProductLifecycleButtons(value) {
+    document.querySelectorAll('[data-pl-lifecycle]').forEach((btn) => {
+      const active = String(btn.dataset.plLifecycle || 'all') === String(value || 'all');
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
   }
 
   function plProductIdsFromDataset(value) {
@@ -5913,7 +5961,12 @@ LEGACY END -->
   }
 
   els.search.addEventListener('input', renderProducts);
-  els.plLifecycleFilter?.addEventListener('change', renderProducts);
+  document.querySelectorAll('[data-pl-lifecycle]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (els.plLifecycleFilter) els.plLifecycleFilter.value = btn.dataset.plLifecycle || 'all';
+      renderProducts();
+    });
+  });
   els.refresh.addEventListener('click', async () => {
     try { await loadData(); }
     catch (e) { els.productBody.innerHTML = `<tr><td colspan="7" class="empty">${text(e.message || e)}</td></tr>`; }

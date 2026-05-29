@@ -166,7 +166,8 @@ async function syncListing(ctx: BridgeContext): Promise<AdapterResult> {
   if (status >= 200 && status < 300 && raw?.ok) {
     const verification = raw.verification || {};
     const offer = Array.isArray(raw.offers) ? raw.offers.find((row: any) => row?.listingId || row?.offerId) : null;
-    return { ok: true, platformItemId: s(verification.listing_id || offer?.listingId || offer?.offerId), listingStatus: mapLookupStatus(raw), rawResponse: raw };
+    const platformItemId = verification.listing_id || offer?.listingId || offer?.offerId || (verification.inventory_item_found ? sku : '');
+    return { ok: true, platformItemId: s(platformItemId), listingStatus: mapLookupStatus(raw), rawResponse: raw };
   }
   const verification = raw?.verification || {};
   const lookupMiss = status === 404 || (status >= 200 && status < 300 && raw?.ok === false && !verification.inventory_item_found && n(verification.offer_count) === 0);

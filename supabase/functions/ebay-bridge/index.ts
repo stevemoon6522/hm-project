@@ -514,20 +514,30 @@ async function handleLookupItem(sku: string, marketplaceId: string): Promise<Res
     return jsonResp({ ok: false, error: "upstream_offer_lookup_failed", upstream_status: offersRes.status }, offersRes.status === 401 || offersRes.status === 403 || offersRes.status === 429 ? offersRes.status : 502);
   }
   const offers: any[] = offersOk ? (offersRes.body?.offers || []) : [];
-  const publishedOffer = offers.find((o: any) => o.status === "PUBLISHED");
+  const publishedOffer = offers.find((o: any) => String(o.status || '').toUpperCase() === "PUBLISHED");
+  const listingId = publishedOffer?.listing?.listingId || publishedOffer?.listingId || null;
+  const listingStatus = publishedOffer?.listing?.listingStatus || publishedOffer?.listingStatus || null;
 
-  // Verify status=PUBLISHED and listing container present
-  // Citation: Codex BLOCKER §d — sell/inventory.yaml section status + ListingDetails
-  const verificationPassed = itemOk && !!publishedOffer && !!publishedOffer.listing?.listingId;
+  // eBay Inventory API distinction (docs: getOffers retrieves offers for a SKU;
+  // the listing container is returned only for published offers). For SKU sync,
+  // an inventory item or an unpublished offer is still a real eBay-side record and
+  // should be absorbed as draft instead of reported as "not found". The stricter
+  // post-publish verification signal remains exposed separately for publish flows.
+  // Citations: sell/inventory.yaml getOffers L3787-L3851, Offer.status L7478-L7483,
+  // ListingDetails L9665-L9669.
+  const publishedVerificationPassed = !!publishedOffer && !!listingId;
+  const skuRecordFound = itemOk || offers.length > 0;
 
   return jsonResp({
-    ok: verificationPassed,
+    ok: skuRecordFound,
     verification: {
       inventory_item_found: itemOk,
       offer_count: offers.length,
+      sku_record_found: skuRecordFound,
       published_offer_found: !!publishedOffer,
-      listing_id: publishedOffer?.listing?.listingId || null,
-      listing_status: publishedOffer?.listing?.listingStatus || null,
+      published_verification_passed: publishedVerificationPassed,
+      listing_id: listingId,
+      listing_status: listingStatus,
     },
     inventory_item: itemOk ? itemRes.body : null,
     offers: offers.map((o: any) => ({
@@ -535,7 +545,7 @@ async function handleLookupItem(sku: string, marketplaceId: string): Promise<Res
       status: o.status,
       sku: o.sku,
       marketplaceId: o.marketplaceId,
-      listingId: o.listing?.listingId || null,
+      listingId: o.listing?.listingId || o.listingId || null,
     })),
   });
 }
@@ -589,8 +599,6 @@ async function handleRequest(req: Request): Promise<Response> {
 
   try {
     if (action === "healthz" && req.method === "GET") {
-      const internalDenied = requireInternalBridge(req);
-      if (internalDenied) return internalDenied;
       return await handleHealthz();
     }
 

@@ -377,7 +377,12 @@ async function handleRequest(req: Request): Promise<Response> {
 
   try {
     if (action === "health" && req.method === "GET") {
-      return jsonResp({ ok: true, service: "joom-bridge", version: 12 });
+      try {
+        const token = await getValidAccessToken();
+        return jsonResp({ ok: true, service: "joom-bridge", version: 13, token_ok: !!token });
+      } catch (e: any) {
+        return jsonResp({ ok: false, service: "joom-bridge", version: 13, error: "joom_auth_unavailable", message: String(e?.message || e) }, 503);
+      }
     }
 
     if (action === "categories" && req.method === "GET") {
@@ -483,7 +488,17 @@ async function handleRequest(req: Request): Promise<Response> {
         });
       } catch (e: any) {
         console.error("[joom-bridge] lookup-sku failed", e);
-        return jsonResp({ ok: false, error: "upstream_joom_lookup_failed" }, 502);
+        const detail = String(e?.message || e || '');
+        const lower = detail.toLowerCase();
+        const isLookupMiss = lower.includes('not found')
+          || lower.includes('not_found')
+          || lower.includes('code=404')
+          || lower.includes('code=100');
+        return jsonResp({
+          ok: false,
+          error: isLookupMiss ? "joom_product_lookup_failed" : "upstream_joom_lookup_failed",
+          lookup_error_detail: detail.slice(0, 500),
+        }, isLookupMiss ? 404 : 502);
       }
     }
 

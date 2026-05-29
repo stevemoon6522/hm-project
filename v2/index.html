@@ -1434,6 +1434,15 @@
           <button type="button" id="sg-import-btn" class="primary" disabled>선택 항목 Master 등록</button>
           <span id="sg-status" style="font-size:12px;color:var(--muted);"></span>
         </div>
+        <div id="sg-lifecycle-choice" class="notice" style="display:none;margin-bottom:10px;">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <strong>Master 등록 위치 선택</strong>
+            <span style="color:var(--muted);font-size:12px;">선택된 Global Product를 어느 상품 흐름으로 보낼까요?</span>
+            <button type="button" id="sg-import-pre-order" class="primary" style="margin-left:auto;">PRE ORDER로 등록</button>
+            <button type="button" id="sg-import-ready-stock">READY STOCK으로 등록</button>
+            <button type="button" id="sg-import-cancel">취소</button>
+          </div>
+        </div>
         <div id="sg-results" class="result-list" style="display:none;max-height:360px;overflow:auto;"></div>
         <div id="sg-log" class="notice" style="display:none;margin-top:10px;"></div>
       </div>
@@ -3421,6 +3430,10 @@ LEGACY END -->
     sgSearchBtn: document.getElementById('sg-search-btn'),
     sgMockBtn: document.getElementById('sg-mock-btn'),
     sgImportBtn: document.getElementById('sg-import-btn'),
+    sgLifecycleChoice: document.getElementById('sg-lifecycle-choice'),
+    sgImportPreOrder: document.getElementById('sg-import-pre-order'),
+    sgImportReadyStock: document.getElementById('sg-import-ready-stock'),
+    sgImportCancel: document.getElementById('sg-import-cancel'),
     sgStatus: document.getElementById('sg-status'),
     sgResults: document.getElementById('sg-results'),
     sgLog: document.getElementById('sg-log'),
@@ -3523,6 +3536,7 @@ LEGACY END -->
     productListCollapsedGroups: new Set(),
     productListSelectedIds: new Set(),
     shopeeGlobalSearchResults: [],
+    shopeeGlobalPendingLifecycle: null,
   };
 
   /** Preselect state: set by openReadyStockWizard() before renderReadyStockView() runs */
@@ -3655,14 +3669,47 @@ LEGACY END -->
     if (hasNonMarketplaceText(sku)) throw new Error(`${contextLabel}: SKU는 마켓플레이스 호환 문자만 허용됩니다: ${sku}`);
   }
 
+  function sgExtractResponse(json) {
+    return json?.result?.response || json?.response || json?.result || json || {};
+  }
+
   function sgExtractItemList(json) {
-    const response = json?.result?.response || json?.response || json?.result || json || {};
+    const response = sgExtractResponse(json);
     return sgFirstArray(response.global_item_list, response.item_list, response.items, response.global_items);
   }
 
   function sgExtractModelList(json) {
-    const response = json?.result?.response || json?.response || json?.result || json || {};
+    const response = sgExtractResponse(json);
     return sgFirstArray(response.global_model, response.global_model_list, response.model, response.model_list, response.models);
+  }
+
+  function sgExtractNextOffset(json, currentOffset, pageSize) {
+    const response = sgExtractResponse(json);
+    const next = response.next_offset ?? response.next_cursor ?? response.offset;
+    if (next !== undefined && next !== null && String(next) !== '' && String(next) !== String(currentOffset)) return String(next);
+    const items = sgExtractItemList(json);
+    return items.length >= pageSize ? String(Number(currentOffset || 0) + pageSize) : '';
+  }
+
+  function sgKeywordTextForItem(item) {
+    return [
+      sgItemName(item), sgItemSku(item), sgItemId(item),
+      item?.item_name, item?.name, item?.global_item_name, item?.description,
+      sgTierNames(item).join(' '),
+    ].filter(Boolean).join(' ').toLowerCase();
+  }
+
+  function sgKeywordTextForModels(models) {
+    return sgArray(models).map((m) => [
+      sgModelSku(m), m?.global_model_id, m?.model_id, m?.model_name, m?.name,
+      sgArray(m?.tier_index).join(' '),
+    ].filter(Boolean).join(' ')).join(' ').toLowerCase();
+  }
+
+  function sgRowMatchesKeyword(row, keyword) {
+    const q = String(keyword || '').trim().toLowerCase();
+    if (!q) return true;
+    return `${sgKeywordTextForItem(row.item || {})} ${sgKeywordTextForModels(row.models || [])}`.includes(q);
   }
 
   function sgSelectedSearchRegion() {
@@ -3749,9 +3796,34 @@ LEGACY END -->
     return sgExtractModelList(json);
   }
 
+  async function sgFetchGlobalItemPage(region, keyword, offset, pageSize) {
+    const params = new URLSearchParams({ region, page_size: String(pageSize) });
+    if (offset) params.set('offset', String(offset));
+    if (keyword) params.set('keyword', keyword);
+    const json = await fetch(`${SHOPEE_BRIDGE}/global_items?${params}`, { headers: AUTH_HEADERS }).then((r) => r.json());
+    if (json?.error || json?.result?.error) throw new Error(json?.message || json?.error || json?.result?.message || json?.result?.error || 'global_items failed');
+    return { json, items: sgExtractItemList(json), nextOffset: sgExtractNextOffset(json, offset, pageSize) };
+  }
+
+  async function sgBuildRowsForItems(region, items, { includeModelsForAll = false } = {}) {
+    const ids = items.map(sgItemId).filter(Boolean);
+    const details = ids.length ? await sgFetchItemDetails(region, ids).catch(() => []) : [];
+    const byId = new Map(details.map((it) => [String(sgItemId(it)), it]));
+    const rows = [];
+    for (const item0 of items) {
+      const item = byId.get(String(sgItemId(item0))) || item0;
+      const globalItemId = sgItemId(item);
+      let models = [];
+      if (globalItemId && includeModelsForAll) models = await sgFetchModels(region, globalItemId).catch(() => []);
+      rows.push({ item, models, raw: { list_item: item0, detail_item: item, models } });
+    }
+    return rows;
+  }
+
   async function searchShopeeGlobalProducts(useMock = false) {
     try {
       sgLog('');
+      if (els.sgLifecycleChoice) els.sgLifecycleChoice.style.display = 'none';
       sgSetStatus('검색 중...');
       if (useMock) {
         sgRenderResults(sgMakeMockRows());
@@ -3760,35 +3832,61 @@ LEGACY END -->
       }
       const keyword = String(els.sgKeyword?.value || '').trim();
       const region = sgSelectedSearchRegion();
-      const params = new URLSearchParams({ region, page_size: '50' });
-      if (keyword) params.set('keyword', keyword);
-      const json = await fetch(`${SHOPEE_BRIDGE}/global_items?${params}`, { headers: AUTH_HEADERS }).then((r) => r.json());
-      if (json?.error || json?.result?.error) throw new Error(json?.message || json?.error || json?.result?.message || json?.result?.error || 'global_items failed');
-      let items = sgExtractItemList(json);
-      if (keyword) {
-        const q = keyword.toLowerCase();
-        items = items.filter((item) => `${sgItemName(item)} ${sgItemSku(item)} ${sgItemId(item)}`.toLowerCase().includes(q));
-      }
-      const ids = items.map(sgItemId).filter(Boolean).slice(0, 20);
-      const details = ids.length ? await sgFetchItemDetails(region, ids).catch(() => []) : [];
-      const byId = new Map(details.map((it) => [String(sgItemId(it)), it]));
+      const pageSize = 50;
+      const maxPages = keyword ? 8 : 1;
+      const targetRows = keyword ? 20 : 20;
       const rows = [];
-      for (const item0 of items.slice(0, 20)) {
-        const item = byId.get(String(sgItemId(item0))) || item0;
-        const globalItemId = sgItemId(item);
-        let models = [];
-        if (globalItemId) models = await sgFetchModels(region, globalItemId).catch(() => []);
-        rows.push({ item, models, raw: { list_item: item0, detail_item: item, models } });
+      let offset = '';
+      let pagesRead = 0;
+      let scanned = 0;
+      while (pagesRead < maxPages && rows.length < targetRows) {
+        const page = await sgFetchGlobalItemPage(region, keyword, offset, pageSize);
+        pagesRead += 1;
+        scanned += page.items.length;
+        if (!page.items.length) break;
+        const pageRows = await sgBuildRowsForItems(region, page.items.slice(0, pageSize));
+        let matches = keyword ? pageRows.filter((row) => sgRowMatchesKeyword(row, keyword)) : pageRows;
+        // Normal Global Product list rows can be ID-only. Enrich first, filter by
+        // detail text, then fetch models only for matched candidates so a keyword
+        // search (e.g. CORTIS) does not trigger hundreds of model-list calls.
+        for (const row of matches) {
+          if (!row.models?.length) {
+            const globalItemId = sgItemId(row.item || {});
+            if (globalItemId) row.models = await sgFetchModels(region, globalItemId).catch(() => []);
+          }
+          rows.push(row);
+          if (rows.length >= targetRows) break;
+        }
+        if (keyword && !matches.length && pagesRead <= 2) {
+          const modelProbeRows = [];
+          for (const row of pageRows.slice(0, 8)) {
+            const globalItemId = sgItemId(row.item || {});
+            if (globalItemId) row.models = await sgFetchModels(region, globalItemId).catch(() => []);
+            if (sgRowMatchesKeyword(row, keyword)) modelProbeRows.push(row);
+          }
+          for (const row of modelProbeRows) {
+            rows.push(row);
+            if (rows.length >= targetRows) break;
+          }
+        }
+        if (!page.nextOffset || page.nextOffset === offset) break;
+        offset = page.nextOffset;
+        sgSetStatus(keyword ? `검색 중... ${scanned}개 확인, ${rows.length}개 매칭` : `검색 중... ${rows.length}개 로드`);
       }
       sgRenderResults(rows);
-      sgSetStatus(`${rows.length}개 로드됨`);
+      sgSetStatus(keyword
+        ? `${rows.length}개 로드됨 (키워드 '${keyword}', ${scanned}개 확인)`
+        : `${rows.length}개 로드됨`);
+      if (keyword && !rows.length) {
+        sgLog(`Shopee Global Product API에 키워드 '${text(keyword)}'로 직접 조회했고, 상세 정보까지 ${scanned}개 확인했지만 매칭 결과가 없습니다.`, 'error');
+      }
     } catch (e) {
       sgSetStatus(e.message || String(e), true);
       sgLog(text(e.message || String(e)), 'error');
     }
   }
 
-  async function sgUpsertProduct(row, model, productGroupId) {
+  async function sgUpsertProduct(row, model, productGroupId, lifecycleState) {
     const item = row.item || {};
     const sku = canonicalShopeeSkuForImport(item, model);
     const context = `${sgItemId(item) || 'global_item'}${model ? `/${model.global_model_id || 'model'}` : ''}`;
@@ -3807,7 +3905,7 @@ LEGACY END -->
       main_image: model ? sgOptionImageUrl(item, model) : sgMainImageUrl(item),
       extra_images: sgFirstArray(item?.image?.image_url_list, item?.image_url_list).filter(Boolean),
       description: item.description || item.global_item_description || item.item_description || null,
-      lifecycle_state: 'ready_stock',
+      lifecycle_state: lifecycleState === 'pre_order' ? 'pre_order' : 'ready_stock',
       purpose: 'registration',
       shopee_global_raw_payload: item,
       shopee_global_model_raw_payload: model || null,
@@ -3844,12 +3942,35 @@ LEGACY END -->
     return product;
   }
 
-  async function importSelectedShopeeGlobalProducts() {
+  function sgSelectedRowsForImport() {
+    return Array.from(document.querySelectorAll('.sg-select:checked'))
+      .map((cb) => state.shopeeGlobalSearchResults[Number(cb.dataset.index)])
+      .filter(Boolean);
+  }
+
+  function showShopeeGlobalLifecycleChoice() {
     try {
       sgLog('');
-      const selected = Array.from(document.querySelectorAll('.sg-select:checked')).map((cb) => state.shopeeGlobalSearchResults[Number(cb.dataset.index)]).filter(Boolean);
+      const selected = sgSelectedRowsForImport();
       if (!selected.length) throw new Error('선택된 Global Product가 없습니다.');
-      sgSetStatus('Master 등록 중...');
+      state.shopeeGlobalPendingLifecycle = null;
+      if (els.sgLifecycleChoice) els.sgLifecycleChoice.style.display = 'block';
+      sgSetStatus(`${selected.length}개 선택됨 — PRE ORDER 또는 READY STOCK을 선택하세요.`);
+    } catch (e) {
+      sgSetStatus(e.message || String(e), true);
+      sgLog(text(e.message || String(e)), 'error');
+    }
+  }
+
+  async function importSelectedShopeeGlobalProducts(lifecycleState) {
+    try {
+      sgLog('');
+      const selected = sgSelectedRowsForImport();
+      if (!selected.length) throw new Error('선택된 Global Product가 없습니다.');
+      const lifecycle = lifecycleState === 'pre_order' ? 'pre_order' : 'ready_stock';
+      state.shopeeGlobalPendingLifecycle = lifecycle;
+      if (els.sgLifecycleChoice) els.sgLifecycleChoice.style.display = 'none';
+      sgSetStatus(`Master 등록 중... (${lifecycle === 'pre_order' ? 'PRE ORDER' : 'READY STOCK'})`);
       const created = [];
       const failures = [];
       for (const row of selected) {
@@ -3859,7 +3980,7 @@ LEGACY END -->
         const targets = models.length ? models : [null];
         for (const model of targets) {
           try {
-            const product = await sgUpsertProduct(row, model, groupId);
+            const product = await sgUpsertProduct(row, model, groupId, lifecycle);
             created.push(product);
           } catch (e) {
             failures.push(`${sgItemId(item) || 'item'}${model ? `/${model.global_model_id || 'model'}` : ''}: ${e.message || e}`);
@@ -3870,6 +3991,7 @@ LEGACY END -->
       sgSetStatus(`등록 완료: ${created.length}개${failures.length ? `, 실패 ${failures.length}개` : ''}`);
       sgLog([
         `<strong>등록 완료</strong>: ${created.length}개 master row`,
+        `<br>선택한 흐름: <strong>${lifecycle === 'pre_order' ? 'PRE ORDER' : 'READY STOCK'}</strong>`,
         failures.length ? `<br><strong>실패</strong><br>${failures.map(text).join('<br>')}` : '',
       ].join(''), failures.length ? 'error' : 'ok');
     } catch (e) {
@@ -5973,7 +6095,14 @@ LEGACY END -->
   });
   els.sgSearchBtn?.addEventListener('click', () => searchShopeeGlobalProducts(false));
   els.sgMockBtn?.addEventListener('click', () => searchShopeeGlobalProducts(true));
-  els.sgImportBtn?.addEventListener('click', importSelectedShopeeGlobalProducts);
+  els.sgImportBtn?.addEventListener('click', showShopeeGlobalLifecycleChoice);
+  els.sgImportPreOrder?.addEventListener('click', () => importSelectedShopeeGlobalProducts('pre_order'));
+  els.sgImportReadyStock?.addEventListener('click', () => importSelectedShopeeGlobalProducts('ready_stock'));
+  els.sgImportCancel?.addEventListener('click', () => {
+    if (els.sgLifecycleChoice) els.sgLifecycleChoice.style.display = 'none';
+    state.shopeeGlobalPendingLifecycle = null;
+    sgSetStatus('Master 등록 취소됨');
+  });
   els.sgKeyword?.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();

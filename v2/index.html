@@ -3715,6 +3715,7 @@ LEGACY END -->
     rswRunId: null,           // run_id for this transition session
     productListCollapsedGroups: new Set(),
     productListSelectedIds: new Set(),
+    priceSyncCollapsedGroups: new Set(),
     shopeeGlobalSearchResults: [],
     shopeeGlobalPendingLifecycle: null,
   };
@@ -3803,6 +3804,71 @@ LEGACY END -->
       || model?.sku
       || ''
     ).trim();
+  }
+
+  function sgNumberFromAny(value) {
+    if (value == null || value === '') return null;
+    if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+    if (typeof value === 'string') {
+      const n = Number(value.replace(/,/g, '').trim());
+      return Number.isFinite(n) ? n : null;
+    }
+    if (typeof value === 'object') {
+      for (const key of ['value', 'amount', 'price', 'original_price', 'weight']) {
+        const n = sgNumberFromAny(value[key]);
+        if (n != null) return n;
+      }
+    }
+    return null;
+  }
+
+  function sgFirstNumberFromPaths(source, paths) {
+    for (const path of paths) {
+      let cur = source;
+      let ok = true;
+      for (const part of path.split('.')) {
+        if (cur == null) { ok = false; break; }
+        cur = cur[part];
+      }
+      if (!ok) continue;
+      const n = sgNumberFromAny(cur);
+      if (n != null && n > 0) return n;
+    }
+    return null;
+  }
+
+  function sgImportedPrice(item, model) {
+    const sources = model ? [model, item] : [item];
+    const paths = [
+      'original_price', 'price', 'price_info.original_price', 'price_info.price',
+      'price_info.current_price', 'price_info.normal_price', 'global_price',
+      'global_original_price', 'model_price', 'item_price'
+    ];
+    for (const source of sources) {
+      const n = sgFirstNumberFromPaths(source || {}, paths);
+      if (n != null) return Math.round(n);
+      for (const listKey of ['price_info', 'price_info_list', 'prices']) {
+        const arr = sgArray(source?.[listKey]);
+        for (const row of arr) {
+          const m = sgFirstNumberFromPaths(row || {}, paths);
+          if (m != null) return Math.round(m);
+        }
+      }
+    }
+    return null;
+  }
+
+  function sgImportedWeightG(item, model) {
+    const sources = model ? [model, item] : [item];
+    const kgPaths = ['weight', 'package_weight', 'logistics_info.weight', 'dimension.weight'];
+    const gPaths = ['weight_g', 'package_weight_g'];
+    for (const source of sources) {
+      const grams = sgFirstNumberFromPaths(source || {}, gPaths);
+      if (grams != null) return Math.round(grams);
+      const kg = sgFirstNumberFromPaths(source || {}, kgPaths);
+      if (kg != null) return Math.round(kg > 100 ? kg : kg * 1000);
+    }
+    return null;
   }
 
   function sgImageUrlFromImageObject(image) {
@@ -4189,10 +4255,17 @@ LEGACY END -->
     assertCanonicalSku(sku, context);
     const optionNames = model ? sgVariationOptionNames(item, model) : [];
     const resolvedOptionNames = model ? (optionNames.length ? optionNames : [sgModelDisplayName(model)].filter(Boolean)) : [];
+    const importedPrice = sgImportedPrice(item, model);
+    const importedWeightG = sgImportedWeightG(item, model);
     const payload = {
       sku,
       product_name: sgItemName(item),
       option_name: model ? (resolvedOptionNames.join(' / ') || null) : null,
+      cost_krw: importedPrice || 0,
+      weight_g: importedWeightG || 0,
+      cost_updated_at: importedPrice ? new Date().toISOString() : null,
+      weight_measured_at: importedWeightG ? new Date().toISOString() : null,
+
       shopee_item_id: Number(sgItemId(item)) || null,
       global_model_id: model ? Number(model.global_model_id || model.model_id) || null : null,
       product_group_id: productGroupId || null,
@@ -4210,6 +4283,14 @@ LEGACY END -->
       shopee_global_item_sku: sgItemSku(item) || null,
       shopee_global_model_sku: model ? sgModelSku(model) : null,
     };
+    if (importedPrice == null) {
+      delete payload.cost_krw;
+      delete payload.cost_updated_at;
+    }
+    if (importedWeightG == null) {
+      delete payload.weight_g;
+      delete payload.weight_measured_at;
+    }
     const existing = await db.from('products').select('id, sku, shopee_item_id, global_model_id').eq('sku', sku).maybeSingle();
     if (existing.error) throw existing.error;
     let product;
@@ -11617,7 +11698,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let offset = 0;
     while (true) {
       const url = SUPABASE_URL + '/rest/v1/products'
-        + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,cost_updated_at,created_at,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
+        + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
         + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
       const res = await fetch(url, {
         headers: Object.assign({}, AUTH_HEADERS, {
@@ -11633,7 +11714,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           // Fallback query without cost_updated_at
           const res2 = await fetch(
             SUPABASE_URL + '/rest/v1/products'
-              + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,created_at,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
+              + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
               + '&order=lifecycle_state.asc,created_at.asc',
             {
               headers: Object.assign({}, AUTH_HEADERS, {
@@ -11911,6 +11992,133 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return max;
   }
 
+  function catNumberRange(rows, field) {
+    const values = Array.from(new Set(
+      rows.map(function(p) { return Number(p[field] || 0); }).filter(function(n) { return Number.isFinite(n) && n > 0; })
+    )).sort(function(a, b) { return a - b; });
+    if (!values.length) return '—';
+    if (values.length === 1) return values[0].toLocaleString();
+    return values[0].toLocaleString() + '-' + values[values.length - 1].toLocaleString();
+  }
+
+  function catProductIdsFromDataset(value) {
+    return String(value || '').split(',').map(function(id) { return id.trim(); }).filter(Boolean);
+  }
+
+  function catBuildProductGroups(rows) {
+    if (typeof plBuildProductGroups === 'function') return plBuildProductGroups(rows);
+    return rows.map(function(p, index) { return { key: 'single:' + p.id, isGrouped: false, rows: [p], firstIndex: index }; });
+  }
+
+  function catRegionSummaryCells(rows, listingIdx) {
+    let html = '';
+    let maxDeltaPct = 0;
+    CAT_REGIONS.forEach(function(r) {
+      const dimStyle = _catRegionVisible.has(r) ? '' : 'opacity:0.35;';
+      const currentPrices = [];
+      const newPrices = [];
+      rows.forEach(function(p) {
+        const pid = String(p.id);
+        const listing = (listingIdx.get(pid) || new Map()).get(r);
+        const currentPrice = listing && listing.last_synced_price != null ? Number(listing.last_synced_price) : null;
+        const newPrice = catComputeNewPrice(catEffectiveCost(p), r, p.weight_g);
+        if (currentPrice != null && Number.isFinite(currentPrice)) currentPrices.push(currentPrice);
+        if (newPrice != null && Number.isFinite(newPrice)) newPrices.push(newPrice);
+        if (currentPrice != null && currentPrice > 0 && newPrice != null) {
+          const pct = Math.abs((newPrice - currentPrice) / currentPrice * 100);
+          if (pct > maxDeltaPct) maxDeltaPct = pct;
+        }
+      });
+      const formatRange = function(values) {
+        if (!values.length) return '—';
+        values.sort(function(a, b) { return a - b; });
+        if (values.length === 1 || values[0] === values[values.length - 1]) return formatPriceForRegion(r, values[0]) + ' ' + CAT_CURRENCY[r];
+        return formatPriceForRegion(r, values[0]) + '-' + formatPriceForRegion(r, values[values.length - 1]) + ' ' + CAT_CURRENCY[r];
+      };
+      html += '<td data-cat-region="' + r + '" style="font-size:12px;' + dimStyle + '">'
+        + '<span class="muted">옵션 ' + currentPrices.length + '/' + rows.length + '</span><br>' + formatRange(currentPrices) + '</td>';
+      html += '<td data-cat-region-new="' + r + '" class="cat-new-price" style="font-size:12px;' + dimStyle + '">'
+        + '<span class="muted">옵션 ' + newPrices.length + '/' + rows.length + '</span><br>' + formatRange(newPrices) + '</td>';
+    });
+    return { html: html, maxDeltaPct: maxDeltaPct };
+  }
+
+  function catRenderGroupRow(group, listingIdx) {
+    const rows = group.rows;
+    const first = rows[0] || {};
+    const collapsed = state.priceSyncCollapsedGroups.has(group.key);
+    const productIds = rows.map(function(p) { return String(p.id || ''); }).filter(Boolean);
+    const options = rows.map(plOptionDisplay).filter(Boolean);
+    const shownOptions = options.slice(0, 4).map(esc).join(', ');
+    const more = options.length > 4 ? ' 외 ' + (options.length - 4) + '개' : '';
+    const regionResult = catRegionSummaryCells(rows, listingIdx);
+    const maxDelta = regionResult.maxDeltaPct;
+    const staleCount = rows.filter(catIsStale).length;
+    const checked = productIds.length && productIds.every(function(id) { return catSelectedIds.has(id); });
+    const partial = !checked && productIds.some(function(id) { return catSelectedIds.has(id); });
+    return '<tr class="pl-group-row" data-cat-group-key="' + esc(group.key) + '">'
+      + '<td><input type="checkbox" class="cat-cb cat-group-cb" data-group-key="' + esc(group.key) + '" data-product-ids="' + esc(productIds.join(',')) + '" ' + (checked ? 'checked' : '') + (partial ? ' data-partial="1"' : '') + ' title="이 묶음 옵션 전체 선택"></td>'
+      + '<td><div class="pl-group-main">'
+      + '<button type="button" class="pl-group-toggle" data-cat-group-toggle="1" data-group-key="' + esc(group.key) + '" title="' + (collapsed ? '옵션 펼치기' : '옵션 접기') + '">' + (collapsed ? '▸' : '▾') + '</button>'
+      + '<div class="pl-product-copy"><div class="pl-master-title-row"><span class="pl-master-title">' + esc(plProductName(first)) + '</span></div>'
+      + '<div class="muted" style="font-size:11px;">' + esc(plParentSku(rows)) + ' · 옵션 묶음 ' + rows.length + '개' + (shownOptions ? ' · ' + shownOptions + esc(more) : '') + '</div></div>'
+      + '</div></td>'
+      + '<td>' + catLifecycleBadge(first.lifecycle_state) + '</td>'
+      + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows, 'cost_krw') + '</td>'
+      + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows, 'weight_g') + '</td>'
+      + regionResult.html
+      + '<td data-cat-delta>' + (maxDelta > 0.5 ? '<span class="cat-price-up">' + maxDelta.toFixed(1) + '%</span>' : '<span class="cat-price-same">—</span>') + '</td>'
+      + '<td style="font-size:12px;color:var(--muted);">묶음</td>'
+      + '<td>' + (staleCount ? '<span class="cat-stale-badge">⚠ ' + staleCount + '/' + rows.length + '</span>' : '') + '</td>'
+      + '</tr>';
+  }
+
+  function catRenderProductRow(p, listingIdx, isGroupChild) {
+    const pid = String(p.id);
+    const byRegion = listingIdx.get(pid) || new Map();
+    const effectiveCost = catEffectiveCost(p);
+    const origCost = Number(p.cost_krw || 0);
+    const isLargeChange = pid in pendingCostEdits && origCost > 0
+      && Math.abs(pendingCostEdits[pid] - origCost) / origCost > 0.30;
+    const regionResult = catBuildRegionCells(byRegion, effectiveCost, p.weight_g);
+    const maxDelta = regionResult.maxDeltaPct;
+    const isStale = catIsStale(p);
+    const optionLabel = plOptionDisplay(p);
+    const rowClass = (isGroupChild ? 'pl-option-row ' : '') + (isLargeChange ? 'cat-row-warn' : '');
+    const skuCell = '<td><div style="font-size:13px;font-weight:500;">' + esc(p.sku || '—') + '</div>'
+      + (isGroupChild ? '<div class="muted" style="font-size:11px;">' + esc(optionLabel || '옵션') + '</div>' : (p.option_name ? '<div class="muted" style="font-size:11px;">' + esc(p.option_name) + '</div>' : ''))
+      + '</td>';
+    const lcCell = '<td>' + catLifecycleBadge(p.lifecycle_state) + '</td>';
+    const costVal = effectiveCost > 0 ? effectiveCost : (origCost || '');
+    const costWarn = isLargeChange ? ' cost-warn' : '';
+    const costCell = '<td>'
+      + '<input type="number" inputmode="decimal" class="cat-cost-input' + costWarn + '"'
+      + ' data-cat-cost-pid="' + esc(pid) + '"'
+      + ' value="' + Number(costVal || 0) + '"'
+      + ' min="1" max="999999999" step="1"'
+      + ' title="매입가(₩) — blur 또는 Enter로 region preview 갱신">'
+      + (isLargeChange
+        ? '<div data-cat-confirm style="font-size:10px;color:var(--yellow);">'
+          + '<input type="checkbox" class="cat-confirm-cb" title="매입가 30% 이상 변동 — 확인 체크 필요"> 확인↑30%</div>'
+        : '<div data-cat-confirm></div>')
+      + '</td>';
+    const wtCell = '<td class="mono" style="font-size:12px;">'
+      + (p.weight_g != null ? Number(p.weight_g).toLocaleString() : '—') + '</td>';
+    const deltaCell = '<td data-cat-delta>'
+      + (maxDelta > 0.5 ? '<span class="cat-price-up">' + maxDelta.toFixed(1) + '%</span>' : '<span class="cat-price-same">—</span>')
+      + '</td>';
+    const updatedAt = p.cost_updated_at || p.created_at || null;
+    const updatedCell = '<td style="font-size:12px;color:var(--muted);">' + catRelativeDate(updatedAt) + '</td>';
+    const staleCell = '<td>' + (isStale ? '<span class="cat-stale-badge">⚠ 14일+</span>' : '') + '</td>';
+    return '<tr class="' + rowClass + '" data-cat-pid="' + esc(pid) + '">'
+      + '<td><input type="checkbox" class="cat-cb cat-row-cb" data-cat-sel="' + esc(pid) + '" ' + (catSelectedIds.has(pid) ? 'checked' : '') + '></td>'
+      + skuCell + lcCell + costCell + wtCell
+      + regionResult.html
+      + deltaCell + updatedCell + staleCell
+      + '</tr>';
+  }
+
+
   // ── Main render ──────────────────────────────────────────────────
 
   /**
@@ -12019,70 +12227,38 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     if (!tbody) return;
-    tbody.innerHTML = rows.map(function(p) {
-      const pid = String(p.id);
-      const byRegion = listingIdx.get(pid) || new Map();
-      const effectiveCost = catEffectiveCost(p);
-      const origCost = Number(p.cost_krw || 0);
-      const isLargeChange = pid in pendingCostEdits && origCost > 0
-        && Math.abs(pendingCostEdits[pid] - origCost) / origCost > 0.30;
-
-      const regionResult = catBuildRegionCells(byRegion, effectiveCost, p.weight_g);
-      const maxDelta = regionResult.maxDeltaPct;
-      const isStale = catIsStale(p);
-
-      const rowClass = isLargeChange ? 'cat-row-warn' : '';
-
-      // SKU + option cell
-      const skuCell = '<td><div style="font-size:13px;font-weight:500;">' + esc(p.sku || '—') + '</div>'
-        + (p.option_name ? '<div class="muted" style="font-size:11px;">' + esc(p.option_name) + '</div>' : '')
-        + '</td>';
-
-      // Lifecycle badge cell
-      const lcCell = '<td>' + catLifecycleBadge(p.lifecycle_state) + '</td>';
-
-      // Cost inline edit cell
-      const costVal = effectiveCost > 0 ? effectiveCost : (origCost || '');
-      const costWarn = isLargeChange ? ' cost-warn' : '';
-      const costCell = '<td>'
-        + '<input type="number" inputmode="decimal" class="cat-cost-input' + costWarn + '"'
-        + ' data-cat-cost-pid="' + esc(pid) + '"'
-        + ' value="' + Number(costVal || 0) + '"'
-        + ' min="1" max="999999999" step="1"'
-        + ' title="매입가(₩) — blur 또는 Enter로 region preview 갱신">'
-        + (isLargeChange
-          ? '<div data-cat-confirm style="font-size:10px;color:var(--yellow);">'
-            + '<input type="checkbox" class="cat-confirm-cb" title="매입가 30% 이상 변동 — 확인 체크 필요"> 확인↑30%</div>'
-          : '<div data-cat-confirm></div>')
-        + '</td>';
-
-      // Weight cell
-      const wtCell = '<td class="mono" style="font-size:12px;">'
-        + (p.weight_g != null ? Number(p.weight_g).toLocaleString() : '—') + '</td>';
-
-      // Max delta cell
-      const deltaCell = '<td data-cat-delta>'
-        + (maxDelta > 0.5
-          ? '<span class="cat-price-up">' + maxDelta.toFixed(1) + '%</span>'
-          : '<span class="cat-price-same">—</span>')
-        + '</td>';
-
-      // cost_updated_at cell
-      const updatedAt = p.cost_updated_at || p.created_at || null;
-      const updatedCell = '<td style="font-size:12px;color:var(--muted);">' + catRelativeDate(updatedAt) + '</td>';
-
-      // Stale badge cell
-      const staleCell = '<td>'
-        + (isStale ? '<span class="cat-stale-badge">⚠ 14일+</span>' : '')
-        + '</td>';
-
-      return '<tr class="' + rowClass + '" data-cat-pid="' + esc(pid) + '">'
-        + '<td><input type="checkbox" class="cat-cb cat-row-cb" data-cat-sel="' + esc(pid) + '"></td>'
-        + skuCell + lcCell + costCell + wtCell
-        + regionResult.html
-        + deltaCell + updatedCell + staleCell
-        + '</tr>';
+    const groups = catBuildProductGroups(rows);
+    tbody.innerHTML = groups.map(function(group) {
+      if (!group.isGrouped) return catRenderProductRow(group.rows[0], listingIdx, false);
+      const groupHtml = catRenderGroupRow(group, listingIdx);
+      if (state.priceSyncCollapsedGroups.has(group.key)) return groupHtml;
+      return groupHtml + group.rows.map(function(row) { return catRenderProductRow(row, listingIdx, true); }).join('');
     }).join('');
+
+    tbody.querySelectorAll('.cat-group-cb[data-partial="1"]').forEach(function(cb) {
+      cb.indeterminate = true;
+    });
+
+    tbody.querySelectorAll('[data-cat-group-toggle]').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        const groupKey = btn.dataset.groupKey || '';
+        if (!groupKey) return;
+        if (state.priceSyncCollapsedGroups.has(groupKey)) state.priceSyncCollapsedGroups.delete(groupKey);
+        else state.priceSyncCollapsedGroups.add(groupKey);
+        applyAndRenderCatalog();
+      });
+    });
+
+    tbody.querySelectorAll('.cat-group-cb').forEach(function(cb) {
+      cb.addEventListener('change', function() {
+        catProductIdsFromDataset(cb.dataset.productIds).forEach(function(pid) {
+          if (cb.checked) catSelectedIds.add(pid);
+          else catSelectedIds.delete(pid);
+        });
+        applyAndRenderCatalog();
+        catSyncSelectAll();
+      });
+    });
 
     // Wire cost input events
     tbody.querySelectorAll('.cat-cost-input').forEach(function(input) {
@@ -12112,9 +12288,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (!pid) return;
         if (cb.checked) catSelectedIds.add(pid);
         else catSelectedIds.delete(pid);
+        applyAndRenderCatalog();
         catSyncSelectAll();
       });
     });
+    catSyncSelectAll();
   }
 
   // ── Select all ──────────────────────────────────────────────────
@@ -12122,10 +12300,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   function catSyncSelectAll() {
     const all = document.getElementById('cat-select-all');
     if (!all) return;
-    const cbs = Array.from(document.querySelectorAll('.cat-row-cb'));
-    const checked = cbs.filter(function(c) { return c.checked; }).length;
-    all.checked = checked > 0 && checked === cbs.length;
-    all.indeterminate = checked > 0 && checked < cbs.length;
+    const ids = new Set();
+    document.querySelectorAll('.cat-row-cb').forEach(function(cb) {
+      if (cb.dataset.catSel) ids.add(String(cb.dataset.catSel));
+    });
+    document.querySelectorAll('.cat-group-cb').forEach(function(cb) {
+      catProductIdsFromDataset(cb.dataset.productIds).forEach(function(pid) { ids.add(String(pid)); });
+    });
+    const visibleIds = Array.from(ids);
+    const checked = visibleIds.filter(function(pid) { return catSelectedIds.has(pid); }).length;
+    all.checked = checked > 0 && checked === visibleIds.length;
+    all.indeterminate = checked > 0 && checked < visibleIds.length;
   }
 
   // ── ULID generator (timestamp-based, for run_id) ────────────────
@@ -12772,14 +12957,24 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const selectAll = document.getElementById('cat-select-all');
     if (selectAll) {
       selectAll.addEventListener('change', function() {
+        const checked = selectAll.checked;
         document.querySelectorAll('.cat-row-cb').forEach(function(cb) {
-          cb.checked = selectAll.checked;
+          cb.checked = checked;
           const pid = cb.dataset.catSel;
           if (pid) {
-            if (selectAll.checked) catSelectedIds.add(pid);
+            if (checked) catSelectedIds.add(pid);
             else catSelectedIds.delete(pid);
           }
         });
+        document.querySelectorAll('.cat-group-cb').forEach(function(cb) {
+          cb.checked = checked;
+          cb.indeterminate = false;
+          catProductIdsFromDataset(cb.dataset.productIds).forEach(function(pid) {
+            if (checked) catSelectedIds.add(pid);
+            else catSelectedIds.delete(pid);
+          });
+        });
+        applyAndRenderCatalog();
       });
     }
 

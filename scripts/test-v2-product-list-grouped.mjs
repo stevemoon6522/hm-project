@@ -66,10 +66,10 @@ assert(
   'group renderer must render child option rows under the master row',
 );
 assert(
-  productList.includes('plIsGroupedVariant(product)')
-    && productList.includes('product.product_group_id')
-    && productList.includes('variation_tier_names'),
-  'group detection must rely on product_group_id plus variation metadata',
+  productList.includes('!product?.product_group_id')
+    && productList.includes('product.global_model_id')
+    && productList.includes('variation_option_names'),
+  'group detection must keep Shopee Global option rows grouped even when Shopee omits tier metadata',
 );
 assert(
   productList.includes("state.productListCollapsedGroups.has(group.key)")
@@ -93,8 +93,9 @@ assert(
   'Shopee group register button must be a neutral emoji-only button inside the Shopee platform cell',
 );
 assert(
-  productList.includes('state.products.filter((p) => !isPreOrderProduct(p)).filter((p) =>'),
-  'product list must exclude PRE ORDER products; they belong in the PRE ORDER tab',
+  productList.includes("const lifecycleFilter = String(els.plLifecycleFilter?.value || 'all')")
+    && productList.includes("return lifecycleFilter === 'all' || lifecycle === lifecycleFilter"),
+  'product list must honor the selected lifecycle filter for ALL/PRE ORDER/READY STOCK tabs',
 );
 assert(
   productList.includes('data-product-ids="${text(productIds.join(\',\'))}"')
@@ -104,8 +105,9 @@ assert(
   'collapsed group checkbox selection must select option product IDs even when child rows are not rendered',
 );
 assert(
-  productList.includes("isGroupChild\n      ? `<div style=\"font-weight:700;color:#523563;\">${text(optionDisplay || '옵션')}</div>`")
-    && productList.includes("isVariantRow\n            ? ''"),
+  productList.includes("optionDisplay || '옵션'")
+    && productList.includes("${isGroupChild ? '' : productLifecycleBadge(p)}")
+    && productList.includes("isVariantRow\r\n            ? ''"),
   'grouped child option rows must display only the option name without repeated product/group metadata',
 );
 assert(

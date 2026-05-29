@@ -3757,6 +3757,19 @@ LEGACY END -->
     return String(model?.global_model_sku || model?.model_sku || model?.seller_sku || model?.sku || '').trim();
   }
 
+  function sgModelDisplayName(model) {
+    return String(
+      model?.global_model_name
+      || model?.model_name
+      || model?.name
+      || model?.global_model_sku
+      || model?.model_sku
+      || model?.seller_sku
+      || model?.sku
+      || ''
+    ).trim();
+  }
+
   function sgImageUrlFromImageObject(image) {
     if (!image) return '';
     if (typeof image === 'string') return image;
@@ -3791,7 +3804,9 @@ LEGACY END -->
 
   function sgVariationOptionNames(item, model) {
     const label = deriveShopeeOptionLabel(item, model);
-    return label ? label.split(' / ').map((v) => v.trim()).filter(Boolean) : [];
+    if (label) return label.split(' / ').map((v) => v.trim()).filter(Boolean);
+    const fallback = sgModelDisplayName(model);
+    return fallback ? [fallback] : [];
   }
 
   function sgOptionImageUrl(item, model) {
@@ -3896,6 +3911,22 @@ LEGACY END -->
     els.sgLog.innerHTML = message || '';
   }
 
+  function sgSyncSelectAllState() {
+    const all = Array.from(document.querySelectorAll('.sg-select'));
+    const checked = all.filter((cb) => cb.checked).length;
+    const selectAll = document.querySelector('.sg-select-all');
+    if (selectAll) {
+      selectAll.checked = all.length > 0 && checked === all.length;
+      selectAll.indeterminate = checked > 0 && checked < all.length;
+    }
+    if (els.sgImportBtn) els.sgImportBtn.disabled = checked === 0;
+  }
+
+  function sgSetAllRowsSelected(checked) {
+    document.querySelectorAll('.sg-select').forEach((cb) => { cb.checked = checked; });
+    sgSyncSelectAllState();
+  }
+
   function sgRenderResults(rows) {
     state.shopeeGlobalSearchResults = rows || [];
     if (!els.sgResults) return;
@@ -3908,7 +3939,7 @@ LEGACY END -->
     els.sgResults.style.display = 'block';
     els.sgResults.innerHTML = `
       <table style="table-layout:fixed;width:100%;">
-        <thead><tr><th style="width:44px;"></th><th>Global Product</th><th style="width:140px;">Item SKU</th><th style="width:220px;">Models / SKUs</th><th style="width:130px;">Option Images</th></tr></thead>
+        <thead><tr><th style="width:44px;"><input type="checkbox" class="sg-select-all" checked title="Global Product 전체 선택/해제" aria-label="Global Product 전체 선택/해제"></th><th>Global Product</th><th style="width:140px;">Item SKU</th><th style="width:220px;">Models / SKUs</th><th style="width:130px;">Option Images</th></tr></thead>
         <tbody>${rows.map((row, idx) => {
           const item = row.item || {};
           const models = row.models || [];
@@ -3923,7 +3954,9 @@ LEGACY END -->
           </tr>`;
         }).join('')}</tbody>
       </table>`;
-    if (els.sgImportBtn) els.sgImportBtn.disabled = false;
+    els.sgResults.querySelector('.sg-select-all')?.addEventListener('change', (e) => sgSetAllRowsSelected(e.target.checked));
+    els.sgResults.querySelectorAll('.sg-select').forEach((cb) => cb.addEventListener('change', sgSyncSelectAllState));
+    sgSyncSelectAllState();
   }
 
   async function sgFetchItemDetails(region, ids) {
@@ -4120,15 +4153,16 @@ LEGACY END -->
     const context = `${sgItemId(item) || 'global_item'}${model ? `/${model.global_model_id || 'model'}` : ''}`;
     assertCanonicalSku(sku, context);
     const optionNames = model ? sgVariationOptionNames(item, model) : [];
+    const resolvedOptionNames = model ? (optionNames.length ? optionNames : [sgModelDisplayName(model)].filter(Boolean)) : [];
     const payload = {
       sku,
       product_name: sgItemName(item),
-      option_name: model ? (optionNames.join(' / ') || null) : null,
+      option_name: model ? (resolvedOptionNames.join(' / ') || null) : null,
       shopee_item_id: Number(sgItemId(item)) || null,
       global_model_id: model ? Number(model.global_model_id || model.model_id) || null : null,
       product_group_id: productGroupId || null,
-      variation_tier_names: model ? sgTierNames(item) : null,
-      variation_option_names: model ? optionNames : null,
+      variation_tier_names: model ? (sgTierNames(item).length ? sgTierNames(item) : ['Option']) : null,
+      variation_option_names: model ? resolvedOptionNames : null,
       variation_tier_index: model ? sgArray(model.tier_index).map((n) => Number(n)) : null,
       main_image: model ? sgOptionImageUrl(item, model) : sgMainImageUrl(item),
       extra_images: sgFirstArray(item?.image?.image_url_list, item?.image_url_list).filter(Boolean),
@@ -4498,9 +4532,18 @@ LEGACY END -->
   }
 
   function plIsGroupedVariant(product) {
-    return !!product?.product_group_id
-      && Array.isArray(product.variation_tier_names)
-      && product.variation_tier_names.length > 0;
+    if (!product?.product_group_id) return false;
+    const optionNames = Array.isArray(product.variation_option_names)
+      ? product.variation_option_names.map((v) => String(v || '').trim()).filter(Boolean)
+      : [];
+    const tierNames = Array.isArray(product.variation_tier_names)
+      ? product.variation_tier_names.map((v) => String(v || '').trim()).filter(Boolean)
+      : [];
+    return tierNames.length > 0
+      || optionNames.length > 0
+      || !!product.global_model_id
+      || !!String(product.option_name || '').trim()
+      || !!String(product.shopee_global_model_sku || '').trim();
   }
 
   function plOptionDisplay(product) {

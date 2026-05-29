@@ -22,6 +22,8 @@ assert(html.includes('id="sg-keyword"') && html.includes('id="sg-search-btn"') &
 assert(html.includes('function sgOptionImageUrl') && html.includes('tier_index') && html.includes('option_list'), 'V2 derives option images from Shopee tier/model data');
 assert(html.includes("models.map((m) => text(sgModelSku(m) || '<empty>'))"), 'V2 escapes Shopee model SKUs before rendering search results');
 assert(html.includes('function canonicalShopeeSkuForImport') && html.includes('global_model_sku') && html.includes('model_sku'), 'V2 preserves Global/model SKU as canonical SKU');
+assert(html.includes('class="sg-select-all"') && html.includes('sgSyncSelectAllState') && html.includes("document.querySelectorAll('.sg-select')"), 'V2 search results have a header select-all checkbox for Global Products');
+assert(html.includes('function sgModelDisplayName') && html.includes("optionNames.length ? optionNames : [sgModelDisplayName(model)]"), 'V2 falls back to model names so option imports render as grouped master rows');
 assert(html.includes('shopee_global_raw_payload') && html.includes('shopee_global_model_raw_payload') && html.includes('raw_payload'), 'V2 writes raw item/model/listing payloads');
 assert(html.includes('product_shopee_listings') && html.includes('global_item_id') && html.includes('global_model_id'), 'V2 maps master products to Shopee listing/global IDs');
 assert(html.includes("els.sgSearchBtn?.addEventListener('click'") && html.includes("els.sgKeyword?.addEventListener('keydown'") && html.includes("els.sgImportBtn?.addEventListener('click'"), 'V2 Shopee Global event handlers are wired');

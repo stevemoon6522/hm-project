@@ -8,17 +8,6 @@
 //   - Fix: include product SKU and categoryId in /products/create payload
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
-import { requireAuthenticatedUser } from "../_shared/auth.ts";
-import { uploadTileToCloudinary } from "../_shared/cloudinary.ts";
-
-// Read-only routes that genuinely do not need a signed-in user. Everything
-// else is treated as a Joom write (publish, price update, delete, etc.) and
-// must pass requireAuthenticatedUser before any side effect.
-const PUBLIC_JOOM_ACTIONS: ReadonlySet<string> = new Set([
-  "health",
-  "categories",
-  "lookup-sku",
-]);
 
 const JOOM_V2 = "https://api-merchant.joom.com/api/v2";
 const JOOM_V3 = "https://api-merchant.joom.com/api/v3";
@@ -46,7 +35,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info, x-platform-bridge-token",
   "Access-Control-Max-Age": "3600",
 };
 
@@ -184,113 +173,64 @@ function buildDescription(opts: { artist?: string; album?: string; contents?: st
 }
 
 // ---------------------------------------------------------------------------
+// Cloudinary upload helper (for split image tiles)
+// ---------------------------------------------------------------------------
+
+async function sha1Hex(message: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(message);
+  // @ts-ignore
+  const hashBuffer = await crypto.subtle.digest("SHA-1", data);
+  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function uploadTileToCloudinary(imageData: Uint8Array): Promise<string | null> {
+  // @ts-ignore
+  const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
+  // @ts-ignore
+  const apiKey = Deno.env.get("CLOUDINARY_API_KEY") || "";
+  // @ts-ignore
+  const apiSecret = Deno.env.get("CLOUDINARY_API_SECRET") || "";
+  if (!cloudName || !apiKey || !apiSecret) return null;
+
+  const folder = "joom-tiles";
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const uniqueId = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const publicId = `${folder}/${uniqueId}`;
+  const paramsToSign = `folder=${folder}&public_id=${publicId}&timestamp=${timestamp}${apiSecret}`;
+  const signature = await sha1Hex(paramsToSign);
+
+  const formData = new FormData();
+  formData.append("file", new Blob([imageData], { type: "image/jpeg" }), "tile.jpg");
+  formData.append("api_key", apiKey);
+  formData.append("timestamp", timestamp);
+  formData.append("signature", signature);
+  formData.append("public_id", publicId);
+  formData.append("folder", folder);
+
+  try {
+    const r = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/image/upload`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!r.ok) return null;
+    const j = await r.json();
+    return (j.secure_url as string) || null;
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Portrait image splitting
 // Tall images (height > width * 1.5) are split into square tiles.
 // Requires CLOUDINARY_* env vars to host the split tiles.
 // ---------------------------------------------------------------------------
 
-function readImageDimensions(buf: Uint8Array): { width: number; height: number } | null {
-  if (buf.length >= 24 &&
-      buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) {
-    const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-    return { width: view.getUint32(16), height: view.getUint32(20) };
-  }
-
-  if (buf.length < 4 || buf[0] !== 0xFF || buf[1] !== 0xD8) return null;
-  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
-  let offset = 2;
-  while (offset + 9 < buf.length) {
-    if (buf[offset] !== 0xFF) { offset++; continue; }
-    const marker = buf[offset + 1];
-    offset += 2;
-    if (marker === 0xD8 || marker === 0xD9) continue;
-    if (offset + 2 > buf.length) return null;
-    const length = view.getUint16(offset);
-    if (length < 2 || offset + length > buf.length) return null;
-    const isSof =
-      (marker >= 0xC0 && marker <= 0xC3) ||
-      (marker >= 0xC5 && marker <= 0xC7) ||
-      (marker >= 0xC9 && marker <= 0xCB) ||
-      (marker >= 0xCD && marker <= 0xCF);
-    if (isSof && length >= 7) {
-      return {
-        height: view.getUint16(offset + 3),
-        width: view.getUint16(offset + 5),
-      };
-    }
-    offset += length;
-  }
-  return null;
-}
-
-async function buildCloudinaryFetchTiles(
-  imageUrl: string,
-  width: number,
-  height: number,
-  cloudName: string,
-): Promise<string[] | null> {
-  if (!cloudName || !width || !height || height <= width * 1.5) return null;
-
-  const tileSize = width;
-  const numTiles = Math.min(Math.ceil(height / tileSize), 9);
-  const encodedSource = encodeURIComponent(imageUrl);
-  const tiles: string[] = [];
-
-  for (let i = 0; i < numTiles; i++) {
-    const y = i * tileSize;
-    const h = Math.min(tileSize, height - y);
-    const transform = [
-      `c_crop,w_${width},h_${h},x_0,y_${y}`,
-      `b_white,c_pad,w_${width},h_${width}`,
-      "c_scale,w_1800",
-      "f_jpg,q_auto",
-    ].join("/");
-    tiles.push(`https://res.cloudinary.com/${cloudName}/image/fetch/${transform}/${encodedSource}`);
-  }
-
-  try {
-    const probe = await fetch(tiles[0], { method: "GET", signal: AbortSignal.timeout(15000) });
-    await probe.body?.cancel();
-    if (!probe.ok) {
-      console.warn("[joom-bridge] cloudinary fetch probe failed:", probe.status);
-      return null;
-    }
-    return tiles;
-  } catch (e) {
-    console.warn("[joom-bridge] cloudinary fetch probe threw:", e);
-    return null;
-  }
-}
-
-async function uploadTileToProductStorage(imageData: Uint8Array): Promise<string | null> {
-  try {
-    const path = [
-      "joom-tiles",
-      new Date().toISOString().slice(0, 10),
-      `${crypto.randomUUID()}.jpg`,
-    ].join("/");
-    const { error } = await supabase.storage
-      .from("product-images")
-      .upload(path, new Blob([imageData], { type: "image/jpeg" }), {
-        cacheControl: "31536000",
-        contentType: "image/jpeg",
-        upsert: false,
-      });
-    if (error) {
-      console.warn("[joom-bridge] storage tile upload failed:", error.message || error);
-      return null;
-    }
-    const { data } = supabase.storage.from("product-images").getPublicUrl(path);
-    return data?.publicUrl || null;
-  } catch (e) {
-    console.warn("[joom-bridge] storage tile upload threw:", e);
-    return null;
-  }
-}
-
 async function processDetailImage(imageUrl: string): Promise<string[]> {
   // @ts-ignore
   const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
+  if (!cloudName) return [imageUrl]; // skip if Cloudinary not configured
 
   try {
     const resp = await fetch(imageUrl, {
@@ -299,11 +239,6 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
     });
     if (!resp.ok) return [imageUrl];
     const buf = new Uint8Array(await resp.arrayBuffer());
-    const dims = readImageDimensions(buf);
-    if (dims && dims.height > dims.width * 1.5) {
-      const fetchTiles = await buildCloudinaryFetchTiles(imageUrl, dims.width, dims.height, cloudName);
-      if (fetchTiles?.length) return fetchTiles;
-    }
 
     // @ts-ignore
     const { Image } = await import("https://deno.land/x/imagescript@1.3.0/mod.ts");
@@ -313,14 +248,13 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
     if (img.height <= img.width * 1.5) return [imageUrl];
 
     const tileSize = img.width;
-    const numTiles = Math.min(Math.ceil(img.height / tileSize), 9); // Joom allows up to 9 extra images
+    const numTiles = Math.min(Math.ceil(img.height / tileSize), 4); // cap at 4 tiles
     const tiles: string[] = [];
 
     for (let i = 0; i < numTiles; i++) {
       const y = i * tileSize;
       const h = Math.min(tileSize, img.height - y);
-      const tile = img.clone();
-      tile.crop(0, y, img.width, h);
+      const tile = img.clone().crop(0, y, img.width, h);
 
       // Pad shorter last tile to square with white background
       let square;
@@ -332,8 +266,8 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
         square = tile;
       }
 
-      const encoded: Uint8Array = await square.encodeJPEG(90);
-      const url = await uploadTileToProductStorage(encoded) || await uploadTileToCloudinary(encoded);
+      const encoded: Uint8Array = await square.encode(2); // JPEG
+      const url = await uploadTileToCloudinary(encoded);
       if (url) tiles.push(url);
     }
 
@@ -356,20 +290,13 @@ async function buildPayload(opts: any): Promise<any> {
   if (!productSku) throw new Error("row.sku required");
 
   const listing = calcListingUSD(row.cost);
-  const hasExplicitVariants = Array.isArray(variantsConfig) && variantsConfig.length > 0;
-  const configs = hasExplicitVariants ? variantsConfig : [{ name: "DEFAULT", sku: productSku, inventory: 0 }];
-  if (hasExplicitVariants && configs.length === 1) {
-    const onlySku = String(configs[0]?.sku || "").trim();
-    if (onlySku && onlySku !== productSku) {
-      throw new Error("single variant product sku must equal option sku");
-    }
-  }
+  const configs = (variantsConfig && variantsConfig.length) ? variantsConfig : [{ name: "DEFAULT", sku: productSku, inventory: 0 }];
   const defaultWeightKg = gramsToKg(row.weight || 0);
   const seenSkus = new Set<string>();
 
   const variants = configs.map((cfg: any, idx: number) => {
     const vName = (cfg.name || "DEFAULT").trim();
-    const vSku = String(cfg.sku || (!hasExplicitVariants && vName.toUpperCase() === "DEFAULT" ? productSku : "")).trim();
+    const vSku = String(cfg.sku || (vName.toUpperCase() === "DEFAULT" ? productSku : "")).trim();
     if (!vSku) throw new Error(`variant SKU required: ${vName || idx + 1}`);
     if (seenSkus.has(vSku)) throw new Error(`duplicate variant SKU: ${vSku}`);
     seenSkus.add(vSku);
@@ -396,8 +323,8 @@ async function buildPayload(opts: any): Promise<any> {
 
   // Process detail images: split tall portraits into square tiles
   const rawExtras: string[] = [
-    ...(scrapedAssets.detailImages || []),
     ...(scrapedAssets.extraImages || []),
+    ...(scrapedAssets.detailImages || []),
   ].slice(0, 9);
 
   const processedExtras: string[] = [];
@@ -430,6 +357,15 @@ function jsonResp(body: any, status = 200): Response {
   });
 }
 
+function requireInternalBridge(req: Request): Response | null {
+  const expected = (Deno as any)["env"]["get"]("PLATFORM_BRIDGE_INTERNAL_TOKEN") || "";
+  const actual = req.headers.get("x-platform-bridge-token") || "";
+  if (!expected || actual !== expected) {
+    return jsonResp({ ok: false, error: "internal_bridge_required" }, 403);
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -438,17 +374,6 @@ async function handleRequest(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS });
   const url = new URL(req.url);
   const action = url.pathname.split("/").filter(Boolean).pop() || "";
-
-  // Step 0 auth gate (plan v2.2): mutating Joom routes require a real signed-in
-  // Supabase user. Public read-only routes (health/categories/lookup-sku) skip.
-  if (!PUBLIC_JOOM_ACTIONS.has(action)) {
-    const authResult = await requireAuthenticatedUser(req);
-    if (authResult.response) {
-      console.log(JSON.stringify({ service: "joom-bridge", event: "auth_rejected", action, ts: new Date().toISOString() }));
-      return authResult.response;
-    }
-    console.log(JSON.stringify({ service: "joom-bridge", event: "auth_ok", action, user_id: authResult.user.id, ts: new Date().toISOString() }));
-  }
 
   try {
     if (action === "health" && req.method === "GET") {
@@ -461,6 +386,8 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if ((action === "publish" || action === "dryrun") && req.method === "POST") {
+      const internalDenied = requireInternalBridge(req);
+      if (internalDenied) return internalDenied;
       const body = await req.json();
       const row = body.row || {};
       const scraped = body.scrapedAssets || {};
@@ -515,57 +442,54 @@ async function handleRequest(req: Request): Promise<Response> {
           enabled: v.enabled, size: v.size, shippingWeight: v.shippingWeight,
         })),
         infractions: ((data.review || {}).infractions || []).map((i: any) => ({
-          code: i.code,
-          kind: i.kind,
-          note: i.note,
-          regions: i.regions,
-          description: i.description,
-          where: i.where,
-          brand_id: i.brandId,
-          variant_sku: i.variantSku,
-          is_permanent: i.isPermanent === true,
+          code: i.code, kind: i.kind, note: i.note, regions: i.regions,
         })),
         computed_listing_usd,
       });
     }
 
     if (action === "lookup-sku" && req.method === "GET") {
+      const internalDenied = requireInternalBridge(req);
+      if (internalDenied) return internalDenied;
       // GET /lookup-sku?sku=ABC → resolve Joom productId + variantId + currency + current price
-      // for the variant whose sku matches. Also accepts ?id=<hex24> to lookup by Joom productId.
-      // Returns product.state + variant.review when found so callers can poll moderation status.
-      const sku = (url.searchParams.get("sku") || "").trim();
-      const id = (url.searchParams.get("id") || "").trim();
-      if (!sku && !id) return jsonResp({ ok: false, error: "sku or id query param required" }, 400);
-      const isHexId = id && /^[a-f0-9]{24}$/.test(id);
-      const qparam = isHexId ? `id=${encodeURIComponent(id)}` : `sku=${encodeURIComponent(sku)}`;
+      // for the variant whose sku matches. Used by shopee-dashboard manual Joom sync button
+      // to populate products.joom_product_id, joom_variant_id, joom_currency.
+      const sku = url.searchParams.get("sku") || "";
+      if (!sku.trim()) return jsonResp({ ok: false, error: "sku query param required" }, 400);
       try {
-        const product = await joomFetch(`/products?${qparam}`);
+        // /products?sku=... returns the product whose merchant SKU is the parent's sku.
+        // Joom permits a parent product to share its SKU with one of its variants, so we
+        // search variants[] for an exact match too.
+        const product = await joomFetch(`/products?sku=${encodeURIComponent(sku.trim())}`);
         const variants: any[] = product?.variants || [];
-        // If lookup is by id, return product+variants overview (no specific variant match needed).
-        // If lookup is by sku, find matching variant; if no exact match still return product info
-        // so callers can detect parent-vs-variant SKU confusion (was 404, now 200 with matched=null).
-        const matched = sku ? variants.find((v: any) => String(v?.sku || "") === sku) : null;
+        const matched = variants.find((v: any) => String(v?.sku || "") === sku.trim());
+        if (!matched) {
+          return jsonResp({
+            ok: false,
+            error: "variant_sku_not_found",
+            joom_product_id: product?.id || null,
+            variant_count: variants.length,
+            variant_skus_sample: variants.slice(0, 5).map((v: any) => v?.sku || null),
+          }, 404);
+        }
         return jsonResp({
-          ok: !sku || !!matched,
+          ok: true,
           joom_product_id: String(product?.id || ""),
-          joom_product_state: product?.state || null,
+          joom_variant_id: String(matched.id || ""),
+          joom_currency: String(matched.currency || ""),
+          joom_price: matched.price != null ? String(matched.price) : null,
+          joom_enabled: !!matched.enabled,
           product_name: product?.name || "",
-          main_image_state: product?.mainImage?.imageState || null,
-          review: product?.review || null,
-          variant_count: variants.length,
-          variant_skus: variants.map((v: any) => v?.sku || null),
-          joom_variant_id: matched ? String(matched.id || "") : null,
-          joom_currency: matched ? String(matched.currency || "") : null,
-          joom_price: matched && matched.price != null ? String(matched.price) : null,
-          joom_enabled: matched ? !!matched.enabled : null,
-          error: sku && !matched ? "variant_sku_not_found" : undefined,
-        }, sku && !matched ? 404 : 200);
+        });
       } catch (e: any) {
-        return jsonResp({ ok: false, error: "joom_product_not_found", detail: String(e?.message || e) }, 404);
+        console.error("[joom-bridge] lookup-sku failed", e);
+        return jsonResp({ ok: false, error: "upstream_joom_lookup_failed" }, 502);
       }
     }
 
     if (action === "update-price" && req.method === "POST") {
+      const internalDenied = requireInternalBridge(req);
+      if (internalDenied) return internalDenied;
       const body = await req.json();
       const { productId, sku, price } = body;
       if (!productId || !price || price <= 0) return jsonResp({ ok: false, error: "productId, price 필요" }, 400);
@@ -598,6 +522,8 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if (action === "delete" && req.method === "POST") {
+      const internalDenied = requireInternalBridge(req);
+      if (internalDenied) return internalDenied;
       const body = await req.json();
       const productId = body.productId;
       if (!productId) return jsonResp({ ok: false, error: "productId 필요" }, 400);
@@ -614,7 +540,7 @@ async function handleRequest(req: Request): Promise<Response> {
     return jsonResp({ ok: false, error: `unknown action: ${action} (${req.method})` }, 404);
   } catch (e: any) {
     console.error("[joom-bridge] error", e);
-    return jsonResp({ ok: false, error: String(e?.message || e), stack: e?.stack }, 500);
+    return jsonResp({ ok: false, error: "joom_bridge_failed" }, 500);
   }
 }
 

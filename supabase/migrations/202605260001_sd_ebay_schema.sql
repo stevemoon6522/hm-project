@@ -68,6 +68,8 @@ alter table public.products
 -- ---------------------------------------------------------------------------
 insert into public.country_settings (
   country_code,
+  name,
+  currency,
   exchange_rate,   -- KRW → USD: 1380
   sales_fee,       -- eBay final value fee 13% (general categories)
   pg_fee,          -- Managed Payments: 2.7%
@@ -82,6 +84,8 @@ insert into public.country_settings (
 )
 values (
   'EX',
+  'eBay US',
+  'USD',
   1380,
   13,
   2.7,

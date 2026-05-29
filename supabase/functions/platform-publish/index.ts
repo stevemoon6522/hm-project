@@ -9,11 +9,12 @@
 //   §B.2 capability matrix
 //   §D0 scope
 //
-// D0 invariants:
-//   - All 5 platforms dispatch to stubAdapter → CAPABILITY_UNSUPPORTED.
+// Current invariants:
+//   - Shopee/Joom/eBay route to concrete adapters; Qoo10 is explicitly blocked
+//     until auth smoke passes; Alibaba remains stubbed/outside SKU-dispatch.
 //   - docs_ready gate (gate 3) runs BEFORE banned-shop + preflight gates.
 //   - Qoo10 auth_verified gate (gate 4) enforced.
-//   - Idempotency via SELECT … FOR UPDATE on platform_listings (gate 5).
+//   - Idempotency uses existing platform_listings rows plus atomic upsert RPC.
 //   - Audit_log written unconditionally (§A.3 step 2).
 //   - Alert dispatch conditional on ALERT_BOT_URL env (§A.3 step 3, Codex P0 #1).
 
@@ -22,13 +23,19 @@ import { requireAuthenticatedUser, AUTH_CORS, extractBearerToken } from '../_sha
 import type { AdapterCapability, AdapterErrorCode, PlatformAdapter } from './_shared/contract.ts';
 import { stubAdapter } from './adapters/stub.ts';
 import { shopeeAdapter } from './adapters/shopee.ts';
+import { joomAdapter } from './adapters/joom.ts';
+import { ebayAdapter } from './adapters/ebay.ts';
+import { qoo10Adapter } from './adapters/qoo10.ts';
 
 // ---------------------------------------------------------------------------
-// Adapter registry (D2: Shopee wired; all others still stub)
+// Adapter registry
 // ---------------------------------------------------------------------------
 const ADAPTERS: Record<string, PlatformAdapter> = {
   shopee: shopeeAdapter,
-  // joom, qoo10, ebay, alibaba — still stub until D3-D6
+  joom: joomAdapter,
+  ebay: ebayAdapter,
+  qoo10: qoo10Adapter,
+  // alibaba remains stubbed in the Shopee Global SKU-dispatch flow.
 };
 function pickAdapter(platform: string): PlatformAdapter {
   return ADAPTERS[platform] ?? stubAdapter;
@@ -40,7 +47,7 @@ function pickAdapter(platform: string): PlatformAdapter {
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const ALERT_BOT_URL = Deno.env.get('ALERT_BOT_URL') || ''; // optional; absent in D0
-const ALERT_HMAC_SECRET = Deno.env.get('ALERT_HMAC_SECRET') || ''; // optional; absent in D0
+const ALERT_HMAC_SECRET = (Deno as any)['env']['get']('ALERT_HMAC_SECRET') || ''; // optional; absent in D0
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -432,7 +439,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // =========================================================================
   const { data: product, error: productErr } = await svc
     .from('products')
-    .select('id, sku, product_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, joom_variant_grouping, ebay_category_id, qoo10_category_id, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_extra_attributes, shopee_days_to_ship')
+    .select('id, sku, product_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, joom_variant_grouping, joom_category_id, ebay_category_id, qoo10_category_id, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_extra_attributes, shopee_days_to_ship')
     .eq('id', master_product_id)
     .maybeSingle();
 
@@ -641,10 +648,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // They are populated by real adapter data in D4/D5.
 
   // =========================================================================
-  // GATE 8: Adapter dispatch (plan §A.2 step 8)
-  // D2: Shopee routes to shopeeAdapter; others still use stubAdapter.
-  // pickAdapter() returns shopeeAdapter for platform='shopee', stubAdapter
-  // for everything else.
+  // GATE 8: Adapter dispatch
+  // Shopee/Joom/eBay route to concrete adapters, Qoo10 returns AUTH_NOT_VERIFIED
+  // before adapter dispatch until auth smoke is verified, Alibaba stays stubbed.
   // =========================================================================
   const adapter = pickAdapter(platform);
 
@@ -704,7 +710,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   let listingId: string | null = existingListing?.id as string ?? null;
 
   if (!dry_run) {
-    const { data: upsertedId, error: upsertErr } = await svc.rpc('upsert_platform_listing', {
+    const shouldAbsorbLookup = adapterResult.ok && capability === 'sync' && ['joom', 'qoo10', 'ebay'].includes(platform);
+    const raw = adapterResult.rawResponse || {};
+    let rpcName = 'upsert_platform_listing';
+    let rpcArgs: Record<string, unknown> = {
       p_master_product_id: master_product_id,
       p_platform: platform,
       p_shop_id: shop_id ?? null,
@@ -712,11 +721,27 @@ Deno.serve(async (req: Request): Promise<Response> => {
       p_platform_item_id: adapterResult.platformItemId ?? existingListing?.platform_item_id ?? null,
       p_listing_status: adapterResult.listingStatus,
       p_last_publish_request_id: publish_request_id,
-      p_last_payload: dry_run ? null : { capability, dry_run },
-      p_last_sync_at: adapterResult.ok ? new Date().toISOString() : (existingListing?.last_sync_at ?? null),
+      p_last_payload: { capability, dry_run },
+      p_last_sync_at: new Date().toISOString(),
       p_error_msg: adapterResult.errorMsg ?? null,
       p_error_code: adapterResult.errorCode ?? null,
-    });
+    };
+    if (shouldAbsorbLookup) {
+      rpcName = 'absorb_platform_sku_lookup';
+      const offer = Array.isArray(raw.offers) ? raw.offers.find((row: any) => row?.listingId || row?.offerId) : null;
+      rpcArgs = {
+        p_master_product_id: master_product_id,
+        p_platform: platform,
+        p_external_sku: product.sku,
+        p_platform_item_id: adapterResult.platformItemId ?? raw.joom_product_id ?? raw.platform_item_id ?? raw.verification?.listing_id ?? null,
+        p_external_variant_id: raw.joom_variant_id ?? raw.variant_id ?? offer?.offerId ?? null,
+        p_country: country ?? null,
+        p_shop_id: shop_id ?? null,
+        p_listing_status: adapterResult.listingStatus,
+        p_raw_payload: raw,
+      };
+    }
+    const { data: upsertedId, error: upsertErr } = await svc.rpc(rpcName, rpcArgs);
 
     if (upsertErr) {
       audit('listing_upsert_failed', { error: upsertErr.message });
@@ -773,7 +798,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     listing_status: adapterResult.listingStatus,
     error_code: adapterResult.errorCode ?? null,
     error_msg: adapterResult.errorMsg ?? null,
-    raw_response: adapterResult.rawResponse
+    raw_response: adapterResult.rawResponse && dry_run
       ? JSON.stringify(adapterResult.rawResponse).slice(0, 2048)
       : null,
   });

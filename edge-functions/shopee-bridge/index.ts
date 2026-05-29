@@ -2368,12 +2368,18 @@ Deno.serve(async (req) => {
       const offset = url.searchParams.get('offset') || '';
       const update_time_from = url.searchParams.get('update_time_from');
       const update_time_to = url.searchParams.get('update_time_to');
+      const keyword = String(url.searchParams.get('keyword') || url.searchParams.get('item_name') || '').trim();
       const query: Record<string, any> = { page_size };
       if (offset && offset !== '0') query.offset = offset;
+      if (keyword) {
+        query.keyword = keyword;
+        query.item_name = keyword;
+      }
       if (update_time_from) query.update_time_from = update_time_from;
       if (update_time_to) query.update_time_to = update_time_to;
+      else if (update_time_from) query.update_time_to = String(Math.floor(Date.now() / 1000));
       const result = await merchantApiCall(region, '/api/v2/global_product/get_global_item_list', { query });
-      return jsonResp({ ok: !result.error, region, query, result });
+      return jsonResp({ ok: !result.error, region, query, keyword: keyword || null, result });
     }
     if (action === 'global_item_info') {
       const ids = url.searchParams.getAll('global_item_id').map(s => parseInt(s)).filter(n => Number.isFinite(n));

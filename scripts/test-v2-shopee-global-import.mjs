@@ -1,0 +1,40 @@
+#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+
+const root = path.resolve(process.cwd());
+const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8');
+const assert = (cond, msg) => {
+  if (!cond) {
+    console.error(`FAIL ${msg}`);
+    process.exit(1);
+  }
+  console.log(`OK ${msg}`);
+};
+
+const html = read('v2/index.html');
+const migration = read('supabase/migrations/202605290002_shopee_global_import_master.sql');
+const bridgeA = read('supabase/functions/shopee-bridge/index.ts');
+const bridgeB = read('edge-functions/shopee-bridge/index.ts');
+
+assert(html.includes('id="sg-import-panel"'), 'V2 register view has Shopee Global import panel');
+assert(html.includes('id="sg-keyword"') && html.includes('id="sg-search-btn"') && html.includes('id="sg-import-btn"'), 'V2 has keyword/search/import controls');
+assert(html.includes('function sgOptionImageUrl') && html.includes('tier_index') && html.includes('option_list'), 'V2 derives option images from Shopee tier/model data');
+assert(html.includes("models.map((m) => text(sgModelSku(m) || '<empty>'))"), 'V2 escapes Shopee model SKUs before rendering search results');
+assert(html.includes('function canonicalShopeeSkuForImport') && html.includes('global_model_sku') && html.includes('model_sku'), 'V2 preserves Global/model SKU as canonical SKU');
+assert(html.includes('shopee_global_raw_payload') && html.includes('shopee_global_model_raw_payload') && html.includes('raw_payload'), 'V2 writes raw item/model/listing payloads');
+assert(html.includes('product_shopee_listings') && html.includes('global_item_id') && html.includes('global_model_id'), 'V2 maps master products to Shopee listing/global IDs');
+assert(html.includes("els.sgSearchBtn?.addEventListener('click'") && html.includes("els.sgKeyword?.addEventListener('keydown'") && html.includes("els.sgImportBtn?.addEventListener('click'"), 'V2 Shopee Global event handlers are wired');
+assert(html.includes('sgMakeMockRows') && html.includes("searchShopeeGlobalProducts(true)"), 'V2 supports dry-run/mock import path');
+
+for (const col of ['shopee_global_raw_payload', 'shopee_global_model_raw_payload', 'shopee_option_image_url', 'shopee_global_item_sku', 'shopee_global_model_sku', 'joom_category_id']) {
+  assert(migration.includes(`add column if not exists ${col}`), `migration adds products.${col}`);
+}
+assert(migration.includes('alter table public.product_shopee_listings') && migration.includes('add column if not exists raw_payload jsonb'), 'migration adds product_shopee_listings.raw_payload');
+
+for (const [name, src] of [['supabase', bridgeA], ['edge-functions', bridgeB]]) {
+  assert(src.includes("url.searchParams.get('keyword')") && src.includes('query.keyword = keyword') && src.includes('query.item_name = keyword'), `${name} shopee-bridge forwards keyword/item_name`);
+  assert(src.includes("'/api/v2/global_product/get_global_item_list'") && src.includes('keyword: keyword || null'), `${name} shopee-bridge global_items response includes keyword`);
+}
+
+console.log('Shopee Global import static coverage OK');

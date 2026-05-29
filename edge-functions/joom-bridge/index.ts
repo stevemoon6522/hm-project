@@ -1,5 +1,8 @@
-// Joom Bridge — v11
-// Changes from v10:
+// Joom Bridge — v12
+// Changes from v11:
+//   - Add /lookup-sku GET: resolve Joom productId/variantId/currency for a given merchant SKU
+//   - /update-price: preserve variant's existing currency (was hardcoded to USD)
+// v11:
 //   - Fix: safeSku fallback no longer appends "-DEFAULT" for single-variant DEFAULT products
 //   - Add /update-price handler
 //   - Fix: include product SKU and categoryId in /products/create payload
@@ -32,7 +35,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info, x-platform-bridge-token",
   "Access-Control-Max-Age": "3600",
 };
 
@@ -354,6 +357,15 @@ function jsonResp(body: any, status = 200): Response {
   });
 }
 
+function requireInternalBridge(req: Request): Response | null {
+  const expected = (Deno as any)["env"]["get"]("PLATFORM_BRIDGE_INTERNAL_TOKEN") || "";
+  const actual = req.headers.get("x-platform-bridge-token") || "";
+  if (!expected || actual !== expected) {
+    return jsonResp({ ok: false, error: "internal_bridge_required" }, 403);
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -374,6 +386,8 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if ((action === "publish" || action === "dryrun") && req.method === "POST") {
+      const internalDenied = requireInternalBridge(req);
+      if (internalDenied) return internalDenied;
       const body = await req.json();
       const row = body.row || {};
       const scraped = body.scrapedAssets || {};
@@ -434,7 +448,48 @@ async function handleRequest(req: Request): Promise<Response> {
       });
     }
 
+    if (action === "lookup-sku" && req.method === "GET") {
+      const internalDenied = requireInternalBridge(req);
+      if (internalDenied) return internalDenied;
+      // GET /lookup-sku?sku=ABC → resolve Joom productId + variantId + currency + current price
+      // for the variant whose sku matches. Used by shopee-dashboard manual Joom sync button
+      // to populate products.joom_product_id, joom_variant_id, joom_currency.
+      const sku = url.searchParams.get("sku") || "";
+      if (!sku.trim()) return jsonResp({ ok: false, error: "sku query param required" }, 400);
+      try {
+        // /products?sku=... returns the product whose merchant SKU is the parent's sku.
+        // Joom permits a parent product to share its SKU with one of its variants, so we
+        // search variants[] for an exact match too.
+        const product = await joomFetch(`/products?sku=${encodeURIComponent(sku.trim())}`);
+        const variants: any[] = product?.variants || [];
+        const matched = variants.find((v: any) => String(v?.sku || "") === sku.trim());
+        if (!matched) {
+          return jsonResp({
+            ok: false,
+            error: "variant_sku_not_found",
+            joom_product_id: product?.id || null,
+            variant_count: variants.length,
+            variant_skus_sample: variants.slice(0, 5).map((v: any) => v?.sku || null),
+          }, 404);
+        }
+        return jsonResp({
+          ok: true,
+          joom_product_id: String(product?.id || ""),
+          joom_variant_id: String(matched.id || ""),
+          joom_currency: String(matched.currency || ""),
+          joom_price: matched.price != null ? String(matched.price) : null,
+          joom_enabled: !!matched.enabled,
+          product_name: product?.name || "",
+        });
+      } catch (e: any) {
+        console.error("[joom-bridge] lookup-sku failed", e);
+        return jsonResp({ ok: false, error: "upstream_joom_lookup_failed" }, 502);
+      }
+    }
+
     if (action === "update-price" && req.method === "POST") {
+      const internalDenied = requireInternalBridge(req);
+      if (internalDenied) return internalDenied;
       const body = await req.json();
       const { productId, sku, price } = body;
       if (!productId || !price || price <= 0) return jsonResp({ ok: false, error: "productId, price 필요" }, 400);
@@ -450,7 +505,14 @@ async function handleRequest(req: Request): Promise<Response> {
       const targets = sku ? variants.filter((v: any) => v.sku === sku) : variants;
       if (!targets.length) return jsonResp({ ok: false, error: `sku "${sku}" 없음` }, 404);
 
-      const updatedVariants = targets.map((v: any) => ({ ...v, price: String(price), currency: "USD" }));
+      // Preserve variant's existing currency. Joom requires the field on update; overwriting
+      // with a hardcoded USD breaks variants in other currencies. Fallback to USD only when
+      // the variant has no currency set (defensive — should never happen for published variants).
+      const updatedVariants = targets.map((v: any) => ({
+        ...v,
+        price: String(price),
+        currency: v.currency || "USD",
+      }));
       const result = await joomFetch("/products/update", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -460,6 +522,8 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if (action === "delete" && req.method === "POST") {
+      const internalDenied = requireInternalBridge(req);
+      if (internalDenied) return internalDenied;
       const body = await req.json();
       const productId = body.productId;
       if (!productId) return jsonResp({ ok: false, error: "productId 필요" }, 400);
@@ -476,7 +540,7 @@ async function handleRequest(req: Request): Promise<Response> {
     return jsonResp({ ok: false, error: `unknown action: ${action} (${req.method})` }, 404);
   } catch (e: any) {
     console.error("[joom-bridge] error", e);
-    return jsonResp({ ok: false, error: String(e?.message || e), stack: e?.stack }, 500);
+    return jsonResp({ ok: false, error: "joom_bridge_failed" }, 500);
   }
 }
 

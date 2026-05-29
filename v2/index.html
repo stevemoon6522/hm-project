@@ -1379,7 +1379,27 @@
 
       <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:14px;">
         <h2 style="font-size:18px;margin:0;">상품 등록 (마스터 데이터 일괄 생성)</h2>
-        <span style="font-size:12px;color:var(--muted);">URL + 무게 입력 → 자동 크롤 → 마스터 등록만 수행</span>
+        <span style="font-size:12px;color:var(--muted);">URL + 무게 입력 또는 Shopee Global Product 검색 → 마스터 등록</span>
+      </div>
+
+      <div class="panel" id="sg-import-panel" style="padding:14px;margin-bottom:16px;">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;">
+          <div>
+            <div style="font-weight:800;color:#3c1d57;">Shopee Global Product → Master DB</div>
+            <div style="font-size:12px;color:var(--muted);line-height:1.45;">키워드로 Global Product를 불러와 model SKU를 canonical SKU로 사용합니다. 옵션 이미지, option/model IDs, raw JSON을 함께 저장합니다.</div>
+          </div>
+          <span class="pill">SKU 생성/치환 없음</span>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <input type="search" id="sg-keyword" placeholder="Shopee global product keyword (예: photocard)" style="min-width:280px;flex:1;max-width:520px;">
+          <select id="sg-region" style="width:90px;"><option value="SG">SG</option></select>
+          <button type="button" id="sg-search-btn">Global 검색</button>
+          <button type="button" id="sg-mock-btn">Dry-run mock</button>
+          <button type="button" id="sg-import-btn" class="primary" disabled>선택 항목 Master 등록</button>
+          <span id="sg-status" style="font-size:12px;color:var(--muted);"></span>
+        </div>
+        <div id="sg-results" class="result-list" style="display:none;max-height:360px;overflow:auto;"></div>
+        <div id="sg-log" class="notice" style="display:none;margin-top:10px;"></div>
       </div>
 
       <!-- Stage 1: URL+weight bulk input -->
@@ -2239,7 +2259,6 @@
           <option value="shopee">Shopee</option>
           <option value="joom">Joom</option>
           <option value="qoo10">Qoo10</option>
-          <option value="alibaba">Alibaba</option>
           <option value="ebay">eBay</option>
         </select>
         <select id="coverage-status-filter" style="min-width:150px;">
@@ -2250,6 +2269,7 @@
           <option value="error">error</option>
         </select>
         <button id="coverage-refresh" type="button">새로고침</button>
+        <button id="coverage-sku-check" type="button" class="primary">SKU로 기존 플랫폼 체크</button>
         <span id="coverage-count" class="status"></span>
       </div>
 
@@ -2265,13 +2285,12 @@
               <th class="coverage-cell">Shopee</th>
               <th class="coverage-cell">Joom</th>
               <th class="coverage-cell">Qoo10</th>
-              <th class="coverage-cell">Alibaba</th>
               <th class="coverage-cell">eBay</th>
               <th style="min-width:190px;">다음 액션</th>
             </tr>
           </thead>
           <tbody id="coverage-body">
-            <tr><td colspan="7" class="empty">로드 중…</td></tr>
+            <tr><td colspan="6" class="empty">로드 중…</td></tr>
           </tbody>
         </table>
       </div>
@@ -3315,6 +3334,7 @@ LEGACY END -->
   const SUPABASE_URL = 'https://mgqlwgnmwegzsjelbrih.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ncWx3Z25td2VnenNqZWxicmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDkzNDMsImV4cCI6MjA5NDg4NTM0M30.mJtqXO7WJMBUYBYVOS1FrD5qmFX6yZxGwfiGw3HUyJE';
   const SHOPEE_BRIDGE = `${SUPABASE_URL}/functions/v1/shopee-bridge`;
+  const PLATFORM_PUBLISH = `${SUPABASE_URL}/functions/v1/platform-publish`;
   const STARONEMALL_VISION_URL = `${SUPABASE_URL}/functions/v1/staronemall-vision`;
   // AUTH_HEADERS.Authorization starts at the anon JWT so the Supabase platform
   // JWT verification (verify_jwt=true on all our Edge Functions) lets requests
@@ -3351,6 +3371,14 @@ LEGACY END -->
     productBody: document.getElementById('product-body'),
     search: document.getElementById('search'),
     refresh: document.getElementById('refresh'),
+    sgKeyword: document.getElementById('sg-keyword'),
+    sgRegion: document.getElementById('sg-region'),
+    sgSearchBtn: document.getElementById('sg-search-btn'),
+    sgMockBtn: document.getElementById('sg-mock-btn'),
+    sgImportBtn: document.getElementById('sg-import-btn'),
+    sgStatus: document.getElementById('sg-status'),
+    sgResults: document.getElementById('sg-results'),
+    sgLog: document.getElementById('sg-log'),
     // LEGACY register-modal elements — now commented out in HTML (Phase B).
     // Keep null refs here so existing code doesn't crash before being fully removed.
     modal: null,            // was 'register-modal'
@@ -3449,6 +3477,7 @@ LEGACY END -->
     rswRunId: null,           // run_id for this transition session
     productListCollapsedGroups: new Set(),
     productListSelectedIds: new Set(),
+    shopeeGlobalSearchResults: [],
   };
 
   /** Preselect state: set by openReadyStockWizard() before renderReadyStockView() runs */
@@ -3495,6 +3524,309 @@ LEGACY END -->
     if (value === '' || value == null) return null;
     const n = Number(value);
     return Number.isFinite(n) ? n : null;
+  }
+
+  function sgArray(value) {
+    return Array.isArray(value) ? value : [];
+  }
+
+  function sgFirstArray(...values) {
+    for (const value of values) {
+      if (Array.isArray(value)) return value;
+    }
+    return [];
+  }
+
+  function sgItemId(item) {
+    return item?.global_item_id || item?.item_id || item?.global_item?.global_item_id || null;
+  }
+
+  function sgItemName(item) {
+    return item?.global_item_name || item?.item_name || item?.name || '';
+  }
+
+  function sgItemSku(item) {
+    return String(item?.global_item_sku || item?.item_sku || item?.sku || '').trim();
+  }
+
+  function sgModelSku(model) {
+    return String(model?.global_model_sku || model?.model_sku || model?.seller_sku || model?.sku || '').trim();
+  }
+
+  function sgImageUrlFromImageObject(image) {
+    if (!image) return '';
+    if (typeof image === 'string') return image;
+    return image.image_url || image.url || image.image || sgArray(image.image_url_list)[0] || sgArray(image.image_id_list)[0] || '';
+  }
+
+  function sgMainImageUrl(item) {
+    return sgImageUrlFromImageObject(item?.image)
+      || sgArray(item?.image_url_list)[0]
+      || sgArray(item?.images)[0]
+      || '';
+  }
+
+  function deriveShopeeOptionLabel(item, model) {
+    const tierIndex = sgArray(model?.tier_index).map((n) => Number(n));
+    const tiers = sgFirstArray(item?.tier_variation, item?.tier_variation_list, item?.variation?.tier_variation);
+    const names = [];
+    tierIndex.forEach((idx, tierNo) => {
+      const tier = tiers[tierNo] || {};
+      const option = sgFirstArray(tier.option_list, tier.options)[idx] || {};
+      const value = option.option || option.option_name || option.name || option.value || '';
+      if (value) names.push(String(value));
+    });
+    return names.join(' / ');
+  }
+
+  function sgTierNames(item) {
+    return sgFirstArray(item?.tier_variation, item?.tier_variation_list, item?.variation?.tier_variation)
+      .map((tier) => String(tier.name || tier.tier_name || tier.variation_name || '').trim())
+      .filter(Boolean);
+  }
+
+  function sgVariationOptionNames(item, model) {
+    const label = deriveShopeeOptionLabel(item, model);
+    return label ? label.split(' / ').map((v) => v.trim()).filter(Boolean) : [];
+  }
+
+  function sgOptionImageUrl(item, model) {
+    const tierIndex = sgArray(model?.tier_index).map((n) => Number(n));
+    const tiers = sgFirstArray(item?.tier_variation, item?.tier_variation_list, item?.variation?.tier_variation);
+    for (let tierNo = 0; tierNo < tierIndex.length; tierNo += 1) {
+      const option = sgFirstArray(tiers[tierNo]?.option_list, tiers[tierNo]?.options)[tierIndex[tierNo]] || {};
+      const url = sgImageUrlFromImageObject(option.image) || option.image_url || option.option_image_url || '';
+      if (url) return url;
+    }
+    return sgImageUrlFromImageObject(model?.image) || model?.image_url || sgMainImageUrl(item);
+  }
+
+  function canonicalShopeeSkuForImport(item, model) {
+    return model ? sgModelSku(model) : sgItemSku(item);
+  }
+
+  function assertCanonicalSku(sku, contextLabel) {
+    if (!String(sku || '').trim()) throw new Error(`${contextLabel}: Shopee SKU가 비어있어 마스터 상품으로 등록할 수 없습니다.`);
+    if (hasNonMarketplaceText(sku)) throw new Error(`${contextLabel}: SKU는 마켓플레이스 호환 문자만 허용됩니다: ${sku}`);
+  }
+
+  function sgExtractItemList(json) {
+    const response = json?.result?.response || json?.response || json?.result || json || {};
+    return sgFirstArray(response.global_item_list, response.item_list, response.items, response.global_items);
+  }
+
+  function sgExtractModelList(json) {
+    const response = json?.result?.response || json?.response || json?.result || json || {};
+    return sgFirstArray(response.global_model, response.global_model_list, response.model, response.model_list, response.models);
+  }
+
+  function sgMakeMockRows() {
+    const item = {
+      global_item_id: 900000000001,
+      global_item_name: '[MOCK] KPOP Photocard Set',
+      global_item_sku: 'MOCK-SET',
+      image: { image_url: 'https://cf.shopee.sg/file/mock-cover' },
+      tier_variation: [{ name: 'Member', option_list: [
+        { option: 'A', image: { image_url: 'https://cf.shopee.sg/file/mock-a' } },
+        { option: 'B', image: { image_url: 'https://cf.shopee.sg/file/mock-b' } },
+      ] }],
+    };
+    return [{
+      item,
+      models: [
+        { global_model_id: 910000000001, global_model_sku: 'MOCK-A-SKU', tier_index: [0], seller_stock: [{ stock: 12 }] },
+        { global_model_id: 910000000002, global_model_sku: 'MOCK-B-SKU', tier_index: [1], seller_stock: [{ stock: 7 }] },
+      ],
+      raw: { item, mock: true },
+    }];
+  }
+
+  function sgSetStatus(message, isError = false) {
+    if (els.sgStatus) {
+      els.sgStatus.textContent = message || '';
+      els.sgStatus.style.color = isError ? 'var(--red)' : 'var(--muted)';
+    }
+  }
+
+  function sgLog(message, type = '') {
+    if (!els.sgLog) return;
+    els.sgLog.style.display = message ? 'block' : 'none';
+    els.sgLog.className = `notice${type ? ` ${type}` : ''}`;
+    els.sgLog.innerHTML = message || '';
+  }
+
+  function sgRenderResults(rows) {
+    state.shopeeGlobalSearchResults = rows || [];
+    if (!els.sgResults) return;
+    if (!rows.length) {
+      els.sgResults.style.display = 'block';
+      els.sgResults.innerHTML = '<div class="empty">검색 결과가 없습니다.</div>';
+      if (els.sgImportBtn) els.sgImportBtn.disabled = true;
+      return;
+    }
+    els.sgResults.style.display = 'block';
+    els.sgResults.innerHTML = `
+      <table style="table-layout:fixed;width:100%;">
+        <thead><tr><th style="width:44px;"></th><th>Global Product</th><th style="width:140px;">Item SKU</th><th style="width:220px;">Models / SKUs</th><th style="width:130px;">Option Images</th></tr></thead>
+        <tbody>${rows.map((row, idx) => {
+          const item = row.item || {};
+          const models = row.models || [];
+          const modelSkus = models.map((m) => text(sgModelSku(m) || '<empty>')).slice(0, 8).join('<br>');
+          const imageCount = models.length ? models.filter((m) => sgOptionImageUrl(item, m)).length : (sgMainImageUrl(item) ? 1 : 0);
+          return `<tr>
+            <td><input type="checkbox" class="sg-select" data-index="${idx}" checked></td>
+            <td><div style="font-weight:700;">${text(sgItemName(item))}</div><div class="muted mono">global_item_id=${text(sgItemId(item) || '')}</div></td>
+            <td class="mono">${text(sgItemSku(item) || '')}</td>
+            <td class="mono" style="font-size:11px;line-height:1.35;">${models.length ? modelSkus : text(sgItemSku(item) || '<single>')}</td>
+            <td>${imageCount}/${models.length || 1}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>`;
+    if (els.sgImportBtn) els.sgImportBtn.disabled = false;
+  }
+
+  async function sgFetchItemDetails(region, ids) {
+    if (!ids.length) return [];
+    const url = `${SHOPEE_BRIDGE}/global_item_info?region=${encodeURIComponent(region)}&${ids.map((id) => `global_item_id=${encodeURIComponent(id)}`).join('&')}`;
+    const json = await fetch(url, { headers: AUTH_HEADERS }).then((r) => r.json());
+    if (json?.error || json?.result?.error) throw new Error(json?.message || json?.error || json?.result?.message || json?.result?.error || 'global_item_info failed');
+    return sgExtractItemList(json);
+  }
+
+  async function sgFetchModels(region, globalItemId) {
+    const url = `${SHOPEE_BRIDGE}/global_model_list?region=${encodeURIComponent(region)}&global_item_id=${encodeURIComponent(globalItemId)}`;
+    const json = await fetch(url, { headers: AUTH_HEADERS }).then((r) => r.json());
+    if (json?.error || json?.result?.error) throw new Error(json?.message || json?.error || json?.result?.message || json?.result?.error || 'global_model_list failed');
+    return sgExtractModelList(json);
+  }
+
+  async function searchShopeeGlobalProducts(useMock = false) {
+    try {
+      sgLog('');
+      sgSetStatus('검색 중...');
+      if (useMock) {
+        sgRenderResults(sgMakeMockRows());
+        sgSetStatus('mock 1개 로드됨');
+        return;
+      }
+      const keyword = String(els.sgKeyword?.value || '').trim();
+      const region = String(els.sgRegion?.value || 'SG');
+      const params = new URLSearchParams({ region, page_size: '50' });
+      if (keyword) params.set('keyword', keyword);
+      const json = await fetch(`${SHOPEE_BRIDGE}/global_items?${params}`, { headers: AUTH_HEADERS }).then((r) => r.json());
+      if (json?.error || json?.result?.error) throw new Error(json?.message || json?.error || json?.result?.message || json?.result?.error || 'global_items failed');
+      let items = sgExtractItemList(json);
+      if (keyword) {
+        const q = keyword.toLowerCase();
+        items = items.filter((item) => `${sgItemName(item)} ${sgItemSku(item)} ${sgItemId(item)}`.toLowerCase().includes(q));
+      }
+      const ids = items.map(sgItemId).filter(Boolean).slice(0, 20);
+      const details = ids.length ? await sgFetchItemDetails(region, ids).catch(() => []) : [];
+      const byId = new Map(details.map((it) => [String(sgItemId(it)), it]));
+      const rows = [];
+      for (const item0 of items.slice(0, 20)) {
+        const item = byId.get(String(sgItemId(item0))) || item0;
+        const globalItemId = sgItemId(item);
+        let models = [];
+        if (globalItemId) models = await sgFetchModels(region, globalItemId).catch(() => []);
+        rows.push({ item, models, raw: { list_item: item0, detail_item: item, models } });
+      }
+      sgRenderResults(rows);
+      sgSetStatus(`${rows.length}개 로드됨`);
+    } catch (e) {
+      sgSetStatus(e.message || String(e), true);
+      sgLog(text(e.message || String(e)), 'error');
+    }
+  }
+
+  async function sgUpsertProduct(row, model, productGroupId) {
+    const item = row.item || {};
+    const sku = canonicalShopeeSkuForImport(item, model);
+    const context = `${sgItemId(item) || 'global_item'}${model ? `/${model.global_model_id || 'model'}` : ''}`;
+    assertCanonicalSku(sku, context);
+    const optionNames = model ? sgVariationOptionNames(item, model) : [];
+    const payload = {
+      sku,
+      product_name: sgItemName(item),
+      option_name: model ? (optionNames.join(' / ') || null) : null,
+      shopee_item_id: Number(sgItemId(item)) || null,
+      global_model_id: model ? Number(model.global_model_id || model.model_id) || null : null,
+      product_group_id: productGroupId || null,
+      variation_tier_names: model ? sgTierNames(item) : null,
+      variation_option_names: model ? optionNames : null,
+      variation_tier_index: model ? sgArray(model.tier_index).map((n) => Number(n)) : null,
+      main_image: model ? sgOptionImageUrl(item, model) : sgMainImageUrl(item),
+      extra_images: sgFirstArray(item?.image?.image_url_list, item?.image_url_list).filter(Boolean),
+      description: item.description || item.global_item_description || item.item_description || null,
+      lifecycle_state: 'ready_stock',
+      purpose: 'registration',
+      shopee_global_raw_payload: item,
+      shopee_global_model_raw_payload: model || null,
+      shopee_option_image_url: model ? sgOptionImageUrl(item, model) : null,
+      shopee_global_item_sku: sgItemSku(item) || null,
+      shopee_global_model_sku: model ? sgModelSku(model) : null,
+    };
+    const existing = await db.from('products').select('id, sku, shopee_item_id, global_model_id').eq('sku', sku).maybeSingle();
+    if (existing.error) throw existing.error;
+    let product;
+    if (existing.data) {
+      const { data, error } = await db.from('products').update(payload).eq('id', existing.data.id).select('id, sku').single();
+      if (error) throw error;
+      product = data;
+    } else {
+      const { data, error } = await db.from('products').insert(payload).select('id, sku').single();
+      if (error) throw error;
+      product = data;
+    }
+    const listingPayload = {
+      product_id: product.id,
+      region: String(els.sgRegion?.value || 'SG'),
+      shop_id: null,
+      shop_item_id: null,
+      shop_model_id: null,
+      global_item_id: Number(sgItemId(item)) || null,
+      global_model_id: model ? Number(model.global_model_id || model.model_id) || null : null,
+      status: 'mapped',
+      last_error: null,
+      raw_payload: { item, model: model || null, source: 'v2_shopee_global_keyword_import' },
+    };
+    const { error: listingError } = await db.from('product_shopee_listings').upsert(listingPayload, { onConflict: 'product_id,region' });
+    if (listingError) throw listingError;
+    return product;
+  }
+
+  async function importSelectedShopeeGlobalProducts() {
+    try {
+      sgLog('');
+      const selected = Array.from(document.querySelectorAll('.sg-select:checked')).map((cb) => state.shopeeGlobalSearchResults[Number(cb.dataset.index)]).filter(Boolean);
+      if (!selected.length) throw new Error('선택된 Global Product가 없습니다.');
+      sgSetStatus('Master 등록 중...');
+      const created = [];
+      const failures = [];
+      for (const row of selected) {
+        const item = row.item || {};
+        const models = sgArray(row.models).filter((m) => sgModelSku(m));
+        const groupId = models.length ? (crypto.randomUUID ? crypto.randomUUID() : null) : null;
+        const targets = models.length ? models : [null];
+        for (const model of targets) {
+          try {
+            const product = await sgUpsertProduct(row, model, groupId);
+            created.push(product);
+          } catch (e) {
+            failures.push(`${sgItemId(item) || 'item'}${model ? `/${model.global_model_id || 'model'}` : ''}: ${e.message || e}`);
+          }
+        }
+      }
+      await loadData();
+      sgSetStatus(`등록 완료: ${created.length}개${failures.length ? `, 실패 ${failures.length}개` : ''}`);
+      sgLog([
+        `<strong>등록 완료</strong>: ${created.length}개 master row`,
+        failures.length ? `<br><strong>실패</strong><br>${failures.map(text).join('<br>')}` : '',
+      ].join(''), failures.length ? 'error' : 'ok');
+    } catch (e) {
+      sgSetStatus(e.message || String(e), true);
+      sgLog(text(e.message || String(e)), 'error');
+    }
   }
 
   function parseRegisterBundleNumber(value) {
@@ -5555,6 +5887,15 @@ LEGACY END -->
   els.refresh.addEventListener('click', async () => {
     try { await loadData(); }
     catch (e) { els.productBody.innerHTML = `<tr><td colspan="7" class="empty">${text(e.message || e)}</td></tr>`; }
+  });
+  els.sgSearchBtn?.addEventListener('click', () => searchShopeeGlobalProducts(false));
+  els.sgMockBtn?.addEventListener('click', () => searchShopeeGlobalProducts(true));
+  els.sgImportBtn?.addEventListener('click', importSelectedShopeeGlobalProducts);
+  els.sgKeyword?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      searchShopeeGlobalProducts(false);
+    }
   });
   document.getElementById('pl-check-all')?.addEventListener('change', (e) => {
     plVisibleRenderedProductIds().forEach((id) => plSetProductSelected(id, e.target.checked));
@@ -12646,12 +12987,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // ════════════════════════════════════════════════════════════════
   // PLATFORM COVERAGE VIEW — existing listings absorption dashboard
   // ════════════════════════════════════════════════════════════════
-  const COVERAGE_PLATFORMS = ['shopee', 'joom', 'qoo10', 'alibaba', 'ebay'];
+  const COVERAGE_PLATFORMS = ['shopee', 'joom', 'qoo10', 'ebay'];
   const COVERAGE_LABELS = {
     shopee: 'Shopee',
     joom: 'Joom',
     qoo10: 'Qoo10',
-    alibaba: 'Alibaba',
     ebay: 'eBay',
   };
   const coverageState = {
@@ -12865,9 +13205,187 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const mapped = COVERAGE_PLATFORMS.filter(function(platform) {
       return group.platforms[platform]?.coverage_status === 'mapped';
     });
-    if (!mapped.length) return '<span class="muted">먼저 기존 listing import/mapping 필요</span>';
+    if (!mapped.length) return '<span class="muted">먼저 SKU 기존 플랫폼 체크 필요</span>';
     if (!missing.length) return '<span class="coverage-chip mapped">전체 커버됨</span>';
     return '<span class="muted">확장 후보: ' + text(missing.map((p) => COVERAGE_LABELS[p]).join(', ')) + '</span>';
+  }
+
+  function coverageBridgeUrl(platform) {
+    if (platform === 'joom') return SHOPEE_BRIDGE.replace('/shopee-bridge', '/joom-bridge');
+    if (platform === 'ebay') return SHOPEE_BRIDGE.replace('/shopee-bridge', '/ebay-bridge');
+    if (platform === 'qoo10') return SHOPEE_BRIDGE.replace('/shopee-bridge', '/qoo10-bridge');
+    return '';
+  }
+
+  async function coverageLookupViaPlatformPublish(platform, sku, productId) {
+    const body = {
+      master_product_id: productId,
+      platform,
+      capability: 'sync',
+      country: platform === 'joom' ? 'GLOBAL' : (platform === 'ebay' ? 'EBAY_US' : undefined),
+      dry_run: false,
+    };
+    const resp = await fetch(PLATFORM_PUBLISH, {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify(body),
+    });
+    const json = await resp.json().catch(function() { return { ok: false, error_msg: 'HTTP ' + resp.status }; });
+    if (!resp.ok || json.ok === false) {
+      const err = json.error_msg || json.message || json.error || ('HTTP ' + resp.status);
+      return { platform, sku, found: false, notFound: json.listing_status === 'not_listed' || json.error_code === 'PLATFORM_NOT_FOUND', error: err, raw: json };
+    }
+    const platformItemId = json.platform_item_id || null;
+    if (!platformItemId) {
+      return { platform, sku, found: false, notFound: false, error: 'lookup_missing_platform_item_id', raw: json };
+    }
+    return {
+      platform,
+      sku,
+      found: true,
+      platformItemId,
+      externalVariantId: null,
+      listingStatus: json.listing_status || 'listed',
+      raw: json,
+    };
+  }
+
+  async function coverageLookupQoo10BySku(sku) {
+    try {
+      const resp = await fetch(coverageBridgeUrl('qoo10') + '/lookup-sku?sku=' + encodeURIComponent(sku), { headers: AUTH_HEADERS });
+      const json = await resp.json().catch(function() { return { ok: false, error: 'HTTP ' + resp.status }; });
+      if (resp.status === 404 || resp.status === 501) {
+        return { platform: 'qoo10', sku, found: false, unsupported: true, error: 'qoo10_lookup_not_implemented', raw: json };
+      }
+      if (!resp.ok || json.ok === false) {
+        return { platform: 'qoo10', sku, found: false, notFound: resp.status === 404, error: json.error || ('HTTP ' + resp.status), raw: json };
+      }
+      const platformItemId = json.goods_no || json.goodsNo || json.item_no || json.itemNo || json.platform_item_id || null;
+      if (!platformItemId) {
+        return { platform: 'qoo10', sku, found: false, notFound: false, error: 'lookup_missing_qoo10_item_id', raw: json };
+      }
+      return {
+        platform: 'qoo10',
+        sku,
+        found: true,
+        platformItemId,
+        externalVariantId: json.seller_code || json.sellerCode || null,
+        listingStatus: 'listed',
+        raw: json,
+      };
+    } catch (err) {
+      return { platform: 'qoo10', sku, found: false, unsupported: true, error: err?.message || String(err), raw: {} };
+    }
+  }
+
+  async function coverageLookupPlatformBySku(platform, sku, productId) {
+    if (platform === 'joom' || platform === 'ebay') return coverageLookupViaPlatformPublish(platform, sku, productId);
+    if (platform === 'qoo10') return coverageLookupQoo10BySku(sku);
+    return { platform, sku, found: false, unsupported: true, error: 'unsupported_platform', raw: {} };
+  }
+
+  async function coverageCheckPlatformHealth(platform) {
+    try {
+      if (platform === 'joom' || platform === 'ebay') return { platform, ok: true, status: 200, error: null };
+      const action = platform === 'joom' ? 'health' : 'healthz';
+      const resp = await fetch(coverageBridgeUrl(platform) + '/' + action, { headers: AUTH_HEADERS });
+      const json = await resp.json().catch(function() { return { ok: false, error: 'HTTP ' + resp.status }; });
+      return { platform, ok: resp.ok && json.ok !== false, status: resp.status, error: json.error || null };
+    } catch (err) {
+      return { platform, ok: false, status: 0, error: err?.message || String(err) };
+    }
+  }
+
+  async function coverageAbsorbLookupHit(productId, hit) {
+    const body = {
+      master_product_id: productId,
+      platform: hit.platform,
+      capability: 'sync',
+      country: hit.platform === 'joom' ? 'GLOBAL' : (hit.platform === 'ebay' ? 'EBAY_US' : undefined),
+    };
+    const resp = await fetch(PLATFORM_PUBLISH, {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify(body),
+    });
+    const json = await resp.json().catch(function() { return { ok: false, error_msg: 'HTTP ' + resp.status }; });
+    if (!resp.ok || json.ok === false) {
+      throw new Error(json.error_msg || json.message || json.error || `platform-publish sync failed (${resp.status})`);
+    }
+    return json.platform_listing_id || json.platform_item_id || null;
+  }
+
+  async function coverageCheckExistingPlatformsBySku() {
+    const btn = document.getElementById('coverage-sku-check');
+    const banner = document.getElementById('coverage-banner');
+    const groups = coverageGroupRows().filter((group) => String(group.sku || '').trim());
+    const targetPlatforms = ['joom', 'qoo10', 'ebay'];
+    let found = 0;
+    let missing = 0;
+    let unsupported = 0;
+    let errors = 0;
+
+    if (!groups.length) {
+      if (banner) {
+        banner.style.display = 'block';
+        banner.textContent = '체크할 SKU가 있는 master 상품이 없습니다.';
+      }
+      return;
+    }
+
+    if (btn) { btn.disabled = true; btn.textContent = 'SKU 체크 중…'; }
+    if (banner) {
+      banner.style.display = 'block';
+      banner.textContent = `${groups.length}개 master SKU를 Joom/Qoo10/eBay에서 확인 중…`;
+    }
+
+    try {
+      const healthChecks = await Promise.all(targetPlatforms.map(coverageCheckPlatformHealth));
+      const available = Object.fromEntries(healthChecks.map((h) => [h.platform, h.ok]));
+      const unavailableLabels = healthChecks
+        .filter((h) => !h.ok)
+        .map((h) => `${COVERAGE_LABELS[h.platform] || h.platform}${h.error ? ' (' + h.error + ')' : ''}`);
+      if (banner && unavailableLabels.length) {
+        banner.textContent = `플랫폼 상태 확인: ${unavailableLabels.join(', ')} 스킵. 나머지 SKU 확인 중…`;
+      }
+
+      for (const group of groups) {
+        const sku = String(group.sku || '').trim();
+        for (const platform of targetPlatforms) {
+          const currentStatus = group.platforms[platform]?.coverage_status || 'missing';
+          if (currentStatus === 'mapped') continue;
+          if (!available[platform]) {
+            unsupported += 1;
+            continue;
+          }
+          let hit;
+          try {
+            hit = await coverageLookupPlatformBySku(platform, sku, group.product_id);
+            if (hit.found) {
+              await coverageAbsorbLookupHit(group.product_id, hit);
+              found += 1;
+            } else if (hit.unsupported) {
+              unsupported += 1;
+            } else if (hit.notFound) {
+              missing += 1;
+            } else {
+              errors += 1;
+              console.warn('[coverage sku check] lookup blocked', { sku, platform, hit });
+            }
+          } catch (err) {
+            errors += 1;
+            console.warn('[coverage sku check] failed', { sku, platform, error: err?.message || err });
+          }
+        }
+      }
+      await coverageFetch();
+      if (banner) {
+        banner.style.display = 'block';
+        banner.textContent = `SKU 체크 완료: 기존 listing ${found}건 mapping, 미등록 ${missing}건, 미구현/스킵 ${unsupported}건, 오류 ${errors}건.`;
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = 'SKU로 기존 플랫폼 체크'; }
+    }
   }
 
   function coverageRender() {
@@ -12898,7 +13416,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     coverageRenderSummary(groups);
     if (count) count.textContent = groups.length + '개 master';
     if (!groups.length) {
-      body.innerHTML = '<tr><td colspan="7" class="empty">표시할 상품이 없습니다.</td></tr>';
+      body.innerHTML = '<tr><td colspan="6" class="empty">표시할 상품이 없습니다.</td></tr>';
       return;
     }
 
@@ -12918,6 +13436,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   function initCoverageListeners() {
     document.getElementById('coverage-refresh')?.addEventListener('click', function() {
       coverageFetch();
+    });
+    document.getElementById('coverage-sku-check')?.addEventListener('click', function() {
+      coverageCheckExistingPlatformsBySku();
     });
     document.getElementById('coverage-search')?.addEventListener('input', coverageRender);
     document.getElementById('coverage-platform-filter')?.addEventListener('change', coverageRender);

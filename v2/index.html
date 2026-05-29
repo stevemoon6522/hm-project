@@ -203,6 +203,8 @@
     .pl-product-cell {
       min-width: 0;
       line-height: 1.35;
+      padding-top: 10px;
+      padding-bottom: 10px;
     }
     .pl-group-row td {
       background: #fff9fd;
@@ -217,8 +219,13 @@
     .pl-group-main {
       display: flex;
       align-items: flex-start;
-      gap: 8px;
+      gap: 10px;
       min-width: 0;
+    }
+    .pl-product-copy {
+      min-width: 0;
+      display: grid;
+      gap: 5px;
     }
     .pl-group-toggle {
       width: 24px;
@@ -235,7 +242,7 @@
     .pl-option-summary {
       font-size: 11px;
       color: var(--muted);
-      margin-top: 2px;
+      line-height: 1.45;
     }
     .pl-group-led {
       display: inline-flex;
@@ -277,20 +284,43 @@
     }
     .pl-master-title-row {
       display: flex;
-      align-items: center;
-      gap: 6px;
+      align-items: flex-start;
+      gap: 8px;
       min-width: 0;
-      flex-wrap: wrap;
+      justify-content: space-between;
     }
     .pl-master-title {
       font-weight: 700;
       min-width: 0;
+      line-height: 1.28;
+      overflow-wrap: anywhere;
+      word-break: keep-all;
+    }
+    .pl-master-meta-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
     }
     .pl-master-edit {
       font-size: 11px;
       padding: 2px 7px;
       box-shadow: none;
       line-height: 1.2;
+      flex-shrink: 0;
+    }
+    .pl-product-title {
+      display: block;
+      font-weight: 700;
+      line-height: 1.28;
+      overflow-wrap: anywhere;
+      word-break: keep-all;
+    }
+    .pl-option-title {
+      display: block;
+      font-weight: 700;
+      color: #523563;
+      line-height: 1.28;
     }
     .pl-master-option-list {
       display: flex;
@@ -2155,6 +2185,7 @@
           </div>
         </div>
         <button id="refresh">Refresh</button>
+        <button id="pl-sync-shopee-leds" type="button" style="font-size:12px;padding:6px 10px;" title="Shopee Global import 매핑을 다시 읽어 Shopee 신호등 상태를 갱신">🟢 Shopee 신호등 동기화</button>
         <button id="pl-select-empty-sku" type="button" style="font-size:12px;padding:6px 10px;" title="SKU가 비어있는 모든 행을 선택">∅ 빈 SKU 선택</button>
         <span style="margin-left:auto;font-size:12px;color:var(--muted);" id="pl-selected-count">선택 0건</span>
         <button id="pl-bulk-delete" type="button" style="font-size:12px;padding:6px 12px;background:#fee2e2;color:#991b1b;" disabled>🗑 선택 삭제</button>
@@ -4667,7 +4698,7 @@ LEGACY END -->
     rows.forEach((row) => {
       const rollup = rollupFor(row.id, platform);
       const total = Number(rollup?.total_count || 0);
-      const listed = Number(rollup?.listed_count || 0);
+      const listed = rollupListedCountForLed(rollup, platform);
       const pending = Number(rollup?.pending_count || 0);
       const errored = Number(rollup?.error_count || 0);
       totalTargets += total;
@@ -4723,11 +4754,12 @@ LEGACY END -->
         <td class="pl-product-cell">
           <div class="pl-group-main">
             <button type="button" class="pl-group-toggle" data-group-toggle="1" data-group-key="${text(group.key)}" title="${collapsed ? '옵션 펼치기' : '옵션 접기'}">${collapsed ? '▸' : '▾'}</button>
-            <div style="min-width:0;">
+            <div class="pl-product-copy">
               <div class="pl-master-title-row">
-                <span class="pl-master-title">${text(productName)}</span>${productLifecycleBadge(first)}
+                <span class="pl-master-title">${text(productName)}</span>
                 <button type="button" class="pl-master-edit" data-edit-master="${text(first.product_group_id || '')}" title="마스터 상품 데이터 수정">수정</button>
               </div>
+              <div class="pl-master-meta-row">${productLifecycleBadge(first)}</div>
               <div class="pl-option-summary">옵션 묶음 · ${text(rows.length)}개${shownOptions ? ` · ${shownOptions}${text(more)}` : ''}</div>
             </div>
           </div>
@@ -4757,10 +4789,10 @@ LEGACY END -->
     const optionDisplay = plOptionDisplay(p);
     const productName = plProductName(p);
     const nameDisplay = isGroupChild
-      ? `<div style="font-weight:700;color:#523563;">${text(optionDisplay || '옵션')}</div>`
+      ? `<span class="pl-option-title">${text(optionDisplay || '옵션')}</span>`
       : (isVariantRow && optionDisplay
-        ? `${text(productName)} <span style="color:var(--muted);">- ${text(optionDisplay)}</span>`
-        : text(productName));
+        ? `<span class="pl-product-title">${text(productName)}</span><span class="muted" style="font-size:11px;">옵션: ${text(optionDisplay)}</span>`
+        : `<span class="pl-product-title">${text(productName)}</span>`);
     return `
       <tr class="${isGroupChild ? 'pl-option-row' : ''}" data-product-id="${text(p.id)}" data-product-group-key="${text(groupKey)}">
         <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}" data-group-key="${text(groupKey)}" ${state.productListSelectedIds?.has(String(p.id)) ? 'checked' : ''}></td>
@@ -5258,6 +5290,32 @@ LEGACY END -->
     if (n === 0) alert('빈 SKU 행이 없습니다.');
   }
 
+  async function syncShopeeTrafficLights() {
+    const btn = document.getElementById('pl-sync-shopee-leds');
+    const original = btn?.textContent || '';
+    if (btn) { btn.disabled = true; btn.textContent = '동기화 중…'; }
+    try {
+      const [listingsRes, rollupsRes] = await Promise.all([
+        db.from('product_shopee_listings').select('*'),
+        db.from('platform_listing_rollups').select('master_product_id, platform, listed_count, pending_count, error_count, total_count, per_shop_detail'),
+      ]);
+      if (listingsRes.error) throw listingsRes.error;
+      if (rollupsRes.error) throw rollupsRes.error;
+      state.listings = listingsRes.data || [];
+      state.rollups = rollupsRes.data || [];
+      renderProducts();
+      const shopeeMapped = (state.rollups || []).filter((r) => r.platform === 'shopee' && rollupListedCountForLed(r, 'shopee') > 0).length;
+      setStatus(`Shopee 신호등 동기화 완료 · mapped ${shopeeMapped}건`, 'ok');
+      if (typeof showToast === 'function') showToast('Shopee 신호등 동기화 완료', 'ok');
+    } catch (e) {
+      setStatus(`Shopee 신호등 동기화 실패: ${e.message || e}`, 'err');
+      if (typeof showToast === 'function') showToast(`Shopee 신호등 동기화 실패: ${e.message || e}`, 'err');
+      else alert(`Shopee 신호등 동기화 실패: ${e.message || e}`);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = original || '🟢 Shopee 신호등 동기화'; }
+    }
+  }
+
   function productListings(productId) {
     return state.listings.filter((l) => String(l.product_id) === String(productId));
   }
@@ -5272,9 +5330,29 @@ LEGACY END -->
       String(r.master_product_id) === String(productId) && r.platform === platform);
   }
 
+  function rollupDetailValues(rollup) {
+    const detail = rollup?.per_shop_detail || {};
+    if (Array.isArray(detail)) return detail.filter(Boolean);
+    if (detail && typeof detail === 'object') return Object.values(detail).filter(Boolean);
+    return [];
+  }
+
+  function isShopeeMappedForLed(detail) {
+    const status = String(detail?.status || 'mapped').toLowerCase();
+    return ['mapped', 'listed'].includes(status) && !!(detail?.shop_item_id || detail?.global_item_id);
+  }
+
+  function rollupListedCountForLed(rollup, platform) {
+    const listed = Number(rollup?.listed_count || 0);
+    if (platform !== 'shopee') return listed;
+    const detailValues = rollupDetailValues(rollup);
+    const mappedByGlobalProduct = detailValues.filter(isShopeeMappedForLed).length;
+    return Math.max(listed, mappedByGlobalProduct);
+  }
+
   function ledState(rollup, platform) {
     if (!rollup || !rollup.total_count) return { glyph: '○', color: '#94a3b8', label: '미등록' };
-    const listed = Number(rollup.listed_count || 0);
+    const listed = rollupListedCountForLed(rollup, platform);
     const pending = Number(rollup.pending_count || 0);
     const errored = Number(rollup.error_count || 0);
     const total = Number(rollup.total_count || 0);
@@ -5322,7 +5400,7 @@ LEGACY END -->
       }
       const sid = d.shop_id || d.shopId || '';
       const banned = SHOPEE_BANNED_SHOP_IDS.has(String(sid));
-      const itemId = d.shop_item_id || d.platform_item_id || '';
+      const itemId = d.shop_item_id || d.platform_item_id || d.global_item_id || '';
       const statusBadge = banned
         ? '<span style="color:#000;font-weight:600;">✕ 차단됨</span>'
         : (d.status === 'listed' || d.status === 'mapped')
@@ -6386,6 +6464,7 @@ LEGACY END -->
   });
   document.getElementById('pl-bulk-delete')?.addEventListener('click', bulkDeleteSelectedProducts);
   document.getElementById('pl-select-empty-sku')?.addEventListener('click', selectEmptySkuRows);
+  document.getElementById('pl-sync-shopee-leds')?.addEventListener('click', syncShopeeTrafficLights);
   document.getElementById('pl-master-edit-close')?.addEventListener('click', closeProductMasterEditModal);
   document.getElementById('pl-master-edit-cancel')?.addEventListener('click', closeProductMasterEditModal);
   document.getElementById('pl-master-edit-save')?.addEventListener('click', saveProductMasterEditModal);

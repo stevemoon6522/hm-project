@@ -2249,6 +2249,7 @@
         <table id="po-table" style="table-layout:auto;">
           <thead id="po-thead">
             <tr>
+              <th style="width:28px;"><input type="checkbox" id="po-select-all" title="PRE ORDER 전체 선택"></th>
               <th style="min-width:180px;">상품</th>
               <th style="min-width:120px;">SKU</th>
               <th style="min-width:120px;">shopee_item_id</th>
@@ -2625,6 +2626,22 @@
           <span class="muted" style="font-size:11px;">dry-run: Shopee 호출 없음 — payload 확인 후 비용 확정 기록</span>
           <button type="button" id="cat-modal-cancel">취소</button>
           <button type="button" id="cat-modal-confirm" class="primary">🚀 Dry-run 실행 (DB 비용 반영)</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Joom publish confirmation modal -->
+    <div id="mr-joom-modal-overlay" class="modal-overlay">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mr-joom-modal-title">
+        <div class="modal-header">
+          <h2 id="mr-joom-modal-title">🌐 Joom 상품 등록 확인</h2>
+          <button type="button" id="mr-joom-modal-close">닫기</button>
+        </div>
+        <div class="modal-body" id="mr-joom-modal-body"></div>
+        <div class="modal-footer">
+          <span class="muted" style="font-size:11px;margin-right:auto;">선택한 카테고리/브랜드/옵션 SKU를 확인한 뒤 Joom 실등록을 실행합니다.</span>
+          <button type="button" id="mr-joom-modal-cancel">취소</button>
+          <button type="button" id="mr-joom-modal-confirm" class="primary">🚀 Joom 등록 실행</button>
         </div>
       </div>
     </div>
@@ -10617,7 +10634,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Remove existing region th cells
     tr.querySelectorAll('[data-po-region]').forEach(function(th) { th.remove(); });
     const ths = Array.from(tr.querySelectorAll('th'));
-    const anchor = ths[2]; // 0=상품, 1=SKU, 2=shopee_item_id
+    const anchor = ths[3]; // 0=선택, 1=상품, 2=SKU, 3=shopee_item_id
     if (!anchor) return;
     const frag = document.createDocumentFragment();
     PO_REGIONS.forEach(function(r) {
@@ -10740,13 +10757,29 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + '</td>';
   }
 
+  function poVisibleProductIds() {
+    if (!els.poBody) return [];
+    return Array.from(els.poBody.querySelectorAll('.po-row-cb'))
+      .map(function(cb) { return String(cb.dataset.poSel || ''); })
+      .filter(Boolean);
+  }
+
+  function poSyncSelectAll() {
+    const all = document.getElementById('po-select-all');
+    if (!all) return;
+    const ids = poVisibleProductIds();
+    const checked = ids.filter(function(pid) { return state.selectedPreOrderIds.has(pid); }).length;
+    all.checked = ids.length > 0 && checked === ids.length;
+    all.indeterminate = checked > 0 && checked < ids.length;
+  }
+
   /** Apply current search/sort filter and re-render tbody. */
   function applyPoFilter() {
     if (!_poCache) return;
     const q = ((els.poSearch && els.poSearch.value) || '').trim().toLowerCase();
     const sortVal = (els.poSort && els.poSort.value) || 'newest';
     const listingIdx = buildListingIndex(_poCache.listings);
-    const colCount = 3 + PO_REGIONS.length + 5;
+    const colCount = 4 + PO_REGIONS.length + 5;
 
     let rows = _poCache.products.filter(function(p) {
       if (!q) return true;
@@ -10772,6 +10805,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     if (!rows.length) {
       els.poBody.innerHTML = '<tr><td colspan="' + colCount + '" class="empty">PRE ORDER 단계 상품이 없습니다. 📦 상품 등록 탭에서 신규 등록하세요.</td></tr>';
+      poSyncSelectAll();
       return;
     }
 
@@ -10795,7 +10829,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const actionCell = '<td>'
         + '<button type="button" data-po-ready-id="' + text(String(p.id)) + '" style="font-size:12px;padding:5px 8px;white-space:nowrap;">'
         + '🔄 READY STOCK 전환</button></td>';
-      return '<tr><td>' + nameLine + '</td>' + skuCell + itemCell + regionCells
+      const checked = state.selectedPreOrderIds.has(String(p.id)) ? 'checked' : '';
+      const selectCell = '<td><input type="checkbox" class="po-row-cb" data-po-sel="' + text(String(p.id)) + '" ' + checked + ' title="READY STOCK 전환 대상으로 선택"></td>';
+      return '<tr>' + selectCell + '<td>' + nameLine + '</td>' + skuCell + itemCell + regionCells
         + costCell + wtCell + dateCell + ageCell + actionCell + '</tr>';
     }).join('');
     els.poBody.querySelectorAll('[data-po-ready-id]').forEach(function(btn) {
@@ -10803,6 +10839,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         openReadyStockWizard(btn.dataset.poReadyId || '');
       });
     });
+    els.poBody.querySelectorAll('.po-row-cb').forEach(function(cb) {
+      cb.addEventListener('change', function() {
+        const pid = String(cb.dataset.poSel || '');
+        if (!pid) return;
+        if (cb.checked) state.selectedPreOrderIds.add(pid);
+        else state.selectedPreOrderIds.delete(pid);
+        poSyncSelectAll();
+      });
+    });
+    poSyncSelectAll();
   }
 
   /** Main render function — called from loadData() and from tab click. */
@@ -10814,7 +10860,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       syncPoRegionHeaders();
       applyPoFilter();
     } catch (e) {
-      const colCount = 3 + PO_REGIONS.length + 5;
+      const colCount = 4 + PO_REGIONS.length + 5;
       if (els.poError) {
         els.poError.textContent = '오류: ' + (e.message || e);
         els.poError.style.display = '';
@@ -10843,7 +10889,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
    */
   function openReadyStockWizard(productId) {
     const id = String(productId || '').trim();
-    state.rswSelectedIds = id ? new Set([id]) : new Set();
+    state.rswSelectedIds = id ? new Set([id]) : new Set(state.selectedPreOrderIds);
     state.rswWeights = {};
     state.rswSkus = {};
     pendingPreselect = id || null;
@@ -10864,6 +10910,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (els.poSort) els.poSort.addEventListener('change', applyPoFilter);
     if (els.poRefresh) els.poRefresh.addEventListener('click', function() { renderPreOrderView(true); });
     if (els.poReadyStockOpen) els.poReadyStockOpen.addEventListener('click', function() { openReadyStockWizard(''); });
+    const poSelectAll = document.getElementById('po-select-all');
+    if (poSelectAll) {
+      poSelectAll.addEventListener('change', function() {
+        poVisibleProductIds().forEach(function(pid) {
+          if (poSelectAll.checked) state.selectedPreOrderIds.add(pid);
+          else state.selectedPreOrderIds.delete(pid);
+        });
+        poSyncSelectAll();
+        applyPoFilter();
+      });
+    }
   }
 
   // Patch showView so clicking the PRE ORDER nav tab triggers a fresh fetch
@@ -11657,10 +11714,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // Region column visibility (all on by default)
   let _catRegionVisible = new Set(CAT_REGIONS);
 
+  // Active price-sync platform. Shopee uses region formulas; Joom uses one global USD price.
+  let _catActivePlatform = 'shopee';
+
   // country_settings fetched once and normalized by region for the V1 engine.
   let _catCountrySettingsByRegion = new Map();
 
-  // ── Price calculation ───────────────────────────────────────────
+  // ── Price calculation
 
   function catCountrySettings(region) {
     return _catCountrySettingsByRegion.get(String(region || '').toUpperCase()) || null;
@@ -11675,6 +11735,22 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       countrySettings: catCountrySettings(region),
     });
     return calc.ok ? calc.originalPrice : null;
+  }
+
+  /** Compute the single Joom global price. Uses the dedicated Joom engine, not Shopee region columns. */
+  function catComputeJoomPrice(costKrw, weightG) {
+    const calc = calculateJoomPrice({
+      costKrw,
+      weightG,
+      countrySettings: catCountrySettings('SG'),
+    });
+    return calc.ok ? calc.joomPrice : null;
+  }
+
+  function catFormatJoomPrice(value, currency) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '—';
+    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + (currency || 'USD');
   }
 
   /** Effective cost for a product row: pendingCostEdits override or DB value */
@@ -11843,6 +11919,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   /** Build the region th column headers (current + new price pairs). */
   function catBuildRegionHeaders() {
+    if (_catActivePlatform === 'joom') return catBuildJoomHeaders();
     let html = '';
     CAT_REGIONS.forEach(function(r) {
       const dimStyle = _catRegionVisible.has(r) ? '' : 'opacity:0.35;';
@@ -11854,13 +11931,20 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return html;
   }
 
+  function catBuildJoomHeaders() {
+    return '<th data-cat-joom-current="1" style="min-width:125px;">Joom 현재가</th>'
+      + '<th data-cat-joom-new="1" style="min-width:125px;">Joom 신규가</th>'
+      + '<th data-cat-joom-status="1" style="min-width:135px;">Joom 매핑</th>';
+  }
+
   /**
    * Build region price cells for a product row.
    * listingByRegion: Map<region, listing>
    * effectiveCost: number
    * Returns HTML string of <td> pairs (current + new).
    */
-  function catBuildRegionCells(listingByRegion, effectiveCost, weightG) {
+  function catBuildRegionCells(listingByRegion, effectiveCost, weightG, product) {
+    if (_catActivePlatform === 'joom') return catBuildJoomCells(product, effectiveCost, weightG);
     let html = '';
     let maxDeltaPct = 0;
 
@@ -11906,6 +11990,40 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return { html: html, maxDeltaPct: maxDeltaPct };
   }
 
+  function catBuildJoomCells(product, effectiveCost, weightG) {
+    const currentPrice = product && product.joom_last_synced_price != null
+      ? Number(product.joom_last_synced_price) : null;
+    const currency = (product && product.joom_currency) || 'USD';
+    const newPrice = catComputeJoomPrice(effectiveCost, weightG);
+    let maxDeltaPct = 0;
+    let deltaClass = 'cat-price-same';
+    let deltaLabel = '';
+    if (currentPrice != null && currentPrice > 0 && newPrice != null) {
+      const deltaPct = (newPrice - currentPrice) / currentPrice * 100;
+      maxDeltaPct = Math.abs(deltaPct);
+      if (deltaPct > 0.5) {
+        deltaClass = 'cat-price-up';
+        deltaLabel = '▲' + deltaPct.toFixed(1) + '%';
+      } else if (deltaPct < -0.5) {
+        deltaClass = 'cat-price-down';
+        deltaLabel = '▼' + Math.abs(deltaPct).toFixed(1) + '%';
+      }
+    }
+    const status = product && product.joom_mapping_status
+      ? product.joom_mapping_status
+      : (product && (product.joom_product_id || product.joom_variant_id) ? 'mapped' : '미매핑');
+    const statusTitle = product && product.joom_mapping_error ? ' title="' + esc(product.joom_mapping_error) + '"' : '';
+    const html = '<td data-cat-joom-current="1" style="font-size:12px;">'
+      + (currentPrice != null ? catFormatJoomPrice(currentPrice, currency) : '<span class="muted">—</span>') + '</td>'
+      + '<td data-cat-joom-new="1" class="cat-new-price ' + deltaClass + '">'
+      + (newPrice != null ? catFormatJoomPrice(newPrice, currency) : '<span class="muted">—</span>')
+      + (deltaLabel ? '<br><span class="cat-delta-label">' + esc(deltaLabel) + '</span>' : '')
+      + '</td>'
+      + '<td data-cat-joom-status="1" style="font-size:12px;"' + statusTitle + '>'
+      + esc(status) + '</td>';
+    return { html: html, maxDeltaPct: maxDeltaPct };
+  }
+
   /**
    * Re-render ONLY the region price preview cells for a single row
    * when operator edits cost inline, without full table re-render.
@@ -11924,6 +12042,24 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     const product = _catCache.products.find(function(p) { return String(p.id) === pid; });
     const weightG = product ? product.weight_g : 0;
+
+    if (_catActivePlatform === 'joom' && product) {
+      const joomResult = catBuildJoomCells(product, newCost, weightG);
+      const temp = document.createElement('tbody');
+      temp.innerHTML = '<tr>' + joomResult.html + '</tr>';
+      ['[data-cat-joom-current]', '[data-cat-joom-new]', '[data-cat-joom-status]'].forEach(function(sel) {
+        const oldCell = tr.querySelector(sel);
+        const newCell = temp.querySelector(sel);
+        if (oldCell && newCell) oldCell.replaceWith(newCell);
+      });
+      const tdDelta = tr.querySelector('[data-cat-delta]');
+      if (tdDelta) {
+        tdDelta.innerHTML = joomResult.maxDeltaPct > 0.5
+          ? '<span class="cat-price-up">' + joomResult.maxDeltaPct.toFixed(1) + '%</span>'
+          : '<span class="cat-price-same">—</span>';
+      }
+      return;
+    }
 
     // Update each region td in this row
     CAT_REGIONS.forEach(function(r) {
@@ -12030,6 +12166,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function catRegionSummaryCells(rows, listingIdx) {
+    if (_catActivePlatform === 'joom') return catJoomSummaryCells(rows);
     let html = '';
     let maxDeltaPct = 0;
     CAT_REGIONS.forEach(function(r) {
@@ -12059,6 +12196,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       html += '<td data-cat-region-new="' + r + '" class="cat-new-price" style="font-size:12px;' + dimStyle + '">'
         + '<span class="muted">옵션 ' + newPrices.length + '/' + rows.length + '</span><br>' + formatRange(newPrices) + '</td>';
     });
+    return { html: html, maxDeltaPct: maxDeltaPct };
+  }
+
+  function catJoomSummaryCells(rows) {
+    const currentPrices = [];
+    const newPrices = [];
+    let maxDeltaPct = 0;
+    rows.forEach(function(p) {
+      const current = p.joom_last_synced_price != null ? Number(p.joom_last_synced_price) : null;
+      const next = catComputeJoomPrice(catEffectiveCost(p), p.weight_g);
+      if (current != null && Number.isFinite(current)) currentPrices.push(current);
+      if (next != null && Number.isFinite(next)) newPrices.push(next);
+      if (current != null && current > 0 && next != null) {
+        const pct = Math.abs((next - current) / current * 100);
+        if (pct > maxDeltaPct) maxDeltaPct = pct;
+      }
+    });
+    const currency = (rows.find(function(p) { return p.joom_currency; }) || {}).joom_currency || 'USD';
+    const formatRange = function(values) {
+      if (!values.length) return '—';
+      values.sort(function(a, b) { return a - b; });
+      if (values.length === 1 || values[0] === values[values.length - 1]) return catFormatJoomPrice(values[0], currency);
+      return catFormatJoomPrice(values[0], currency) + '-' + catFormatJoomPrice(values[values.length - 1], currency);
+    };
+    const mappedCount = rows.filter(function(p) { return p.joom_product_id || p.joom_variant_id || p.joom_mapping_status === 'mapped'; }).length;
+    const html = '<td data-cat-joom-current="1" style="font-size:12px;">'
+      + '<span class="muted">옵션 ' + currentPrices.length + '/' + rows.length + '</span><br>' + formatRange(currentPrices) + '</td>'
+      + '<td data-cat-joom-new="1" class="cat-new-price" style="font-size:12px;">'
+      + '<span class="muted">옵션 ' + newPrices.length + '/' + rows.length + '</span><br>' + formatRange(newPrices) + '</td>'
+      + '<td data-cat-joom-status="1" style="font-size:12px;">mapped ' + mappedCount + '/' + rows.length + '</td>';
     return { html: html, maxDeltaPct: maxDeltaPct };
   }
 
@@ -12099,7 +12266,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const origCost = Number(p.cost_krw || 0);
     const isLargeChange = pid in pendingCostEdits && origCost > 0
       && Math.abs(pendingCostEdits[pid] - origCost) / origCost > 0.30;
-    const regionResult = catBuildRegionCells(byRegion, effectiveCost, p.weight_g);
+    const regionResult = catBuildRegionCells(byRegion, effectiveCost, p.weight_g, p);
     const maxDelta = regionResult.maxDeltaPct;
     const isStale = catIsStale(p);
     const optionLabel = plOptionDisplay(p);
@@ -12176,8 +12343,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const thead = table.querySelector('thead tr');
     if (!thead) return;
 
-    // Remove existing region headers
-    thead.querySelectorAll('[data-cat-region],[data-cat-region-new]').forEach(function(th) { th.remove(); });
+    // Remove existing dynamic price headers
+    thead.querySelectorAll('[data-cat-region],[data-cat-region-new],[data-cat-joom-current],[data-cat-joom-new],[data-cat-joom-status]').forEach(function(th) { th.remove(); });
 
     // Find anchor: the 5th th (무게(g) column), insert after it
     const ths = Array.from(thead.querySelectorAll('th'));
@@ -12185,6 +12352,28 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (!weightTh) return;
 
     const frag = document.createDocumentFragment();
+    if (_catActivePlatform === 'joom') {
+      const thCurr = document.createElement('th');
+      thCurr.dataset.catJoomCurrent = '1';
+      thCurr.style.cssText = 'min-width:125px;';
+      thCurr.textContent = 'Joom 현재가';
+      frag.appendChild(thCurr);
+
+      const thNew = document.createElement('th');
+      thNew.dataset.catJoomNew = '1';
+      thNew.style.cssText = 'min-width:125px;';
+      thNew.textContent = 'Joom 신규가';
+      frag.appendChild(thNew);
+
+      const thStatus = document.createElement('th');
+      thStatus.dataset.catJoomStatus = '1';
+      thStatus.style.cssText = 'min-width:135px;';
+      thStatus.textContent = 'Joom 매핑';
+      frag.appendChild(thStatus);
+      weightTh.after(frag);
+      return;
+    }
+
     CAT_REGIONS.forEach(function(r) {
       const dimStyle = _catRegionVisible.has(r) ? '' : 'opacity:0.35;';
 
@@ -12902,6 +13091,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   // ── Platform + Shopee market controls ───────────────────────────
 
+  function catSyncPlatformActions() {
+    const isJoom = _catActivePlatform === 'joom';
+    const marketFilters = document.getElementById('cat-region-filters');
+    const dryBtn = document.getElementById('cat-dry-btn');
+    const liveBtn = document.getElementById('cat-live-btn');
+    const joomBtn = document.getElementById('cat-joom-btn');
+    if (marketFilters) marketFilters.style.display = isJoom ? 'none' : '';
+    if (dryBtn) dryBtn.style.display = isJoom ? 'none' : '';
+    if (liveBtn) liveBtn.style.display = isJoom ? 'none' : '';
+    if (joomBtn) joomBtn.style.display = isJoom ? '' : 'none';
+  }
+
   function initCatPlatformTabs() {
     const tabs = Array.from(document.querySelectorAll('#cat-platform-tabs .cat-platform-tab'));
     if (!tabs.length) return;
@@ -12918,10 +13119,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           tab.classList.toggle('active', active);
           tab.setAttribute('aria-selected', active ? 'true' : 'false');
         });
-        const marketFilters = document.getElementById('cat-region-filters');
-        if (marketFilters) marketFilters.style.display = platform === 'shopee' ? '' : 'none';
+        _catActivePlatform = platform;
+        catSyncPlatformActions();
+        catSyncRegionHeaders();
+        applyAndRenderCatalog();
         if (platform === 'joom') {
-          showToast('Joom은 현재 선택 행 가격 동기화 버튼을 지원합니다.', '');
+          showToast('Joom은 단일 글로벌 가격 공식으로 표시합니다.', '');
         }
       });
     });
@@ -13011,6 +13214,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   initCatRegionFilters();
   initCatPlatformTabs();
+  catSyncPlatformActions();
   initCatalogListeners();
   initDailyCloseListeners();
   initPoRegionFilters();
@@ -15422,7 +15626,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               style: 'font-size:11px;padding:3px 10px;background:#5c24b0;color:#fff;border-color:#5c24b0;',
               disabled: joomStatus === 'publishing',
             }, '🚀 Joom 발행');
-            joomPublishBtn.addEventListener('click', () => mrPromoteJoom(group));
+            joomPublishBtn.addEventListener('click', () => mrOpenJoomModal(group));
             joomStatusRow.appendChild(joomPublishBtn);
           }
 
@@ -16791,6 +16995,58 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Codex P0 #1 (cross-card SKU duplicate guard), P0 #2 (lookup-sku recovery check),
     // P0 #3 (square main image validation via shopee-bridge proxy_image),
     // P1 #6 (price floor $1), P1 #7 (permanent infraction escalation) 반영.
+    let _mrPendingJoomGroup = null;
+
+    function mrCloseJoomModal() {
+      const overlay = document.getElementById('mr-joom-modal-overlay');
+      if (overlay) overlay.classList.remove('show');
+      _mrPendingJoomGroup = null;
+    }
+
+    function mrOpenJoomModal(group) {
+      const firstRow = group && group.rows && group.rows[0];
+      if (!firstRow) { showToast('카드 행이 없습니다.'); return; }
+      const activeRows = group.rows.filter(r => !CROSS_SKU_INACTIVE.has(r.status));
+      if (!activeRows.length) { showToast('Joom 발행할 활성 옵션이 없습니다.'); return; }
+      _mrPendingJoomGroup = group;
+      const overlay = document.getElementById('mr-joom-modal-overlay');
+      const body = document.getElementById('mr-joom-modal-body');
+      const parentSku = mrJoomParentSku(group, activeRows) || ('JOOM-' + (group.source_record_id || '').slice(0, 8));
+      const category = firstRow._joomCategory || 'music_albums';
+      const brand = firstRow._joomBrand || firstRow.artist || '—';
+      const mainImage = firstRow._joomMainImageOverride || firstRow._main_image || '';
+      if (body) {
+        body.innerHTML = '<div class="notice">Joom은 실등록 후 SKU/옵션 구조 변경이 제한됩니다. parent SKU, 카테고리, 옵션 SKU를 확인하세요.</div>'
+          + '<div class="grid">'
+          + '<div class="field" style="grid-column:span 4;"><label>Parent SKU</label><div class="mono">' + esc(parentSku || '—') + '</div></div>'
+          + '<div class="field" style="grid-column:span 4;"><label>Category</label><div>' + esc(category) + '</div></div>'
+          + '<div class="field" style="grid-column:span 4;"><label>Brand</label><div>' + esc(brand) + '</div></div>'
+          + '</div>'
+          + '<div class="field"><label>메인 이미지</label><div class="mono" style="font-size:11px;overflow-wrap:anywhere;">' + (mainImage ? esc(mainImage) : '<span class="muted">미입력 — 등록 전 차단됨</span>') + '</div></div>'
+          + '<div class="field"><label>옵션 SKU (' + activeRows.length + '개)</label><div style="display:grid;gap:4px;">'
+          + activeRows.map((r) => {
+            const optParts = [];
+            if (r._opt0) optParts.push(r._opt0);
+            if (group.twoAxis && r._opt1) optParts.push(r._opt1);
+            const optName = optParts.join(' / ') || 'ONE SIZE';
+            return '<div style="display:flex;gap:8px;align-items:center;font-size:12px;"><span class="mono" style="min-width:150px;">' + esc(r._sku || 'SKU 미입력') + '</span><span>' + esc(optName) + '</span></div>';
+          }).join('')
+          + '</div></div>';
+      }
+      if (overlay) overlay.classList.add('show');
+    }
+
+    async function mrConfirmJoomModal() {
+      if (!_mrPendingJoomGroup) return;
+      const group = _mrPendingJoomGroup;
+      mrCloseJoomModal();
+      await mrPromoteJoom(_mrPendingJoomGroup || group);
+    }
+
+    document.getElementById('mr-joom-modal-close')?.addEventListener('click', mrCloseJoomModal);
+    document.getElementById('mr-joom-modal-cancel')?.addEventListener('click', mrCloseJoomModal);
+    document.getElementById('mr-joom-modal-confirm')?.addEventListener('click', mrConfirmJoomModal);
+
     async function mrPromoteJoom(group) {
       const firstRow = group.rows[0];
       if (!firstRow) { showToast('카드 행이 없습니다.'); return; }
@@ -17300,6 +17556,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     // Operating country codes in display order
     const FEE_COUNTRIES = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'EX'];
+    const FEE_COUNTRY_LABELS = {
+      EX: 'eBay EX (가상)',
+    };
+    function feeCountryLabel(code) {
+      return FEE_COUNTRY_LABELS[code] || code;
+    }
 
     let feeActiveCountry = 'SG';
     // In-memory cache of loaded rows: { [code]: {...db row fields} }
@@ -17316,7 +17578,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       // Country tabs
       tabsEl.innerHTML = FEE_COUNTRIES.map(code => {
-        const label = code + (feeDirty.has(code) ? ' *' : '');
+        const label = feeCountryLabel(code) + (feeDirty.has(code) ? ' *' : '');
         return '<button class="fee-country-tab' + (code === feeActiveCountry ? ' active' : '') + '" data-fee-code="' + code + '">' + label + '</button>';
       }).join('');
       tabsEl.querySelectorAll('.fee-country-tab').forEach(function(btn) {
@@ -17328,7 +17590,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       const row = feeRows[feeActiveCountry];
       if (!row) {
-        panelEl.innerHTML = '<div style="color:var(--muted);font-size:13px;">DB에서 ' + feeActiveCountry + ' 행을 불러오는 중…</div>';
+        panelEl.innerHTML = '<div style="color:var(--muted);font-size:13px;">DB에서 ' + feeCountryLabel(feeActiveCountry) + ' 행을 불러오는 중…</div>';
         return;
       }
 
@@ -17349,7 +17611,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         '<div class="fee-grid-v2">' + fieldsHtml + '</div>' +
         '<div class="fee-save-bar">' +
         '<span class="fee-save-status" id="fee-save-status">변경 사항은 자동 저장됩니다</span>' +
-        '<button type="button" id="fee-reset-btn" style="font-size:12px;padding:5px 12px;">' + feeActiveCountry + ' DB에서 복원</button>' +
+        '<button type="button" id="fee-reset-btn" style="font-size:12px;padding:5px 12px;">' + feeCountryLabel(feeActiveCountry) + ' DB에서 복원</button>' +
         '</div>';
 
       // Input listeners — auto-save on change
@@ -17365,7 +17627,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             // Update active tab label to show dirty marker
             tabsEl.querySelectorAll('.fee-country-tab').forEach(function(b) {
               if (b.dataset.feeCode === feeActiveCountry) {
-                b.textContent = feeActiveCountry + ' *';
+                b.textContent = feeCountryLabel(feeActiveCountry) + ' *';
               }
             });
           }
@@ -17440,10 +17702,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     async function feeResetActive() {
       const code = feeActiveCountry;
       feeDirty.delete(code);
-      feeSetStatus(code + ' DB에서 다시 불러오는 중…', '');
+      feeSetStatus(feeCountryLabel(code) + ' DB에서 다시 불러오는 중…', '');
       await feeLoadRow(code);
       feeRender();
-      feeSetStatus(code + ' 복원 완료', 'ok');
+      feeSetStatus(feeCountryLabel(code) + ' 복원 완료', 'ok');
       setTimeout(function() { feeSetStatus('변경 사항은 자동 저장됩니다', ''); }, 2000);
     }
 

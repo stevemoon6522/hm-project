@@ -12818,11 +12818,72 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const valid = [];
     const blocked = [];
 
+    // Stability/perf: avoid N×region sequential get_model_list calls during Shopee bulk price edits.
+    // Fresh mapped listings are trusted; any item with an untrusted target is fetched once and reused.
+    const PREFLIGHT_TRUST_TTL_MS = 6 * 60 * 60 * 1000;
+    const now = Date.now();
+    function isTrustedListing(listing) {
+      if (!listing || listing.status !== 'mapped') return false;
+      const tsRaw = listing.last_synced_at || listing.published_at;
+      if (!tsRaw) return false;
+      const ts = Date.parse(tsRaw);
+      if (!Number.isFinite(ts)) return false;
+      return (now - ts) < PREFLIGHT_TRUST_TTL_MS;
+    }
+
+    const allKeys = new Map();
+    const mixedKeys = new Set();
     for (const p of payloads) {
-      const key = p.region + ':' + p.itemId;
-      if (!cache.has(key)) {
-        cache.set(key, await catFetchShopeeModelIndex(p.region, p.itemId));
+      const itemId = Number(p.itemId);
+      if (!Number.isFinite(itemId) || itemId <= 0) continue;
+      const key = p.region + ':' + itemId;
+      if (!allKeys.has(key)) allKeys.set(key, { region: p.region, itemId: itemId });
+      if (!isTrustedListing(p.listing)) mixedKeys.add(key);
+    }
+
+    const trustedModelIds = new Map();
+    const trustedItemNoModel = new Set();
+    for (const p of payloads) {
+      const itemId = Number(p.itemId);
+      if (!Number.isFinite(itemId) || itemId <= 0) continue;
+      const key = p.region + ':' + itemId;
+      if (mixedKeys.has(key)) continue;
+      const modelId = p.listing && p.listing.shop_model_id ? Number(p.listing.shop_model_id) : null;
+      if (modelId) {
+        if (!trustedModelIds.has(key)) trustedModelIds.set(key, new Set());
+        trustedModelIds.get(key).add(modelId);
+      } else {
+        trustedItemNoModel.add(key);
       }
+    }
+    for (const [key, modelIds] of trustedModelIds.entries()) {
+      cache.set(key, { ok: true, hasModel: modelIds.size > 0, modelIds: modelIds, _trusted: true });
+    }
+    for (const key of trustedItemNoModel) {
+      if (!cache.has(key)) cache.set(key, { ok: true, hasModel: false, modelIds: new Set(), _trusted: true });
+    }
+
+    const needsFetch = [];
+    for (const key of mixedKeys) {
+      const info = allKeys.get(key);
+      if (info) needsFetch.push({ key: key, region: info.region, itemId: info.itemId });
+    }
+    const PREFLIGHT_PARALLELISM = 5;
+    for (let i = 0; i < needsFetch.length; i += PREFLIGHT_PARALLELISM) {
+      const chunk = needsFetch.slice(i, i + PREFLIGHT_PARALLELISM);
+      await Promise.all(chunk.map(async function(u) {
+        const info = await catFetchShopeeModelIndex(u.region, u.itemId);
+        cache.set(u.key, info);
+      }));
+    }
+
+    for (const p of payloads) {
+      const itemId = Number(p.itemId);
+      if (!Number.isFinite(itemId) || itemId <= 0) {
+        blocked.push(Object.assign({}, p, { reason: 'preflight failed: invalid item_id' }));
+        continue;
+      }
+      const key = p.region + ':' + itemId;
       const info = cache.get(key);
       if (!info || !info.ok) {
         blocked.push(Object.assign({}, p, { reason: 'preflight failed: ' + ((info && info.error) || 'unknown') }));

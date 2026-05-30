@@ -630,16 +630,18 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if (action === "lookup-item" && req.method === "GET") {
-      const internalDenied = requireInternalBridge(req);
-      if (internalDenied) return internalDenied;
+      // V2 eBay registration UI calls ebay-bridge directly, like shopee-bridge/joom-bridge.
+      // requireAuthenticatedUser above remains the auth boundary; do not require the
+      // server-only platform bridge token from browser-originated publish verification.
       const sku = url.searchParams.get("sku") || "";
       const marketplaceId = url.searchParams.get("marketplace_id") || "EBAY_US";
       return await handleLookupItem(sku, marketplaceId);
     }
 
     if (action === "publish" && req.method === "POST") {
-      const internalDenied = requireInternalBridge(req);
-      if (internalDenied) return internalDenied;
+      // V2 eBay registration UI calls ebay-bridge directly, like shopee-bridge/joom-bridge.
+      // requireAuthenticatedUser above remains the auth boundary; do not require the
+      // server-only platform bridge token from browser-originated publish requests.
       const body = await req.json();
       return await handlePublish(body);
     }

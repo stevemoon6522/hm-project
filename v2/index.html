@@ -3885,7 +3885,11 @@ LEGACY END -->
   function sgImageUrlFromImageObject(image) {
     if (!image) return '';
     if (typeof image === 'string') return image;
-    return image.image_url || image.url || image.image || sgArray(image.image_url_list)[0] || sgArray(image.image_id_list)[0] || '';
+    const url = image.image_url || image.url || image.image || sgArray(image.image_url_list)[0] || '';
+    if (url) return url;
+    // Construct CDN URL from image_id when image_url is absent (Shopee global CDN)
+    const id = image.image_id || sgArray(image.image_id_list)[0] || '';
+    return id ? `https://cf.shopee.sg/file/${id}` : '';
   }
 
   function sgMainImageUrl(item) {
@@ -4083,7 +4087,12 @@ LEGACY END -->
     const url = `${SHOPEE_BRIDGE}/global_model_list?region=${encodeURIComponent(region)}&global_item_id=${encodeURIComponent(globalItemId)}`;
     const json = await fetch(url, { headers: AUTH_HEADERS }).then((r) => r.json());
     if (json?.error || json?.result?.error) throw new Error(json?.message || json?.error || json?.result?.message || json?.result?.error || 'global_model_list failed');
-    return sgExtractModelList(json);
+    // tier_variation in model list response contains per-option images (image_url/image_id per option)
+    const response = sgExtractResponse(json);
+    return {
+      models: sgExtractModelList(json),
+      tierVariation: sgFirstArray(response.tier_variation, response.tier_variation_list),
+    };
   }
 
   async function sgFetchGlobalItemPage(region, keyword, offset, pageSize) {
@@ -4178,7 +4187,11 @@ LEGACY END -->
       const item = byId.get(String(sgItemId(item0))) || item0;
       const globalItemId = sgItemId(item);
       let models = [];
-      if (globalItemId && includeModelsForAll) models = await sgFetchModels(region, globalItemId).catch(() => []);
+      if (globalItemId && includeModelsForAll) {
+        const r = await sgFetchModels(region, globalItemId).catch(() => ({ models: [], tierVariation: [] }));
+        models = r.models || [];
+        if (item && Array.isArray(r.tierVariation) && r.tierVariation.length) item.tier_variation = r.tierVariation;
+      }
       rows.push({ item, models, raw: { list_item: item0, detail_item: item, models } });
     }
     return rows;
@@ -4191,8 +4204,13 @@ LEGACY END -->
       const batch = pending.slice(i, i + batchSize);
       await Promise.all(batch.map(async (row) => {
         const globalItemId = sgItemId(row.item || {});
-        row.models = await sgFetchModels(region, globalItemId).catch(() => []);
+        const result = await sgFetchModels(region, globalItemId).catch(() => ({ models: [], tierVariation: [] }));
+        row.models = result.models || [];
         if (row.raw) row.raw.models = row.models;
+        // Apply tier_variation from model list response to item (contains per-option image_url/image_id)
+        if (row.item && Array.isArray(result.tierVariation) && result.tierVariation.length) {
+          row.item.tier_variation = result.tierVariation;
+        }
       }));
     }
   }
@@ -4971,27 +4989,18 @@ LEGACY END -->
     if (!el) return;
     const first = rows[0] || {};
     const optionImageCount = rows.filter((row) => String(row.main_image || '').trim()).length;
-    const extraIds = Array.isArray(first.shopee_extra_image_ids) ? first.shopee_extra_image_ids : [];
     const chips = [
       `StarOneMall: ${first.staronemall_url ? '있음' : '없음'}`,
       `Shopee 대표 image_id: ${first.shopee_image_id ? String(first.shopee_image_id).slice(0, 24) + '...' : '없음'}`,
-      `Shopee 상세 image_id: ${extraIds.length}개`,
       `옵션 첨부 이미지: ${optionImageCount}/${rows.length}`,
       `그룹: ${first.product_group_id || '없음'}`,
     ];
     const mainUrls = rows.map((row) => row.main_image).filter(Boolean);
-    const extraUrls = rows.flatMap((row) => Array.isArray(row.extra_images) ? row.extra_images : []).filter(Boolean);
     el.innerHTML = `
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${chips.map((chip) => `<span class="pill">${text(chip)}</span>`).join('')}</div>
-      <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;">
-        <div>
-          <div style="font-weight:700;font-size:12px;margin-bottom:6px;">대표 이미지 미리보기</div>
-          ${plMasterEditRenderImagePreview(mainUrls, '대표 이미지 URL 없음')}
-        </div>
-        <div>
-          <div style="font-weight:700;font-size:12px;margin-bottom:6px;">상세 이미지 미리보기</div>
-          ${plMasterEditRenderImagePreview(extraUrls, '상세 이미지 URL 없음')}
-        </div>
+      <div>
+        <div style="font-weight:700;font-size:12px;margin-bottom:6px;">옵션 이미지 미리보기</div>
+        ${plMasterEditRenderImagePreview(mainUrls, '옵션 이미지 URL 없음')}
       </div>
     `;
   }
@@ -5000,7 +5009,7 @@ LEGACY END -->
     const optionsEl = document.getElementById('pl-master-edit-options');
     if (!optionsEl) return;
     optionsEl.innerHTML = `
-      <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:980px;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:760px;">
         <thead>
           <tr style="background:var(--surface2,#f8f9fa);">
             <th style="text-align:left;padding:6px;border-bottom:1px solid var(--border);">옵션명</th>
@@ -5008,12 +5017,10 @@ LEGACY END -->
             <th style="text-align:right;padding:6px;border-bottom:1px solid var(--border);">매입가</th>
             <th style="text-align:right;padding:6px;border-bottom:1px solid var(--border);">무게(g)</th>
             <th style="text-align:left;padding:6px;border-bottom:1px solid var(--border);">옵션 이미지 URL</th>
-            <th style="text-align:left;padding:6px;border-bottom:1px solid var(--border);">추가 이미지</th>
           </tr>
         </thead>
         <tbody>
           ${rows.map((row) => {
-            const extras = Array.isArray(row.extra_images) ? row.extra_images.filter(Boolean).join('\n') : '';
             return `
               <tr data-product-id="${text(row.id)}">
                 <td style="padding:6px;border-bottom:1px solid var(--border);">
@@ -5031,10 +5038,6 @@ LEGACY END -->
                 <td style="padding:6px;border-bottom:1px solid var(--border);">
                   <input data-field="main_image" type="url" value="${text(row.main_image || '')}" placeholder="https://..." style="width:260px;font-size:12px;padding:4px 6px;">
                   <div style="margin-top:6px;">${plMasterEditRenderImagePreview(row.main_image ? [row.main_image] : [], '옵션 이미지 URL 없음')}</div>
-                </td>
-                <td style="padding:6px;border-bottom:1px solid var(--border);">
-                  <textarea data-field="extra_images" rows="2" placeholder="한 줄에 URL 1개" style="width:220px;font-size:11px;padding:4px 6px;">${text(extras)}</textarea>
-                  <div style="margin-top:6px;">${plMasterEditRenderImagePreview(Array.isArray(row.extra_images) ? row.extra_images : [], '추가 이미지 URL 없음')}</div>
                 </td>
               </tr>
             `;
@@ -5117,10 +5120,6 @@ LEGACY END -->
       const weight = Number(field('weight_g')?.value || 0);
       if (!(cost >= 0)) throw new Error(`${sku} 매입가가 올바르지 않습니다.`);
       if (!(weight > 0)) throw new Error(`${sku} 무게는 1g 이상이어야 합니다.`);
-      const extraImages = String(field('extra_images')?.value || '')
-        .split(/\r?\n|,/)
-        .map((s) => s.trim())
-        .filter(Boolean);
       const prevNames = Array.isArray(existing.variation_option_names) ? existing.variation_option_names.slice() : [];
       const nextNames = prevNames.length ? prevNames : [optionName || existing.option_name || ''];
       if (optionName) nextNames[0] = optionName;
@@ -5133,7 +5132,6 @@ LEGACY END -->
           cost_krw: cost,
           weight_g: weight,
           main_image: String(field('main_image')?.value || '').trim() || null,
-          extra_images: extraImages,
         },
       };
     });

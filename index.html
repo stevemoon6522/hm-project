@@ -1017,10 +1017,6 @@
     </div>
 
     <div class="field">
-      <label>Shopee Item ID</label>
-      <input type="text" id="m-itemid" placeholder="(선택) Shopee 상품 ID">
-    </div>
-    <div class="field">
       <label>상품명</label>
       <input type="text" id="m-product-name" placeholder="자동 입력 또는 직접 입력">
     </div>
@@ -4772,7 +4768,6 @@ function renderTableHeader() {
   let html = `
     <th class="select-col"><label class="row-select-hit" title="전체 선택/해제"><input type="checkbox" id="select-all-rows"></label></th>
     <th style="width:140px;">Staronemall</th>
-    <th style="width:120px;">Shopee Item ID</th>
     <th style="width:180px;">상품명</th>
     <th style="width:200px;">SKU</th>
     <th style="width:140px;">옵션명</th>
@@ -4788,7 +4783,6 @@ function renderTableHeader() {
     `;
   });
   html += `<th style="width:90px;text-align:center;color:var(--c-jm);">Joom ↑</th>`;
-  html += `<th style="width:160px;">Shopee</th>`;
   html += `<th class="actions-col">·</th>`;
   headEl.innerHTML = html;
 }
@@ -4860,7 +4854,6 @@ function renderTableBody() {
       <tr class="row" data-id="${row.id}">
         <td class="select-cell"><label class="row-select-hit"><input type="checkbox" class="row-select" data-id="${row.id}"></label></td>
         <td class="master-url-cell" data-id="${row.id}" title="더블클릭하여 URL 편집" style="width:140px;">${renderStaronemallCell(row)}</td>
-        <td class="itemid editable" data-field="itemId" title="${row.itemId || ''}">${row.itemId || '<span style="color:var(--text-faint);">—</span>'}</td>
         <td class="product-name editable" data-field="productName" title="${esc(row.productName || '')}" style="font-size:11px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${row.productName ? esc(row.productName) : '<span style="color:var(--text-faint);">—</span>'}</td>
         <td class="sku editable" data-field="sku" title="${esc(row.sku)}">${esc(row.sku)}${bundleBadge}${skuSyncBadge}
           <div class="tag-badges-wrap" data-id="${row.id}">${tagBadgesHtml}</div></td>
@@ -4872,7 +4865,6 @@ function renderTableBody() {
         <td style="text-align:center;">${(row.joomProductId && row.sku && row.sku.trim())
           ? `<button class="joom-price-sync" data-id="${row.id}" title="Joom 가격 업데이트\nProduct ID: ${row.joomProductId}\nSKU: ${row.sku}" style="font-size:10px;padding:2px 7px;border:1px solid var(--c-jm);border-radius:3px;background:none;color:var(--c-jm);cursor:pointer;">↑</button>`
           : `<span style="color:var(--text-faint);font-size:10px;" title="${row.joomProductId ? 'SKU 없음' : 'Joom 미등록'}">—</span>`}</td>
-        <td class="shopee-cell">${renderShopeeCell(row)}</td>
         <td class="actions-col">
           <button class="row-action-btn price-move-btn" data-action="move-to-register" title="상품 등록 탭으로 이동" style="font-size:10px;margin-right:4px;">→ 등록</button>
           <button class="row-action-btn" data-action="delete" title="삭제">×</button>
@@ -4980,19 +4972,6 @@ function renderTableBody() {
         renderTableBody();
         renderVerify();
       }
-    });
-  });
-
-  // Shopee 셀 핸들러
-  tbody.querySelectorAll('td.shopee-cell').forEach(td => {
-    td.querySelectorAll('.shopee-publish').forEach(btn => {
-      btn.addEventListener('click', e => {
-        e.stopPropagation();
-        const tr = btn.closest('tr');
-        const id = tr.dataset.id;
-        const row = state.rows.find(r => String(r.id) === String(id));
-        if (row) openShopeeModal(row);
-      });
     });
   });
 
@@ -5221,7 +5200,6 @@ async function _sendToExtension(message) {
 
 function resetModal() {
   document.getElementById('m-url').value = '';
-  document.getElementById('m-itemid').value = '';
   document.getElementById('m-product-name').value = '';
   document.getElementById('m-sku').value = '';
   document.getElementById('m-option').value = '';
@@ -5297,7 +5275,7 @@ document.getElementById('m-save').addEventListener('click', async () => {
   if (weight <= 0) { alert('무게를 입력해주세요'); return; }
 
   const newProduct = {
-    itemId: document.getElementById('m-itemid').value.trim(),
+    itemId: '',
     sku,
     productName: document.getElementById('m-product-name').value.trim(),
     option: document.getElementById('m-option').value.trim(),

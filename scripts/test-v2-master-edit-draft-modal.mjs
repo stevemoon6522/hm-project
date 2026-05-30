@@ -30,9 +30,7 @@ const editCode = sliceBetween(
 for (const token of [
   'id="pl-master-edit-staronemall-url"',
   'id="pl-master-edit-lifecycle"',
-  'id="pl-master-edit-category"',
-  'id="pl-master-edit-brand-name"',
-  'id="pl-master-edit-brand-id"',
+  'id="pl-master-edit-components"',
   'id="pl-master-edit-description"',
   'id="pl-master-edit-days"',
   'id="pl-master-edit-attrs"',
@@ -40,6 +38,16 @@ for (const token of [
   'id="pl-master-edit-options"',
 ]) {
   assert(modalHtml.includes(token), `master edit modal missing draft field: ${token}`);
+}
+
+for (const removedToken of [
+  'id="pl-master-edit-category"',
+  'id="pl-master-edit-brand-name"',
+  'id="pl-master-edit-brand-id"',
+  'Shopee category ID',
+  'Shopee brand',
+]) {
+  assert(!modalHtml.includes(removedToken), `master edit modal still exposes platform-specific field: ${removedToken}`);
 }
 
 for (const token of [
@@ -50,11 +58,22 @@ for (const token of [
   'plMasterEditReadOptionPatches(rows)',
   'variation_option_names',
   'main_image',
-  'extra_images',
   'shopee_days_to_ship',
   'shopee_extra_attributes',
+  'shopee_category_id: rows[0]?.shopee_category_id || 101390',
+  'shopee_brand_id: rows[0]?.shopee_brand_id ?? 0',
+  "shopee_brand_name: rows[0]?.shopee_brand_name || 'No Brand'",
 ]) {
   assert(editCode.includes(token), `master edit draft save/open flow missing token: ${token}`);
+}
+
+for (const removedToken of [
+  "document.getElementById('pl-master-edit-category')",
+  "document.getElementById('pl-master-edit-brand-id')",
+  "document.getElementById('pl-master-edit-brand-name')",
+  'extra_images',
+]) {
+  assert(!editCode.includes(removedToken), `master edit save/open flow still reads removed field: ${removedToken}`);
 }
 
 console.log('v2 master edit draft modal checks passed');

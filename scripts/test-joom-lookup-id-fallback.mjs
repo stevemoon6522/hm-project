@@ -15,6 +15,7 @@ for (const [label, source] of [['supabase', joomBridge], ['edge mirror', edgeJoo
 
 assert.match(platformPublish, /joom_product_id, joom_variant_id, joom_currency/, 'platform-publish must select stored Joom mapping fields for sync fallback');
 assert.match(joomAdapter, /id: s\(ctx\.masterProduct\.joom_product_id\)/, 'Joom platform adapter must send stored joom_product_id to lookup-sku');
+assert.match(joomAdapter, /trustedStoredMapping = fallbackStoredJoomMapping/, 'Joom platform adapter must trust stored Joom IDs before bridge lookup so grouped options do not emit false lookup failures');
 assert.match(joomAdapter, /fallbackStoredJoomMapping/, 'Joom platform adapter must fall back to stored Joom IDs when bridge lookup misses but product.joom_product_id is known');
 assert.match(joomAdapter, /joom_lookup_fallback: 'stored_joom_product_id'/, 'Joom stored-ID fallback must be auditable in absorbed raw payload');
 assert.match(joomAdapter, /platformItemId: storedProductId/, 'Joom stored-ID fallback must still populate platform_item_id for platform_listings');

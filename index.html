@@ -1244,25 +1244,7 @@
 
     <textarea id="srm-desc-custom" style="display:none"></textarea>
 
-    <div class="field">
-      <label>카테고리 <span style="color:#5a5a66;font-size:10px;">(KRSC global_categories에서 동적 로드)</span></label>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <input type="text" id="srm-category-search" placeholder="검색 (예: album, photocard, idol)..." style="flex:1;padding:6px 8px;border:1px solid #d8d8e0;border-radius:3px;font-size:12px;background:#fafafc;color:#0a0a0c;">
-        <button type="button" id="srm-category-refresh" class="btn" style="padding:6px 10px;font-size:11px;">🔄 새로고침</button>
-      </div>
-      <select id="srm-category" size="6" style="width:100%;margin-top:6px;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:6px;border-radius:3px;font-size:12px;font-family:var(--mono);">
-        <option value="101390">⏳ 로딩 중... (fallback: 101390 Idol Collectibles)</option>
-      </select>
-    </div>
-    <div class="field">
-      <label>브랜드 <span style="color:#5a5a66;font-size:10px;">(카테고리 선택 후 자동 로드)</span></label>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <input type="text" id="srm-brand-search" placeholder="브랜드명 검색 (예: HYBE, JYP, SM)..." style="flex:1;padding:6px 8px;border:1px solid #d8d8e0;border-radius:3px;font-size:12px;background:#fafafc;color:#0a0a0c;">
-        <select id="srm-brand" style="width:240px;padding:6px;border:1px solid #d8d8e0;border-radius:3px;background:#fafafc;color:#0a0a0c;font-size:12px;">
-          <option value="0|No Brand">No Brand</option>
-        </select>
-      </div>
-    </div>
+
     <div class="field">
       <label>Category Attributes (optional JSON)</label>
       <textarea id="srm-attrs-json" rows="3" placeholder='[{"attribute_id":100037,"attribute_value_list":[{"original_value_name":"South Korea"}]}]' style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-family:inherit;font-size:12px;resize:vertical;"></textarea>
@@ -6589,57 +6571,6 @@ function _shopeeBuildDescription({ artist, album, contentsRaw, userDesc, name })
   return lines.join('\n').trim();
 }
 
-let _shopeeCategoryCache = null;
-let _shopeeBrandCache = {}; // keyed by category_id
-
-async function _shopeeLoadCategories(forceRefresh = false) {
-  if (_shopeeCategoryCache && !forceRefresh) return _shopeeCategoryCache;
-  const headers = await _joomAuthHeaders();
-  const r = await fetch(SHOPEE_MERCHANT + '/global_categories', { headers });
-  const j = await r.json();
-  const list = j?.result?.response?.category_list || j?.result?.response?.list || [];
-  // Each entry typically has: category_id, parent_category_id, original_category_name, display_category_name, has_children
-  const leaves = list.filter(c => !c.has_children);
-  _shopeeCategoryCache = leaves.length > 0 ? leaves : list;
-  return _shopeeCategoryCache;
-}
-
-function _shopeeRenderCategoryOptions(query = '') {
-  const sel = document.getElementById('srm-category');
-  if (!sel) return;
-  const q = String(query || '').toLowerCase().trim();
-  const list = _shopeeCategoryCache || [];
-  const filtered = q ? list.filter(c => `${c.original_category_name || ''} ${c.display_category_name || ''}`.toLowerCase().includes(q)) : list;
-  const top = filtered.slice(0, 100);
-  sel.innerHTML = top.map(c => {
-    const name = c.display_category_name || c.original_category_name || `cat_${c.category_id}`;
-    return `<option value="${c.category_id}">${c.category_id} · ${_shpAttrEsc(name)}</option>`;
-  }).join('') || '<option value="">검색 결과 없음</option>';
-}
-
-async function _shopeeLoadBrandsForCategory(category_id, forceRefresh = false) {
-  if (!category_id) return [];
-  if (_shopeeBrandCache[category_id] && !forceRefresh) return _shopeeBrandCache[category_id];
-  const headers = await _joomAuthHeaders();
-  const r = await fetch(SHOPEE_MERCHANT + '/global_brands?category_id=' + encodeURIComponent(category_id), { headers });
-  const j = await r.json();
-  const list = j?.result?.response?.brand_list || [];
-  _shopeeBrandCache[category_id] = list;
-  return list;
-}
-
-function _shopeeRenderBrandOptions(query = '') {
-  const sel = document.getElementById('srm-brand');
-  if (!sel) return;
-  const cat = document.getElementById('srm-category')?.value;
-  const list = _shopeeBrandCache[cat] || [];
-  const q = String(query || '').toLowerCase().trim();
-  const filtered = q ? list.filter(b => `${b.original_brand_name || ''} ${b.display_brand_name || ''}`.toLowerCase().includes(q)) : list;
-  const top = filtered.slice(0, 200);
-  const items = ['<option value="0|No Brand">No Brand</option>']
-    .concat(top.map(b => `<option value="${b.brand_id}|${_shpAttrEsc(b.original_brand_name || '')}">${_shpAttrEsc(b.original_brand_name || '')}</option>`));
-  sel.innerHTML = items.join('');
-}
 
 async function openShopeeRegModal(row) {
   _shopeeRegRow = row;
@@ -6678,14 +6609,6 @@ async function openShopeeRegModal(row) {
   });
 
   modal.classList.add('show');
-
-  // Kick off KRSC global_categories load (non-blocking)
-  (async () => {
-    try {
-      await _shopeeLoadCategories();
-      _shopeeRenderCategoryOptions(document.getElementById('srm-category-search')?.value || '');
-    } catch (_) { /* keep fallback option */ }
-  })();
 
   if (!row.staronemallUrl) {
     previewMsg.textContent = 'Staronemall URL 없음 — 이미지 없이 진행 가능';
@@ -6746,9 +6669,6 @@ async function _shopeeRegSubmit() {
   const namePrefix = document.getElementById('srm-name-prefix').value.trim();
   const nameBody = document.getElementById('srm-name-body').value.trim();
   const name = (namePrefix + ' ' + nameBody).trim();
-  const category_id = document.getElementById('srm-category').value;
-  const brandRaw = (document.getElementById('srm-brand')?.value || '0|No Brand').split('|');
-  const brand = { brand_id: Number(brandRaw[0] || 0), original_brand_name: brandRaw[1] || 'No Brand' };
   const stock = parseInt(document.getElementById('srm-stock').value) || 0;
   const fallbackWeightKg = Math.max(0.01, Number(document.getElementById('srm-weight-kg')?.value || 0.10));
   const _readRegionDts = (code) => {
@@ -6882,10 +6802,8 @@ async function _shopeeRegSubmit() {
         stock,
         weight_g: primaryTarget.weight_g || (fallbackWeightKg * 1000),
         days_to_ship: primaryTarget.days_to_ship || 4,
-        category_id,
         image_id,
         description,
-        brand,
         attribute_list: [{ attribute_id: 100037, attribute_value_list: [{ original_value_name: 'South Korea' }] }].concat(extraAttrs),
         variation: primaryTarget.variation || null,
         targets: targetPayloads,
@@ -6982,26 +6900,6 @@ async function _shopeeRegSubmit() {
     refreshVariationSummary();
     _renderShopeeVariationTable();
 
-    // Category dynamic loading
-    const catSearch = document.getElementById('srm-category-search');
-    const catSelect = document.getElementById('srm-category');
-    const catRefresh = document.getElementById('srm-category-refresh');
-    const brandSearch = document.getElementById('srm-brand-search');
-    catSearch?.addEventListener('input', e => _shopeeRenderCategoryOptions(e.target.value));
-    catRefresh?.addEventListener('click', async () => {
-      catSelect.innerHTML = '<option>로딩 중...</option>';
-      try { await _shopeeLoadCategories(true); _shopeeRenderCategoryOptions(catSearch?.value || ''); }
-      catch (e) { catSelect.innerHTML = '<option value="101390">로드 실패 (fallback 101390)</option>'; }
-    });
-    catSelect?.addEventListener('change', async () => {
-      const cat = catSelect.value;
-      if (!cat) return;
-      try {
-        await _shopeeLoadBrandsForCategory(cat);
-        _shopeeRenderBrandOptions(brandSearch?.value || '');
-      } catch (_) { /* keep No Brand fallback */ }
-    });
-    brandSearch?.addEventListener('input', e => _shopeeRenderBrandOptions(e.target.value));
   };
   init();
 })();

@@ -113,7 +113,9 @@ function normalizeItem(row: any) {
 
 function normalizeInventory(row: any) {
   return {
-    itemTypeCode: firstNonEmpty(row?.ItemTypeCode, row?.itemTypeCode, row?.OptionCode, row?.optionCode, row?.SellerOptionCode, row?.sellerOptionCode),
+    // Qoo10 OptionCode can be an internal option identifier. Only seller-code
+    // fields are allowed to satisfy a master SKU match.
+    itemTypeCode: firstNonEmpty(row?.ItemTypeCode, row?.itemTypeCode, row?.SellerOptionCode, row?.sellerOptionCode),
     optionCode: firstNonEmpty(row?.OptionCode, row?.optionCode),
     name1: firstNonEmpty(row?.Name1, row?.name1, row?.Name, row?.name),
     value1: firstNonEmpty(row?.Value1, row?.value1, row?.Value, row?.value),
@@ -157,12 +159,12 @@ async function fetchInventoryByItemCode(itemCode: string) {
 async function lookupByKnownItemCode(sku: string, itemCode: string) {
   const inventory = await fetchInventoryByItemCode(itemCode);
   if (!inventory.ok) return null;
-  const match = inventory.rows.find((row: any) => sameSku(row.itemTypeCode, sku) || sameSku(row.optionCode, sku));
+  const match = inventory.rows.find((row: any) => sameSku(row.itemTypeCode, sku));
   if (!match) return null;
   return {
     goods_no: itemCode,
     seller_code: sku,
-    option_code: match.itemTypeCode || match.optionCode || sku,
+    option_code: match.itemTypeCode || sku,
     option_name: [match.value1, match.value2].filter(Boolean).join(" / ") || null,
     status: "listed",
     match_type: "option_item_type_code",
@@ -258,6 +260,7 @@ async function handleLookupSku(sku: string, itemCodeParam = ""): Promise<Respons
   return jsonResp({
     ok: true,
     sku: cleanSku,
+    verified_sku: cleanSku,
     goods_no: hit.goods_no,
     seller_code: hit.seller_code || cleanSku,
     option_code: hit.option_code || null,

@@ -17646,6 +17646,56 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return FEE_COUNTRY_LABELS[code] || code;
     }
 
+    const EBAY_SHIPPING_BASELINE_1KG_COUNTRIES = [
+      { code: 'US', name: '미국', note: 'Domestic shipping · 미국직항 일반화물 기준' },
+      { code: 'GB', name: '영국' },
+      { code: 'FR', name: '프랑스' },
+      { code: 'ES', name: '스페인' },
+      { code: 'SE', name: '스웨덴' },
+      { code: 'BG', name: '불가리아' },
+      { code: 'SG', name: '싱가포르' },
+      { code: 'AU', name: '호주' },
+      { code: 'NZ', name: '뉴질랜드' },
+      { code: 'JP', name: '일본' },
+      { code: 'HK', name: '홍콩' },
+      { code: 'MO', name: '마카오' },
+    ];
+    const EBAY_SHIPPING_HIGHER_RATE_1KG_COUNTRIES = [
+      { code: 'DE', name: '독일' }, { code: 'IT', name: '이탈리아' },
+      { code: 'NL', name: '네덜란드' }, { code: 'PL', name: '폴란드' },
+      { code: 'PT', name: '포르투갈' }, { code: 'IE', name: '아일랜드' },
+      { code: 'FI', name: '핀란드' }, { code: 'CH', name: '스위스' },
+      { code: 'LU', name: '룩셈부르크' }, { code: 'AT', name: '오스트리아' },
+      { code: 'BE', name: '벨기에' }, { code: 'CZ', name: '체코' },
+      { code: 'HU', name: '헝가리' }, { code: 'DK', name: '덴마크' },
+      { code: 'NO', name: '노르웨이' }, { code: 'GR', name: '그리스' },
+      { code: 'MT', name: '몰타' }, { code: 'LT', name: '리투아니아' },
+      { code: 'LV', name: '라트비아' }, { code: 'RO', name: '루마니아' },
+      { code: 'SI', name: '슬로베니아' }, { code: 'SK', name: '슬로바키아' },
+      { code: 'HR', name: '크로아티아' }, { code: 'EE', name: '에스토니아' },
+      { code: 'CY', name: '키프로스' }, { code: 'IL', name: '이스라엘' },
+      { code: 'CA', name: '캐나다' }, { code: 'MX', name: '멕시코' },
+      { code: 'BR', name: '브라질' }, { code: 'CL', name: '칠레' },
+      { code: 'CO', name: '콜롬비아' }, { code: 'SA', name: '사우디아라비아' },
+      { code: 'AE', name: '아랍에미리트' },
+    ];
+    function renderEbayShippingPhase1Summary() {
+      const chip = function(c) {
+        return '<span class="badge" title="' + (c.note || '') + '"><code>' + c.code + '</code> ' + c.name + '</span>';
+      };
+      return '<div class="notice ok" style="margin:0 0 14px 0;">' +
+        '<b>eBay 배송 Phase 1</b> · 1kg 이하 기준은 미국직항 일반화물 운임을 상품가에 포함합니다. ' +
+        'Seller Hub Shipping policy는 <code>US + baseline countries only</code>로 세팅하고 higher-rate 국가는 rate table 전까지 제외하세요.' +
+        '</div>' +
+        '<div class="panel" style="padding:12px;margin-bottom:14px;background:rgba(255,255,255,0.02);">' +
+        '<div style="font-size:12px;font-weight:700;margin-bottom:8px;">1kg 이하 기준 배송 가능 국가</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + EBAY_SHIPPING_BASELINE_1KG_COUNTRIES.map(chip).join('') + '</div>' +
+        '<div style="font-size:12px;font-weight:700;margin:14px 0 8px;">higher-rate 제외/보류 국가</div>' +
+        '<div style="display:flex;gap:6px;flex-wrap:wrap;">' + EBAY_SHIPPING_HIGHER_RATE_1KG_COUNTRIES.map(chip).join('') + '</div>' +
+        '<div class="fee-hint" style="margin-top:10px;">DB seed: <code>ebay_shipping_country_groups</code>, <code>ebay_shipping_country_rates</code>. Phase 2에서 국가/weight별 surcharge 또는 rate table matrix로 확장합니다.</div>' +
+        '</div>';
+    }
+
     let feeActiveCountry = 'SG';
     // In-memory cache of loaded rows: { [code]: {...db row fields} }
     let feeRows = {};
@@ -17691,6 +17741,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }).join('');
 
       panelEl.innerHTML =
+        (feeActiveCountry === 'EX' ? renderEbayShippingPhase1Summary() : '') +
         '<div class="fee-grid-v2">' + fieldsHtml + '</div>' +
         '<div class="fee-save-bar">' +
         '<span class="fee-save-status" id="fee-save-status">변경 사항은 자동 저장됩니다</span>' +

@@ -47,6 +47,27 @@ function mapJoomStatus(raw: any): AdapterResult['listingStatus'] {
   return 'not_listed';
 }
 
+function fallbackStoredJoomMapping(ctx: BridgeContext, raw: any): AdapterResult | null {
+  const storedProductId = s(ctx.masterProduct.joom_product_id).trim();
+  if (!storedProductId) return null;
+  const storedVariantId = s(ctx.masterProduct.joom_variant_id || ctx.masterProduct.sku).trim();
+  return {
+    ok: true,
+    platformItemId: storedProductId,
+    listingStatus: 'listed',
+    rawResponse: {
+      ok: true,
+      joom_lookup_fallback: 'stored_joom_product_id',
+      joom_product_id: storedProductId,
+      joom_variant_id: storedVariantId,
+      joom_currency: s(ctx.masterProduct.joom_currency || 'USD'),
+      sku: s(ctx.masterProduct.sku),
+      bridge_lookup_error: raw?.error || raw?.message || null,
+      bridge_lookup_detail: raw?.lookup_error_detail || null,
+    },
+  };
+}
+
 async function bridgePost(action: string, body: Record<string, unknown>, userToken: string): Promise<{ status: number; raw: any }> {
   const res = await fetch(`${SUPABASE_URL}/functions/v1/joom-bridge/${action}`, {
     method: 'POST',
@@ -150,6 +171,8 @@ async function syncListing(ctx: BridgeContext): Promise<AdapterResult> {
       rawResponse: raw,
     };
   }
+  const storedFallback = fallbackStoredJoomMapping(ctx, raw);
+  if (storedFallback && mapBridgeError(status, raw) === 'PLATFORM_NOT_FOUND') return storedFallback;
   return {
     ok: false,
     listingStatus: 'not_listed',

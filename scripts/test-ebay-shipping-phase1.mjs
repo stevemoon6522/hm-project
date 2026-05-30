@@ -44,6 +44,7 @@ assert.match(html, /EBAY_SHIPPING_HIGHER_RATE_1KG_COUNTRIES/, 'V2 exposes higher
 assert.match(html, /renderEbayShippingPhase1Summary/, 'V2 renders eBay shipping phase-1 summary');
 assert.match(html, /1kg 이하 기준 배송 가능 국가/, 'V2 labels baseline countries for operators');
 assert.match(html, /higher-rate 제외\/보류 국가/, 'V2 labels excluded higher-rate countries');
-assert.match(html, /US \+ baseline countries only/, 'V2 includes Seller Hub policy checklist wording');
+assert.match(html, /Domestic shipping = free/, 'V2 includes Seller Hub domestic free policy wording');
+assert.match(html, /국가별 extra = 미국 대비 차액/, 'V2 includes country delta surcharge policy wording');
 
 console.log('eBay shipping phase-1 tests passed');

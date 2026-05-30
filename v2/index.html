@@ -16991,15 +16991,50 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     // eBay listing price formula — cloned from _v2JoomCalcSgListing (same math)
-    // country_settings 'EX' row provides exchange_rate=USD KRW, Final Value Fee 15.3%, International Fee 1.45%
-    // shipping: eBay ships fee is handled by policy (free shipping ON listing);
-    //   for price calc, use flat 0 (buyer pays per eBay International Shipping account setting)
+    // country_settings 'EX' row provides exchange_rate=USD KRW, Final Value Fee 15.3%, International Fee 1.45%.
+    // Shipping model: US direct baseline shipping is embedded into item price so EBAY_US domestic shipping = free;
+    // country-specific international shipping policy should charge only the extra delta vs US baseline.
+    const EBAY_US_DIRECT_SHIPPING_RATES_KRW = {
+      100: 7200,
+      200: 8900,
+      300: 10500,
+      400: 12300,
+      500: 14400,
+      600: 15800,
+      700: 17200,
+      800: 18500,
+      900: 19900,
+      1000: 20700,
+    };
+    function _v2EbayShippingWeightBucketG(weightG) {
+      const w = Number(weightG) || 0;
+      if (w <= 0) return 0;
+      if (w <= 1000) return Math.ceil(w / 100) * 100;
+      return 1000;
+    }
+    function _v2EbayGetShippingRateKrw(countryCode, weightG) {
+      const bucket = _v2EbayShippingWeightBucketG(weightG);
+      if (!bucket) return 0;
+      if (String(countryCode || '').toUpperCase() === 'US') return EBAY_US_DIRECT_SHIPPING_RATES_KRW[bucket] || 0;
+      return 0;
+    }
+    function _v2EbayBuildPricingContext(costKrw, weightG, c) {
+      const weightBucketG = _v2EbayShippingWeightBucketG(weightG);
+      const usShippingKrw = _v2EbayGetShippingRateKrw('US', weightG);
+      const exchangeRate = Number(c?.exchangeRate || 0);
+      const usShippingUsd = exchangeRate > 0 ? usShippingKrw / exchangeRate : 0;
+      const priceUsd = _v2EbayCalcUsdListing(costKrw, weightG, c);
+      return { priceUsd, weightBucketG, usShippingKrw, usShippingUsd };
+    }
     function _v2EbayCalcUsdListing(costKrw, weightG, c) {
       if (!costKrw || costKrw <= 0) return 0;
-      // No KSE/Joom ship-fee table — eBay shipping embedded in policy; use 0 for listing
-      const shipping = 0;
+      const exchangeRate = Number(c?.exchangeRate || 0);
+      if (!exchangeRate || exchangeRate <= 0) return 0;
+      const usShippingKrw = _v2EbayGetShippingRateKrw('US', weightG);
+      if (!usShippingKrw) return 0;
+      const shipping = usShippingKrw / exchangeRate;
       const effectiveCost = costKrw * (1 - (c.purchaseVat || 0) / 100);
-      const settlementLocal = effectiveCost / c.exchangeRate;
+      const settlementLocal = effectiveCost / exchangeRate;
       const cr = c.salesFee / 100;
       const vr = c.gst / 100;
       const sales_pg    = c.pgFee / 100;
@@ -17337,7 +17372,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       try { exCountry = await _v2LoadEbayExCountry(); } catch (e) { showToast('eBay 가격 설정 로드 실패: ' + (e.message || e), 'err'); return; }
 
       const weightG = Number(firstRow._weight_g || firstRow.weight_g || 0);
-      const priceUsd = _v2EbayCalcUsdListing(costKrw, weightG, exCountry);
+      if (weightG <= 0) {
+        showToast('eBay 등록에는 마스터 상품 무게가 필요합니다. Master 상품의 weight_g를 먼저 입력하세요.', 'err');
+        return;
+      }
+      const ebayPricing = _v2EbayBuildPricingContext(costKrw, weightG, exCountry);
+      const priceUsd = ebayPricing.priceUsd;
       if (priceUsd < 1.0) {
         showToast(`계산된 eBay 가격 $${priceUsd.toFixed(2)} 가 너무 낮습니다. 매입가 또는 country_settings EX를 확인하세요.`);
         return;
@@ -17386,6 +17426,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         `[eBay 발행] 상품 설명(영문, 최대 4000자)을 입력하세요:\n` +
         `제목: ${title}\n` +
         `계산 가격: $${priceUsd.toFixed(2)}\n` +
+        `미국 기준 배송비: ${ebayPricing.usShippingKrw.toLocaleString()}원 / $${ebayPricing.usShippingUsd.toFixed(2)} (${ebayPricing.weightBucketG}g bucket, 상품가 포함)\n` +
         `SKU: ${activeSku}\n\n` +
         `설명:`
       );
@@ -17425,6 +17466,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             quantity: 50,
             categoryId: String(categoryId),
             weightG: weightG || 0,
+            weightBucketG: ebayPricing.weightBucketG,
+            usShippingKrw: ebayPricing.usShippingKrw,
+            usShippingUsd: Number(ebayPricing.usShippingUsd.toFixed(2)),
             marketplaceId: 'EBAY_US',
           }),
         });
@@ -17684,8 +17728,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         return '<span class="badge" title="' + (c.note || '') + '"><code>' + c.code + '</code> ' + c.name + '</span>';
       };
       return '<div class="notice ok" style="margin:0 0 14px 0;">' +
-        '<b>eBay 배송 Phase 1</b> · 1kg 이하 기준은 미국직항 일반화물 운임을 상품가에 포함합니다. ' +
-        'Seller Hub Shipping policy는 <code>US + baseline countries only</code>로 세팅하고 higher-rate 국가는 rate table 전까지 제외하세요.' +
+        '<b>eBay 배송 정책</b> · 마스터 무게로 미국직항 일반화물 운임을 계산해 eBay 상품가에 포함합니다. ' +
+        '<code>Domestic shipping = free</code>, <code>국가별 extra = 미국 대비 차액</code> 기준으로 Seller Hub Shipping policy/rate table을 운영하세요.' +
         '</div>' +
         '<div class="panel" style="padding:12px;margin-bottom:14px;background:rgba(255,255,255,0.02);">' +
         '<div style="font-size:12px;font-weight:700;margin-bottom:8px;">1kg 이하 기준 배송 가능 국가</div>' +

@@ -104,7 +104,9 @@ async function updateRow(id, url) {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/products?id=eq.${id}`, {
     method: 'PATCH',
     headers: writeHeaders,
-    body: JSON.stringify({ shopee_option_image_url: url, updated_at: new Date().toISOString() }),
+    // Import sets both columns to the per-option image (v2/index.html:4292,4299):
+    // main_image is what the master-edit UI shows; shopee_option_image_url feeds publish.
+    body: JSON.stringify({ main_image: url, shopee_option_image_url: url, updated_at: new Date().toISOString() }),
   });
   if (!r.ok) throw new Error(`update ${id} failed ${r.status}: ${await r.text()}`);
 }
@@ -138,11 +140,11 @@ async function main() {
         console.warn(`  ? ${row.sku} (${row.option_name}): no option image resolved`);
         continue;
       }
-      if (newUrl === row.shopee_option_image_url) {
+      if (newUrl === row.main_image && newUrl === row.shopee_option_image_url) {
         unchanged += 1;
         continue;
       }
-      console.log(`  ${apply ? '~' : 'DRY'} ${row.sku} (${row.option_name}): ${String(row.shopee_option_image_url).slice(-22)} -> ${newUrl.slice(-22)}`);
+      console.log(`  ${apply ? '~' : 'DRY'} ${row.sku} (${row.option_name}): ${String(row.main_image).slice(-22)} -> ${newUrl.slice(-22)}`);
       if (apply) {
         try {
           await updateRow(row.id, newUrl);

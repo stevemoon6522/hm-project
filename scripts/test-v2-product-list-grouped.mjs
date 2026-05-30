@@ -78,7 +78,8 @@ assert(
 );
 assert(
   productList.includes("isVariantRow ? '<span class=\"muted\"")
-    && productList.includes('data-open="${text(p.id)}"'),
+    && !productList.includes('data-open="${text(p.id)}"')
+    && productList.includes('data-open-shopee-single="${text(p.id)}"'),
   'variant option rows must not show the legacy Register button',
 );
 assert(

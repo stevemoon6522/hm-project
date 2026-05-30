@@ -1509,7 +1509,6 @@
     <div class="nav-tabs">
       <button class="nav-tab" onclick="showView('view-register')">📦 상품 등록</button>
       <button class="nav-tab" onclick="showView('view-products')">📋 상품 목록</button>
-      <button class="nav-tab" onclick="showView('view-pre-order')">🔖 PRE ORDER</button>
       <button class="nav-tab" onclick="showView('view-price-sync')">💰 가격 동기화</button>
       <button class="nav-tab" onclick="showView('view-coverage')">🧭 플랫폼 커버리지</button>
       <button class="nav-tab" onclick="showView('view-daily-close')">🌙 일일 마감</button>
@@ -2191,6 +2190,7 @@
         </div>
         <button id="refresh">Refresh</button>
         <button id="pl-sync-platform-skus" type="button" style="font-size:12px;padding:6px 10px;" title="Shopee/Joom/Qoo10/eBay SKU 등록 여부를 다시 확인하고 플랫폼 신호등을 갱신">🔁 플랫폼 SKU 동기화</button>
+        <button id="po-ready-stock-open" type="button" class="po-ready-stock-open" style="display:none;font-size:12px;padding:6px 10px;">READY STOCK 전환</button>
         <button id="pl-select-empty-sku" type="button" style="font-size:12px;padding:6px 10px;" title="SKU가 비어있는 모든 행을 선택">∅ 빈 SKU 선택</button>
         <span style="margin-left:auto;font-size:12px;color:var(--muted);" id="pl-selected-count">선택 0건</span>
         <button id="pl-bulk-delete" type="button" style="font-size:12px;padding:6px 12px;background:#fee2e2;color:#991b1b;" disabled>🗑 선택 삭제</button>
@@ -2217,6 +2217,7 @@
           </tbody>
         </table>
       </div>
+      <div id="pl-ready-stock-panel-host"></div>
     </div><!-- /view-products -->
 
     <!-- ═══════════════════════════════════════════════
@@ -2235,7 +2236,6 @@
           <option value="unpublished">Region 미발행 많은 순</option>
         </select>
         <button id="po-refresh" type="button">새로고침</button>
-        <button id="po-ready-stock-open" type="button" class="po-ready-stock-open">READY STOCK 전환</button>
         <span id="po-count" style="font-size:12px;font-weight:600;color:var(--accent);white-space:nowrap;"></span>
         <span id="po-error" class="status err" style="display:none;"></span>
       </div>
@@ -4617,9 +4617,8 @@ LEGACY END -->
     els.productBody.innerHTML = plBuildProductGroups(rows).map((group) => (
       group.isGrouped ? renderProductGroup(group) : renderProductOptionRow(group.rows[0], group.key, false)
     )).join('');
-    els.productBody.querySelectorAll('[data-open]').forEach((btn) => {
-      // Phase B: route to new 2-stage modal; legacy openModal kept below for reference
-      btn.addEventListener('click', () => openRegisterShopeeModal(btn.dataset.open));
+    els.productBody.querySelectorAll('[data-open-shopee-single]').forEach((btn) => {
+      btn.addEventListener('click', () => openRegisterShopeeModal(btn.dataset.openShopeeSingle));
     });
     els.productBody.querySelectorAll('[data-open-shopee-group]').forEach((btn) => {
       btn.addEventListener('click', () => openRegisterShopeeGroupModal(btn.dataset.openShopeeGroup));
@@ -4711,6 +4710,19 @@ LEGACY END -->
       btn.classList.toggle('is-active', active);
       btn.setAttribute('aria-pressed', active ? 'true' : 'false');
     });
+    updateProductListReadyStockButton(value);
+  }
+
+  function updateProductListReadyStockButton(lifecycleFilter) {
+    const btn = document.getElementById('po-ready-stock-open');
+    if (!btn) return;
+    btn.style.display = String(lifecycleFilter || 'all') === 'pre_order' ? '' : 'none';
+  }
+
+  function ensureReadyStockPanelInProductList() {
+    const host = document.getElementById('pl-ready-stock-panel-host');
+    const panel = document.getElementById('po-ready-stock-panel');
+    if (host && panel && panel.parentElement !== host) host.appendChild(panel);
   }
 
   function plProductIdsFromDataset(value) {
@@ -4893,15 +4905,22 @@ LEGACY END -->
     return groupHtml + rows.map((row) => renderProductOptionRow(row, group.key, true)).join('');
   }
 
+  function plMasterEditTargetKey(product) {
+    return String(product?.product_group_id || product?.id || '').trim();
+  }
+
   function renderProductOptionRow(p, groupKey, isGroupChild) {
     const isVariantRow = plIsGroupedVariant(p);
     const optionDisplay = plOptionDisplay(p);
     const productName = plProductName(p);
+    const editButton = !isGroupChild
+      ? `<button type="button" class="pl-master-edit" data-edit-master="${text(plMasterEditTargetKey(p))}" title="마스터 상품 데이터 수정">수정</button>`
+      : '';
     const nameDisplay = isGroupChild
       ? `<span class="pl-option-title">${text(optionDisplay || '옵션')}</span>`
       : (isVariantRow && optionDisplay
         ? `<span class="pl-product-title">${text(productName)}</span><span class="muted" style="font-size:11px;">옵션: ${text(optionDisplay)}</span>`
-        : `<span class="pl-product-title">${text(productName)}</span>`);
+        : `<span class="pl-master-title-row"><span class="pl-product-title">${text(productName)}</span>${editButton}</span>`);
     const rowClass = isGroupChild ? 'pl-option-row' : (isVariantRow ? '' : 'pl-single-product-row');
     return `
       <tr class="${rowClass}" data-product-id="${text(p.id)}" data-product-group-key="${text(groupKey)}">
@@ -4915,13 +4934,18 @@ LEGACY END -->
         </td>
         <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.cost_krw || 0).toLocaleString()}</td>
         <td class="mono pl-edit" data-field="weight_g" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.weight_g || 0).toLocaleString()}</td>
-        <td style="text-align:center;">${platformLedCell(p.id, 'shopee')}</td>
+        <td class="pl-platform-cell">
+          <div class="pl-shopee-cell">
+            ${platformLedCell(p.id, 'shopee')}
+            ${(!isVariantRow && !isGroupChild) ? `<button type="button" data-open-shopee-single="${text(p.id)}" class="pl-shopee-register" title="Shopee 등록" aria-label="Shopee 등록">📤</button>` : ''}
+          </div>
+        </td>
         <td style="text-align:center;">${platformLedCell(p.id, 'joom')}</td>
         <td style="text-align:center;">${platformLedCell(p.id, 'qoo10')}</td>
         <td style="text-align:center;">${platformLedCell(p.id, 'ebay')}</td>
         <td style="text-align:center;">${platformLedCell(p.id, 'alibaba')}</td>
         <td style="white-space:nowrap;">
-          ${isVariantRow ? '<span class="muted" style="font-size:11px;">옵션</span>' : `<button type="button" data-open="${text(p.id)}" class="primary" style="font-size:11px;padding:4px 8px;">Register</button>`}
+          ${isVariantRow ? '<span class="muted" style="font-size:11px;">옵션</span>' : '<span class="muted" style="font-size:11px;">단품</span>'}
           <button type="button" data-delete="${text(p.id)}" data-sku="${text(p.sku || '')}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">🗑</button>
         </td>
       </tr>
@@ -5032,8 +5056,11 @@ LEGACY END -->
                   <input data-field="weight_g" type="number" min="1" step="1" value="${text(String(Number(row.weight_g || 0) || ''))}" style="width:80px;text-align:right;font-size:12px;padding:4px 6px;">
                 </td>
                 <td style="padding:6px;border-bottom:1px solid var(--border);">
-                  <input data-field="main_image" type="url" value="${text(row.main_image || '')}" placeholder="https://..." style="width:260px;font-size:12px;padding:4px 6px;">
-                  <div style="margin-top:6px;">${plMasterEditRenderImagePreview(row.main_image ? [row.main_image] : [], '옵션 이미지 URL 없음')}</div>
+                  <div style="display:flex;gap:6px;align-items:center;">
+                    <input data-field="main_image" type="url" value="${text(row.main_image || '')}" placeholder="https://..." style="width:260px;font-size:12px;padding:4px 6px;">
+                    <button type="button" data-clear-option-image="1" style="font-size:11px;padding:4px 8px;background:#f1f5f9;color:#475569;">제거</button>
+                  </div>
+                  <div data-option-image-preview="1" style="margin-top:6px;">${plMasterEditRenderImagePreview(row.main_image ? [row.main_image] : [], '옵션 이미지 URL 없음')}</div>
                 </td>
               </tr>
             `;
@@ -5043,9 +5070,37 @@ LEGACY END -->
     `;
   }
 
+
+
+  function plMasterEditRefreshOptionImagePreview(tr) {
+    const input = tr?.querySelector('[data-field="main_image"]');
+    const preview = tr?.querySelector('[data-option-image-preview]');
+    if (!preview) return;
+    const url = String(input?.value || '').trim();
+    preview.innerHTML = plMasterEditRenderImagePreview(url ? [url] : [], '옵션 이미지 URL 없음');
+    const rows = plGroupRowsById(document.getElementById('pl-master-edit-modal')?.dataset.productGroupId || '');
+    if (rows.length) plMasterEditRenderImageSummary(rows);
+  }
+
+  function plMasterEditBindOptionImageControls() {
+    document.querySelectorAll('#pl-master-edit-options tr[data-product-id]').forEach((tr) => {
+      const input = tr.querySelector('[data-field="main_image"]');
+      const clearBtn = tr.querySelector('[data-clear-option-image="1"]');
+      input?.addEventListener('input', () => plMasterEditRefreshOptionImagePreview(tr));
+      clearBtn?.addEventListener('click', () => {
+        if (input) input.value = '';
+        plMasterEditRefreshOptionImagePreview(tr);
+      });
+    });
+  }
+
   async function openProductMasterEditModal(productGroupId) {
     const groupId = String(productGroupId || '').trim();
     let rows = plGroupRowsById(groupId);
+    if (!rows.length) {
+      const single = (state.products || []).find((p) => String(p.id) === groupId);
+      if (single) rows = [single];
+    }
     if (!rows.length) {
       showToast('수정할 마스터 상품 묶음을 찾지 못했습니다.', 'err');
       return;
@@ -5053,10 +5108,9 @@ LEGACY END -->
     const overlay = document.getElementById('pl-master-edit-modal');
     if (!overlay) return;
     try {
-      const { data, error } = await db
-        .from('products')
-        .select(RSH_PRODUCT_SELECT)
-        .eq('product_group_id', groupId);
+      let query = db.from('products').select(RSH_PRODUCT_SELECT);
+      query = rows.length === 1 && !rows[0]?.product_group_id ? query.eq('id', rows[0].id) : query.eq('product_group_id', groupId);
+      const { data, error } = await query;
       if (error) throw error;
       if (Array.isArray(data) && data.length) {
         rows = rshSortedProducts(data);
@@ -5089,6 +5143,7 @@ LEGACY END -->
     if (attrsInput) attrsInput.value = plMasterEditJsonText(first.shopee_extra_attributes, []);
     plMasterEditRenderImageSummary(rows);
     plMasterEditRenderOptions(rows);
+    plMasterEditBindOptionImageControls();
     const err = document.getElementById('pl-master-edit-error');
     if (err) { err.textContent = ''; err.style.display = 'none'; }
     overlay.classList.add('show');
@@ -5130,7 +5185,11 @@ LEGACY END -->
   async function saveProductMasterEditModal() {
     const overlay = document.getElementById('pl-master-edit-modal');
     const groupId = overlay?.dataset.productGroupId || '';
-    const rows = plGroupRowsById(groupId);
+    let rows = plGroupRowsById(groupId);
+    if (!rows.length) {
+      const single = (state.products || []).find((p) => String(p.id) === String(groupId));
+      if (single) rows = [single];
+    }
     const err = document.getElementById('pl-master-edit-error');
     const saveBtn = document.getElementById('pl-master-edit-save');
     if (!rows.length) return;
@@ -5429,7 +5488,7 @@ LEGACY END -->
   async function syncPlatformSkus() {
     const btn = document.getElementById('pl-sync-platform-skus');
     const original = btn?.textContent || '';
-    const targetPlatforms = ['joom', 'qoo10', 'ebay'];
+    const targetPlatforms = ['shopee', 'joom', 'qoo10', 'ebay'];
     const groups = platformSkuSyncGroups();
     let found = 0;
     let alreadyMapped = 0;
@@ -5473,6 +5532,7 @@ LEGACY END -->
           try {
             const hit = await coverageLookupPlatformBySku(platform, sku, group.id);
             if (hit.found) {
+              if (platform === 'shopee') await coverageAbsorbShopeePublishedHit(group.id, hit);
               if (platform === 'qoo10') await coverageAbsorbLookupHit(group.id, hit);
               found += 1;
             } else if (hit.unsupported) {
@@ -14597,6 +14657,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function coverageBridgeUrl(platform) {
+    if (platform === 'shopee') return SHOPEE_BRIDGE;
     if (platform === 'joom') return SHOPEE_BRIDGE.replace('/shopee-bridge', '/joom-bridge');
     if (platform === 'ebay') return SHOPEE_BRIDGE.replace('/shopee-bridge', '/ebay-bridge');
     if (platform === 'qoo10') return SHOPEE_BRIDGE.replace('/shopee-bridge', '/qoo10-bridge');
@@ -14664,7 +14725,97 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
   }
 
+
+  function coverageShopeePublishedItemsFromRaw(raw) {
+    if (Array.isArray(raw?.published_list)) return raw.published_list;
+    if (Array.isArray(raw?.published_item)) return raw.published_item;
+    if (Array.isArray(raw?.response?.published_item)) return raw.response.published_item;
+    if (Array.isArray(raw?.result?.response?.published_item)) return raw.result.response.published_item;
+    return [];
+  }
+
+  function coverageNormalizeShopeePublishedHit(row, sku) {
+    const raw = row?.raw_payload || row?.raw_response || row || {};
+    const globalItemId = row?.global_item_id || raw.global_item_id || raw.target_global_item_id || raw.result?.global_item_id || null;
+    const publishedList = coverageShopeePublishedItemsFromRaw(raw);
+    const regionHits = publishedList
+      .map((entry) => {
+        const status = Number(entry.item_status ?? entry.status ?? 1);
+        return {
+          region: String(entry.region || entry.shop_region || entry.country || '').toUpperCase(),
+          shop_item_id: entry.shop_item_id || entry.item_id || entry.shopItemId || null,
+          shop_model_id: entry.shop_model_id || entry.model_id || entry.shopModelId || null,
+          shop_id: entry.shop_id || entry.shopId || null,
+          item_status: Number.isFinite(status) ? status : null,
+          global_item_id: entry.global_item_id || globalItemId || null,
+        };
+      })
+      .filter((entry) => entry.region && entry.shop_item_id && (!entry.item_status || [1, 8].includes(entry.item_status)));
+    const fallbackItemId = row?.shop_item_id || row?.platform_item_id || raw.shop_item_id || raw.item_id || null;
+    if (!regionHits.length && fallbackItemId) {
+      regionHits.push({
+        region: String(row?.region || raw.region || raw.shop_region || 'GLOBAL').toUpperCase(),
+        shop_item_id: fallbackItemId,
+        shop_model_id: row?.shop_model_id || raw.shop_model_id || null,
+        shop_id: row?.shop_id || raw.shop_id || null,
+        item_status: null,
+        global_item_id: globalItemId,
+      });
+    }
+    return {
+      platform: 'shopee',
+      sku,
+      found: regionHits.length > 0,
+      notFound: regionHits.length === 0,
+      platformItemId: regionHits[0]?.shop_item_id || null,
+      regionHits,
+      raw,
+    };
+  }
+
+  async function coverageLookupShopeePublishedBySku(sku, productId) {
+    const product = (state.products || []).find((p) => String(p.id) === String(productId));
+    const localRows = (state.listings || []).filter((row) => String(row.product_id) === String(productId));
+    const localHit = localRows.find((row) => row.shop_item_id || row.platform_item_id || coverageShopeePublishedItemsFromRaw(row.raw_payload).length);
+    if (localHit) return coverageNormalizeShopeePublishedHit(localHit, sku);
+    const globalItemId = product?.shopee_item_id || product?.global_item_id || product?.shopee_global_item_id || '';
+    if (globalItemId) {
+      try {
+        const resp = await fetch(`${SHOPEE_BRIDGE}/published_list?region=SG&global_item_id=${encodeURIComponent(globalItemId)}`, { headers: AUTH_HEADERS });
+        const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+        if (!resp.ok || json.ok === false) {
+          return { platform: 'shopee', sku, found: false, notFound: false, error: json.error || json.message || `HTTP ${resp.status}`, raw: json };
+        }
+        const bridgeHit = coverageNormalizeShopeePublishedHit({ ...json, global_item_id: globalItemId }, sku);
+        if (bridgeHit.found) return bridgeHit;
+      } catch (err) {
+        return { platform: 'shopee', sku, found: false, notFound: false, error: err?.message || String(err), raw: {} };
+      }
+    }
+    return { platform: 'shopee', sku, found: false, notFound: true, error: 'shopee_published_list_not_found', raw: {} };
+  }
+
+  async function coverageAbsorbShopeePublishedHit(productId, hit) {
+    const rows = Array.isArray(hit?.regionHits) ? hit.regionHits : [];
+    for (const row of rows) {
+      const payload = {
+        product_id: productId,
+        region: row.region || 'GLOBAL',
+        global_item_id: row.global_item_id || null,
+        shop_id: row.shop_id || null,
+        shop_item_id: row.shop_item_id || null,
+        shop_model_id: row.shop_model_id || null,
+        status: 'mapped',
+        raw_payload: { source: 'published_list_sku_sync', hit: row },
+      };
+      const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: 'product_id,region' });
+      if (error) throw error;
+    }
+    return rows.length;
+  }
+
   async function coverageLookupPlatformBySku(platform, sku, productId) {
+    if (platform === 'shopee') return coverageLookupShopeePublishedBySku(sku, productId);
     if (platform === 'joom' || platform === 'ebay') return coverageLookupViaPlatformPublish(platform, sku, productId);
     if (platform === 'qoo10') return coverageLookupQoo10BySku(sku);
     return { platform, sku, found: false, unsupported: true, error: 'unsupported_platform', raw: {} };

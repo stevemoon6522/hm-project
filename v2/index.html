@@ -5533,7 +5533,7 @@ LEGACY END -->
             const hit = await coverageLookupPlatformBySku(platform, sku, group.id);
             if (hit.found) {
               if (platform === 'shopee') await coverageAbsorbShopeePublishedHit(group.id, hit);
-              if (platform === 'qoo10') await coverageAbsorbLookupHit(group.id, hit);
+              else await coverageAbsorbLookupHit(group.id, hit);
               found += 1;
             } else if (hit.unsupported) {
               skipped += 1;
@@ -14693,6 +14693,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       platformItemId,
       externalVariantId: null,
       listingStatus: json.listing_status || 'listed',
+      country: platform === 'joom' ? 'GLOBAL' : (platform === 'ebay' ? 'EBAY_US' : null),
       raw: json,
     };
   }
@@ -14701,7 +14702,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     try {
       const resp = await fetch(coverageBridgeUrl('qoo10') + '/lookup-sku?sku=' + encodeURIComponent(sku), { headers: AUTH_HEADERS });
       const json = await resp.json().catch(function() { return { ok: false, error: 'HTTP ' + resp.status }; });
-      if (resp.status === 404 || resp.status === 501) {
+      if (resp.status === 501) {
         return { platform: 'qoo10', sku, found: false, unsupported: true, error: 'qoo10_lookup_not_implemented', raw: json };
       }
       if (!resp.ok || json.ok === false) {
@@ -14837,7 +14838,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       master_product_id: productId,
       platform: hit.platform,
       capability: 'sync',
-      country: hit.platform === 'joom' ? 'GLOBAL' : (hit.platform === 'ebay' ? 'EBAY_US' : undefined),
+      country: hit.country || (hit.platform === 'joom' ? 'GLOBAL' : (hit.platform === 'ebay' ? 'EBAY_US' : undefined)),
     };
     const resp = await fetch(PLATFORM_PUBLISH, {
       method: 'POST',
@@ -14848,7 +14849,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (!resp.ok || json.ok === false) {
       throw new Error(json.error_msg || json.message || json.error || `platform-publish sync failed (${resp.status})`);
     }
-    return json.platform_listing_id || json.platform_item_id || null;
+    return json.platform_listing_id || json.platform_item_id || hit.platformItemId || null;
   }
 
   async function coverageCheckExistingPlatformsBySku() {

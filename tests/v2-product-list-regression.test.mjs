@@ -60,3 +60,13 @@ test('platform SKU sync includes Shopee and absorbs published_list region ids fo
   assert.doesNotMatch(coverageLookup, /row\?\.shopee_item_id \|\| row\?\.platform_item_id/, 'products.shopee_item_id is a global id and must not be treated as shop_item_id');
   assert.match(coverageLookup, /global_item_id: row\.global_item_id \|\| null/, 'absorbed listing should preserve global_item_id for later price/sync operations');
 });
+
+test('platform SKU sync absorbs Joom/Qoo10/eBay lookup hits through platform-publish sync', () => {
+  assert.match(platformSync, /else await coverageAbsorbLookupHit\(group\.id, hit\)/, 'non-Shopee lookup hits should all be absorbed, not only Qoo10');
+  assert.match(coverageLookup, /fetch\(PLATFORM_PUBLISH/, 'frontend should route non-Shopee absorbs through platform-publish');
+  assert.match(coverageLookup, /capability: 'sync'/, 'non-Shopee absorb should use sync capability, not publish/create');
+  assert.match(coverageLookup, /country: hit\.country \|\| \(hit\.platform === 'joom' \? 'GLOBAL' : \(hit\.platform === 'ebay' \? 'EBAY_US' : undefined\)\)/, 'Joom/eBay lookup absorbs should use stable rollup country keys');
+  assert.doesNotMatch(coverageLookup, /db\.rpc\('absorb_platform_sku_lookup'/, 'browser must not call SECURITY DEFINER absorb RPC directly');
+  assert.match(coverageLookup, /if \(resp\.status === 501\)/, 'Qoo10 501 should be treated as unsupported');
+  assert.doesNotMatch(coverageLookup, /resp\.status === 404 \|\| resp\.status === 501/, 'Qoo10 404 should be notFound, not unsupported');
+});

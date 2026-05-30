@@ -4626,6 +4626,9 @@ LEGACY END -->
     els.productBody.querySelectorAll('[data-open-shopee-group]').forEach((btn) => {
       btn.addEventListener('click', () => openRegisterShopeeGroupModal(btn.dataset.openShopeeGroup));
     });
+    els.productBody.querySelectorAll('[data-open-joom-group]').forEach((btn) => {
+      btn.addEventListener('click', () => openRegisterJoomGroupModal(btn.dataset.openJoomGroup));
+    });
     els.productBody.querySelectorAll('[data-edit-master]').forEach((btn) => {
       btn.addEventListener('click', () => openProductMasterEditModal(btn.dataset.editMaster));
     });
@@ -4875,7 +4878,12 @@ LEGACY END -->
             <button type="button" data-open-shopee-group="${text(first.product_group_id || '')}" class="pl-shopee-register" title="Shopee 등록" aria-label="Shopee 등록">📤</button>
           </div>
         </td>
-        <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'joom')}</td>
+        <td class="pl-platform-cell">
+          <div class="pl-shopee-cell">
+            ${plGroupPlatformCell(rows, 'joom')}
+            <button type="button" data-open-joom-group="${text(first.product_group_id || '')}" class="pl-shopee-register" title="Joom 등록" aria-label="Joom 등록">🛒</button>
+          </div>
+        </td>
         <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'qoo10')}</td>
         <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'ebay')}</td>
         <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'alibaba')}</td>
@@ -9372,6 +9380,73 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     rshUpdateImageCount();
     const countEl = $rsh('img-count');
     if (countEl) countEl.textContent = `${label} 선택됨`;
+  }
+
+  function plBuildJoomPublishGroupFromProducts(rows) {
+    const sortedRows = rshSortedProducts(rows || []).filter(plIsGroupedVariant);
+    const first = sortedRows[0] || {};
+    const tierNames = Array.isArray(first.variation_tier_names) && first.variation_tier_names.length
+      ? first.variation_tier_names
+      : ['옵션'];
+    const twoAxis = tierNames.length > 1 || sortedRows.some((row) => Array.isArray(row.variation_option_names) && row.variation_option_names.length > 1);
+    const adaptedRows = sortedRows.map((row) => {
+      const optionNames = Array.isArray(row.variation_option_names) && row.variation_option_names.length
+        ? row.variation_option_names
+        : [plOptionDisplay(row) || row.option_name || 'ONE SIZE'];
+      const derived = mrDeriveFromTitle(row.product_name || '');
+      const artist = row.artist || derived.artist || '';
+      const album = row.album || derived.album || '';
+      return Object.assign({}, row, {
+        status: row.status || 'ready',
+        url: row.staronemall_url || '',
+        observed: { title: row.product_name || '', detail_image_urls: [] },
+        artist,
+        album,
+        _sku: row.sku || '',
+        _opt0: optionNames[0] || row.option_name || 'ONE SIZE',
+        _opt1: optionNames[1] || '',
+        _cost_krw: Number(row.cost_krw || row.sourcing_price || 0),
+        _weight_g: Number(row.weight_g || 0),
+        _main_image: row.main_image || '',
+        _extra_images: Array.isArray(row.extra_images) ? row.extra_images : [],
+        _components_en: row.components_extracted_en || '',
+        _tierNames: tierNames,
+        _twoAxis: twoAxis,
+        _joomCategory: 'music_albums',
+        _joomBrand: row.shopee_brand_name || artist,
+        _joomMainImageOverride: '',
+      });
+    });
+    return {
+      source_record_id: first.product_group_id || first.id || null,
+      idempotency_token: crypto.randomUUID(),
+      tierNames,
+      twoAxis,
+      rows: adaptedRows,
+      _cachedParentSku: plParentSku(sortedRows),
+    };
+  }
+
+  async function openRegisterJoomGroupModal(productGroupId) {
+    const groupId = String(productGroupId || '').trim();
+    if (!groupId) {
+      showToast('상품 그룹 ID가 없어 Joom 등록 모달을 열 수 없습니다.', 'err');
+      return;
+    }
+    const { data, error } = await db
+      .from('products')
+      .select(RSH_PRODUCT_SELECT)
+      .eq('product_group_id', groupId);
+    if (error) {
+      showToast(`옵션 묶음 로드 실패: ${error.message || error}`, 'err');
+      return;
+    }
+    const rows = rshSortedProducts(data || []).filter(plIsGroupedVariant);
+    if (!rows.length) {
+      showToast('이 그룹에 Joom 등록할 옵션 상품이 없습니다.', 'err');
+      return;
+    }
+    mrOpenJoomModal(plBuildJoomPublishGroupFromProducts(rows));
   }
 
   async function openRegisterShopeeGroupModal(productGroupId) {

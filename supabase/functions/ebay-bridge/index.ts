@@ -319,6 +319,28 @@ function validateDescription(desc: string): string {
   return desc;
 }
 
+function validateShippingSurcharges(rows: any[]): any[] {
+  if (!Array.isArray(rows)) return [];
+  return rows.slice(0, 80).map((r) => {
+    const countryCode = String(r?.countryCode || '').toUpperCase();
+    if (!/^[A-Z]{2}$/.test(countryCode)) throw new Error(`invalid shipping surcharge countryCode: ${countryCode}`);
+    const weightBucketG = Number(r?.weightBucketG || 0);
+    const deltaKrw = Number(r?.deltaKrw || 0);
+    const extraShippingUsd = Number(r?.extraShippingUsd || 0);
+    if (!weightBucketG || weightBucketG < 100 || weightBucketG > 1000) throw new Error(`invalid shipping surcharge weightBucketG for ${countryCode}`);
+    if (deltaKrw < 0 || extraShippingUsd < 0) throw new Error(`invalid negative shipping surcharge for ${countryCode}`);
+    return {
+      countryCode,
+      countryName: String(r?.countryName || ''),
+      weightBucketG,
+      baselineKrw: Number(r?.baselineKrw || 0),
+      standardKrw: Number(r?.standardKrw || 0),
+      deltaKrw,
+      extraShippingUsd: Number(extraShippingUsd.toFixed(2)),
+    };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // /publish handler — main listing orchestration
 // ---------------------------------------------------------------------------
@@ -336,6 +358,8 @@ async function handlePublish(body: any): Promise<Response> {
     categoryId,
     weightG,
     packageDimensions,
+    shippingSurchargePolicy = "delta_vs_us_baseline",
+    shippingSurchargesUsd = [],
     marketplaceId = "EBAY_US",
   } = body;
 
@@ -346,6 +370,7 @@ async function handlePublish(body: any): Promise<Response> {
   if (!imageUrls || imageUrls.length === 0) throw new Error("imageUrls 는 최소 1개 필요합니다");
   if (!priceUsd || priceUsd <= 0) throw new Error("priceUsd > 0 필요합니다");
   if (!categoryId) throw new Error("categoryId 는 필수입니다");
+  const safeShippingSurcharges = validateShippingSurcharges(shippingSurchargesUsd);
 
   // Validate aspects (name/value length guards)
   const safeAspects: Record<string, string[]> = aspects || {};
@@ -485,6 +510,8 @@ async function handlePublish(body: any): Promise<Response> {
     ebay_item_id: listingId,
     ebay_offer_id: offerId,
     marketplace_id: marketplaceId,
+    shipping_surcharge_policy: shippingSurchargePolicy,
+    shipping_surcharges_usd: safeShippingSurcharges,
     listingStatus: "PUBLISHED",
   });
 }

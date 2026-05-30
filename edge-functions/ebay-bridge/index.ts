@@ -21,13 +21,14 @@
 //   #5: merchantLocationKey = STARONE-SUWON-B105; postalCode from EBAY_LOC_POSTAL_CODE env
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { AUTH_CORS, requireAuthenticatedUser } from "../_shared/auth.ts";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 const EBAY_API   = "https://api.ebay.com";
-const EBAY_TOKEN = "https://api.ebay.com/identity/v1/oauth2/token";
+const EBAY_OAUTH_ENDPOINT = (Deno as any)["env"]["get"]("EBAY_OAUTH_ENDPOINT") || `${EBAY_API}/identity/v1/oauth2/token`;
 
 // Default merchantLocationKey — Operator Decision #5
 const MERCHANT_LOCATION_KEY = "STARONE-SUWON-B105";
@@ -43,9 +44,7 @@ const EBAY_SCOPES = [
 const LISTING_DURATION = "GTC";
 
 const CORS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info",
+  ...AUTH_CORS,
   "Access-Control-Max-Age": "3600",
 };
 
@@ -75,7 +74,7 @@ async function getValidAccessToken(): Promise<string> {
   // Refresh access token using stored refresh_token
   // Citation: authorization-guide.txt — Authorization Code Grant flow
   const credentials = btoa(`${data.client_id}:${data.client_secret}`);
-  const r = await fetch(EBAY_TOKEN, {
+  const r = await fetch(EBAY_OAUTH_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -320,6 +319,28 @@ function validateDescription(desc: string): string {
   return desc;
 }
 
+function validateShippingSurcharges(rows: any[]): any[] {
+  if (!Array.isArray(rows)) return [];
+  return rows.slice(0, 80).map((r) => {
+    const countryCode = String(r?.countryCode || '').toUpperCase();
+    if (!/^[A-Z]{2}$/.test(countryCode)) throw new Error(`invalid shipping surcharge countryCode: ${countryCode}`);
+    const weightBucketG = Number(r?.weightBucketG || 0);
+    const deltaKrw = Number(r?.deltaKrw || 0);
+    const extraShippingUsd = Number(r?.extraShippingUsd || 0);
+    if (!weightBucketG || weightBucketG < 100 || weightBucketG > 1000) throw new Error(`invalid shipping surcharge weightBucketG for ${countryCode}`);
+    if (deltaKrw < 0 || extraShippingUsd < 0) throw new Error(`invalid negative shipping surcharge for ${countryCode}`);
+    return {
+      countryCode,
+      countryName: String(r?.countryName || ''),
+      weightBucketG,
+      baselineKrw: Number(r?.baselineKrw || 0),
+      standardKrw: Number(r?.standardKrw || 0),
+      deltaKrw,
+      extraShippingUsd: Number(extraShippingUsd.toFixed(2)),
+    };
+  });
+}
+
 // ---------------------------------------------------------------------------
 // /publish handler — main listing orchestration
 // ---------------------------------------------------------------------------
@@ -337,6 +358,8 @@ async function handlePublish(body: any): Promise<Response> {
     categoryId,
     weightG,
     packageDimensions,
+    shippingSurchargePolicy = "delta_vs_us_baseline",
+    shippingSurchargesUsd = [],
     marketplaceId = "EBAY_US",
   } = body;
 
@@ -347,6 +370,7 @@ async function handlePublish(body: any): Promise<Response> {
   if (!imageUrls || imageUrls.length === 0) throw new Error("imageUrls 는 최소 1개 필요합니다");
   if (!priceUsd || priceUsd <= 0) throw new Error("priceUsd > 0 필요합니다");
   if (!categoryId) throw new Error("categoryId 는 필수입니다");
+  const safeShippingSurcharges = validateShippingSurcharges(shippingSurchargesUsd);
 
   // Validate aspects (name/value length guards)
   const safeAspects: Record<string, string[]> = aspects || {};
@@ -486,6 +510,8 @@ async function handlePublish(body: any): Promise<Response> {
     ebay_item_id: listingId,
     ebay_offer_id: offerId,
     marketplace_id: marketplaceId,
+    shipping_surcharge_policy: shippingSurchargePolicy,
+    shipping_surcharges_usd: safeShippingSurcharges,
     listingStatus: "PUBLISHED",
   });
 }
@@ -505,21 +531,40 @@ async function handleLookupItem(sku: string, marketplaceId: string): Promise<Res
   ]);
 
   const itemOk = itemRes.status === 200;
-  const offers: any[] = offersRes.body?.offers || [];
-  const publishedOffer = offers.find((o: any) => o.status === "PUBLISHED");
+  const itemMissing = itemRes.status === 404;
+  const offersOk = offersRes.status === 200;
+  const offersMissing = offersRes.status === 404;
+  if (!itemOk && !itemMissing) {
+    return jsonResp({ ok: false, error: "upstream_inventory_lookup_failed", upstream_status: itemRes.status }, itemRes.status === 401 || itemRes.status === 403 || itemRes.status === 429 ? itemRes.status : 502);
+  }
+  if (!offersOk && !offersMissing) {
+    return jsonResp({ ok: false, error: "upstream_offer_lookup_failed", upstream_status: offersRes.status }, offersRes.status === 401 || offersRes.status === 403 || offersRes.status === 429 ? offersRes.status : 502);
+  }
+  const offers: any[] = offersOk ? (offersRes.body?.offers || []) : [];
+  const publishedOffer = offers.find((o: any) => String(o.status || '').toUpperCase() === "PUBLISHED");
+  const listingId = publishedOffer?.listing?.listingId || publishedOffer?.listingId || null;
+  const listingStatus = publishedOffer?.listing?.listingStatus || publishedOffer?.listingStatus || null;
 
-  // Verify status=PUBLISHED and listing container present
-  // Citation: Codex BLOCKER §d — sell/inventory.yaml section status + ListingDetails
-  const verificationPassed = itemOk && !!publishedOffer && !!publishedOffer.listing?.listingId;
+  // eBay Inventory API distinction (docs: getOffers retrieves offers for a SKU;
+  // the listing container is returned only for published offers). For SKU sync,
+  // an inventory item or an unpublished offer is still a real eBay-side record and
+  // should be absorbed as draft instead of reported as "not found". The stricter
+  // post-publish verification signal remains exposed separately for publish flows.
+  // Citations: sell/inventory.yaml getOffers L3787-L3851, Offer.status L7478-L7483,
+  // ListingDetails L9665-L9669.
+  const publishedVerificationPassed = !!publishedOffer && !!listingId;
+  const skuRecordFound = itemOk || offers.length > 0;
 
   return jsonResp({
-    ok: verificationPassed,
+    ok: skuRecordFound,
     verification: {
       inventory_item_found: itemOk,
       offer_count: offers.length,
+      sku_record_found: skuRecordFound,
       published_offer_found: !!publishedOffer,
-      listing_id: publishedOffer?.listing?.listingId || null,
-      listing_status: publishedOffer?.listing?.listingStatus || null,
+      published_verification_passed: publishedVerificationPassed,
+      listing_id: listingId,
+      listing_status: listingStatus,
     },
     inventory_item: itemOk ? itemRes.body : null,
     offers: offers.map((o: any) => ({
@@ -527,7 +572,7 @@ async function handleLookupItem(sku: string, marketplaceId: string): Promise<Res
       status: o.status,
       sku: o.sku,
       marketplaceId: o.marketplaceId,
-      listingId: o.listing?.listingId || null,
+      listingId: o.listing?.listingId || o.listingId || null,
     })),
   });
 }
@@ -541,7 +586,7 @@ async function handleHealthz(): Promise<Response> {
     const token = await getValidAccessToken();
     return jsonResp({ ok: true, service: "ebay-bridge", version: 1, token_ok: !!token });
   } catch (e: any) {
-    return jsonResp({ ok: false, service: "ebay-bridge", version: 1, error: String(e?.message || e) }, 500);
+    return jsonResp({ ok: false, service: "ebay-bridge", version: 1, error: "healthz_failed" }, 500);
   }
 }
 
@@ -556,6 +601,15 @@ function jsonResp(body: any, status = 200): Response {
   });
 }
 
+function requireInternalBridge(req: Request): Response | null {
+  const expected = (Deno as any)["env"]["get"]("PLATFORM_BRIDGE_INTERNAL_TOKEN") || "";
+  const actual = req.headers.get("x-platform-bridge-token") || "";
+  if (!expected || actual !== expected) {
+    return jsonResp({ ok: false, error: "internal_bridge_required" }, 403);
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -567,6 +621,8 @@ async function handleRequest(req: Request): Promise<Response> {
 
   const url = new URL(req.url);
   const action = url.pathname.split("/").filter(Boolean).pop() || "";
+  const authResult = await requireAuthenticatedUser(req);
+  if (authResult.response) return authResult.response;
 
   try {
     if (action === "healthz" && req.method === "GET") {
@@ -574,12 +630,16 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if (action === "lookup-item" && req.method === "GET") {
+      const internalDenied = requireInternalBridge(req);
+      if (internalDenied) return internalDenied;
       const sku = url.searchParams.get("sku") || "";
       const marketplaceId = url.searchParams.get("marketplace_id") || "EBAY_US";
       return await handleLookupItem(sku, marketplaceId);
     }
 
     if (action === "publish" && req.method === "POST") {
+      const internalDenied = requireInternalBridge(req);
+      if (internalDenied) return internalDenied;
       const body = await req.json();
       return await handlePublish(body);
     }
@@ -590,7 +650,6 @@ async function handleRequest(req: Request): Promise<Response> {
     return jsonResp({
       ok: false,
       error: String(e?.message || e),
-      stack: e?.stack,
     }, 500);
   }
 }

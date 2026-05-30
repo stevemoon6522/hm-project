@@ -3,7 +3,7 @@
 // using Claude Vision API (Anthropic Messages API).
 //
 // POST /extract
-//   body: { master_row_id: number, staronemall_url: string }
+//   body: { master_row_id: number, staronemall_url: string, image_url?: string }
 //   - If products.components_extracted_en is already set → returns cached result (no re-call).
 //   - Otherwise: fetch HTML, find largest wisacdn detail image, call Claude Vision,
 //     save result to products, return { ok: true, components_en: string }.
@@ -176,7 +176,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // Parse body
-  let body: { master_row_id?: unknown; staronemall_url?: unknown };
+  let body: { master_row_id?: unknown; staronemall_url?: unknown; image_url?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -185,6 +185,7 @@ Deno.serve(async (req: Request) => {
 
   const masterId = Number(body.master_row_id);
   const staronemallUrl = String(body.staronemall_url || "").trim();
+  const requestedImageUrl = String(body.image_url || "").trim() || null;
 
   // master_row_id = 0 means "extract only, do not persist to DB" (used before the row is saved)
   const persistToDb = masterId > 0;
@@ -197,9 +198,12 @@ Deno.serve(async (req: Request) => {
       "staronemall_url is required and must be a staronemall.com URL."
     );
   }
+  if (requestedImageUrl && !/^https?:\/\//i.test(requestedImageUrl)) {
+    return errResp("image_url must be an absolute http(s) URL when provided.");
+  }
 
   // --- 1. Check cache (only if persisting to a real row) ---
-  if (persistToDb) {
+  if (persistToDb && !requestedImageUrl) {
     const { data: row, error: fetchErr } = await db
       .from("products")
       .select("components_extracted_en, components_extracted_at")
@@ -224,28 +228,32 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  // --- 2. Fetch StarOneMall HTML ---
-  let html: string;
-  try {
-    const pageResp = await fetch(staronemallUrl, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        Accept: "text/html,application/xhtml+xml,*/*;q=0.9",
-      },
-    });
-    if (!pageResp.ok) {
-      throw new Error(`HTTP ${pageResp.status} fetching ${staronemallUrl}`);
+  let candidates: string[] = [];
+  if (!requestedImageUrl) {
+    // --- 2. Fetch StarOneMall HTML ---
+    let html: string;
+    try {
+      const pageResp = await fetch(staronemallUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+          Accept: "text/html,application/xhtml+xml,*/*;q=0.9",
+        },
+      });
+      if (!pageResp.ok) {
+        throw new Error(`HTTP ${pageResp.status} fetching ${staronemallUrl}`);
+      }
+      html = await pageResp.text();
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      return errResp(`staronemall page fetch failed: ${msg}`, 502);
     }
-    html = await pageResp.text();
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return errResp(`staronemall page fetch failed: ${msg}`, 502);
+
+    candidates = extractDetailImageUrls(html);
   }
 
   // --- 3. Extract image URL ---
-  const candidates = extractDetailImageUrls(html);
-  const imageUrl = pickBestDetailImage(candidates);
+  const imageUrl = requestedImageUrl ?? pickBestDetailImage(candidates);
 
   if (!imageUrl) {
     return errResp(

@@ -15618,21 +15618,114 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       });
     }
 
-    function mrRenderCrawledImagePreview(firstRow) {
+    function mrGetGroupOptionImages(group, firstRow) {
+      const sourceRow = firstRow || group?.rows?.[0] || {};
+      const observed = sourceRow?.observed || {};
+      const baseUrl = sourceRow?.url || sourceRow?.staronemall_url || '';
+      const rawDetailImages = Array.isArray(sourceRow._detail_image_urls)
+        ? sourceRow._detail_image_urls
+        : (Array.isArray(observed.detail_image_urls) ? observed.detail_image_urls : []);
+      return mrJoomNormalizeImageList(rawDetailImages, baseUrl).slice(0, 9);
+    }
+
+    function mrSetGroupOptionImages(group, images, componentImageUrl = '') {
+      const normalized = mrJoomNormalizeImageList(images || [], group?.rows?.[0]?.url || '');
+      const selected = normalized.includes(componentImageUrl) ? componentImageUrl : (normalized[0] || '');
+      (group?.rows || []).forEach(row => {
+        row._detail_image_urls = normalized.slice();
+        row._extra_images = normalized.slice(0, 8);
+        row._components_image_url = selected;
+      });
+    }
+
+    function mrGroupComponentImageUrl(group) {
+      const firstRow = group?.rows?.[0] || {};
+      const options = mrGetGroupOptionImages(group, firstRow);
+      const selected = firstRow._components_image_url || '';
+      return options.includes(selected) ? selected : (options[0] || '');
+    }
+
+    function mrOpenOptionImageModal(group) {
+      const firstRow = group?.rows?.[0] || {};
+      const images = mrGetGroupOptionImages(group, firstRow);
+      let selected = mrGroupComponentImageUrl(group);
+      const overlay = el('div', { class: 'modal-overlay show', style: 'z-index:90;' });
+      const modal = el('div', { class: 'modal', style: 'width:min(920px,100%);' });
+      const header = el('div', { class: 'modal-header' });
+      header.appendChild(el('h2', {}, '옵션 이미지 관리'));
+      const closeBtn = el('button', { type: 'button' }, '닫기');
+      header.appendChild(closeBtn);
+      const body = el('div', { class: 'modal-body' });
+      body.appendChild(el('p', { style: 'margin:0;color:var(--muted);font-size:12px;' }, 'Product introduction 하단 이미지 중 실제 상품 상세 이미지만 남겨주세요. 구성품 추출용 이미지를 선택하면 “이미지에서 추출” 버튼이 그 이미지를 Vision에 전달합니다.'));
+      const grid = el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;' });
+      const checks = [];
+      if (images.length) {
+        images.forEach((src, idx) => {
+          const card = el('label', { style: 'display:flex;flex-direction:column;gap:6px;border:1px solid var(--border);border-radius:8px;padding:8px;background:#fff;cursor:pointer;' });
+          const img = el('img', { src, style: 'width:100%;height:120px;object-fit:cover;border-radius:6px;border:1px solid var(--border);background:#f8fafc;' });
+          const keep = el('input', { type: 'checkbox', checked: true });
+          const pick = el('input', { type: 'radio', name: 'mr-component-image-url', value: src, checked: src === selected });
+          pick.addEventListener('change', () => { if (pick.checked) selected = src; });
+          card.appendChild(img);
+          card.appendChild(el('span', { style: 'font-size:11px;font-weight:700;' }, `이미지 #${idx + 1}`));
+          const keepLine = el('span', { style: 'font-size:11px;display:flex;gap:5px;align-items:center;' });
+          keepLine.appendChild(keep);
+          keepLine.appendChild(document.createTextNode('옵션 이미지로 사용'));
+          card.appendChild(keepLine);
+          const pickLine = el('span', { style: 'font-size:11px;display:flex;gap:5px;align-items:center;color:#4a275f;font-weight:700;' });
+          pickLine.appendChild(pick);
+          pickLine.appendChild(document.createTextNode('구성품 추출용'));
+          card.appendChild(pickLine);
+          checks.push({ src, keep, pick });
+          grid.appendChild(card);
+        });
+      } else {
+        grid.appendChild(el('div', { style: 'font-size:12px;color:var(--red);' }, '관리할 옵션 이미지가 없습니다. 먼저 Staronemall 상세 이미지를 다시 크롤링해주세요.'));
+      }
+      body.appendChild(grid);
+      const footer = el('div', { class: 'modal-footer' });
+      const cancelBtn = el('button', { type: 'button' }, '취소');
+      const saveBtn = el('button', { type: 'button', style: 'background:#4a275f;color:#fff;' }, '선택 저장');
+      const close = () => overlay.remove();
+      closeBtn.addEventListener('click', close);
+      cancelBtn.addEventListener('click', close);
+      saveBtn.addEventListener('click', () => {
+        const kept = checks.filter(x => x.keep.checked).map(x => x.src);
+        const picked = checks.find(x => x.pick.checked)?.src || selected || kept[0] || '';
+        mrSetGroupOptionImages(group, kept, picked);
+        close();
+        mrRenderPreviewCards();
+      });
+      footer.appendChild(cancelBtn);
+      footer.appendChild(saveBtn);
+      modal.appendChild(header);
+      modal.appendChild(body);
+      modal.appendChild(footer);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+    }
+
+    function mrRenderCrawledImagePreview(firstRow, group) {
       const observed = firstRow?.observed || {};
       const baseUrl = firstRow?.url || '';
       const rawMainImages = Array.isArray(observed.main_image_urls) ? observed.main_image_urls : [];
       const representativeImages = mrJoomNormalizeImageList(rawMainImages, baseUrl).slice(0, 1);
-      const rawDetailImages = Array.isArray(observed.detail_image_urls) ? observed.detail_image_urls : [];
-      const optionImages = mrJoomNormalizeImageList(rawDetailImages, baseUrl).slice(0, 7);
+      const optionImages = mrGetGroupOptionImages(group, firstRow).slice(0, 7);
 
       const wrap = el('div', {
         style: 'display:grid;grid-template-columns:minmax(120px,160px) 1fr;gap:8px;margin-top:6px;padding:8px;background:#fff;border:1px dashed var(--border);border-radius:8px;',
       });
 
-      const renderBucket = (title, images, emptyText) => {
+      const renderBucket = (title, images, emptyText, editable = false) => {
         const bucket = el('div', { style: 'display:flex;flex-direction:column;gap:4px;' });
-        bucket.appendChild(el('div', { style: 'font-size:11px;font-weight:800;color:#4a275f;' }, title));
+        const titleRow = el('div', { style: 'display:flex;gap:6px;align-items:center;justify-content:space-between;' });
+        titleRow.appendChild(el('div', { style: 'font-size:11px;font-weight:800;color:#4a275f;' }, title));
+        if (editable && group) {
+          const manageBtn = el('button', { type: 'button', style: 'font-size:10px;padding:2px 7px;' }, '옵션 이미지 관리');
+          manageBtn.addEventListener('click', () => mrOpenOptionImageModal(group));
+          titleRow.appendChild(manageBtn);
+        }
+        bucket.appendChild(titleRow);
         const grid = el('div', { style: 'display:flex;gap:5px;flex-wrap:wrap;align-items:center;' });
         if (images.length) {
           images.forEach((src, idx) => {
@@ -15656,7 +15749,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       };
 
       wrap.appendChild(renderBucket('대표 이미지', representativeImages, '대표 이미지 없음'));
-      wrap.appendChild(renderBucket('옵션 이미지', optionImages, '옵션 이미지 없음'));
+      wrap.appendChild(renderBucket('옵션 이미지', optionImages, '옵션 이미지 없음', true));
       return wrap;
     }
 
@@ -15676,7 +15769,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (statusEl) { statusEl.textContent = loadingMsg; statusEl.style.color = 'var(--muted)'; }
 
       try {
-        const cached = _componentsCache.get(url);
+        const componentImageUrl = mrGroupComponentImageUrl(group);
+        const cacheKey = `${url}|${componentImageUrl || ''}`;
+        const cached = _componentsCache.get(cacheKey);
         if (cached?.components_en) {
           mrSetGroupComponents(group, cached.components_en);
           mrSetGroupComponentsStatus(group, '캐시된 구성품을 적용했습니다.', false);
@@ -15687,7 +15782,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const resp = await fetch(`${STARONEMALL_VISION_URL}/extract`, {
           method: 'POST',
           headers: AUTH_HEADERS,
-          body: JSON.stringify({ master_row_id: 0, staronemall_url: url }),
+          body: JSON.stringify({ master_row_id: 0, staronemall_url: url, image_url: componentImageUrl }),
         });
         const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
         if (!resp.ok || !json.ok) {
@@ -15695,7 +15790,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }
         const componentsEn = String(json.components_en || '').trim();
         if (!componentsEn) throw new Error('추출된 구성품 텍스트가 비어 있습니다.');
-        _componentsCache.set(url, { components_en: componentsEn, masterId: 0, approved: false });
+        _componentsCache.set(cacheKey, { components_en: componentsEn, masterId: 0, approved: false, image_url: componentImageUrl });
         mrSetGroupComponents(group, componentsEn);
         mrSetGroupComponentsStatus(group, '이미지에서 구성품을 추출했습니다.', false);
         if (textarea) textarea.value = componentsEn;
@@ -15876,7 +15971,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         defaultsRow.appendChild(defWLab);
 
         infoCol.appendChild(defaultsRow);
-        infoCol.appendChild(mrRenderCrawledImagePreview(firstRow));
+        infoCol.appendChild(mrRenderCrawledImagePreview(firstRow, group));
 
         // 상품 구성품: manual input plus image-to-text extraction from StarOneMall detail image.
         if (firstRow._components_en == null) mrSetGroupComponents(group, firstRow.components_extracted_en || '');
@@ -16372,7 +16467,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               _weight_g: firstRow.weight_g || firstRow._weight_g || 0,
               _main_image: '',
               _main_image_file_name: '',
-              _extra_images: mrJoomNormalizeImageList(firstRow.observed?.detail_image_urls || [], firstRow.url || '').slice(0, 8),
+              _detail_image_urls: mrGetGroupOptionImages(group, firstRow),
+              _components_image_url: mrGroupComponentImageUrl(group),
+              _extra_images: mrGetGroupOptionImages(group, firstRow).slice(0, 8),
               _twoAxis: group.twoAxis,
               // Share the group's idempotency token
               _group_token: group.idempotency_token,

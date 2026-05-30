@@ -15618,6 +15618,25 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       });
     }
 
+    function mrConvertGroupToSingleProduct(group, row) {
+      const keepRow = row || group?.rows?.[0];
+      if (!keepRow) return;
+      const groupRows = group?.rows || [];
+      MR_PREV = MR_PREV.filter(r => r === keepRow || !groupRows.includes(r));
+      keepRow._singleProductMode = true;
+      keepRow._opt0 = '';
+      keepRow._opt1 = '';
+      keepRow.member = '';
+      keepRow._twoAxis = false;
+      keepRow._tierIndex = null;
+      keepRow._optionNames = [];
+      keepRow._sku = mrComputeSku(keepRow);
+      keepRow.status = keepRow.status === 'done' || keepRow.status === 'promoting' ? keepRow.status : 'preview';
+      keepRow.error = null;
+      keepRow._cardError = false;
+      keepRow._group_token = group?.idempotency_token || keepRow._group_token || crypto.randomUUID();
+    }
+
     function mrGetGroupOptionImages(group, firstRow) {
       const sourceRow = firstRow || group?.rows?.[0] || {};
       const observed = sourceRow?.observed || {};
@@ -16265,6 +16284,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           if (row._extra_images == null) {
             row._extra_images = mrJoomNormalizeImageList(row.observed?.detail_image_urls || [], row.url || firstRow.url || '').slice(0, 8);
           }
+          const isSingleProduct = !!row._singleProductMode;
 
           const optRow = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;padding:6px 8px;background:var(--surface2,#f8f9fa);border-radius:6px;' });
 
@@ -16292,25 +16312,32 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           };
 
           const axis0Name = group.tierNames[0] || '멤버';
-          optRow.appendChild(mkOptField(axis0Name, row._opt0, (v) => {
-            row._opt0 = v;
-            row.member = v;
-            row._sku = mrComputeSku(row);
-            const skuInput = optRow.querySelector('[data-auto-sku-row-key]');
-            mrSetSkuInputState(skuInput, row);
-            const parentSkuEl = card.querySelector('[data-parent-sku-preview]');
-            if (parentSkuEl) parentSkuEl.textContent = `parent SKU: ${mrPreviewParentSku(group)}`;
-          }, 90));
-          if (group.twoAxis) {
-            const axis1Name = group.tierNames[1] || '버전';
-            optRow.appendChild(mkOptField(axis1Name, row._opt1, (v) => {
-              row._opt1 = v;
+          if (isSingleProduct) {
+            optRow.appendChild(el('span', {
+              style: 'font-size:11px;font-weight:800;color:#4a275f;background:#f3e8ff;border:1px solid #e9d5ff;border-radius:999px;padding:4px 8px;align-self:center;',
+              title: '옵션 없이 단품 상품으로 저장됩니다. 상품 자체 제외는 카드 전체 제외를 사용하세요.',
+            }, '단품 상품'));
+          } else {
+            optRow.appendChild(mkOptField(axis0Name, row._opt0, (v) => {
+              row._opt0 = v;
+              row.member = v;
               row._sku = mrComputeSku(row);
               const skuInput = optRow.querySelector('[data-auto-sku-row-key]');
               mrSetSkuInputState(skuInput, row);
               const parentSkuEl = card.querySelector('[data-parent-sku-preview]');
               if (parentSkuEl) parentSkuEl.textContent = `parent SKU: ${mrPreviewParentSku(group)}`;
-            }, 80));
+            }, 90));
+            if (group.twoAxis) {
+              const axis1Name = group.tierNames[1] || '버전';
+              optRow.appendChild(mkOptField(axis1Name, row._opt1, (v) => {
+                row._opt1 = v;
+                row._sku = mrComputeSku(row);
+                const skuInput = optRow.querySelector('[data-auto-sku-row-key]');
+                mrSetSkuInputState(skuInput, row);
+                const parentSkuEl = card.querySelector('[data-parent-sku-preview]');
+                if (parentSkuEl) parentSkuEl.textContent = `parent SKU: ${mrPreviewParentSku(group)}`;
+              }, 80));
+            }
           }
 
           // SKU (auto-generated from Artist / Album / Version / member)
@@ -16434,9 +16461,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
           // Remove row button
           if (row.status !== 'done' && row.status !== 'promoting') {
-            const xBtn = el('button', { type: 'button', style: 'font-size:10px;padding:2px 7px;align-self:center;background:#fee2e2;color:#991b1b;' }, '✕');
+            const isLastOptionRow = group.rows.length <= 1;
+            const xBtn = el('button', {
+              type: 'button',
+              style: 'font-size:10px;padding:2px 7px;align-self:center;background:#fee2e2;color:#991b1b;',
+              title: isLastOptionRow ? '마지막 옵션은 카드 삭제가 아니라 단품 상품으로 전환합니다. 상품 제외는 카드 전체 제외를 사용하세요.' : '이 옵션 행만 삭제',
+            }, isLastOptionRow ? '옵션 제거→단품' : '✕');
             xBtn.addEventListener('click', () => {
-              MR_PREV = MR_PREV.filter(x => x !== row);
+              if (isLastOptionRow) {
+                mrConvertGroupToSingleProduct(group, row);
+              } else {
+                MR_PREV = MR_PREV.filter(x => x !== row);
+              }
               mrRenderPreviewCards();
             });
             optRow.appendChild(xBtn);
@@ -16453,6 +16489,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (cardStatus !== 'done') {
           const addOptBtn = el('button', { type: 'button', style: 'font-size:11px;padding:4px 10px;margin-top:4px;' }, '+ 옵션 행 추가');
           addOptBtn.addEventListener('click', () => {
+            group.rows.forEach(r => { r._singleProductMode = false; });
+            firstRow._singleProductMode = false;
             const clone = {
               ...firstRow,
               status: 'preview',
@@ -16470,6 +16508,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               _detail_image_urls: mrGetGroupOptionImages(group, firstRow),
               _components_image_url: mrGroupComponentImageUrl(group),
               _extra_images: mrGetGroupOptionImages(group, firstRow).slice(0, 8),
+              _singleProductMode: false,
               _twoAxis: group.twoAxis,
               // Share the group's idempotency token
               _group_token: group.idempotency_token,
@@ -16819,10 +16858,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           if (!(row._cost_krw > 0)) { row.status = 'failed'; row.error = '매입가가 0입니다.'; rowErr = true; continue; }
           if (!(row._weight_g > 0)) { row.status = 'failed'; row.error = '무게가 0입니다.'; rowErr = true; continue; }
           if (!row._main_image) { row.status = 'failed'; row.error = '메인/옵션 이미지를 첨부해주세요.'; rowErr = true; continue; }
-          if (!row._opt0) { row.status = 'failed'; row.error = `${group.tierNames[0] || '옵션'}이 비어있습니다.`; rowErr = true; continue; }
-          if (!mrSlug(row._opt0, 12)) { row.status = 'failed'; row.error = '멤버/옵션명은 SKU 생성을 위해 영문 또는 숫자를 포함해야 합니다.'; rowErr = true; continue; }
-          if (group.twoAxis && !row._opt1) { row.status = 'failed'; row.error = `${group.tierNames[1] || '버전'}이 비어있습니다.`; rowErr = true; continue; }
-          if (group.twoAxis && !mrSlug(row._opt1, 8)) { row.status = 'failed'; row.error = `${group.tierNames[1] || '버전'}은 SKU 생성을 위해 영문 또는 숫자를 포함해야 합니다.`; rowErr = true; continue; }
+          if (!row._singleProductMode && !row._opt0) { row.status = 'failed'; row.error = `${group.tierNames[0] || '옵션'}이 비어있습니다.`; rowErr = true; continue; }
+          if (!row._singleProductMode && !mrSlug(row._opt0, 12)) { row.status = 'failed'; row.error = '멤버/옵션명은 SKU 생성을 위해 영문 또는 숫자를 포함해야 합니다.'; rowErr = true; continue; }
+          if (!row._singleProductMode && group.twoAxis && !row._opt1) { row.status = 'failed'; row.error = `${group.tierNames[1] || '버전'}이 비어있습니다.`; rowErr = true; continue; }
+          if (!row._singleProductMode && group.twoAxis && !mrSlug(row._opt1, 8)) { row.status = 'failed'; row.error = `${group.tierNames[1] || '버전'}은 SKU 생성을 위해 영문 또는 숫자를 포함해야 합니다.`; rowErr = true; continue; }
         }
         if (rowErr) continue; // skip to next group, this group has row-level errors
       }
@@ -16842,7 +16881,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           weight_g:       r._weight_g || 0,
           main_image:     r._main_image || '',
           extra_images:   r._extra_images || [],
-          option_names:   group.twoAxis ? [r._opt0 || '', r._opt1 || ''] : [r._opt0 || ''],
+          option_names:   r._singleProductMode ? [] : (group.twoAxis ? [r._opt0 || '', r._opt1 || ''] : [r._opt0 || '']),
           tier_index:     r._tierIndex || [activeRows.indexOf(r)],
           collision_mode: r.collisionMode || 'reuse',
         }));
@@ -16864,7 +16903,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               p_sku:               vOpt.sku,
               p_weight_g:          vOpt.weight_g,
               p_lifecycle_state:   lifecycle,
-              p_option_name:       vOpt.option_names[0] || null,
+              p_option_name:       row._singleProductMode ? null : (vOpt.option_names[0] || null),
               p_cost_krw_override: vOpt.cost_krw,
               p_overwrite:         overwrite,
               p_idempotency_token: group.idempotency_token,

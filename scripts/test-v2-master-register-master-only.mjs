@@ -69,6 +69,13 @@ assert(masterRegister.includes('_detail_image_urls'), 'manual option image remov
 assert(masterRegister.includes('_components_image_url'), 'selected component image URL must be stored on the preview rows');
 assert(masterRegister.includes('components_extracted_en'), 'components must be persisted into products');
 assert(masterRegister.includes('components_approved: components ? 1 : 0'), 'operator-entered components must be saved as approved');
+assert(masterRegister.includes('function mrConvertGroupToSingleProduct'), 'last option-row removal must convert the card to single-product mode');
+assert(masterRegister.includes('_singleProductMode'), 'single-product mode must be stored on the remaining preview row');
+assert(masterRegister.includes('const isLastOptionRow = group.rows.length <= 1'), 'row delete must detect the last option row separately');
+assert(masterRegister.includes('mrConvertGroupToSingleProduct(group, row)'), 'last option-row delete must not remove the whole product card');
+assert(masterRegister.includes("p_option_name:       row._singleProductMode ? null : (vOpt.option_names[0] || null)"), 'single-product DB save must use null option_name');
+assert(masterRegister.includes('if (!row._singleProductMode && !row._opt0)'), 'option name validation must be skipped for single-product mode');
+assert(masterRegister.includes('단품 상품'), 'single-product mode must be visible to the operator');
 
 assert(masterRegister.includes('if (!MR_MASTER_ONLY_MODE) {'), 'platform-only UI/validation must be gated off');
 assert(masterRegister.includes('if (MR_MASTER_ONLY_MODE)'), 'multi-option promotion must short-circuit after master creation');

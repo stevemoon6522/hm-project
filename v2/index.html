@@ -7363,7 +7363,7 @@ LEGACY END -->
     try {
       const resp = await fetch(`${STARONEMALL_VISION_URL}/extract`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON },
+        headers: AUTH_HEADERS,
         body: JSON.stringify({ master_row_id: masterId, staronemall_url: staronemallUrl }),
       });
       const json = await resp.json();
@@ -15618,6 +15618,48 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       });
     }
 
+    function mrRenderCrawledImagePreview(firstRow) {
+      const observed = firstRow?.observed || {};
+      const baseUrl = firstRow?.url || '';
+      const rawMainImages = Array.isArray(observed.main_image_urls) ? observed.main_image_urls : [];
+      const normalizedMainImages = mrJoomNormalizeImageList(rawMainImages, baseUrl);
+      const representativeImages = normalizedMainImages.slice(0, 1);
+      const optionImages = normalizedMainImages.slice(1, 7);
+
+      const wrap = el('div', {
+        style: 'display:grid;grid-template-columns:minmax(120px,160px) 1fr;gap:8px;margin-top:6px;padding:8px;background:#fff;border:1px dashed var(--border);border-radius:8px;',
+      });
+
+      const renderBucket = (title, images, emptyText) => {
+        const bucket = el('div', { style: 'display:flex;flex-direction:column;gap:4px;' });
+        bucket.appendChild(el('div', { style: 'font-size:11px;font-weight:800;color:#4a275f;' }, title));
+        const grid = el('div', { style: 'display:flex;gap:5px;flex-wrap:wrap;align-items:center;' });
+        if (images.length) {
+          images.forEach((src, idx) => {
+            const tile = el('a', {
+              href: src,
+              target: '_blank',
+              rel: 'noopener noreferrer',
+              title: `${title} #${idx + 1}`,
+              style: 'width:48px;height:48px;border:1px solid var(--border);border-radius:6px;background:#fff;overflow:hidden;display:flex;align-items:center;justify-content:center;',
+            });
+            const img = el('img', { src, style: 'width:100%;height:100%;object-fit:cover;' });
+            img.addEventListener('error', () => { tile.textContent = '오류'; tile.style.color = 'var(--red)'; tile.style.fontSize = '10px'; });
+            tile.appendChild(img);
+            grid.appendChild(tile);
+          });
+        } else {
+          grid.appendChild(el('span', { style: 'font-size:11px;color:var(--red);' }, emptyText));
+        }
+        bucket.appendChild(grid);
+        return bucket;
+      };
+
+      wrap.appendChild(renderBucket('대표 이미지', representativeImages, '대표 이미지 없음'));
+      wrap.appendChild(renderBucket('옵션 이미지', optionImages, '옵션 이미지 없음'));
+      return wrap;
+    }
+
     async function mrExtractComponentsForGroup(group, textarea, statusEl, buttonEl) {
       const firstRow = group?.rows?.[0] || {};
       const url = firstRow.url || '';
@@ -15644,7 +15686,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }
         const resp = await fetch(`${STARONEMALL_VISION_URL}/extract`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', apikey: SUPABASE_ANON },
+          headers: AUTH_HEADERS,
           body: JSON.stringify({ master_row_id: 0, staronemall_url: url }),
         });
         const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
@@ -15834,6 +15876,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         defaultsRow.appendChild(defWLab);
 
         infoCol.appendChild(defaultsRow);
+        infoCol.appendChild(mrRenderCrawledImagePreview(firstRow));
 
         // 상품 구성품: manual input plus image-to-text extraction from StarOneMall detail image.
         if (firstRow._components_en == null) mrSetGroupComponents(group, firstRow.components_extracted_en || '');

@@ -53,6 +53,11 @@ assert(masterRegister.includes('상품 구성품'), 'master register must expose
 assert(masterRegister.includes('이미지에서 추출'), 'master register must expose image-to-text components extraction');
 assert(masterRegister.includes('mrExtractComponentsForGroup'), 'master register must call the Vision extraction helper');
 assert(masterRegister.includes('STARONEMALL_VISION_URL'), 'components extraction must reuse the staronemall-vision function');
+assert(masterRegister.includes('headers: AUTH_HEADERS'), 'components extraction must include Authorization bearer headers');
+assert(html.includes('headers: AUTH_HEADERS'), 'wizard components extraction must include Authorization bearer headers');
+assert(masterRegister.includes('대표 이미지'), 'master register must show a separate crawled representative image area');
+assert(masterRegister.includes('옵션 이미지'), 'master register must show a separate crawled option image area');
+assert(masterRegister.includes('mrRenderCrawledImagePreview'), 'master register must render crawled image previews before manual attachment');
 assert(masterRegister.includes('components_extracted_en'), 'components must be persisted into products');
 assert(masterRegister.includes('components_approved: components ? 1 : 0'), 'operator-entered components must be saved as approved');
 

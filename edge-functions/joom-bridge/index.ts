@@ -514,23 +514,55 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === "lookup-sku" && req.method === "GET") {
       const internalDenied = requireInternalBridge(req);
       if (internalDenied) return internalDenied;
-      // GET /lookup-sku?sku=ABC → resolve Joom productId + variantId + currency + current price
-      // for the variant whose sku matches. Used by shopee-dashboard manual Joom sync button
-      // to populate products.joom_product_id, joom_variant_id, joom_currency.
-      const sku = url.searchParams.get("sku") || "";
-      if (!sku.trim()) return jsonResp({ ok: false, error: "sku query param required" }, 400);
+      // GET /lookup-sku?sku=ABC&id=... → resolve Joom productId + variantId + currency.
+      // Some imported/previously-published rows have products.joom_product_id even when
+      // Joom no longer resolves the local master SKU as the parent SKU. In that case,
+      // retry by id before declaring the remote product missing.
+      const sku = (url.searchParams.get("sku") || "").trim();
+      const id = (url.searchParams.get("id") || "").trim();
+      if (!sku && !id) return jsonResp({ ok: false, error: "sku or id query param required" }, 400);
+
+      const isLookupMiss = (e: any) => {
+        const detail = String(e?.message || e || '');
+        const lower = detail.toLowerCase();
+        return lower.includes('not found')
+          || lower.includes('not_found')
+          || lower.includes('code=404')
+          || lower.includes('code=100');
+      };
+      const lookupJoomProductBySkuOrId = async () => {
+        let skuError: any = null;
+        if (sku) {
+          try {
+            return await joomFetch(`/products?sku=${encodeURIComponent(sku)}`);
+          } catch (e) {
+            skuError = e;
+            if (!id || !isLookupMiss(e)) throw e;
+          }
+        }
+        if (id) return await joomFetch(`/products?id=${encodeURIComponent(id)}`);
+        throw skuError;
+      };
+      const findLookupVariant = (product: any) => {
+        const variants: any[] = Array.isArray(product?.variants) ? product.variants : [];
+        if (sku) {
+          const exact = variants.find((v: any) => String(v?.sku || "").trim() === sku);
+          if (exact) return exact;
+        }
+        if (id && String(product?.id || "") === id && variants.length === 1) return variants[0];
+        return null;
+      };
+
       try {
-        // /products?sku=... returns the product whose merchant SKU is the parent's sku.
-        // Joom permits a parent product to share its SKU with one of its variants, so we
-        // search variants[] for an exact match too.
-        const product = await joomFetch(`/products?sku=${encodeURIComponent(sku.trim())}`);
-        const variants: any[] = product?.variants || [];
-        const matched = variants.find((v: any) => String(v?.sku || "") === sku.trim());
+        const product = await lookupJoomProductBySkuOrId();
+        const variants: any[] = Array.isArray(product?.variants) ? product.variants : [];
+        const matched = findLookupVariant(product);
         if (!matched) {
           return jsonResp({
             ok: false,
             error: "variant_sku_not_found",
             joom_product_id: product?.id || null,
+            lookup_by_id: !!id,
             variant_count: variants.length,
             variant_skus_sample: variants.slice(0, 5).map((v: any) => v?.sku || null),
           }, 404);
@@ -546,7 +578,13 @@ async function handleRequest(req: Request): Promise<Response> {
         });
       } catch (e: any) {
         console.error("[joom-bridge] lookup-sku failed", e);
-        return jsonResp({ ok: false, error: "upstream_joom_lookup_failed" }, 502);
+        const detail = String(e?.message || e || '');
+        const miss = isLookupMiss(e);
+        return jsonResp({
+          ok: false,
+          error: miss ? "joom_product_lookup_failed" : "upstream_joom_lookup_failed",
+          lookup_error_detail: detail.slice(0, 500),
+        }, miss ? 404 : 502);
       }
     }
 

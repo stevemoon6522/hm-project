@@ -137,7 +137,10 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
 async function syncListing(ctx: BridgeContext): Promise<AdapterResult> {
   const userToken = s(ctx.userAuthToken);
   if (!userToken) return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_AUTH_FAILED', errorMsg: 'Authenticated user token is required for Joom sync' };
-  const params = { sku: s(ctx.masterProduct.sku) };
+  const params = {
+    sku: s(ctx.masterProduct.sku),
+    id: s(ctx.masterProduct.joom_product_id),
+  };
   const { status, raw } = await bridgeGet('lookup-sku', params, userToken);
   if (status >= 200 && status < 300 && raw?.ok) {
     return {

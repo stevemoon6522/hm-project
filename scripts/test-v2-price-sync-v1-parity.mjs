@@ -93,5 +93,19 @@ for (const platform of ['shopee', 'joom', 'qoo10', 'alibaba', 'ebay']) {
   assert(v2.includes(`data-cat-platform="${platform}"`), `V2 price sync toolbar must include ${platform} platform tab`);
 }
 assert(v2.includes("chip.className = 'cat-market-chip active'"), 'Shopee markets must render as compact chips instead of loose checkboxes');
+assert(v2.includes('function catFlushSelectedInlineEdits'), 'Shopee live sync must flush selected row cost/weight inputs before building payloads');
+assert(/await catFlushSelectedInlineEdits\(\{\s*persistWeight:\s*true\s*\}\);[\s\S]*const \{ payloads \} = catBuildPriceSyncPayloads\(\)/.test(v2), 'Shopee live sync must read pending inline edits before empty-target validation');
+assert(/const targetRegions = CAT_REGIONS\.filter\(function\(r\) \{ return _catRegionVisible\.has\(r\); \}\)/.test(v2), 'Shopee price payload builder must honor active region chips for region-scoped 10-20 row batches');
+assert(v2.includes('placeholder="아티스트 / SKU / 상품명 / 옵션 검색"'), 'Price sync search placeholder must make artist keyword search explicit');
+assert(v2.includes('id="login-github"'), 'V2 auth panel must expose GitHub OAuth login for Supabase GitHub accounts');
+assert(v2.includes("provider: 'github'"), 'V2 GitHub login must call Supabase signInWithOAuth');
+assert(v2.includes('function catEnsureSelectedShopeeListings'), 'Shopee price sync must auto-resolve GLOBAL published_list mappings into shop listings before payload build');
+assert(v2.includes("SHOPEE_BRIDGE + '/published_list?'"), 'Shopee price sync auto-resolution must use published_list from the global item id');
+assert(v2.includes("SHOPEE_BRIDGE + '/tokens?region=SG'"), 'Shopee published_list auto-resolution must map shop_id back to region using token shop ids');
+assert(v2.includes('const matchesRegion = region ? region === r : (regionShopId && Number(shopId) === Number(regionShopId));'), 'Shopee published_list entries without region must match via shop_id');
+assert(v2.includes('function catProductNeedsShopeeModel'), 'Variant/global-model rows must require shop_model_id during auto-resolution');
+assert(v2.includes('variation_tier_index.map(function(v) { return Number(v); }).join'), 'Shopee shop model matching must fall back to tier_index when SKU/name differ');
+assert(/await catEnsureSelectedShopeeListings\(\);[\s\S]*const \{ payloads \} = catBuildPriceSyncPayloads\(\)/.test(v2), 'Shopee live sync must hydrate shop listings before empty-target validation');
+assert(!/Shopee 가격을 실동기화합니다\.[\s\S]{0,200}confirm\(/.test(v2), 'V2 Shopee sync should match V1 one-click live update flow without an extra confirm blocker');
 
 console.log('v2 price sync V1 parity checks passed');

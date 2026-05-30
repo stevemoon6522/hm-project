@@ -1499,6 +1499,7 @@
       <div id="login-error" class="error-text"></div>
       <div class="actions">
         <button id="login-submit" type="submit" class="primary">Sign in</button>
+        <button id="login-github" type="button">Sign in with GitHub</button>
       </div>
     </form>
   </div>
@@ -2422,7 +2423,7 @@
       <!-- toolbar -->
       <div class="toolbar cat-toolbar">
         <div class="cat-filter-row">
-          <input id="cat-search" type="search" placeholder="SKU / 상품명 / 옵션 검색">
+          <input id="cat-search" type="search" placeholder="아티스트 / SKU / 상품명 / 옵션 검색">
           <select id="cat-lifecycle-filter">
             <option value="">전체 lifecycle</option>
             <option value="pre_order">PRE_ORDER</option>
@@ -3597,6 +3598,7 @@ LEGACY END -->
     loginEmail: document.getElementById('login-email'),
     loginPassword: document.getElementById('login-password'),
     loginSubmit: document.getElementById('login-submit'),
+    loginGithub: document.getElementById('login-github'),
     loginError: document.getElementById('login-error'),
     logout: document.getElementById('logout'),
     productBody: document.getElementById('product-body'),
@@ -4585,6 +4587,21 @@ LEGACY END -->
       els.loginError.textContent = e.message || String(e);
     } finally {
       els.loginSubmit.disabled = false;
+    }
+  }
+
+  async function signInWithGithub() {
+    els.loginError.textContent = '';
+    if (els.loginGithub) els.loginGithub.disabled = true;
+    try {
+      const { error } = await db.auth.signInWithOAuth({
+        provider: 'github',
+        options: { redirectTo: window.location.href },
+      });
+      if (error) throw error;
+    } catch (e) {
+      els.loginError.textContent = e.message || String(e);
+      if (els.loginGithub) els.loginGithub.disabled = false;
     }
   }
 
@@ -6730,6 +6747,9 @@ LEGACY END -->
     });
   } else if (els.loginSubmit) {
     els.loginSubmit.addEventListener('click', signIn);
+  }
+  if (els.loginGithub) {
+    els.loginGithub.addEventListener('click', signInWithGithub);
   }
   if (!els.loginForm && els.loginPassword) {
     // Fallback for legacy markup without a form element.
@@ -11861,6 +11881,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // In-memory cache of pending cost edits: { [productId]: newCostKrw }
   const pendingCostEdits = {};
 
+  // In-memory cache of pending weight edits: { [productId]: weightG }.
+  // Used when the operator types weight and immediately clicks sync before blur fires.
+  const pendingWeightEdits = {};
+
   // In-memory cache of pending 도매가(sourcing) edits: { [productId]: sourcingKrw }
   // Populated when the operator edits 도매가 or crawls Staronemall; persisted
   // alongside cost_krw on the live-sync path so sourcing isn't silently dropped.
@@ -11920,6 +11944,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const pid = String(product.id);
     if (pid in pendingCostEdits) return pendingCostEdits[pid];
     return Number(product.cost_krw || 0);
+  }
+
+  /** Effective weight for a product row: pendingWeightEdits override or DB value */
+  function catEffectiveWeight(product) {
+    if (!product) return 0;
+    const pid = String(product.id);
+    if (pid in pendingWeightEdits) return pendingWeightEdits[pid];
+    return Number(product.weight_g || 0);
   }
 
   /** Relative date string: "3일 전", "오늘" */
@@ -12203,7 +12235,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     listings.forEach(function(l) { listingByRegion.set(String(l.region), l); });
 
     const product = _catCache.products.find(function(p) { return String(p.id) === pid; });
-    const weightG = product ? product.weight_g : 0;
+    const weightG = product ? catEffectiveWeight(product) : 0;
 
     if (_catActivePlatform === 'joom' && product) {
       const joomResult = catBuildJoomCells(product, newCost, weightG);
@@ -12346,6 +12378,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const product = _catCache.products.find(function(p) { return String(p.id) === String(pid); });
       if (product) product.weight_g = weightG;
     }
+    delete pendingWeightEdits[String(pid)];
     // Re-render region preview using the new weight (cost unchanged).
     const product = _catCache && _catCache.products.find(function(p) { return String(p.id) === String(pid); });
     if (product) catUpdateRowPriceCells(pid, catEffectiveCost(product));
@@ -12435,7 +12468,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const pid = String(p.id);
         const listing = (listingIdx.get(pid) || new Map()).get(r);
         const currentPrice = listing && listing.last_synced_price != null ? Number(listing.last_synced_price) : null;
-        const newPrice = catComputeNewPrice(catEffectiveCost(p), r, p.weight_g);
+        const newPrice = catComputeNewPrice(catEffectiveCost(p), r, catEffectiveWeight(p));
         if (currentPrice != null && Number.isFinite(currentPrice)) currentPrices.push(currentPrice);
         if (newPrice != null && Number.isFinite(newPrice)) newPrices.push(newPrice);
         if (currentPrice != null && currentPrice > 0 && newPrice != null) {
@@ -12463,7 +12496,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let maxDeltaPct = 0;
     rows.forEach(function(p) {
       const current = p.joom_last_synced_price != null ? Number(p.joom_last_synced_price) : null;
-      const next = catComputeJoomPrice(catEffectiveCost(p), p.weight_g);
+      const next = catComputeJoomPrice(catEffectiveCost(p), catEffectiveWeight(p));
       if (current != null && Number.isFinite(current)) currentPrices.push(current);
       if (next != null && Number.isFinite(next)) newPrices.push(next);
       if (current != null && current > 0 && next != null) {
@@ -12510,7 +12543,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + '<td>' + catLifecycleBadge(first.lifecycle_state) + '</td>'
       + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows, 'sourcing_price') + '</td>'
       + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows, 'cost_krw') + '</td>'
-      + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows, 'weight_g') + '</td>'
+      + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows.map(function(row) { return Object.assign({}, row, { weight_g: catEffectiveWeight(row) }); }), 'weight_g') + '</td>'
       + regionResult.html
       + '<td data-cat-delta>' + (maxDelta > 0.5 ? '<span class="cat-price-up">' + maxDelta.toFixed(1) + '%</span>' : '<span class="cat-price-same">—</span>') + '</td>'
       + '<td style="font-size:12px;color:var(--muted);">묶음</td>'
@@ -12525,7 +12558,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const origCost = Number(p.cost_krw || 0);
     const isLargeChange = pid in pendingCostEdits && origCost > 0
       && Math.abs(pendingCostEdits[pid] - origCost) / origCost > 0.30;
-    const regionResult = catBuildRegionCells(byRegion, effectiveCost, p.weight_g, p);
+    const effectiveWeight = catEffectiveWeight(p);
+    const regionResult = catBuildRegionCells(byRegion, effectiveCost, effectiveWeight, p);
     const maxDelta = regionResult.maxDeltaPct;
     const isStale = catIsStale(p);
     const optionLabel = plOptionDisplay(p);
@@ -12565,7 +12599,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const wtCell = '<td>'
       + '<input type="number" inputmode="decimal" class="cat-weight-input mono"'
       + ' data-cat-weight-pid="' + esc(pid) + '"'
-      + ' value="' + (p.weight_g != null ? Number(p.weight_g) : '') + '"'
+      + ' value="' + (effectiveWeight > 0 ? Number(effectiveWeight) : '') + '"'
       + ' min="1" max="999999999" step="1" style="width:64px;font-size:12px;"'
       + ' title="무게(g) — blur/Enter 시 저장 + region preview 갱신 (실호출 아님)">'
       + '</td>';
@@ -12690,7 +12724,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Filter
     let rows = _catCache.products.filter(function(p) {
       if (q) {
-        const hay = (p.sku || '') + ' ' + (p.product_name || '') + ' ' + (p.option_name || '');
+        const hay = [
+          p.sku,
+          p.product_name,
+          p.option_name,
+          p.shopee_global_model_sku,
+          plOptionDisplay(p),
+          Array.isArray(p.variation_option_names) ? p.variation_option_names.join(' ') : '',
+        ].filter(Boolean).join(' ');
         if (hay.toLowerCase().indexOf(q) === -1) return false;
       }
       if (lcFilter) {
@@ -12803,8 +12844,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           return;
         }
         input.classList.remove('cost-warn');
+        const roundedWeight = Math.round(weight);
+        pendingWeightEdits[pid] = roundedWeight;
         lastSaved = rawVal;
-        catPersistWeight(pid, Math.round(weight), input);
+        const product = _catCache && (_catCache.products || []).find(function(p) { return String(p.id) === String(pid); });
+        catUpdateRowPriceCells(pid, catEffectiveCost(product || {}));
+        catPersistWeight(pid, roundedWeight, input);
       }
       input.addEventListener('blur', onWeightChange);
       input.addEventListener('keydown', function(e) {
@@ -12850,6 +12895,55 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const checked = visibleIds.filter(function(pid) { return catSelectedIds.has(pid); }).length;
     all.checked = checked > 0 && checked === visibleIds.length;
     all.indeterminate = checked > 0 && checked < visibleIds.length;
+  }
+
+  function catFlushSelectedInlineEdits(options) {
+    const persistWeight = !!(options && options.persistWeight);
+    const weightSaves = [];
+    const selected = new Set(Array.from(catSelectedIds).map(String));
+
+    document.querySelectorAll('.cat-row-cb:checked').forEach(function(cb) {
+      const pid = String(cb.dataset.catSel || '');
+      if (!pid || !selected.has(pid)) return;
+      const tr = cb.closest('tr');
+      if (!tr) return;
+
+      const sourcingInput = tr.querySelector('.cat-sourcing-input');
+      if (sourcingInput && sourcingInput.value.trim() !== '') {
+        const sourcing = Number(sourcingInput.value.trim());
+        if (Number.isFinite(sourcing) && sourcing > 0 && sourcing <= 999999999) {
+          catApplySourcingToRow(pid, sourcing);
+        }
+      }
+
+      const costInput = tr.querySelector('.cat-cost-input');
+      if (costInput && costInput.value.trim() !== '') {
+        const cost = Number(costInput.value.trim());
+        if (Number.isFinite(cost) && cost > 0 && cost <= 999999999) {
+          pendingCostEdits[pid] = cost;
+          catUpdateRowPriceCells(pid, cost);
+        } else {
+          costInput.classList.add('cost-warn');
+        }
+      }
+
+      const weightInput = tr.querySelector('.cat-weight-input');
+      if (weightInput && weightInput.value.trim() !== '') {
+        const weight = Number(weightInput.value.trim());
+        if (Number.isFinite(weight) && weight > 0 && weight <= 999999999) {
+          const roundedWeight = Math.round(weight);
+          pendingWeightEdits[pid] = roundedWeight;
+          weightInput.classList.remove('cost-warn');
+          const product = _catCache && (_catCache.products || []).find(function(p) { return String(p.id) === pid; });
+          catUpdateRowPriceCells(pid, catEffectiveCost(product || {}));
+          if (persistWeight) weightSaves.push(catPersistWeight(pid, roundedWeight, weightInput));
+        } else {
+          weightInput.classList.add('cost-warn');
+        }
+      }
+    });
+
+    return Promise.all(weightSaves);
   }
 
   // ── ULID generator (timestamp-based, for run_id) ────────────────
@@ -12901,13 +12995,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }
       }
 
-      // Build one shop-level update_price envelope per mapped region.
-      CAT_REGIONS.forEach(function(r) {
+      const newWeightG = catEffectiveWeight(product);
+      if (!newWeightG || newWeightG <= 0) return;
+
+      // Build one shop-level update_price envelope per mapped, currently enabled region.
+      const targetRegions = CAT_REGIONS.filter(function(r) { return _catRegionVisible.has(r); });
+      targetRegions.forEach(function(r) {
         const listing = byRegion.get(r);
         if (!listing || !listing.shop_item_id) return;
         const itemId = Number(listing.shop_item_id);
         if (!Number.isFinite(itemId) || itemId <= 0) return;
-        const newPrice = catComputeNewPrice(newCost, r, product.weight_g);
+        const newPrice = catComputeNewPrice(newCost, r, newWeightG);
         const priceInfo = normalizeShopeeOriginalPrice(r, newPrice);
         if (!priceInfo.ok) return;
 
@@ -12937,6 +13035,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           modelId: modelId,
           listing: listing,
           newCost: newCost,
+          newWeightG: newWeightG,
           price: priceInfo.value,
           payload: payload,
           payloadHash: payloadHash,
@@ -12955,6 +13054,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // ── Dry-run modal ───────────────────────────────────────────────
 
   function catShowDryRunModal() {
+    catFlushSelectedInlineEdits({ persistWeight: false });
     const { runId, payloads } = catBuildDryRunPayloads();
 
     const modalBody = document.getElementById('cat-modal-body');
@@ -13127,16 +13227,22 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return bridgeResultMessage(json || {}) || fallback || 'unknown';
   }
 
-  async function catFetchShopeeModelIndex(region, itemId) {
+  async function catFetchShopeeModelRows(region, itemId) {
     const qs = new URLSearchParams({ region: region, item_id: String(itemId) });
     const response = await fetch(SHOPEE_BRIDGE + '/shop_model_list?' + qs.toString(), { headers: AUTH_HEADERS });
     const json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
     if (!response.ok || !json.ok || json.result?.error) {
-      return { ok: false, error: catBridgePriceMessage(json, 'HTTP ' + response.status) };
+      return { ok: false, error: catBridgePriceMessage(json, 'HTTP ' + response.status), models: [] };
     }
     const modelList = json.result?.response?.model || json.result?.response?.model_list || json.response?.model || [];
+    return { ok: true, models: Array.isArray(modelList) ? modelList : [] };
+  }
+
+  async function catFetchShopeeModelIndex(region, itemId) {
+    const info = await catFetchShopeeModelRows(region, itemId);
+    if (!info.ok) return { ok: false, error: info.error };
     const modelIds = new Set(
-      modelList.map(function(m) { return Number(m && m.model_id); })
+      info.models.map(function(m) { return Number(m && m.model_id); })
         .filter(function(v) { return Number.isFinite(v) && v > 0; })
     );
     return { ok: true, hasModel: modelIds.size > 0, modelIds: modelIds };
@@ -13277,14 +13383,178 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
   }
 
+  function catNormalizeSkuText(value) {
+    return String(value || '').trim().toLowerCase();
+  }
+
+  function catShopeeModelMatchesProduct(model, product) {
+    const sku = catNormalizeSkuText(product && product.sku);
+    const globalSku = catNormalizeSkuText(product && product.shopee_global_model_sku);
+    const optionName = catNormalizeSkuText(product && product.option_name);
+    const modelSku = catNormalizeSkuText(model && model.model_sku);
+    const modelName = catNormalizeSkuText(model && model.model_name);
+    const productTierIndex = Array.isArray(product && product.variation_tier_index)
+      ? product.variation_tier_index.map(function(v) { return Number(v); }).join(',')
+      : '';
+    const modelTierIndex = Array.isArray(model && model.tier_index)
+      ? model.tier_index.map(function(v) { return Number(v); }).join(',')
+      : '';
+    if (modelSku && (modelSku === sku || modelSku === globalSku)) return true;
+    if (modelName && optionName && modelName === optionName) return true;
+    if (productTierIndex && modelTierIndex && productTierIndex === modelTierIndex) return true;
+    return false;
+  }
+
+  function catProductGlobalItemId(product, byRegion) {
+    const direct = Number(product && (product.shopee_item_id || product.global_item_id || product.shopee_global_item_id || 0));
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    if (byRegion && typeof byRegion.values === 'function') {
+      for (const listing of byRegion.values()) {
+        const v = Number(listing && listing.global_item_id);
+        if (Number.isFinite(v) && v > 0) return v;
+      }
+    }
+    return null;
+  }
+
+  function catProductNeedsShopeeModel(product) {
+    if (!product) return false;
+    if (Number(product.global_model_id) > 0) return true;
+    if (String(product.shopee_global_model_sku || '').trim()) return true;
+    if (String(product.option_name || '').trim()) return true;
+    if (Array.isArray(product.variation_option_names) && product.variation_option_names.length) return true;
+    if (Array.isArray(product.variation_tier_index) && product.variation_tier_index.length) return true;
+    return false;
+  }
+
+  async function catFetchShopeeShopRegionIndex() {
+    const byRegion = new Map();
+    const byShopId = new Map();
+    try {
+      const response = await fetch(SHOPEE_BRIDGE + '/tokens?region=SG', { headers: AUTH_HEADERS });
+      const json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
+      const tokens = Array.isArray(json && json.tokens) ? json.tokens : [];
+      tokens.forEach(function(t) {
+        const region = String(t.region || t.shop_region || '').toUpperCase();
+        const shopId = Number(t.shop_id || t.shopId);
+        if (!region || !Number.isFinite(shopId) || shopId <= 0) return;
+        byRegion.set(region, shopId);
+        byShopId.set(String(shopId), region);
+      });
+    } catch (e) {
+      console.warn('[CAT live] tokens unavailable for published_list region matching:', e.message || e);
+    }
+    return { byRegion: byRegion, byShopId: byShopId };
+  }
+
+  function catPublishedItemsFromResponse(json) {
+    if (Array.isArray(json?.published_list)) return json.published_list;
+    if (Array.isArray(json?.published_item)) return json.published_item;
+    if (Array.isArray(json?.response?.published_item)) return json.response.published_item;
+    if (Array.isArray(json?.result?.response?.published_item)) return json.result.response.published_item;
+    return [];
+  }
+
+  async function catEnsureSelectedShopeeListings() {
+    if (!_catCache) return 0;
+    const selectedProducts = catSelectedProducts();
+    const targetRegions = CAT_REGIONS.filter(function(r) { return _catRegionVisible.has(r); });
+    if (!selectedProducts.length || !targetRegions.length) return 0;
+
+    const listingIdx = new Map();
+    (_catCache.listings || []).forEach(function(l) {
+      const pid = String(l.product_id);
+      if (!listingIdx.has(pid)) listingIdx.set(pid, new Map());
+      listingIdx.get(pid).set(String(l.region), l);
+    });
+
+    let added = 0;
+    const publishedCache = new Map();
+    const modelCache = new Map();
+    let shopIndex = null;
+
+    for (const product of selectedProducts) {
+      const pid = String(product.id);
+      const byRegion = listingIdx.get(pid) || new Map();
+      const globalItemId = catProductGlobalItemId(product, byRegion);
+      if (!Number.isFinite(globalItemId) || globalItemId <= 0) continue;
+      const needsModel = catProductNeedsShopeeModel(product);
+      const needsRegion = targetRegions.some(function(r) {
+        const l = byRegion.get(r);
+        return !(l && l.shop_item_id && (!needsModel || l.shop_model_id));
+      });
+      if (!needsRegion) continue;
+
+      if (!publishedCache.has(globalItemId)) {
+        const qs = new URLSearchParams({ region: 'SG', global_item_id: String(globalItemId) });
+        const response = await fetch(SHOPEE_BRIDGE + '/published_list?' + qs.toString(), { headers: AUTH_HEADERS });
+        const json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
+        if (!response.ok || !json.ok || json.result?.error) {
+          publishedCache.set(globalItemId, []);
+        } else {
+          publishedCache.set(globalItemId, catPublishedItemsFromResponse(json));
+        }
+      }
+
+      const publishedItems = publishedCache.get(globalItemId) || [];
+      for (const r of targetRegions) {
+        const existing = byRegion.get(r);
+        if (existing && existing.shop_item_id && (!needsModel || existing.shop_model_id)) continue;
+        if (!shopIndex) shopIndex = await catFetchShopeeShopRegionIndex();
+        const regionShopId = shopIndex.byRegion.get(r) || null;
+        const published = publishedItems.find(function(entry) {
+          const region = String(entry.region || entry.shop_region || entry.country || '').toUpperCase();
+          const shopId = Number(entry.shop_id || entry.shopId);
+          const status = Number(entry.item_status ?? entry.status ?? 1);
+          const matchesRegion = region ? region === r : (regionShopId && Number(shopId) === Number(regionShopId));
+          return matchesRegion && (!Number.isFinite(status) || [1, 8].includes(status));
+        });
+        const itemId = Number(published && (published.shop_item_id || published.item_id || published.shopItemId));
+        if (!Number.isFinite(itemId) || itemId <= 0) continue;
+
+        let modelId = null;
+        const modelKey = r + ':' + itemId;
+        if (!modelCache.has(modelKey)) modelCache.set(modelKey, await catFetchShopeeModelRows(r, itemId));
+        const modelInfo = modelCache.get(modelKey);
+        if (modelInfo && modelInfo.ok && modelInfo.models.length) {
+          const model = modelInfo.models.find(function(m) { return catShopeeModelMatchesProduct(m, product); });
+          modelId = model && model.model_id ? Number(model.model_id) : null;
+          if (!modelId && needsModel) continue;
+        }
+
+        const payload = {
+          product_id: pid,
+          region: r,
+          global_item_id: globalItemId,
+          shop_id: published.shop_id || published.shopId || null,
+          shop_item_id: itemId,
+          shop_model_id: modelId,
+          status: 'mapped',
+          published_at: new Date().toISOString(),
+          raw_payload: { source: 'price_sync_auto_published_list', published: published },
+        };
+        const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: 'product_id,region' });
+        if (error) throw error;
+        _catCache.listings = (_catCache.listings || []).filter(function(l) { return !(String(l.product_id) === pid && String(l.region) === r); });
+        _catCache.listings.push(payload);
+        if (!listingIdx.has(pid)) listingIdx.set(pid, new Map());
+        listingIdx.get(pid).set(r, payload);
+        added += 1;
+      }
+    }
+    return added;
+  }
+
   async function catExecuteShopeeLive() {
+    await catFlushSelectedInlineEdits({ persistWeight: true });
+    await catEnsureSelectedShopeeListings();
     const { payloads } = catBuildPriceSyncPayloads();
     if (!payloads.length) {
       showToast('Shopee 실호출 대상이 없습니다. 매핑된 행을 선택하고 cost를 확인하세요.', 'err');
       return;
     }
-    if (!confirm('Shopee 가격을 실동기화합니다.\n\n대상 payload: ' + payloads.length + '건\n부분 실패 시 자동 rollback은 없습니다. 진행할까요?')) return;
-
+    // V1 parity: the Shopee sync button is an explicit operator action.
+    // Do not require an extra confirm; preflight blocks unsafe targets before update_price.
     const btn = document.getElementById('cat-sync-btn');
     const oldText = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Shopee 동기화 중...'; }
@@ -13365,6 +13635,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function catExecuteJoomSync() {
+    await catFlushSelectedInlineEdits({ persistWeight: true });
     const products = catSelectedProducts();
     if (!products.length) {
       showToast('Joom 동기화 대상 행을 선택하세요.', 'err');
@@ -13390,7 +13661,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const newCost = productId in pendingCostEdits ? pendingCostEdits[productId] : Number(product.cost_krw || 0);
         const calc = calculateJoomPrice({
           costKrw: newCost,
-          weightG: product.weight_g,
+          weightG: catEffectiveWeight(product),
           countrySettings: joomSettings,
         });
         if (!calc.ok || !Number.isFinite(calc.joomPrice) || calc.joomPrice <= 0) {

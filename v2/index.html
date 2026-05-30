@@ -1570,6 +1570,7 @@
               <input type="search" id="sg-keyword" placeholder="Shopee global product keyword (예: CORTIS)">
               <select id="sg-region" style="width:110px;" aria-label="Global Product search scope"><option value="GLOBAL">Global</option></select>
               <button type="button" id="sg-search-btn" class="primary">Global 검색</button>
+              <button type="button" id="sg-refresh-btn" title="캐시를 무시하고 Shopee Global Product를 다시 조회해 변경사항을 확인합니다.">변경사항 새로고침</button>
               <button type="button" id="sg-import-btn" disabled>선택 항목 Master 등록</button>
             </div>
             <div class="register-statusline">
@@ -3608,6 +3609,7 @@ LEGACY END -->
     sgKeyword: document.getElementById('sg-keyword'),
     sgRegion: document.getElementById('sg-region'),
     sgSearchBtn: document.getElementById('sg-search-btn'),
+    sgRefreshBtn: document.getElementById('sg-refresh-btn'),
     sgMockBtn: document.getElementById('sg-mock-btn'),
     sgImportBtn: document.getElementById('sg-import-btn'),
     sgLifecycleChoice: document.getElementById('sg-lifecycle-choice'),
@@ -3717,6 +3719,8 @@ LEGACY END -->
     productListSelectedIds: new Set(),
     priceSyncCollapsedGroups: new Set(),
     shopeeGlobalSearchResults: [],
+    sgSearchMemoryCache: new Map(),
+    sgActiveBackgroundRefreshKey: '',
     shopeeGlobalPendingLifecycle: null,
   };
 
@@ -4102,6 +4106,59 @@ LEGACY END -->
     return `${SG_SEARCH_CACHE_VERSION}:${String(region || 'GLOBAL').toUpperCase()}:${String(keyword || '').trim().toLowerCase()}`;
   }
 
+  function sgReadSearchCacheSync(region, keyword) {
+    const key = sgSearchCacheKey(region, keyword);
+    const hit = state.sgSearchMemoryCache instanceof Map ? state.sgSearchMemoryCache.get(key) : null;
+    if (hit && Date.now() - Number(hit.savedAt || 0) < SG_SEARCH_CACHE_TTL_MS && Array.isArray(hit.rows)) return hit;
+    return null;
+  }
+
+  function sgRememberSearchCache(entry) {
+    if (!entry || !entry.key || !Array.isArray(entry.rows)) return;
+    if (!(state.sgSearchMemoryCache instanceof Map)) state.sgSearchMemoryCache = new Map();
+    state.sgSearchMemoryCache.set(entry.key, entry);
+  }
+
+  function sgRowChangeKey(row) {
+    const item = row && row.item ? row.item : {};
+    return String(sgItemId(item) || sgItemSku(item) || sgItemName(item) || '');
+  }
+
+  function sgRowSignature(row) {
+    const item = row && row.item ? row.item : {};
+    const models = sgArray(row && row.models).map((m) => [
+      sgModelSku(m),
+      m?.global_model_id || m?.model_id || '',
+      m?.model_name || m?.name || '',
+      sgArray(m?.tier_index).join(','),
+      sgImportedPrice(item, m) || '',
+      sgImportedWeightG(item, m) || '',
+    ].join('|')).sort();
+    return JSON.stringify({
+      id: sgItemId(item),
+      name: sgItemName(item),
+      sku: sgItemSku(item),
+      image: sgMainImageUrl(item),
+      price: sgImportedPrice(item, null) || '',
+      weight: sgImportedWeightG(item, null) || '',
+      models,
+    });
+  }
+
+  function sgCompareSearchRows(oldRows, freshRows) {
+    const oldMap = new Map(sgArray(oldRows).map((row) => [sgRowChangeKey(row), sgRowSignature(row)]).filter(([key]) => key));
+    const freshMap = new Map(sgArray(freshRows).map((row) => [sgRowChangeKey(row), sgRowSignature(row)]).filter(([key]) => key));
+    let added = 0;
+    let removed = 0;
+    let changed = 0;
+    freshMap.forEach((sig, key) => {
+      if (!oldMap.has(key)) added += 1;
+      else if (oldMap.get(key) !== sig) changed += 1;
+    });
+    oldMap.forEach((_, key) => { if (!freshMap.has(key)) removed += 1; });
+    return { added, removed, changed, hasChanges: added > 0 || removed > 0 || changed > 0 };
+  }
+
   function sgOpenSearchCacheDb() {
     if (!window.indexedDB) return Promise.resolve(null);
     return new Promise((resolve) => {
@@ -4118,6 +4175,8 @@ LEGACY END -->
 
   async function sgReadSearchCache(region, keyword) {
     const key = sgSearchCacheKey(region, keyword);
+    const memoryHit = sgReadSearchCacheSync(region, keyword);
+    if (memoryHit) return memoryHit;
     try {
       const dbi = await sgOpenSearchCacheDb();
       if (dbi) {
@@ -4128,13 +4187,19 @@ LEGACY END -->
           req.onerror = () => resolve(null);
         });
         dbi.close();
-        if (hit && Date.now() - Number(hit.savedAt || 0) < SG_SEARCH_CACHE_TTL_MS && Array.isArray(hit.rows)) return hit;
+        if (hit && Date.now() - Number(hit.savedAt || 0) < SG_SEARCH_CACHE_TTL_MS && Array.isArray(hit.rows)) {
+          sgRememberSearchCache(hit);
+          return hit;
+        }
       }
     } catch (e) { /* cache is best-effort */ }
     try {
       const raw = localStorage.getItem(`sd:sg-search:${key}`);
       const hit = raw ? JSON.parse(raw) : null;
-      if (hit && Date.now() - Number(hit.savedAt || 0) < SG_SEARCH_CACHE_TTL_MS && Array.isArray(hit.rows)) return hit;
+      if (hit && Date.now() - Number(hit.savedAt || 0) < SG_SEARCH_CACHE_TTL_MS && Array.isArray(hit.rows)) {
+        sgRememberSearchCache(hit);
+        return hit;
+      }
     } catch (e) { /* ignore quota / JSON issues */ }
     return null;
   }
@@ -4149,6 +4214,7 @@ LEGACY END -->
       scanned: payload.scanned || 0,
       pagesRead: payload.pagesRead || 0,
     };
+    sgRememberSearchCache(entry);
     try {
       const dbi = await sgOpenSearchCacheDb();
       if (dbi) {
@@ -4204,11 +4270,69 @@ LEGACY END -->
     }
   }
 
-  async function searchShopeeGlobalProducts(useMock = false) {
+  async function sgFetchFreshShopeeGlobalRows(region, keyword, onProgress) {
+    const pageSize = 50;
+    const rows = [];
+    const seenItemIds = new Set();
+    const seenOffsets = new Set(['']);
+    let offset = '';
+    let pagesRead = 0;
+    let scanned = 0;
+    while (true) {
+      const page = await sgFetchGlobalItemPage(region, keyword, offset, pageSize);
+      pagesRead += 1;
+      scanned += page.items.length;
+      if (!page.items.length) break;
+      const pageRows = await sgBuildRowsForItems(region, page.items.slice(0, pageSize));
+      const matches = keyword ? pageRows.filter((row) => sgRowMatchesKeyword(row, keyword)) : pageRows;
+      await sgEnsureModelsForRows(region, matches);
+      for (const row of matches) {
+        const itemId = String(sgItemId(row.item || '') || `row-${pagesRead}-${rows.length}`);
+        if (seenItemIds.has(itemId)) continue;
+        seenItemIds.add(itemId);
+        rows.push(row);
+      }
+      if (typeof onProgress === 'function') onProgress({ rows, scanned, pagesRead });
+      const nextOffset = page.nextOffset || '';
+      if (!nextOffset || nextOffset === offset || seenOffsets.has(String(nextOffset))) break;
+      seenOffsets.add(String(nextOffset));
+      offset = nextOffset;
+    }
+    return { rows, scanned, pagesRead };
+  }
+
+  async function sgRefreshShopeeGlobalInBackground(region, keyword, cached) {
+    const key = sgSearchCacheKey(region, keyword);
+    if (state.sgActiveBackgroundRefreshKey === key) return;
+    state.sgActiveBackgroundRefreshKey = key;
+    try {
+      const fresh = await sgFetchFreshShopeeGlobalRows(region, keyword);
+      await sgWriteSearchCache(region, keyword, fresh);
+      const diff = sgCompareSearchRows(cached?.rows || [], fresh.rows || []);
+      const stillCurrent = sgSearchCacheKey(sgSelectedSearchRegion(), String(els.sgKeyword?.value || '').trim()) === key;
+      if (stillCurrent && diff.hasChanges) {
+        sgRenderResults(fresh.rows || []);
+        sgSetStatus(`캐시 표시 후 Shopee 변경사항 반영됨: 추가 ${diff.added}, 변경 ${diff.changed}, 삭제 ${diff.removed}`);
+        sgLog(`Shopee Global Product 변경사항을 새로 반영했습니다. 추가 ${diff.added}개, 변경 ${diff.changed}개, 삭제 ${diff.removed}개.`, 'ok');
+      } else if (stillCurrent) {
+        sgSetStatus(`캐시 ${fresh.rows.length}개 유지됨 — Shopee 변경사항 없음`);
+      }
+    } catch (e) {
+      console.warn('[Shopee Global Product background refresh] failed', e);
+    } finally {
+      if (state.sgActiveBackgroundRefreshKey === key) state.sgActiveBackgroundRefreshKey = '';
+    }
+  }
+
+  async function searchShopeeGlobalProducts(options = {}) {
+    const useMock = options === true || !!(options && options.useMock);
+    const forceRefresh = !!(options && options.forceRefresh);
+    const staleWhileRevalidate = options && options.staleWhileRevalidate !== false;
     try {
       sgLog('');
       if (els.sgLifecycleChoice) els.sgLifecycleChoice.style.display = 'none';
-      sgSetStatus('검색 중...');
+      sgSetStatus(forceRefresh ? 'Shopee 변경사항 새로고침 중...' : '검색 중...');
+      if (els.sgRefreshBtn) els.sgRefreshBtn.disabled = forceRefresh;
       if (useMock) {
         sgRenderResults(sgMakeMockRows());
         sgSetStatus('mock 1개 로드됨');
@@ -4216,53 +4340,43 @@ LEGACY END -->
       }
       const keyword = String(els.sgKeyword?.value || '').trim();
       const region = sgSelectedSearchRegion();
-      const cached = await sgReadSearchCache(region, keyword);
-      if (cached) {
+      const cached = forceRefresh ? await sgReadSearchCache(region, keyword) : await sgReadSearchCache(region, keyword);
+      if (cached && !forceRefresh) {
         sgRenderResults(cached.rows || []);
         const savedAt = cached.savedAt ? new Date(cached.savedAt).toLocaleString() : '이전 검색';
         sgSetStatus(keyword
           ? `캐시 ${cached.rows.length}개 즉시 로드됨 (키워드 '${keyword}', ${cached.scanned || 0}개 확인, ${savedAt})`
           : `캐시 ${cached.rows.length}개 즉시 로드됨 (${savedAt})`);
+        if (staleWhileRevalidate) sgRefreshShopeeGlobalInBackground(region, keyword, cached);
         return;
       }
-      const pageSize = 50;
-      const rows = [];
-      const seenItemIds = new Set();
-      const seenOffsets = new Set(['']);
-      let offset = '';
-      let pagesRead = 0;
-      let scanned = 0;
-      while (true) {
-        const page = await sgFetchGlobalItemPage(region, keyword, offset, pageSize);
-        pagesRead += 1;
-        scanned += page.items.length;
-        if (!page.items.length) break;
-        const pageRows = await sgBuildRowsForItems(region, page.items.slice(0, pageSize));
-        const matches = keyword ? pageRows.filter((row) => sgRowMatchesKeyword(row, keyword)) : pageRows;
-        await sgEnsureModelsForRows(region, matches);
-        for (const row of matches) {
-          const itemId = String(sgItemId(row.item || '') || `row-${pagesRead}-${rows.length}`);
-          if (seenItemIds.has(itemId)) continue;
-          seenItemIds.add(itemId);
-          rows.push(row);
-        }
+
+      const fresh = await sgFetchFreshShopeeGlobalRows(region, keyword, ({ rows, scanned }) => {
         sgSetStatus(keyword ? `검색 중... ${scanned}개 확인, ${rows.length}개 매칭` : `검색 중... ${scanned}개 확인, ${rows.length}개 로드`);
-        const nextOffset = page.nextOffset || '';
-        if (!nextOffset || nextOffset === offset || seenOffsets.has(String(nextOffset))) break;
-        seenOffsets.add(String(nextOffset));
-        offset = nextOffset;
+      });
+      sgRenderResults(fresh.rows);
+      const diff = cached ? sgCompareSearchRows(cached.rows || [], fresh.rows || []) : null;
+      if (forceRefresh && diff) {
+        sgSetStatus(diff.hasChanges
+          ? `새로고침 완료: ${fresh.rows.length}개 로드됨 · 추가 ${diff.added}, 변경 ${diff.changed}, 삭제 ${diff.removed}`
+          : `새로고침 완료: ${fresh.rows.length}개 로드됨 · 변경사항 없음`);
+        sgLog(diff.hasChanges
+          ? `Shopee 변경사항 감지: 추가 ${diff.added}개, 변경 ${diff.changed}개, 삭제 ${diff.removed}개.`
+          : 'Shopee 변경사항이 없습니다.', diff.hasChanges ? 'ok' : '');
+      } else {
+        sgSetStatus(keyword
+          ? `${fresh.rows.length}개 로드됨 (키워드 '${keyword}', 전체 ${fresh.scanned}개 확인)`
+          : `${fresh.rows.length}개 로드됨 (전체 ${fresh.scanned}개 확인)`);
       }
-      sgRenderResults(rows);
-      sgSetStatus(keyword
-        ? `${rows.length}개 로드됨 (키워드 '${keyword}', 전체 ${scanned}개 확인)`
-        : `${rows.length}개 로드됨 (전체 ${scanned}개 확인)`);
-      await sgWriteSearchCache(region, keyword, { rows, scanned, pagesRead });
-      if (keyword && !rows.length) {
-        sgLog(`Shopee Global Product API에 키워드 '${text(keyword)}'로 직접 조회했고, 상세 정보까지 전체 ${scanned}개 확인했지만 매칭 결과가 없습니다.`, 'error');
+      await sgWriteSearchCache(region, keyword, fresh);
+      if (keyword && !fresh.rows.length) {
+        sgLog(`Shopee Global Product API에 키워드 '${text(keyword)}'로 직접 조회했고, 상세 정보까지 전체 ${fresh.scanned}개 확인했지만 매칭 결과가 없습니다.`, 'error');
       }
     } catch (e) {
       sgSetStatus(e.message || String(e), true);
       sgLog(text(e.message || String(e)), 'error');
+    } finally {
+      if (els.sgRefreshBtn) els.sgRefreshBtn.disabled = false;
     }
   }
 
@@ -6708,8 +6822,9 @@ LEGACY END -->
     try { await loadData(); }
     catch (e) { els.productBody.innerHTML = `<tr><td colspan="7" class="empty">${text(e.message || e)}</td></tr>`; }
   });
-  els.sgSearchBtn?.addEventListener('click', () => searchShopeeGlobalProducts(false));
-  els.sgMockBtn?.addEventListener('click', () => searchShopeeGlobalProducts(true));
+  els.sgSearchBtn?.addEventListener('click', () => searchShopeeGlobalProducts({ staleWhileRevalidate: true }));
+  els.sgRefreshBtn?.addEventListener('click', () => searchShopeeGlobalProducts({ forceRefresh: true }));
+  els.sgMockBtn?.addEventListener('click', () => searchShopeeGlobalProducts({ useMock: true }));
   els.sgImportBtn?.addEventListener('click', showShopeeGlobalLifecycleChoice);
   els.sgImportPreOrder?.addEventListener('click', () => importSelectedShopeeGlobalProducts('pre_order'));
   els.sgImportReadyStock?.addEventListener('click', () => importSelectedShopeeGlobalProducts('ready_stock'));

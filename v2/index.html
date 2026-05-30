@@ -5433,7 +5433,10 @@ LEGACY END -->
   }
 
   function platformSkuSyncGroups() {
-    return (state.products || []).filter((p) => String(p?.sku || '').trim());
+    const skuRows = (state.products || []).filter((p) => String(p?.sku || '').trim());
+    const selectedIds = state.productListSelectedIds || new Set();
+    if (!selectedIds.size) return skuRows;
+    return skuRows.filter((p) => selectedIds.has(String(p.id)));
   }
 
   async function syncPlatformSkus() {
@@ -16960,7 +16963,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     // ── eBay pricing helpers ───────────────────────────────────────────────
-    // country_settings 'EX' row: exchange_rate=1380, sales_fee=13, pg_fee=2.7
+    // country_settings 'EX' row: exchange_rate=USD KRW, sales_fee=15.3, pg_fee=1.45
     let _v2EbayExCountryCache = null;
     let _v2EbayExCountryPromise = null;
     async function _v2LoadEbayExCountry() {
@@ -16971,15 +16974,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (error || !data) throw new Error('country_settings EX row 없음 (eBay virtual row): ' + (error?.message || 'no row'));
         _v2EbayExCountryCache = {
           exchangeRate: Number(data.exchange_rate),
-          pgFee:        Number(data.pg_fee)        || 0,
-          salesFee:     Number(data.sales_fee)     || 0,
-          fspFee:       Number(data.fsp_fee)       || 0,
-          otherFee:     Number(data.other_fee)     || 0,
-          settlementFee: Number(data.settlement_fee) || 0,
-          gst:          Number(data.gst)           || 0,
-          fspCcb:       Number(data.fsp_ccb)       || 0,
-          importDuty:   Number(data.import_duty)   || 0,
-          fixedServiceFee: Number(data.fixed_service_fee) || 0,
+          pgFee:        Number(data.pg_fee ?? 1.45)        || 0,
+          salesFee:     Number(data.sales_fee ?? 15.3)     || 0,
+          fspFee:       0,
+          otherFee:     0,
+          settlementFee: 0,
+          gst:          0,
+          fspCcb:       0,
+          importDuty:   0,
+          fixedServiceFee: 0,
           purchaseVat:  Number(data.purchase_vat)  || 0,
         };
         return _v2EbayExCountryCache;
@@ -16988,7 +16991,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     // eBay listing price formula — cloned from _v2JoomCalcSgListing (same math)
-    // country_settings 'EX' row provides exchange_rate=1380, sales_fee=13%, pg_fee=2.7%
+    // country_settings 'EX' row provides exchange_rate=USD KRW, Final Value Fee 15.3%, International Fee 1.45%
     // shipping: eBay ships fee is handled by policy (free shipping ON listing);
     //   for price calc, use flat 0 (buyer pays per eBay International Shipping account setting)
     function _v2EbayCalcUsdListing(costKrw, weightG, c) {
@@ -17624,6 +17627,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       { key: 'fixed_service_fee', label: 'Service Fee (고정)', unit: 'local', hint: '주문건당 고정 수수료 (현지 통화)',         isPercent: false },
       { key: 'purchase_vat',      label: '매입가 부가세 차감',   unit: '%',     hint: '매입가에 포함된 부가세 (Joom: 9.1)',     isPercent: true  },
     ];
+    const FEE_EBAY_FIELDS = [
+      { key: 'exchange_rate', label: 'Exchange Rate', unit: 'KRW', hint: 'USD 환율 (1 USD = ? 원)', isPercent: false },
+      { key: 'sales_fee', label: 'Final Value Fee · CD/Music category', unit: '%', hint: 'CD/Music 카테고리 수수료. eBay 예시 기준 15.3%.', isPercent: true, defaultValue: 15.3 },
+      { key: 'pg_fee', label: 'International Fee', unit: '%', hint: '글로벌 판매자 international fee. eBay 예시 기준 1.45%.', isPercent: true, defaultValue: 1.45 },
+    ];
+    function feeFieldsForCountry(code) {
+      return code === 'EX' ? FEE_EBAY_FIELDS : FEE_FIELDS;
+    }
 
     // Operating country codes in display order
     const FEE_COUNTRIES = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'EX'];
@@ -17666,8 +17677,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         return;
       }
 
-      const fieldsHtml = FEE_FIELDS.map(function(f) {
-        const val = (row[f.key] != null) ? Number(row[f.key]) : 0;
+      const fieldsHtml = feeFieldsForCountry(feeActiveCountry).map(function(f) {
+        const val = (row[f.key] != null) ? Number(row[f.key]) : Number(f.defaultValue || 0);
         const step = f.isPercent ? '0.01' : '0.0001';
         return '<div class="fee-input-v2">' +
                '<label>' + f.label + '</label>' +

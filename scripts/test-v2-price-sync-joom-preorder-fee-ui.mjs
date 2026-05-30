@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
 const v2 = fs.readFileSync(new URL('../v2/index.html', import.meta.url), 'utf8');
+const ebayFeeMigration = fs.readFileSync(new URL('../supabase/migrations/202605300003_ebay_cd_international_fee.sql', import.meta.url), 'utf8');
 
 function sliceBetween(source, start, end) {
   const s = source.indexOf(start);
@@ -57,6 +58,15 @@ assert.match(fees, /FEE_COUNTRIES = \['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 
 assert.match(fees, /JM: 'Joom \(Global\)'/, 'fee settings must label JM as Joom global');
 assert.match(fees, /EX: 'eBay EX \(가상\)'/, 'fee settings must clarify EX as the eBay virtual row');
 assert.match(fees, /feeCountryLabel\(code\)/, 'fee tabs and reset labels must use user-facing country labels');
+assert.match(fees, /FEE_EBAY_FIELDS/, 'fee settings must define an eBay-specific fee field list');
+assert.match(fees, /Final Value Fee · CD\/Music category/, 'eBay EX fee tab must expose the 15.3% category final value fee');
+assert.match(fees, /International Fee/, 'eBay EX fee tab must expose the global seller international fee');
+assert.match(fees, /defaultValue: 15\.3/, 'eBay category fee default must be 15.3%');
+assert.match(fees, /defaultValue: 1\.45/, 'eBay international fee default must be 1.45%');
+assert.match(fees, /feeFieldsForCountry\(feeActiveCountry\)/, 'fee settings must render EX with its eBay-only fee fields instead of all Shopee fee fields');
+assert.match(ebayFeeMigration, /sales_fee = 15\.3/, 'eBay EX migration must set category final value fee to 15.3%');
+assert.match(ebayFeeMigration, /pg_fee = 1\.45/, 'eBay EX migration must set international fee to 1.45%');
+assert.match(ebayFeeMigration, /where country_code = 'EX'/, 'eBay EX fee migration must only touch the virtual eBay row');
 
 assert.match(v2, /id="mr-joom-modal-overlay"/, 'Joom publish must have a confirmation modal overlay');
 assert.match(masterRegister, /function mrOpenJoomModal\(group\)/, 'Joom publish button must open a modal before live publish');

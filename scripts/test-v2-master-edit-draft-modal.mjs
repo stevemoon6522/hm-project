@@ -28,6 +28,16 @@ const editCode = sliceBetween(
 );
 
 for (const token of [
+  'class="pl-master-edit-layout"',
+  'class="pl-master-edit-card pl-master-edit-main-card"',
+  'class="pl-master-edit-card pl-master-edit-image-card"',
+  'class="pl-master-edit-card pl-master-edit-text-card"',
+  'class="pl-master-edit-card pl-master-edit-options-card"',
+]) {
+  assert(modalHtml.includes(token), `master edit modal must use unified BOYNEXTDOOR-style layout: ${token}`);
+}
+
+for (const token of [
   'id="pl-master-edit-staronemall-url"',
   'id="pl-master-edit-lifecycle"',
   'id="pl-master-edit-components"',

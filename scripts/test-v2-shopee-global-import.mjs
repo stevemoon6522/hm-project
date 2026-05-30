@@ -23,6 +23,7 @@ assert(html.includes('function sgOptionImageUrl') && html.includes('tier_index')
 assert(html.includes("models.map((m) => text(sgModelSku(m) || '<empty>'))"), 'V2 escapes Shopee model SKUs before rendering search results');
 assert(html.includes('function canonicalShopeeSkuForImport') && html.includes('global_model_sku') && html.includes('model_sku'), 'V2 preserves Global/model SKU as canonical SKU');
 assert(html.includes('class="sg-select-all"') && html.includes('sgSyncSelectAllState') && html.includes("document.querySelectorAll('.sg-select')"), 'V2 search results have a header select-all checkbox for Global Products');
+assert(html.includes('class="sg-staronemall-url"') && html.includes('sgReadSelectedStaronemallUrls') && html.includes('StarOneMall URL은 필수입니다'), 'V2 requires a per-selected Global Product StarOneMall URL before master import');
 assert(html.includes('function sgModelDisplayName') && html.includes("optionNames.length ? optionNames : [sgModelDisplayName(model)]"), 'V2 falls back to model names so option imports render as grouped master rows');
 assert(html.includes('shopee_global_raw_payload') && html.includes('shopee_global_model_raw_payload') && html.includes('raw_payload'), 'V2 writes raw item/model/listing payloads');
 assert(html.includes('product_shopee_listings') && html.includes('global_item_id') && html.includes('global_model_id'), 'V2 maps master products to Shopee listing/global IDs');

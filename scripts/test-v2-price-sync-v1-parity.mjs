@@ -61,20 +61,33 @@ assert(brNorm.ok && brNorm.value === 57.51 && brNorm.decimals === 2, 'BR normali
 const twNorm = normalizeShopeeOriginalPrice('TW', 459.4);
 assert(twNorm.ok && twNorm.value === 459 && twNorm.decimals === 0, 'TW normalization must use integer prices');
 
+const joomV1 = calculateV1Listing({
+  costKrw: 10000,
+  weightG: 100,
+  region: 'JM',
+  countrySettings: DEFAULT_COUNTRY_SETTINGS.JM,
+});
+assertNear(joomV1.listing, 7.749360613810742, 0.000000001, 'V1 JM listing must use dedicated Joom fee row');
+
 const joom = calculateJoomPrice({
   costKrw: 10000,
   weightG: 100,
-  countrySettings: DEFAULT_COUNTRY_SETTINGS.SG,
+  countrySettings: DEFAULT_COUNTRY_SETTINGS.JM,
 });
-assertNear(joom.joomPrice, 13.75, 0.000001, 'Joom price must follow V1 SG listing proxy');
+assertNear(joom.joomPrice, 7.75, 0.000001, 'Joom price must follow V1 JM fee row');
 
 const v2 = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
 assert(v2.includes("from './price-engine.js'"), 'V2 must import the shared V1 parity price engine');
 assert(v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/update_price'"), 'V2 Shopee sync must use shop-level update_price');
 assert(!v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/update_global_price'"), 'V2 price sync must not build global update_price payloads');
 assert(v2.includes('shop_model_id,status,published_at,last_synced_price'), 'V2 listings fetch must include shop_model_id for variant price updates');
+assert(v2.includes("countrySettings: catCountrySettings('JM')"), 'V2 Joom price preview must use JM country_settings fee row');
+assert(v2.includes("const joomSettings = catCountrySettings('JM')"), 'V2 Joom bulk sync must load JM country_settings fee row');
 assert(v2.includes("JOOM_BRIDGE + '/lookup-sku?sku='"), 'V2 Joom sync must resolve SKU before update-price');
 assert(v2.includes("JOOM_BRIDGE + '/update-price'"), 'V2 Joom sync must call update-price');
+assert(v2.includes('function _v2LoadJoomCountry()'), 'V2 Joom publish must load the JM country_settings fee row');
+assert(v2.includes('const listing = _v2JoomCalcListing(costKrw, weightG, joomCountry);'), 'V2 Joom publish variants must use the JM fee formula');
+assert(v2.includes("'JM'") && v2.includes("Joom (Global)"), 'V2 fee settings must expose the Joom global fee row');
 assert(v2.includes('id="cat-platform-tabs"'), 'V2 price sync toolbar must expose platform tabs');
 for (const platform of ['shopee', 'joom', 'qoo10', 'alibaba', 'ebay']) {
   assert(v2.includes(`data-cat-platform="${platform}"`), `V2 price sync toolbar must include ${platform} platform tab`);

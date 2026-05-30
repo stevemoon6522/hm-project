@@ -198,7 +198,7 @@ export function calculateShopeePrice({ costKrw, weightG, region, countrySettings
 }
 
 export function calculateJoomPrice({ costKrw, weightG, countrySettings } = {}) {
-  const full = calculateV1Listing({ costKrw, weightG, region: 'SG', countrySettings: countrySettings || DEFAULT_COUNTRY_SETTINGS.SG });
+  const full = calculateV1Listing({ costKrw, weightG, region: 'JM', countrySettings: countrySettings || DEFAULT_COUNTRY_SETTINGS.JM });
   if (!full.ok) return { ...full, joomPrice: null };
   const joomPrice = Number(full.listing.toFixed(2));
   return { ...full, ok: Number.isFinite(joomPrice) && joomPrice > 0, joomPrice };

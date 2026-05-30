@@ -53,7 +53,9 @@ assert.match(preOrderLogic, /poSelectAll\.addEventListener\('change'/, 'PRE ORDE
 assert.match(preOrderLogic, /new Set\(state\.selectedPreOrderIds\)/, 'READY STOCK wizard must open with selected PRE ORDER rows');
 
 assert.match(fees, /FEE_COUNTRY_LABELS/, 'fee settings must label virtual country rows');
-assert.match(fees, /EX: 'eBay EX \(가상\)'/, 'EX fee tab must clarify that it is the eBay virtual row');
+assert.match(fees, /FEE_COUNTRIES = \['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'EX'\]/, 'fee settings must expose the Joom global fee row');
+assert.match(fees, /JM: 'Joom \(Global\)'/, 'fee settings must label JM as Joom global');
+assert.match(fees, /EX: 'eBay EX \(가상\)'/, 'fee settings must clarify EX as the eBay virtual row');
 assert.match(fees, /feeCountryLabel\(code\)/, 'fee tabs and reset labels must use user-facing country labels');
 
 assert.match(v2, /id="mr-joom-modal-overlay"/, 'Joom publish must have a confirmation modal overlay');

@@ -2985,7 +2985,7 @@
     <!-- ═══════════════════════════════════════════════
          VIEW: 수수료 / 환율 설정
          country_settings 테이블의 각 국가 행을 직접 편집한다.
-         운영 지역: SG / TW / TH / MY / PH / BR + EX(eBay virtual)
+         운영 지역: SG / TW / TH / MY / PH / BR + JM(Joom global) + EX(eBay virtual)
          ═══════════════════════════════════════════════ -->
     <div id="view-fee-settings" class="view">
       <div style="display:flex;align-items:baseline;gap:12px;margin-bottom:18px;">
@@ -11742,7 +11742,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const calc = calculateJoomPrice({
       costKrw,
       weightG,
-      countrySettings: catCountrySettings('SG'),
+      countrySettings: catCountrySettings('JM'),
     });
     return calc.ok ? calc.joomPrice : null;
   }
@@ -12977,7 +12977,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (btn) { btn.disabled = true; btn.textContent = 'Joom 동기화 중...'; }
 
     const JOOM_BRIDGE = SHOPEE_BRIDGE.replace('/shopee-bridge', '/joom-bridge');
-    const sgSettings = catCountrySettings('SG');
+    const joomSettings = catCountrySettings('JM');
     const now = new Date().toISOString();
     let lookupOk = 0;
     let priceOk = 0;
@@ -12991,7 +12991,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const calc = calculateJoomPrice({
           costKrw: newCost,
           weightG: product.weight_g,
-          countrySettings: sgSettings,
+          countrySettings: joomSettings,
         });
         if (!calc.ok || !Number.isFinite(calc.joomPrice) || calc.joomPrice <= 0) {
           errors.push(sku + ': Joom price calculation failed');
@@ -16943,38 +16943,38 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
     // ── end eBay helpers ───────────────────────────────────────────────────
 
-    let _v2JoomSgCountryCache = null;
-    let _v2JoomSgCountryPromise = null;
-    async function _v2LoadSgCountry() {
-      if (_v2JoomSgCountryCache) return _v2JoomSgCountryCache;
-      if (_v2JoomSgCountryPromise) return _v2JoomSgCountryPromise;
-      _v2JoomSgCountryPromise = (async () => {
-        const { data, error } = await db.from('country_settings').select('*').eq('country_code', 'SG').single();
-        if (error || !data) throw new Error('country_settings SG row 없음: ' + (error?.message || 'no row'));
-        _v2JoomSgCountryCache = {
-          exchangeRate: Number(data.exchange_rate),
-          pgFee:        Number(data.pg_fee)        || 0,
-          salesFee:     Number(data.sales_fee)     || 0,
-          fspFee:       Number(data.fsp_fee)       || 0,
-          otherFee:     Number(data.other_fee)     || 0,
-          settlementFee: Number(data.settlement_fee) || 0,
-          gst:          Number(data.gst)           || 0,
-          fspCcb:       Number(data.fsp_ccb)       || 0,
-          importDuty:   Number(data.import_duty)   || 0,
-          fixedServiceFee: Number(data.fixed_service_fee) || 0,
-          purchaseVat:  Number(data.purchase_vat)  || 0,
+    let _v2JoomCountryCache = null;
+    let _v2JoomCountryPromise = null;
+    async function _v2LoadJoomCountry() {
+      if (_v2JoomCountryCache) return _v2JoomCountryCache;
+      if (_v2JoomCountryPromise) return _v2JoomCountryPromise;
+      _v2JoomCountryPromise = (async () => {
+        const { data, error } = await db.from('country_settings').select('*').eq('country_code', 'JM').single();
+        if (error || !data) console.warn('country_settings JM row 없음; price-engine 기본 Joom 수수료 사용:', error?.message || 'no row');
+        const fallback = normalizeCountrySettings(null, 'JM');
+        const source = data || {};
+        _v2JoomCountryCache = {
+          exchangeRate: Number(source.exchange_rate ?? fallback.exchangeRate),
+          pgFee:        Number(source.pg_fee        ?? fallback.pgFee)        || 0,
+          salesFee:     Number(source.sales_fee     ?? fallback.salesFee)     || 0,
+          fspFee:       Number(source.fsp_fee       ?? fallback.fspFee)       || 0,
+          otherFee:     Number(source.other_fee     ?? fallback.otherFee)     || 0,
+          settlementFee: Number(source.settlement_fee ?? fallback.settlementFee) || 0,
+          gst:          Number(source.gst           ?? fallback.gst)           || 0,
+          fspCcb:       Number(source.fsp_ccb       ?? fallback.fspCcb)       || 0,
+          importDuty:   Number(source.import_duty   ?? fallback.importDuty)   || 0,
+          fixedServiceFee: Number(source.fixed_service_fee ?? fallback.fixedServiceFee) || 0,
+          purchaseVat:  Number(source.purchase_vat  ?? fallback.purchaseVat)  || 0,
         };
-        return _v2JoomSgCountryCache;
+        return _v2JoomCountryCache;
       })();
-      return _v2JoomSgCountryPromise;
+      return _v2JoomCountryPromise;
     }
 
-    // Ported verbatim from V1 calcRowFull duty=0 branch (which is the only one SG hits — importDuty=0).
-    // Returns SG `listing` value (denominated in SGD per V1 convention) — used directly as Joom USD price
-    // per operator decision (V1 _joomBulkSync line 4114 does the same — `calcRow(row, 'SG').listing`).
-    function _v2JoomCalcSgListing(costKrw, weightG, c) {
+    // Joom listing price formula — same V1 calcRowFull duty=0 branch, fed by country_settings 'JM'.
+    function _v2JoomCalcListing(costKrw, weightG, c) {
       if (!costKrw || costKrw <= 0) return 0;
-      const shipping = weightG > 0 ? _v2JoomShippingFeeSG(weightG) : 0;
+      const shipping = 0;
       const effectiveCost = costKrw * (1 - (c.purchaseVat || 0) / 100);
       const settlementLocal = effectiveCost / c.exchangeRate;
       const cr = c.salesFee / 100;
@@ -17094,8 +17094,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
 
       // Build variantsConfig
-      let sgCountry;
-      try { sgCountry = await _v2LoadSgCountry(); } catch (e) { showToast('SG country_settings 로드 실패: ' + (e.message || e), 'err'); return; }
+      let joomCountry;
+      try { joomCountry = await _v2LoadJoomCountry(); } catch (e) { showToast('JM country_settings 로드 실패: ' + (e.message || e), 'err'); return; }
       let variantsConfig;
       try {
         variantsConfig = activeRows.map((r) => {
@@ -17107,7 +17107,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           const costKrw = Number(r._cost_krw || firstRow.cost_krw || 0);
           if (!costKrw) throw new Error(`옵션 "${optionName}" 매입가가 0원입니다.`);
           const weightG = Number(r._weight_g || firstRow._weight_g || firstRow.weight_g || 0);
-          const listing = _v2JoomCalcSgListing(costKrw, weightG, sgCountry);
+          const listing = _v2JoomCalcListing(costKrw, weightG, joomCountry);
           const usdPrice = listing.toFixed(2);
           // P1 #6: price floor guard
           if (parseFloat(usdPrice) < 1.0) {
@@ -17555,8 +17555,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     ];
 
     // Operating country codes in display order
-    const FEE_COUNTRIES = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'EX'];
+    const FEE_COUNTRIES = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'EX'];
     const FEE_COUNTRY_LABELS = {
+      JM: 'Joom (Global)',
       EX: 'eBay EX (가상)',
     };
     function feeCountryLabel(code) {

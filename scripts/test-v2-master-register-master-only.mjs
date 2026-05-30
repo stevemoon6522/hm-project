@@ -58,6 +58,9 @@ assert(html.includes('headers: AUTH_HEADERS'), 'wizard components extraction mus
 assert(masterRegister.includes('대표 이미지'), 'master register must show a separate crawled representative image area');
 assert(masterRegister.includes('옵션 이미지'), 'master register must show a separate crawled option image area');
 assert(masterRegister.includes('mrRenderCrawledImagePreview'), 'master register must render crawled image previews before manual attachment');
+assert(masterRegister.includes('observed.detail_image_urls'), 'option image preview must use Product introduction/detail images');
+assert(!masterRegister.includes('const optionImages = normalizedMainImages.slice(1, 7)'), 'option image preview must not reuse representative/main images');
+assert(masterRegister.includes('mrFilterStaronemallDetailImageUrls'), 'option image preview must exclude StarOneMall process/banner detail images');
 assert(masterRegister.includes('components_extracted_en'), 'components must be persisted into products');
 assert(masterRegister.includes('components_approved: components ? 1 : 0'), 'operator-entered components must be saved as approved');
 

@@ -15622,9 +15622,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const observed = firstRow?.observed || {};
       const baseUrl = firstRow?.url || '';
       const rawMainImages = Array.isArray(observed.main_image_urls) ? observed.main_image_urls : [];
-      const normalizedMainImages = mrJoomNormalizeImageList(rawMainImages, baseUrl);
-      const representativeImages = normalizedMainImages.slice(0, 1);
-      const optionImages = normalizedMainImages.slice(1, 7);
+      const representativeImages = mrJoomNormalizeImageList(rawMainImages, baseUrl).slice(0, 1);
+      const rawDetailImages = Array.isArray(observed.detail_image_urls) ? observed.detail_image_urls : [];
+      const optionImages = mrJoomNormalizeImageList(rawDetailImages, baseUrl).slice(0, 7);
 
       const wrap = el('div', {
         style: 'display:grid;grid-template-columns:minmax(120px,160px) 1fr;gap:8px;margin-top:6px;padding:8px;background:#fff;border:1px dashed var(--border);border-radius:8px;',

@@ -3071,18 +3071,6 @@
         <label for="pl-master-edit-staronemall-url">StarOneMall URL</label>
         <input id="pl-master-edit-staronemall-url" type="url" placeholder="https://www.staronemall.com/...">
       </div>
-      <div class="field" style="grid-column:span 6;">
-        <label for="pl-master-edit-category">Shopee category ID</label>
-        <input id="pl-master-edit-category" type="number" min="1" step="1" placeholder="100740">
-      </div>
-      <div class="field" style="grid-column:span 4;">
-        <label for="pl-master-edit-brand-name">Shopee brand</label>
-        <input id="pl-master-edit-brand-name" type="text" placeholder="No Brand">
-      </div>
-      <div class="field" style="grid-column:span 2;">
-        <label for="pl-master-edit-brand-id">Brand ID</label>
-        <input id="pl-master-edit-brand-id" type="number" min="0" step="1" placeholder="0">
-      </div>
       <div class="field" style="grid-column:span 12;">
         <label for="pl-master-edit-components">상품 구성품</label>
         <textarea id="pl-master-edit-components" rows="6" placeholder="예: CD, Photobook, Photocard..."></textarea>
@@ -5083,12 +5071,6 @@ LEGACY END -->
     if (lifecycleInput) lifecycleInput.value = first.lifecycle_state || 'ready_stock';
     const staroneInput = document.getElementById('pl-master-edit-staronemall-url');
     if (staroneInput) staroneInput.value = first.staronemall_url || '';
-    const categoryInput = document.getElementById('pl-master-edit-category');
-    if (categoryInput) categoryInput.value = first.shopee_category_id ? String(first.shopee_category_id) : '';
-    const brandNameInput = document.getElementById('pl-master-edit-brand-name');
-    if (brandNameInput) brandNameInput.value = first.shopee_brand_name || 'No Brand';
-    const brandIdInput = document.getElementById('pl-master-edit-brand-id');
-    if (brandIdInput) brandIdInput.value = String(Number(first.shopee_brand_id || 0));
     const componentsInput = document.getElementById('pl-master-edit-components');
     if (componentsInput) componentsInput.value = first.components_extracted_en || '';
     const descInput = document.getElementById('pl-master-edit-description');
@@ -5154,11 +5136,6 @@ LEGACY END -->
     if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '저장 중...'; }
     if (err) { err.textContent = ''; err.style.display = 'none'; }
     try {
-      const categoryRaw = String(document.getElementById('pl-master-edit-category')?.value || '').trim();
-      const categoryId = categoryRaw ? Number(categoryRaw) : null;
-      if (categoryId && ![100740, 101390].includes(categoryId)) {
-        throw new Error('Shopee category ID는 현재 100740 또는 101390만 허용됩니다.');
-      }
       const optionPatches = plMasterEditReadOptionPatches(rows);
       const shopeeDaysToShip = plMasterEditReadJson('pl-master-edit-days', rows[0]?.shopee_days_to_ship || {}, 'Shopee DTS');
       const shopeeExtraAttributes = plMasterEditReadJson('pl-master-edit-attrs', rows[0]?.shopee_extra_attributes || [], 'Shopee extra attributes');
@@ -5166,9 +5143,13 @@ LEGACY END -->
         product_name: productName,
         lifecycle_state: document.getElementById('pl-master-edit-lifecycle')?.value || rows[0]?.lifecycle_state || 'ready_stock',
         staronemall_url: String(document.getElementById('pl-master-edit-staronemall-url')?.value || '').trim() || null,
-        shopee_category_id: categoryId,
-        shopee_brand_id: Number(document.getElementById('pl-master-edit-brand-id')?.value || 0) || 0,
-        shopee_brand_name: stripNonMarketplaceText(document.getElementById('pl-master-edit-brand-name')?.value || '').trim() || 'No Brand',
+        // Shopee category/brand are platform-specific, not part of the common
+        // master. Inputs removed from the master form; preserve existing values
+        // (publish requires them) and default when absent. category 101390 =
+        // Idol Collectibles, brand 0 = No Brand.
+        shopee_category_id: rows[0]?.shopee_category_id || 101390,
+        shopee_brand_id: rows[0]?.shopee_brand_id ?? 0,
+        shopee_brand_name: rows[0]?.shopee_brand_name || 'No Brand',
         shopee_description: String(document.getElementById('pl-master-edit-description')?.value || '').trim() || null,
         shopee_days_to_ship: shopeeDaysToShip,
         shopee_extra_attributes: shopeeExtraAttributes,

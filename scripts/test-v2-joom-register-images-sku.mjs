@@ -36,7 +36,12 @@ const buildPayload = sliceBetween(
 assert(masterRegister.includes('async function mrJoomLoadDetailImages(group)'), 'V2 Joom flow must load StarOneMall detail images');
 assert(masterRegister.includes('write_to_source_records: false'), 'Joom detail crawl fallback must not create duplicate source_records');
 assert(html.includes('data-open-joom-group="${text(first.product_group_id || \'\')}"'), 'Product list grouped Joom cell must expose a Joom register button');
-assert(html.includes('openRegisterJoomGroupModal(btn.dataset.openJoomGroup)'), 'Product list Joom register button must open the Joom publish confirmation flow');
+assert(html.includes('data-open-joom-single="${text(p.id)}"'), 'Product list single-row Joom cell must expose a Joom register button');
+assert(html.includes('openRegisterJoomGroupModal(btn.dataset.openJoomSingle)'), 'Single-row Joom register button must reuse the Joom publish confirmation flow');
+assert(html.includes('const variantRows = allRows.filter(plIsGroupedVariant);') && html.includes('const sortedRows = variantRows.length ? variantRows : allRows;'), 'Joom publish adapter must support both grouped variants and single master rows');
+assert(html.includes('window.mrOpenJoomModal(plBuildJoomPublishGroupFromProducts(rows))'), 'Product list Joom register button must open the Joom publish confirmation flow through the exported master-register bridge');
+assert(html.includes('window.mrDeriveFromTitle = mrDeriveFromTitle') && html.includes('window.mrOpenJoomModal = mrOpenJoomModal'), 'Master-register Joom helpers must be exported for product-list Joom buttons');
+assert(html.includes("typeof window.mrDeriveFromTitle === 'function'"), 'Product-list Joom adapter must not reference private master-register helpers directly');
 assert(html.includes('function plBuildJoomPublishGroupFromProducts(rows)'), 'Product list Joom publish must adapt products rows into the tested mrPromoteJoom payload shape');
 assert(html.includes("_joomCategory: 'music_albums'"), 'Product list Joom publish must reuse the tested default Joom category');
 assert(promoteJoom.includes('detailImages = await mrJoomLoadDetailImages(group)'), 'Joom payload must include detail images');

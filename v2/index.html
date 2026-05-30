@@ -4816,6 +4816,9 @@ LEGACY END -->
     els.productBody.querySelectorAll('[data-open-joom-group]').forEach((btn) => {
       btn.addEventListener('click', () => openRegisterJoomGroupModal(btn.dataset.openJoomGroup));
     });
+    els.productBody.querySelectorAll('[data-open-joom-single]').forEach((btn) => {
+      btn.addEventListener('click', () => openRegisterJoomGroupModal(btn.dataset.openJoomSingle));
+    });
     els.productBody.querySelectorAll('[data-edit-master]').forEach((btn) => {
       btn.addEventListener('click', () => openProductMasterEditModal(btn.dataset.editMaster));
     });
@@ -5130,7 +5133,12 @@ LEGACY END -->
             ${(!isVariantRow && !isGroupChild) ? `<button type="button" data-open-shopee-single="${text(p.id)}" class="pl-shopee-register" title="Shopee 등록" aria-label="Shopee 등록">📤</button>` : ''}
           </div>
         </td>
-        <td style="text-align:center;">${platformLedCell(p.id, 'joom')}</td>
+        <td class="pl-platform-cell">
+          <div class="pl-shopee-cell">
+            ${platformLedCell(p.id, 'joom')}
+            ${(!isVariantRow && !isGroupChild) ? `<button type="button" data-open-joom-single="${text(p.id)}" class="pl-shopee-register" title="Joom 등록" aria-label="Joom 등록">🛒</button>` : ''}
+          </div>
+        </td>
         <td style="text-align:center;">${platformLedCell(p.id, 'qoo10')}</td>
         <td style="text-align:center;">${platformLedCell(p.id, 'ebay')}</td>
         <td style="text-align:center;">${platformLedCell(p.id, 'alibaba')}</td>
@@ -9662,7 +9670,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function plBuildJoomPublishGroupFromProducts(rows) {
-    const sortedRows = rshSortedProducts(rows || []).filter(plIsGroupedVariant);
+    const allRows = rshSortedProducts(rows || []);
+    const variantRows = allRows.filter(plIsGroupedVariant);
+    const sortedRows = variantRows.length ? variantRows : allRows;
     const first = sortedRows[0] || {};
     const tierNames = Array.isArray(first.variation_tier_names) && first.variation_tier_names.length
       ? first.variation_tier_names
@@ -9672,7 +9682,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const optionNames = Array.isArray(row.variation_option_names) && row.variation_option_names.length
         ? row.variation_option_names
         : [plOptionDisplay(row) || row.option_name || 'ONE SIZE'];
-      const derived = mrDeriveFromTitle(row.product_name || '');
+      const derived = typeof window.mrDeriveFromTitle === 'function'
+        ? window.mrDeriveFromTitle(row.product_name || '')
+        : { artist: '', album: '' };
       const artist = row.artist || derived.artist || '';
       const album = row.album || derived.album || '';
       return Object.assign({}, row, {
@@ -9707,25 +9719,40 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function openRegisterJoomGroupModal(productGroupId) {
-    const groupId = String(productGroupId || '').trim();
-    if (!groupId) {
-      showToast('상품 그룹 ID가 없어 Joom 등록 모달을 열 수 없습니다.', 'err');
+    const targetId = String(productGroupId || '').trim();
+    if (!targetId) {
+      showToast('상품 ID가 없어 Joom 등록 모달을 열 수 없습니다.', 'err');
       return;
     }
-    const { data, error } = await db
+    let { data, error } = await db
       .from('products')
       .select(RSH_PRODUCT_SELECT)
-      .eq('product_group_id', groupId);
+      .eq('product_group_id', targetId);
+    if (!error && (!data || data.length === 0)) {
+      const singleRes = await db
+        .from('products')
+        .select(RSH_PRODUCT_SELECT)
+        .eq('id', targetId);
+      data = singleRes.data;
+      error = singleRes.error;
+    }
     if (error) {
-      showToast(`옵션 묶음 로드 실패: ${error.message || error}`, 'err');
+      showToast(`Joom 등록 상품 로드 실패: ${error.message || error}`, 'err');
       return;
     }
-    const rows = rshSortedProducts(data || []).filter(plIsGroupedVariant);
+    const allRows = rshSortedProducts(data || []);
+    const variantRows = allRows.filter(plIsGroupedVariant);
+    const rows = variantRows.length ? variantRows : allRows;
     if (!rows.length) {
-      showToast('이 그룹에 Joom 등록할 옵션 상품이 없습니다.', 'err');
+      showToast('Joom 등록할 상품이 없습니다.', 'err');
       return;
     }
-    mrOpenJoomModal(plBuildJoomPublishGroupFromProducts(rows));
+    if (typeof window.mrOpenJoomModal !== 'function') {
+      showToast('Joom 등록 모듈이 아직 초기화되지 않았습니다. 페이지를 새로고침 후 다시 시도하세요.', 'err');
+      console.error('[openRegisterJoomGroupModal] window.mrOpenJoomModal is not available');
+      return;
+    }
+    window.mrOpenJoomModal(plBuildJoomPublishGroupFromProducts(rows));
   }
 
   async function openRegisterShopeeGroupModal(productGroupId) {
@@ -18803,6 +18830,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       mrUpdateStage1Summary();
     }
+
+    // Expose the tested Joom register helpers to the product-list Joom button.
+    // The master-register module is scoped in this IIFE, while the product list
+    // renderer/openRegisterJoomGroupModal lives in the outer script scope.
+    // Without this bridge, clicking the product-list Joom button raises a
+    // ReferenceError before the confirmation modal can open.
+    window.mrDeriveFromTitle = mrDeriveFromTitle;
+    window.mrOpenJoomModal = mrOpenJoomModal;
 
     // Initialize after DOM is ready and auth has settled.
     if (document.readyState === 'loading') {

@@ -209,7 +209,8 @@
       overflow-wrap: normal;
       word-break: keep-all;
     }
-    .pl-group-row td {
+    .pl-group-row td,
+    .pl-single-product-row td {
       background: #fff9fd;
       border-top: 1px solid var(--border);
     }
@@ -4901,8 +4902,9 @@ LEGACY END -->
       : (isVariantRow && optionDisplay
         ? `<span class="pl-product-title">${text(productName)}</span><span class="muted" style="font-size:11px;">옵션: ${text(optionDisplay)}</span>`
         : `<span class="pl-product-title">${text(productName)}</span>`);
+    const rowClass = isGroupChild ? 'pl-option-row' : (isVariantRow ? '' : 'pl-single-product-row');
     return `
-      <tr class="${isGroupChild ? 'pl-option-row' : ''}" data-product-id="${text(p.id)}" data-product-group-key="${text(groupKey)}">
+      <tr class="${rowClass}" data-product-id="${text(p.id)}" data-product-group-key="${text(groupKey)}">
         <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}" data-group-key="${text(groupKey)}" ${state.productListSelectedIds?.has(String(p.id)) ? 'checked' : ''}></td>
         <td class="pl-sku-cell pl-edit" data-field="sku" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;">${text(p.sku || '')}</td>
         <td class="pl-product-cell">

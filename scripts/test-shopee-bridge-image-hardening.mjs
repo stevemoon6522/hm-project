@@ -25,7 +25,7 @@ function sha256(s) {
 assert(sha256(edge) === sha256(supabase), 'edge-functions and supabase/functions shopee-bridge copies must match');
 
 for (const token of [
-  'const SOURCE_VERSION = 42',
+  'const SOURCE_VERSION = 43',
   'const OPERATING_REGION_SET = new Set(OPERATING_REGIONS)',
   'const PROXY_IMAGE_MAX_BYTES = 5 * 1024 * 1024',
   'const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024',

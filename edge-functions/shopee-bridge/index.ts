@@ -1,4 +1,5 @@
-// Shopee Bridge v42: harden StarOneMall image proxy/upload_image validation and generated-upload idempotency.
+// Shopee Bridge v44: v2 register variants — buildGlobalModels seller_stock migration + per-model weight/image fields + register_cbsc failure state machine (§6-1) + idempotency_token as request_id.
+// v42: harden StarOneMall image proxy/upload_image validation and generated-upload idempotency.
 // v41: /health reports the hosted deployment version from DENO_DEPLOYMENT_ID.
 // v40: GlobalProduct registration uses add_global_item -> init_tier_variation/add_global_model -> create_publish_task -> get_publish_task_result.
 // v39: KRSC/CBSC merchant flow ??merchantApiCall reads `region='_MERCHANT'` row first (main_account OAuth token). Auto-refresh with merchant_id principal. Shop-token fallback retained.
@@ -33,6 +34,7 @@ const PUBLIC_ACTIONS: ReadonlySet<string> = new Set([
   "attributes",
   "brands",
   "channels",
+  "shop_item_dts_limit",
   "global_categories",
   "global_brands",
   "global_attributes",
@@ -42,9 +44,13 @@ const PUBLIC_ACTIONS: ReadonlySet<string> = new Set([
   "shop_model_list",
   "global_items",
   "global_item_info",
+  "global_item_dts_limit",
   "global_model_list",
   "proxy_image",
   "publish_task_result",
+  "publishable_shop",
+  "shop_publishable_status",
+  "merchant_shops",
 ]);
 
 const SANDBOX_HOST = 'openplatform.sandbox.test-stable.shopee.sg';
@@ -64,7 +70,7 @@ const ENV_PARTNER_ID = Deno.env.get("SHOPEE_PARTNER_ID") || "";
 const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 // CBSC main account ID ??Shopee CB Mall / KRSC group. Same across all 10 region shops in our setup.
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
-const SOURCE_VERSION = 42;
+const SOURCE_VERSION = 43;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -1028,6 +1034,111 @@ async function findOkMutation(payloadHash: string) {
   return data || null;
 }
 
+// ─── publish_request_id idempotency gate (D2 P1) ────────────────────────────
+//
+// If the caller supplies a publish_request_id (UUID string) in the request body,
+// we check shopee_publish_idempotency before forwarding to Shopee.
+//
+//  - Cache hit  → return the stored response immediately (no Shopee call).
+//  - Cache miss → call handler(), store the result, return it.
+//  - Race / duplicate INSERT → fetch the winner row and return it (convergence).
+//  - No publish_request_id → call handler() directly (back-compat, no change).
+//
+// Cache TTL: 7 days (rows older than 7 days are ignored in the SELECT so stale
+// entries don't pollute the cache without a hard DELETE).
+//
+// The wrapper is transparent — it never alters the shape returned by handler().
+
+const PUBLISH_IDEMPOTENCY_TTL_DAYS = 7;
+
+async function withPublishRequestId(
+  action: string,
+  region: string,
+  shopId: number | null,
+  body: any,
+  handler: () => Promise<Response>,
+): Promise<Response> {
+  const rawId = typeof body?.publish_request_id === 'string' ? body.publish_request_id.trim() : null;
+  // Validate UUID format — reject malformed values so they don't slip through.
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!rawId || !uuidRe.test(rawId)) {
+    // No (or invalid) publish_request_id — pass through unchanged.
+    return handler();
+  }
+
+  const since = new Date(Date.now() - PUBLISH_IDEMPOTENCY_TTL_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  // Step 1: look up existing cached result.
+  const { data: cached, error: lookupErr } = await supabase
+    .from('shopee_publish_idempotency')
+    .select('response')
+    .eq('publish_request_id', rawId)
+    .gte('created_at', since)
+    .maybeSingle();
+
+  if (lookupErr) {
+    // Non-fatal: log and fall through to real call so we don't block the operator.
+    audit('publish_idempotency_lookup_failed', { action, region, publish_request_id: rawId, error: lookupErr.message });
+  } else if (cached?.response) {
+    audit('publish_idempotency_cache_hit', { action, region, publish_request_id: rawId });
+    return new Response(JSON.stringify(cached.response, null, 2), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json', ...CORS },
+    });
+  }
+
+  // Step 2: execute the real handler.
+  const resp = await handler();
+
+  // Step 3: only cache successful (2xx) responses to avoid storing error states.
+  if (resp.status >= 200 && resp.status < 300) {
+    let parsed: unknown = null;
+    try {
+      // Clone so the original Response body stream is not consumed.
+      parsed = await resp.clone().json();
+    } catch (_) {
+      // Non-JSON response — skip caching.
+    }
+    if (parsed !== null) {
+      const { error: insertErr } = await supabase
+        .from('shopee_publish_idempotency')
+        .insert({
+          publish_request_id: rawId,
+          action,
+          region: region || null,
+          shop_id: shopId || null,
+          response: parsed,
+        });
+
+      if (insertErr) {
+        // Unique-violation means a concurrent call already inserted — fetch it.
+        if (/duplicate key|unique.*violation/i.test(insertErr.message || '')) {
+          const { data: winner } = await supabase
+            .from('shopee_publish_idempotency')
+            .select('response')
+            .eq('publish_request_id', rawId)
+            .gte('created_at', since)
+            .maybeSingle();
+          if (winner?.response) {
+            audit('publish_idempotency_race_resolved', { action, region, publish_request_id: rawId });
+            return new Response(JSON.stringify(winner.response, null, 2), {
+              status: 200,
+              headers: { 'Content-Type': 'application/json', ...CORS },
+            });
+          }
+        } else {
+          audit('publish_idempotency_insert_failed', { action, region, publish_request_id: rawId, error: insertErr.message });
+        }
+      } else {
+        audit('publish_idempotency_stored', { action, region, publish_request_id: rawId });
+      }
+    }
+  }
+
+  return resp;
+}
+// ────────────────────────────────────────────────────────────────────────────
+
 async function forceRefreshForMutation(region: string, action: string) {
   if (action === 'update_shop_days_to_ship') {
     const refreshed = await forceRefreshShopToken(region);
@@ -1220,8 +1331,8 @@ async function runV2MutationAction(action: string, body: any) {
   const item_id = parseInt(body.item_id || body.shop_item_id);
   const days_to_ship = Number(body.days_to_ship);
   if (!item_id) return { ok: false, error: 'shop_item_id required' };
-  if (!Number.isFinite(days_to_ship) || days_to_ship < 1 || days_to_ship > 30) {
-    return { ok: false, error: 'days_to_ship must be between 1 and 30' };
+  if (!Number.isFinite(days_to_ship) || days_to_ship < 1 || days_to_ship > 150) {
+    return { ok: false, error: 'days_to_ship must be between 1 and 150' };
   }
   const requestPayload = {
     item_id,
@@ -1236,13 +1347,39 @@ async function runV2MutationAction(action: string, body: any) {
 
 function clampDaysToShip(v: unknown): number {
   const n = Number(v);
-  return Math.max(1, Math.min(30, Number.isFinite(n) ? n : 2));
+  return Math.max(1, Math.min(150, Number.isFinite(n) ? n : 2));
 }
+
+// Per Shopee UI/docs: Ready Stock DTS valid range is 1-10 (per Global SKU
+// frame_016 observation); Pre-Order DTS valid range is 3-150 (per Shop SKU
+// frame_020 observation). The Global add_global_item endpoint caps DTS at 10
+// regardless of pre_order — operator msg #679. So:
+//   - Ready Stock: clamp 1-10 (both Global + Region)
+//   - Pre-Order Global: force 10 (max allowed at Global level)
+//   - Pre-Order Region: clamp 3-150 (region max)
+function clampReadyStockDts(v: unknown): number {
+  const n = Number(v);
+  return Math.max(1, Math.min(10, Number.isFinite(n) ? n : 2));
+}
+function clampPreOrderRegionDts(v: unknown): number {
+  const n = Number(v);
+  return Math.max(3, Math.min(150, Number.isFinite(n) ? n : 10));
+}
+const PRE_ORDER_GLOBAL_DTS = 10;
 
 function imageBlockFrom(body: any) {
   const image: any = {};
-  if (body?.image_id) image.image_id_list = [String(body.image_id)];
-  else if (body?.image_url) image.image_url_list = [String(body.image_url)];
+  // Some regions (e.g. BR) reject items with fewer than 2 images. Callers
+  // can pass image_id_list / image_url_list to satisfy that requirement.
+  if (Array.isArray(body?.image_id_list) && body.image_id_list.length) {
+    image.image_id_list = body.image_id_list.map((x: any) => String(x));
+  } else if (body?.image_id) {
+    image.image_id_list = [String(body.image_id)];
+  } else if (Array.isArray(body?.image_url_list) && body.image_url_list.length) {
+    image.image_url_list = body.image_url_list.map((x: any) => String(x));
+  } else if (body?.image_url) {
+    image.image_url_list = [String(body.image_url)];
+  }
   return image;
 }
 
@@ -1251,7 +1388,13 @@ function normalizeTierVariation(variation: any) {
   return variation.tier_variation.slice(0, 2).map((t: any) => ({
     name: String(t?.name || '').trim(),
     option_list: Array.isArray(t?.option_list)
-      ? t.option_list.map((o: any) => ({ option: String(o?.option || '').trim() })).filter((o: any) => o.option)
+      ? t.option_list.map((o: any) => {
+          const entry: any = { option: String(o?.option || '').trim() };
+          // Path A (§2-3): per-option image. Pass through image object/url if provided.
+          // probe_per_option_image_ok gate enforced at UI layer before calling bridge.
+          if (o?.image) entry.image = o.image;
+          return entry;
+        }).filter((o: any) => o.option)
       : [],
   })).filter((t: any) => t.name && t.option_list.length > 0);
 }
@@ -1265,15 +1408,65 @@ function normalizeVariation(variation: any) {
   return { tier_variation, model };
 }
 
+// buildGlobalModels — v44: migrated from normal_stock (sunset 2024-10-23) to seller_stock.
+// Also adds optional per-model weight (float, kg) and per-option image fields when provided.
+// Probe gate flags (probe_per_model_weight_ok / probe_per_option_image_ok) are checked at the
+// UI layer before calling register_cbsc; bridge always sends what it receives.
 function buildGlobalModels(variation: any, fallbackPrice: number, fallbackStock: number) {
   const normalized = normalizeVariation(variation);
   if (!normalized) return [];
-  return normalized.model.map((m: any) => ({
-    tier_index: Array.isArray(m?.tier_index) ? m.tier_index.map((x: any) => Number(x)) : [],
-    global_model_sku: String(m?.global_model_sku || m?.model_sku || '').trim(),
-    original_price: Number(m?.global_original_price ?? m?.original_price ?? fallbackPrice),
-    normal_stock: Number(m?.stock ?? fallbackStock ?? 0),
-  }));
+  return normalized.model.map((m: any) => {
+    const stock = Number(m?.stock ?? fallbackStock ?? 0);
+    const model: any = {
+      tier_index: Array.isArray(m?.tier_index) ? m.tier_index.map((x: any) => Number(x)) : [],
+      global_model_sku: String(m?.global_model_sku || m?.model_sku || '').trim(),
+      original_price: Number(m?.global_original_price ?? m?.original_price ?? fallbackPrice),
+      // seller_stock replaces deprecated normal_stock (Shopee sunset 2024-10-23).
+      seller_stock: [{ stock }],
+    };
+    // Optional: per-model weight in kg (probe_per_model_weight_ok gate at UI layer).
+    // weight_g is stored in grams in our DB; Shopee expects kg float.
+    if (m?.weight_g != null && Number(m.weight_g) > 0) {
+      model.weight = Number(m.weight_g) / 1000;
+    } else if (m?.weight != null && Number(m.weight) > 0) {
+      // Already in kg (direct pass-through from caller).
+      model.weight = Number(m.weight);
+    }
+    // Optional: per-model image_id (probe_per_option_image_ok gate at UI layer).
+    // Shopee docs path A: model[].image_id — sent when available.
+    if (m?.image_id) {
+      model.image_id = String(m.image_id);
+    }
+    return model;
+  });
+}
+
+function normalizeGlobalModelForAdd(model: any) {
+  const stock = Number(model?.seller_stock?.[0]?.stock ?? model?.stock ?? model?.normal_stock ?? 0);
+  const out: any = {
+    tier_index: Array.isArray(model?.tier_index) ? model.tier_index.map((x: any) => Number(x)) : [],
+    original_price: Number(model?.global_original_price ?? model?.original_price ?? 0),
+    seller_stock: [{ stock }],
+  };
+  const sku = String(model?.global_model_sku || model?.model_sku || '').trim();
+  if (sku) out.global_model_sku = sku;
+  if (model?.image_id) out.image_id = String(model.image_id);
+  return out;
+}
+
+function buildAddGlobalModelPayload(global_item_id: number, models: any[], body: any = {}, target: any = {}) {
+  const dts = clampDaysToShip(target?.days_to_ship ?? body?.days_to_ship ?? body?.pre_order?.days_to_ship ?? 10);
+  const payload: any = {
+    global_item_id,
+    global_model: models.map(normalizeGlobalModelForAdd),
+    days_to_ship: dts,
+    package_length: Number(body.package_length_cm ?? body.package_length ?? body.dimension?.package_length) || 20,
+    package_width: Number(body.package_width_cm ?? body.package_width ?? body.dimension?.package_width) || 15,
+    package_height: Number(body.package_height_cm ?? body.package_height ?? body.dimension?.package_height) || 5,
+  };
+  const weightKg = Number(body.weight ?? body.weight_kg ?? 0);
+  if (weightKg > 0) payload.weight = weightKg;
+  return payload;
 }
 
 function buildPublishModels(variation: any, fallbackPrice: number) {
@@ -1301,7 +1494,8 @@ function buildGlobalItemPayload(body: any) {
     },
     image: imageBlockFrom(body),
     original_price: Number(body.global_price ?? body.price),
-    normal_stock: Number(body.stock || 0),
+    // seller_stock replaces deprecated normal_stock at global item level (Shopee sunset 2024-10-23).
+    seller_stock: [{ stock: Number(body.stock || 0) }],
     pre_order: { days_to_ship: dts },
     brand: body.brand && body.brand.original_brand_name
       ? { brand_id: Number(body.brand.brand_id || 0), original_brand_name: String(body.brand.original_brand_name) }
@@ -1337,11 +1531,23 @@ function asAttrOptions(a: any): AttrOption[] {
 
 function flattenGlobalAttributes(raw: any): GlobalAttr[] {
   const src = raw?.response || raw || {};
+  // Production get_attribute_tree (category_id_list form) wraps the tree as:
+  //   response.list[<n>].attribute_tree[]  — each item is one requested category.
+  // Older sandbox / legacy shapes used flat attribute_list / attributes at the root.
+  // Support all shapes.
+  const fromListWrapper: any[] = [];
+  if (Array.isArray(src.list)) {
+    for (const entry of src.list) {
+      if (Array.isArray(entry?.attribute_tree)) fromListWrapper.push(...entry.attribute_tree);
+      if (Array.isArray(entry?.attribute_list)) fromListWrapper.push(...entry.attribute_list);
+    }
+  }
   const roots = [
     ...(Array.isArray(src.attribute_list) ? src.attribute_list : []),
     ...(Array.isArray(src.attributes) ? src.attributes : []),
     ...(Array.isArray(src.attribute_tree) ? src.attribute_tree : []),
     ...(Array.isArray(src.children) ? src.children : []),
+    ...fromListWrapper,
   ];
   const out: GlobalAttr[] = [];
   const walk = (node: any) => {
@@ -1428,7 +1634,12 @@ async function buildCategoryAttributeList(region: string, categoryId: number, in
   const normalized = normalizeAttributeList(inputAttrs);
   const byId = new Map<number, any>();
   normalized.forEach((a) => byId.set(Number(a.attribute_id), a));
-  const attrTreeRes = await merchantApiCall(region, '/api/v2/global_product/get_attribute_tree', { query: { category_id: categoryId, language: 'en' } });
+  // Shopee Open Platform docs reference get_mtsku_attribute_tree with category_ids list
+  // (sandbox path returns 404 in production — verified 2026-05-21). On the production
+  // partner endpoint the correct path is /get_attribute_tree but the parameter must be
+  // category_id_list (CSV/array), not category_id. Single-value category_id returns
+  // an empty response{}; passing the list form fills attribute_list correctly.
+  const attrTreeRes = await merchantApiCall(region, '/api/v2/global_product/get_attribute_tree', { query: { category_id_list: String(categoryId), language: 'en' } });
   const treeAttrs = flattenGlobalAttributes(attrTreeRes);
   const missing: any[] = [];
   for (const attr of treeAttrs.filter((a) => a.is_mandatory)) {
@@ -1465,12 +1676,18 @@ async function getRegionShopId(region: string): Promise<number> {
   return shopId;
 }
 
-async function getPublishLogistics(region: string) {
+async function getPublishLogistics(region: string, isPreOrder = false) {
   const result = await shopApiCall(region, '/api/v2/logistics/get_channel_list');
   const channels: any[] = result?.response?.logistics_channel_list || [];
   const pickId = (ch: any) => ch?.logistic_id ?? ch?.logistics_channel_id ?? ch?.channel_id ?? ch?.id;
   const pickName = (ch: any) => ch?.logistic_name ?? ch?.name ?? `channel_${pickId(ch)}`;
-  const enabled = channels.filter(ch => pickId(ch) != null && (ch.enabled ?? true));
+  let enabled = channels.filter(ch => pickId(ch) != null && (ch.enabled ?? true));
+  // Pre-order items can only use channels that explicitly support_pre_order=true.
+  // (Verified 2026-05-22 — PH channel 48023 returned
+  // "publish fail : channelID: 48023, msg:channel not support pre order".)
+  if (isPreOrder) {
+    enabled = enabled.filter(ch => ch.support_pre_order === true);
+  }
   const out = enabled.map(ch => ({
     logistic_id: Number(pickId(ch)),
     logistic_name: String(pickName(ch)),
@@ -1481,18 +1698,29 @@ async function getPublishLogistics(region: string) {
 }
 
 function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
-  const dts = clampDaysToShip(target.days_to_ship ?? body.days_to_ship);
   const price = Number(target.price ?? body.price);
+  // is_pre_order is decided by caller (adapter) via body.is_pre_order OR
+  // lifecycle_state === 'pre_order'. Default false (Ready Stock) for back-compat.
+  const isPreOrder = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
+  const dtsRaw = target.days_to_ship ?? body.days_to_ship;
+  const dts = isPreOrder
+    ? clampPreOrderRegionDts(dtsRaw)
+    : clampReadyStockDts(dtsRaw);
   const item: any = {
     item_name: body.name,
     description: body.description || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`,
-    item_status: body.item_status || 'UNLIST',
+    item_status: body.item_status || 'NORMAL',
     original_price: price,
     image: imageBlockFrom(body),
     category_id: Number(body.category_id),
     logistic: logistics,
-    pre_order: { is_pre_order: false, days_to_ship: dts },
+    pre_order: { is_pre_order: isPreOrder, days_to_ship: dts },
   };
+  const publishVariation = normalizeVariation(target.variation || body.variation);
+  if (publishVariation) {
+    item.tier_variation = publishVariation.tier_variation;
+    item.model = buildPublishModels(publishVariation, price);
+  }
   return item;
 }
 
@@ -2040,7 +2268,8 @@ Deno.serve(async (req) => {
     if (action === 'global_attributes') {
       const category_id = url.searchParams.get('category_id') || '';
       if (!category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
-      const result = await merchantApiCall(region, '/api/v2/global_product/get_attribute_tree', { query: { category_id, language: 'en' } });
+      // Production /get_attribute_tree requires category_id_list (CSV), not single category_id.
+      const result = await merchantApiCall(region, '/api/v2/global_product/get_attribute_tree', { query: { category_id_list: category_id, language: 'en' } });
       return jsonResp({ ok: !result.error, region, category_id, result });
     }
     // POST /add_global_item: create only the GlobalProduct source item. Variation/model setup is separate.
@@ -2051,10 +2280,12 @@ Deno.serve(async (req) => {
       if (!body.sku) return jsonResp({ ok: false, error: 'sku required' }, 400);
       if (!body.price && !body.global_price) return jsonResp({ ok: false, error: 'price required' }, 400);
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
-      const payload = buildGlobalItemPayload(body);
-      const result = await merchantApiCall(r, '/api/v2/global_product/add_global_item', { method: 'POST', body: payload });
-      if (result.error) return jsonResp({ ok: false, region: r, error: result.error, message: result.message, sent: payload, raw: result }, 502);
-      return jsonResp({ ok: true, region: r, global_item_id: result.response?.global_item_id, sent: payload, raw: result });
+      return withPublishRequestId(action, r, null, body, async () => {
+        const payload = buildGlobalItemPayload(body);
+        const result = await merchantApiCall(r, '/api/v2/global_product/add_global_item', { method: 'POST', body: payload });
+        if (result.error) return jsonResp({ ok: false, region: r, error: result.error, message: result.message, sent: payload, raw: result }, 502);
+        return jsonResp({ ok: true, region: r, global_item_id: result.response?.global_item_id, sent: payload, raw: result });
+      });
     }
     if (action === 'init_tier_variation' && req.method === 'POST') {
       const body = await req.json();
@@ -2065,12 +2296,14 @@ Deno.serve(async (req) => {
       if (!variation) return jsonResp({ ok: false, error: 'variation required' }, 400);
       const models = buildGlobalModels(variation, Number(body.global_price ?? body.price), Number(body.stock || 0));
       if (!models.length) return jsonResp({ ok: false, error: 'global_model required' }, 400);
-      const result = await merchantApiCall(r, '/api/v2/global_product/init_tier_variation', {
-        method: 'POST',
-        body: { global_item_id, tier_variation: variation.tier_variation, global_model: [models[0]] },
+      return withPublishRequestId(action, r, null, body, async () => {
+        const result = await merchantApiCall(r, '/api/v2/global_product/init_tier_variation', {
+          method: 'POST',
+          body: { global_item_id, tier_variation: variation.tier_variation, global_model: [models[0]] },
+        });
+        if (result.error) return jsonResp({ ok: false, region: r, error: result.error, message: result.message, raw: result }, 502);
+        return jsonResp({ ok: true, region: r, global_item_id, sent_model: models[0], raw: result });
       });
-      if (result.error) return jsonResp({ ok: false, region: r, error: result.error, message: result.message, raw: result }, 502);
-      return jsonResp({ ok: true, region: r, global_item_id, sent_model: models[0], raw: result });
     }
     if (action === 'add_global_model' && req.method === 'POST') {
       const body = await req.json();
@@ -2079,12 +2312,15 @@ Deno.serve(async (req) => {
       const model_list = Array.isArray(body.model_list) ? body.model_list : buildGlobalModels(body.variation, Number(body.global_price ?? body.price), Number(body.stock || 0));
       if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
       if (!model_list.length) return jsonResp({ ok: false, error: 'model_list required' }, 400);
-      const result = await merchantApiCall(r, '/api/v2/global_product/add_global_model', {
-        method: 'POST',
-        body: { global_item_id, model_list },
+      return withPublishRequestId(action, r, null, body, async () => {
+        const addModelPayload = buildAddGlobalModelPayload(global_item_id, model_list, body, body);
+        const result = await merchantApiCall(r, '/api/v2/global_product/add_global_model', {
+          method: 'POST',
+          body: addModelPayload,
+        });
+        if (result.error) return jsonResp({ ok: false, region: r, error: result.error, message: result.message, sent: addModelPayload, raw: result }, 502);
+        return jsonResp({ ok: true, region: r, global_item_id, sent: addModelPayload, sent_model_list: addModelPayload.global_model, raw: result });
       });
-      if (result.error) return jsonResp({ ok: false, region: r, error: result.error, message: result.message, raw: result }, 502);
-      return jsonResp({ ok: true, region: r, global_item_id, sent_model_list: model_list, raw: result });
     }
     // POST /create_publish_task: publish one global item to one shop/region.
     if (action === 'create_publish_task' && req.method === 'POST') {
@@ -2094,13 +2330,15 @@ Deno.serve(async (req) => {
       const shop_id = Number(body.shop_id || await getRegionShopId(r));
       if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
       if (!shop_id) return jsonResp({ ok: false, error: 'shop_id required' }, 400);
-      const logistics = await getPublishLogistics(r);
-      const item = body.item || buildPublishItemPayload(body, body, logistics);
-      if (!item.logistic) item.logistic = logistics;
-      const sent = { global_item_id, shop_id, shop_region: r, item };
-      const result = await merchantApiCall(r, '/api/v2/global_product/create_publish_task', { method: 'POST', body: sent });
-      if (result.error) return jsonResp({ ok: false, region: r, error: result.error, message: result.message, sent, raw: result }, 502);
-      return jsonResp({ ok: true, region: r, publish_task_id: result.response?.publish_task_id, sent, raw: result });
+      return withPublishRequestId(action, r, shop_id, body, async () => {
+        const logistics = await getPublishLogistics(r);
+        const item = body.item || buildPublishItemPayload(body, body, logistics);
+        if (!item.logistic) item.logistic = logistics;
+        const sent = { global_item_id, shop_id, shop_region: r, item };
+        const result = await merchantApiCall(r, '/api/v2/global_product/create_publish_task', { method: 'POST', body: sent });
+        if (result.error) return jsonResp({ ok: false, region: r, error: result.error, message: result.message, sent, raw: result }, 502);
+        return jsonResp({ ok: true, region: r, publish_task_id: result.response?.publish_task_id, sent, raw: result });
+      });
     }
     if (action === 'publish_task_result') {
       const publish_task_id = url.searchParams.get('publish_task_id') || '';
@@ -2108,10 +2346,186 @@ Deno.serve(async (req) => {
       const result = await merchantApiCall(region, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id } });
       return jsonResp({ ok: !result.error, region, result });
     }
+    if (action === 'publishable_shop') {
+      const global_item_id = url.searchParams.get('global_item_id') || '';
+      if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
+      const result = await merchantApiCall(region, '/api/v2/global_product/get_publishable_shop', { query: { global_item_id } });
+      return jsonResp({ ok: !result.error, region, global_item_id, result });
+    }
+    if (action === 'shop_publishable_status') {
+      const global_item_id = url.searchParams.get('global_item_id') || '';
+      if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
+      const offset = url.searchParams.get('offset') || '0';
+      const page_size = url.searchParams.get('page_size') || '50';
+      const result = await merchantApiCall(region, '/api/v2/global_product/get_shop_publishable_status', { query: { global_item_id, offset, page_size } });
+      return jsonResp({ ok: !result.error, region, global_item_id, result });
+    }
+    if (action === 'publish_to_region' && req.method === 'POST') {
+      const body = await req.json();
+      const global_item_id = Number(body.global_item_id);
+      if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
+      const targetInputs = (Array.isArray(body.targets) && body.targets.length ? body.targets : [body])
+        .map((t: any) => ({ ...t, region: String(t.region || '').toUpperCase() }))
+        .filter((t: any) => t.region);
+      if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
+      if (!body.name) return jsonResp({ ok: false, error: 'name required (publish item payload)' }, 400);
+      if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
+      const _isPreOrderRepublish = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
+      const results: any[] = [];
+      for (const target of targetInputs) {
+        const targetRegion = String(target.region || '').toUpperCase();
+        try {
+          const shop_id = target.shop_id ? Number(target.shop_id) : await getRegionShopId(targetRegion);
+          const BRIDGE_BANNED_SHOP_IDS = new Set([1002269093]);
+          if (BRIDGE_BANNED_SHOP_IDS.has(shop_id)) {
+            results.push({ ok: false, region: targetRegion, shop_id, stage: 'banned_shop', error: 'shop_id is permanently banned' });
+            continue;
+          }
+          const logistics = await getPublishLogistics(targetRegion, _isPreOrderRepublish);
+          const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
+          const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
+          const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });
+          if (publishRes.error) {
+            results.push({ ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes });
+            continue;
+          }
+          const publish_task_id = Number(publishRes.response?.publish_task_id);
+          let task: any = null;
+          let pollAttempts = 0;
+          // BR publish async is slower — double the polling window for BR only
+          const maxPoll = (targetRegion === 'BR') ? 60 : 30;
+          for (let i = 0; i < maxPoll; i++) {
+            await new Promise(s => setTimeout(s, 2000));
+            const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id } });
+            task = taskRes;
+            pollAttempts = i + 1;
+            if (taskRes.error || !isPublishPending(taskRes)) break;
+          }
+          let outcome = parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
+          // Fallback verification: query published_list — BR gets 3 retries (5s apart), others get 1
+          if (!outcome.ok) {
+            const fbRetries = (targetRegion === 'BR') ? 3 : 1;
+            const fbSleep = (targetRegion === 'BR') ? 5000 : 0;
+            for (let r = 0; r < fbRetries; r++) {
+              if (r > 0) await new Promise(s => setTimeout(s, fbSleep));
+              try {
+                const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
+                const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
+                const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
+                if (hit && hit.item_id) {
+                  outcome = { ok: true, region: targetRegion, shop_id, publish_task_id, item_id: Number(hit.item_id), publish_status: 'verified_via_published_list_retry_' + r, error: null, task };
+                  break;
+                }
+              } catch (_) {}
+            }
+          }
+          // BR-only: if still failing after fallback, re-issue create_publish_task once more
+          if (!outcome.ok && targetRegion === 'BR') {
+            try {
+              const retryPublishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });
+              if (retryPublishRes.response?.publish_task_id) {
+                const retryTaskId = Number(retryPublishRes.response.publish_task_id);
+                // Give BR 15s for async resolution before final published_list check
+                await new Promise(s => setTimeout(s, 15000));
+                const finalPubRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
+                const finalItems = Array.isArray(finalPubRes?.response?.published_item) ? finalPubRes.response.published_item : [];
+                const finalHit = finalItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
+                if (finalHit && finalHit.item_id) {
+                  outcome = { ok: true, region: 'BR', shop_id, publish_task_id: retryTaskId, item_id: Number(finalHit.item_id), publish_status: 'verified_via_br_retry', error: null, task: retryPublishRes };
+                }
+              }
+            } catch (_) {}
+          }
+          outcome.raw_create = publishRes;
+          outcome.raw_task = task;
+          outcome.poll_attempts = pollAttempts;
+          results.push(outcome);
+        } catch (e: any) {
+          results.push({ ok: false, region: targetRegion, stage: 'publish_exception', error: String(e?.message || e) });
+        }
+      }
+      return jsonResp({ ok: true, global_item_id, results });
+    }
+    if (action === 'oauth_exchange') {
+      const code = url.searchParams.get('code') || '';
+      const main_account_id = url.searchParams.get('main_account_id') || '';
+      const shop_id = url.searchParams.get('shop_id') || '';
+      if (!code) return jsonResp({ ok: false, error: 'code required' }, 400);
+      if (!main_account_id && !shop_id) return jsonResp({ ok: false, error: 'main_account_id or shop_id required' }, 400);
+      const app = await getApp();
+      const path = '/api/v2/auth/token/get';
+      const ts = Math.floor(Date.now() / 1000);
+      const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
+      const body: any = { code, partner_id: Number(app.partner_id) };
+      if (main_account_id) body.main_account_id = Number(main_account_id);
+      if (shop_id) body.shop_id = Number(shop_id);
+      const r = await fetch(`https://${LIVE_HOST}${path}?partner_id=${app.partner_id}&timestamp=${ts}&sign=${sign}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (j.error || !j.access_token) return jsonResp({ ok: false, error: j.error || 'no_access_token', message: j.message || null, raw: j }, 502);
+      // Persist merchant row (KRSC merchant token)
+      const now = Math.floor(Date.now() / 1000);
+      const expires_at = now + Number(j.expire_in || 14400);
+      const merchant_id_list: number[] = Array.isArray(j.merchant_id_list) ? j.merchant_id_list.map((x: any) => Number(x)) : [];
+      const merchant_id = merchant_id_list[0] || null;
+      const updates: any[] = [];
+      if (main_account_id && merchant_id) {
+        const { error } = await supabase.from('shopee_tokens').upsert({
+          region: '_MERCHANT', shop_id: Number(main_account_id), merchant_id, access_token: j.access_token, refresh_token: j.refresh_token, expires_at,
+        }, { onConflict: 'region' });
+        updates.push({ kind: 'merchant', region: '_MERCHANT', shop_id: main_account_id, error: error?.message || null });
+      }
+      const shop_id_list: number[] = Array.isArray(j.shop_id_list) ? j.shop_id_list.map((x: any) => Number(x)) : [];
+      return jsonResp({ ok: true, access_token_set: !!j.access_token, expires_at, merchant_id, merchant_id_list, shop_id_list, updates, raw: j });
+    }
+    if (action === 'merchant_shops') {
+      const r = url.searchParams.get('region') || 'SG';
+      const result = await merchantApiCall(r, '/api/v2/merchant/get_shop_list_by_merchant', { query: { page_no: 1, page_size: 100 } });
+      return jsonResp({ ok: !result.error, region: r, result });
+    }
+    if (action === 'oauth_url') {
+      const app = await getApp();
+      const path = url.searchParams.get('shop') === '1'
+        ? '/api/v2/shop/auth_partner'
+        : '/api/v2/merchant/auth_partner';
+      const ts = Math.floor(Date.now() / 1000);
+      const base = `${app.partner_id}${path}${ts}`;
+      const sign = await hmac(app.partner_key, base);
+      const redirect = url.searchParams.get('redirect') || 'https://shopee-dashboard-kohl.vercel.app/v2/';
+      const oauthUrl = `https://${LIVE_HOST}${path}?partner_id=${app.partner_id}&timestamp=${ts}&sign=${sign}&redirect=${encodeURIComponent(redirect)}`;
+      return jsonResp({ ok: true, oauth_url: oauthUrl, partner_id: app.partner_id, timestamp: ts, path });
+    }
+    if (action === 'force_refresh_all') {
+      const regions = (url.searchParams.get('regions') || 'SG,TW,TH,MY,PH,BR').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+      const results: any[] = [];
+      let merchant: any = null;
+      try {
+        merchant = await refreshMerchantRowToken();
+      } catch (e) {
+        merchant = { error: String((e as any)?.message || e) };
+      }
+      for (const r of regions) {
+        try {
+          const refreshed = await forceRefreshShopToken(r);
+          results.push({ region: r, ok: true, shop_id: refreshed.shop_id, expires_at: refreshed.expires_at });
+        } catch (e) {
+          results.push({ region: r, ok: false, error: String((e as any)?.message || e) });
+        }
+      }
+      return jsonResp({ ok: true, merchant, shops: results });
+    }
     // POST /register_cbsc: high-level GlobalProduct registration and region publish orchestration.
+    // v44: accepts body.idempotency_token (UUID) forwarded from UI card — used as request_id
+    //      for the withPublishRequestId gate so duplicate browser submits are blocked.
+    //      body.variation.model[] now supports per-model weight_g and image_id fields (§6-1, §2-2).
     if (action === 'register_cbsc' && req.method === 'POST') {
       const body = await req.json();
       const r = body.region || 'SG';
+      // Use UI-supplied idempotency_token as the publish request id when provided (§6-2).
+      const _cbscIdempotencyToken = body.idempotency_token ? String(body.idempotency_token) : null;
       const targetInputs = (Array.isArray(body.targets) && body.targets.length ? body.targets : [body])
         .map((t: any) => ({ ...t, region: t.region || r }))
         .filter((t: any) => t.region);
@@ -2120,6 +2534,7 @@ Deno.serve(async (req) => {
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
 
+      return withPublishRequestId(action, r, _cbscIdempotencyToken, body, async () => {
       const stage_logs: string[] = [];
       const catAttrs = await buildCategoryAttributeList(r, Number(body.category_id), Array.isArray(body.attribute_list) ? body.attribute_list : []);
       if (catAttrs.missing.length > 0) {
@@ -2133,13 +2548,22 @@ Deno.serve(async (req) => {
         }, 400);
       }
 
+      // Operator msg #679: Global add_global_item DTS caps at 10. For Pre-Order
+      // products we force 10 at Global level; per-region DTS is then applied
+      // separately in each create_publish_task call (which can go up to 150).
+      // Ready Stock keeps the existing 1-10 clamp on the first target's DTS.
+      const _isPreOrderRegister = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
+      const _globalDts = _isPreOrderRegister
+        ? PRE_ORDER_GLOBAL_DTS
+        : clampReadyStockDts(targetInputs[0]?.days_to_ship ?? body.days_to_ship);
       const addPayload = buildGlobalItemPayload({
         ...body,
         attribute_list: catAttrs.attribute_list,
         price: Number(body.global_price ?? body.price ?? targetInputs[0]?.price),
         stock: Number(body.stock ?? targetInputs[0]?.stock ?? 0),
         weight_g: Number(body.weight_g ?? targetInputs[0]?.weight_g ?? 100),
-        days_to_ship: targetInputs[0]?.days_to_ship ?? body.days_to_ship,
+        days_to_ship: _globalDts,
+        is_pre_order: _isPreOrderRegister,
       });
       const addRes = await merchantApiCall(r, '/api/v2/global_product/add_global_item', { method: 'POST', body: addPayload });
       if (addRes.error) {
@@ -2193,6 +2617,9 @@ Deno.serve(async (req) => {
       if (!global_item_id) return jsonResp({ ok: false, region: r, stage: 'add_global_item', error: 'no global_item_id', raw: addRes }, 502);
       stage_logs.push(`add_global_item ok: global_item_id=${global_item_id}`);
 
+      // §6-1 failure state machine: variation setup with explicit stage tracking.
+      // init_tier_variation failure → auto delete_global_item (cleanup orphan).
+      // add_global_model partial failure → no auto cleanup (dangerous), return partial_published.
       const baseVariation = normalizeVariation(body.variation || targetInputs.find((t: any) => t.variation)?.variation);
       if (baseVariation) {
         const globalModels = buildGlobalModels(baseVariation, Number(body.global_price ?? body.price ?? targetInputs[0]?.price), Number(body.stock ?? 0));
@@ -2200,25 +2627,137 @@ Deno.serve(async (req) => {
           method: 'POST',
           body: { global_item_id, tier_variation: baseVariation.tier_variation, global_model: [globalModels[0]] },
         });
-        if (initRes.error) return jsonResp({ ok: false, region: r, stage: 'init_tier_variation', global_item_id, error: initRes.error, message: initRes.message, raw: initRes }, 502);
+        if (initRes.error) {
+          // §6-1: init_tier_variation failed → orphan global_item exists. Auto-cleanup.
+          stage_logs.push(`init_tier_variation FAILED: ${initRes.error} — attempting delete_global_item cleanup`);
+          let cleanupState = 'cleanup_required';
+          try {
+            const delRes = await merchantApiCall(r, '/api/v2/global_product/delete_global_item', {
+              method: 'POST',
+              body: { global_item_id },
+            });
+            if (!delRes.error) {
+              cleanupState = 'cleanup_done';
+              stage_logs.push(`delete_global_item cleanup ok: global_item_id=${global_item_id}`);
+            } else {
+              stage_logs.push(`delete_global_item cleanup FAILED: ${delRes.error}`);
+            }
+          } catch (cleanupErr: any) {
+            stage_logs.push(`delete_global_item cleanup exception: ${String(cleanupErr?.message || cleanupErr)}`);
+          }
+          return jsonResp({
+            ok: false,
+            region: r,
+            stage: 'init_tier_variation',
+            cleanup_state: cleanupState,
+            global_item_id: cleanupState === 'cleanup_done' ? null : global_item_id,
+            error: initRes.error,
+            message: initRes.message,
+            stage_logs,
+            raw: initRes,
+          }, 502);
+        }
         stage_logs.push(`init_tier_variation ok: 1/${globalModels.length} models`);
         if (globalModels.length > 1) {
+          const addModelPayload = buildAddGlobalModelPayload(global_item_id, globalModels.slice(1), body, targetInputs[0] || {});
           const addModelRes = await merchantApiCall(r, '/api/v2/global_product/add_global_model', {
             method: 'POST',
-            body: { global_item_id, model_list: globalModels.slice(1) },
+            body: addModelPayload,
           });
-          if (addModelRes.error) return jsonResp({ ok: false, region: r, stage: 'add_global_model', global_item_id, error: addModelRes.error, message: addModelRes.message, raw: addModelRes }, 502);
+          if (addModelRes.error) {
+            // §6-1: add_global_model failure — partial state. No auto cleanup (dangerous).
+            // Return partial_published so UI can surface the correct DB state.
+            // P1 #1: include per-model identifiers so UI/operator knows which options to retry.
+            stage_logs.push(`add_global_model FAILED: ${addModelRes.error} — partial model state, no auto-cleanup`);
+            const failedModels = globalModels.slice(1).map((m: any, idx: number) => ({
+              tier_index: m.tier_index,
+              global_model_sku: m.model_sku ?? m.global_model_sku ?? null,
+              error: addModelRes.error,
+            }));
+            const succeededModels = [{
+              tier_index: globalModels[0].tier_index,
+              global_model_sku: globalModels[0].model_sku ?? globalModels[0].global_model_sku ?? null,
+              // global_model_id is not returned by init_tier_variation; must be fetched separately if needed
+              global_model_id: null,
+            }];
+            return jsonResp({
+              ok: false,
+              region: r,
+              stage: 'add_global_model',
+              cleanup_state: 'partial_published',
+              global_item_id,
+              models_added: 1,
+              models_failed: globalModels.length - 1,
+              succeeded_models: succeededModels,
+              failed_models: failedModels,
+              error: addModelRes.error,
+              message: addModelRes.message,
+              stage_logs,
+              raw: addModelRes,
+            }, 502);
+          }
           stage_logs.push(`add_global_model ok: ${globalModels.length - 1} models`);
         }
+      }
+
+      // Diagnostic: query KRSC publishable_shop for this global_item_id once. Result is
+      // recorded in stage_logs + returned so adapter/UI can show which region shops
+      // Shopee considers eligible (KRSC blocks publish to non-publishable shops).
+      let publishable_shops: any = null;
+      try {
+        const psRes = await merchantApiCall(r, '/api/v2/global_product/get_publishable_shop', { query: { global_item_id } });
+        publishable_shops = psRes;
+        console.log(`[register_cbsc] get_publishable_shop global_item_id=${global_item_id} response=${JSON.stringify(psRes).slice(0, 1200)}`);
+        const shopList = Array.isArray(psRes?.response?.publishable_shop) ? psRes.response.publishable_shop : [];
+        stage_logs.push(`publishable_shops: ${shopList.length} shops eligible (${shopList.map((s: any) => `${s.shop_region || s.region || '?'}:${s.shop_id}`).join(', ')})`);
+      } catch (e) {
+        stage_logs.push(`publishable_shops_lookup_failed: ${String(e)}`);
+      }
+
+      // Codex hypothesis C — pre-check per-shop publishable status (with reason)
+      // so we can surface KRSC's "category prohibited" / "channel/region not
+      // supported" reasons up-front instead of getting a generic publish_task
+      // failure that misattributes the cause.
+      let publishable_status: any = null;
+      const unpublishableByShop = new Map<number, string>();
+      try {
+        const stRes = await merchantApiCall(r, '/api/v2/global_product/get_shop_publishable_status', { query: { global_item_id, offset: 0, page_size: 100 } });
+        publishable_status = stRes;
+        const list = Array.isArray(stRes?.response?.shop_publishable_status_list) ? stRes.response.shop_publishable_status_list : [];
+        for (const row of list) {
+          if (row?.shop_publishable_status === false && row?.unpublishable_reason) {
+            unpublishableByShop.set(Number(row.shop_id), String(row.unpublishable_reason));
+          }
+        }
+        stage_logs.push(`shop_publishable_status: ${list.length} shops checked, ${unpublishableByShop.size} unpublishable`);
+      } catch (e) {
+        stage_logs.push(`shop_publishable_status_failed: ${String(e)}`);
       }
 
       const results: any[] = [];
       for (const target of targetInputs) {
         const targetRegion = String(target.region || '').toUpperCase();
         try {
-          const shop_id = await getRegionShopId(targetRegion);
-          const logistics = await getPublishLogistics(targetRegion);
-          const item = buildPublishItemPayload({ ...body, image_id: body.image_id, image_url: body.image_url }, target, logistics);
+          // Prefer caller-provided shop_id; only fall back to region default when omitted.
+          // Ignoring the caller's shop_id (old behaviour) would publish to the wrong shop
+          // when an explicit non-default shop is passed (e.g. a second shop in the same region).
+          const shop_id = target.shop_id ? Number(target.shop_id) : await getRegionShopId(targetRegion);
+          // Defense-in-depth: block permanently-banned shop IDs even inside the bridge.
+          const BRIDGE_BANNED_SHOP_IDS = new Set([1002269093]);
+          if (BRIDGE_BANNED_SHOP_IDS.has(shop_id)) {
+            results.push({ ok: false, region: targetRegion, shop_id, stage: 'banned_shop', error: 'shop_id is permanently banned', message: `shop_id ${shop_id} is banned and cannot be published to` });
+            continue;
+          }
+          // Pre-check: if KRSC reported this shop as unpublishable, surface the
+          // reason verbatim instead of letting create_publish_task return a
+          // generic failure with a misleading message.
+          const blockedReason = unpublishableByShop.get(shop_id);
+          if (blockedReason) {
+            results.push({ ok: false, region: targetRegion, shop_id, stage: 'shop_unpublishable', error: 'shop_unpublishable', message: blockedReason });
+            continue;
+          }
+          const logistics = await getPublishLogistics(targetRegion, _isPreOrderRegister);
+          const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });
           if (publishRes.error) {
@@ -2226,25 +2765,128 @@ Deno.serve(async (req) => {
             continue;
           }
           const publish_task_id = Number(publishRes.response?.publish_task_id);
+          console.log(`[register_cbsc] region=${targetRegion} shop_id=${shop_id} publish_task_id=${publish_task_id} create_publish_task_response=${JSON.stringify(publishRes).slice(0, 800)}`);
           let task: any = null;
-          for (let i = 0; i < 8; i++) {
-            await new Promise(s => setTimeout(s, 1500));
+          let pollAttempts = 0;
+          // BR publish async is slower — double the polling window for BR only
+          const maxPoll = (targetRegion === 'BR') ? 60 : 30;
+          for (let i = 0; i < maxPoll; i++) {
+            await new Promise(s => setTimeout(s, 2000));
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id } });
             task = taskRes;
+            pollAttempts = i + 1;
             if (taskRes.error || !isPublishPending(taskRes)) break;
           }
-          results.push(parsePublishOutcome(targetRegion, shop_id, publish_task_id, task));
+          console.log(`[register_cbsc] region=${targetRegion} publish_task_id=${publish_task_id} poll_attempts=${pollAttempts} final_task=${JSON.stringify(task).slice(0, 1200)}`);
+          let outcome = parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
+          outcome.raw_create = publishRes;
+          outcome.raw_task = task;
+          outcome.poll_attempts = pollAttempts;
+          // Fallback verification: if parser declared failure but the task may still be
+          // resolving async on Shopee's side, query published_list and check whether the
+          // global_item_id has actually surfaced as a shop item.
+          // BR gets 3 retries (5s apart), other regions get 1 attempt.
+          if (!outcome.ok) {
+            const fbRetries = (targetRegion === 'BR') ? 3 : 1;
+            const fbSleep = (targetRegion === 'BR') ? 5000 : 0;
+            for (let r = 0; r < fbRetries; r++) {
+              if (r > 0) await new Promise(s => setTimeout(s, fbSleep));
+              try {
+                const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
+                const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
+                const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
+                if (hit && hit.item_id) {
+                  outcome = {
+                    ok: true,
+                    region: targetRegion,
+                    shop_id,
+                    publish_task_id,
+                    item_id: Number(hit.item_id),
+                    publish_status: 'verified_via_published_list_retry_' + r,
+                    error: null,
+                    task,
+                  };
+                  break;
+                }
+              } catch (_) { /* ignore — keep original parsePublishOutcome verdict */ }
+            }
+          }
+          // BR-only: if still failing after fallback retries, re-issue create_publish_task once more
+          if (!outcome.ok && targetRegion === 'BR') {
+            try {
+              stage_logs.push('BR retry: re-creating publish_task');
+              const retryPublishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });
+              if (retryPublishRes.response?.publish_task_id) {
+                const retryTaskId = Number(retryPublishRes.response.publish_task_id);
+                // Give BR 15s for async resolution before final published_list check
+                await new Promise(s => setTimeout(s, 15000));
+                const finalPubRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id } });
+                const finalItems = Array.isArray(finalPubRes?.response?.published_item) ? finalPubRes.response.published_item : [];
+                const finalHit = finalItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
+                if (finalHit && finalHit.item_id) {
+                  outcome = { ok: true, region: 'BR', shop_id, publish_task_id: retryTaskId, item_id: Number(finalHit.item_id), publish_status: 'verified_via_br_retry', error: null, task: retryPublishRes };
+                }
+              }
+            } catch (_) {}
+          }
+          results.push(outcome);
         } catch (e: any) {
           results.push({ ok: false, region: target.region || r, stage: 'publish_exception', error: String(e?.message || e) });
         }
       }
-      return jsonResp({ ok: true, region: r, global_item_id, stage_logs, results });
+      return jsonResp({ ok: true, region: r, global_item_id, stage_logs, results, publishable_shops, publishable_status });
+      }); // end withPublishRequestId for register_cbsc
     }
     if (action === 'item_info') {
       const item_id = parseInt(url.searchParams.get('item_id') || '0');
       if (!item_id) return jsonResp({ ok: false, error: 'item_id required' }, 400);
       const result = await shopApiCall(region, '/api/v2/product/get_item_base_info', { query: { item_id_list: item_id } });
       return jsonResp({ ok: !result.error, region, item_id, result });
+    }
+    if (action === 'shop_item_dts_limit') {
+      const r = String(url.searchParams.get('region') || region || '').toUpperCase();
+      const item_id = parseInt(url.searchParams.get('item_id') || '0');
+      let category_id = parseInt(url.searchParams.get('category_id') || '0');
+      if (!r) return jsonResp({ ok: false, error: 'region required' }, 400);
+      if (!item_id && !category_id) return jsonResp({ ok: false, error: 'item_id or category_id required' }, 400);
+      let itemInfo: any = null;
+      let itemInfoResult: any = null;
+      if (!category_id && item_id) {
+        itemInfoResult = await shopApiCall(r, '/api/v2/product/get_item_base_info', { query: { item_id_list: item_id } });
+        if (itemInfoResult.error) {
+          return jsonResp({ ok: false, region: r, item_id, error: itemInfoResult.error, result: itemInfoResult }, 500);
+        }
+        const itemList = itemInfoResult.response?.item_list || [];
+        itemInfo = Array.isArray(itemList) ? itemList[0] || null : null;
+        category_id = Number(itemInfo?.category_id || 0);
+        if (!category_id) {
+          return jsonResp({ ok: false, region: r, item_id, error: 'category_id not found for item', result: itemInfoResult }, 404);
+        }
+      }
+      const result = await shopApiCall(r, '/api/v2/product/get_item_limit', { query: { category_id } });
+      if (result.error) {
+        return jsonResp({ ok: false, region: r, category_id, item_id: item_id || null, error: result.error, result }, 500);
+      }
+      const dts_limit = result.response?.dts_limit || result.dts_limit || null;
+      const range = dts_limit?.days_to_ship_limit || null;
+      const min_limit = Number(range?.min_limit);
+      const max_limit = Number(range?.max_limit);
+      const non_pre_order_days_to_ship = Number(dts_limit?.non_pre_order_days_to_ship);
+      const support_pre_order = dts_limit?.support_pre_order !== false;
+      return jsonResp({
+        ok: true,
+        region: r,
+        item_id: item_id || null,
+        category_id,
+        category_source: itemInfo ? 'item_info' : 'query',
+        dts_limit,
+        min_limit: Number.isFinite(min_limit) ? min_limit : null,
+        max_limit: Number.isFinite(max_limit) ? max_limit : null,
+        non_pre_order_days_to_ship: Number.isFinite(non_pre_order_days_to_ship) ? non_pre_order_days_to_ship : null,
+        support_pre_order,
+        note: 'Shop-level DTS limit from product/get_item_limit.',
+        result,
+      });
     }
     if (action === 'list_items') {
       const item_status = url.searchParams.get('item_status') || 'NORMAL';
@@ -2330,8 +2972,8 @@ Deno.serve(async (req) => {
       const is_pre_order = !!body.is_pre_order;
       if (!r) return jsonResp({ ok: false, error: 'region required' }, 400);
       if (!item_id) return jsonResp({ ok: false, error: 'item_id required' }, 400);
-      if (!Number.isFinite(days_to_ship) || days_to_ship < 1 || days_to_ship > 30) {
-        return jsonResp({ ok: false, error: 'days_to_ship must be int 1-30' }, 400);
+      if (!Number.isFinite(days_to_ship) || days_to_ship < 1 || days_to_ship > 150) {
+        return jsonResp({ ok: false, error: 'days_to_ship must be int 1-150' }, 400);
       }
       const result = await shopApiCall(r, '/api/v2/product/update_item', {
         method: 'POST',
@@ -2373,6 +3015,10 @@ Deno.serve(async (req) => {
       const query: Record<string, any> = { page_size };
       if (offset && offset !== '0') query.offset = offset;
       if (keyword) {
+        // Shopee's Global Product list has had inconsistent docs around keyword
+        // naming; include both aliases so callers can perform keyword search where
+        // the live API supports it. The V2 UI also performs client-side filtering
+        // as a safe fallback when the upstream ignores these params.
         query.keyword = keyword;
         query.item_name = keyword;
       }
@@ -2388,6 +3034,62 @@ Deno.serve(async (req) => {
       if (ids.length === 0) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
       const result = await merchantApiCall(merchantRegion, '/api/v2/global_product/get_global_item_info', { query: { global_item_id_list: ids.join(',') } });
       return jsonResp({ ok: !result.error, region, global_item_id_list: ids, result });
+    }
+    if (action === 'global_item_dts_limit') {
+      const global_item_id = parseInt(url.searchParams.get('global_item_id') || '0');
+      let category_id = parseInt(url.searchParams.get('category_id') || '0');
+      if (!global_item_id && !category_id) {
+        return jsonResp({ ok: false, error: 'global_item_id or category_id required' }, 400);
+      }
+      let itemInfo: any = null;
+      let itemInfoResult: any = null;
+      if (!category_id && global_item_id) {
+        itemInfoResult = await merchantApiCall(region, '/api/v2/global_product/get_global_item_info', {
+          query: { global_item_id_list: String(global_item_id) },
+        });
+        if (itemInfoResult.error) {
+          return jsonResp({ ok: false, region, global_item_id, error: itemInfoResult.error, result: itemInfoResult }, 500);
+        }
+        const itemList = itemInfoResult.response?.global_item_list || itemInfoResult.response?.item_list || [];
+        itemInfo = Array.isArray(itemList) ? itemList[0] || null : null;
+        category_id = Number(itemInfo?.category_id || 0);
+        if (!category_id) {
+          return jsonResp({ ok: false, region, global_item_id, error: 'category_id not found for global item', result: itemInfoResult }, 404);
+        }
+      }
+      const result = await merchantApiCall(region, '/api/v2/global_product/get_global_item_limit', {
+        query: { category_id },
+      });
+      if (result.error) {
+        return jsonResp({ ok: false, region, category_id, global_item_id: global_item_id || null, error: result.error, result }, 500);
+      }
+      const dts_limit = result.response?.dts_limit || result.dts_limit || null;
+      const rangeListRaw = Array.isArray(dts_limit?.days_to_ship_range_list)
+        ? dts_limit.days_to_ship_range_list
+        : (dts_limit ? [dts_limit] : []);
+      const ranges = rangeListRaw
+        .map((it: any) => ({
+          min_limit: Number(it?.min_limit),
+          max_limit: Number(it?.max_limit),
+        }))
+        .filter((it: any) => Number.isFinite(it.min_limit) && Number.isFinite(it.max_limit) && it.min_limit >= 1 && it.max_limit >= it.min_limit);
+      const allMins = ranges.map((it: any) => it.min_limit);
+      const allMaxs = ranges.map((it: any) => it.max_limit);
+      const min_limit = allMins.length ? Math.min(...allMins) : null;
+      const max_limit = allMaxs.length ? Math.max(...allMaxs) : null;
+      return jsonResp({
+        ok: true,
+        region,
+        global_item_id: global_item_id || null,
+        category_id,
+        category_source: itemInfo ? 'global_item_info' : 'query',
+        dts_limit,
+        ranges,
+        min_limit: Number.isFinite(min_limit) ? min_limit : null,
+        max_limit: Number.isFinite(max_limit) ? max_limit : null,
+        note: 'Shopee KRSC exposes category/global DTS limits. Region-specific DTS range is not provided by this endpoint.',
+        result,
+      });
     }
     if (action === 'global_model_list') {
       const merchantRegion = String(region || '').toUpperCase() === 'GLOBAL' ? 'SG' : region;
@@ -2480,11 +3182,13 @@ Deno.serve(async (req) => {
       const global_item_sku = typeof body.global_item_sku === 'string' ? body.global_item_sku.trim() : '';
       if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
       if (!global_item_sku) return jsonResp({ ok: false, error: 'global_item_sku required' }, 400);
-      const result = await merchantApiCall(r, '/api/v2/global_product/update_global_item', {
-        method: 'POST',
-        body: { global_item_id, global_item_sku },
+      return withPublishRequestId(action, r, null, body, async () => {
+        const result = await merchantApiCall(r, '/api/v2/global_product/update_global_item', {
+          method: 'POST',
+          body: { global_item_id, global_item_sku },
+        });
+        return jsonResp({ ok: !result.error, region: r, global_item_id, global_item_sku, result });
       });
-      return jsonResp({ ok: !result.error, region: r, global_item_id, global_item_sku, result });
     }
 
     if (action === 'update_global_model' && req.method === 'POST') {
@@ -2500,11 +3204,13 @@ Deno.serve(async (req) => {
         .filter((m: any) => Number.isFinite(m.global_model_id) && m.global_model_id > 0 && m.global_model_sku !== '');
       if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
       if (cleaned.length === 0) return jsonResp({ ok: false, error: 'global_model[] required (global_model_id + global_model_sku)' }, 400);
-      const result = await merchantApiCall(r, '/api/v2/global_product/update_global_model', {
-        method: 'POST',
-        body: { global_item_id, global_model: cleaned },
+      return withPublishRequestId(action, r, null, body, async () => {
+        const result = await merchantApiCall(r, '/api/v2/global_product/update_global_model', {
+          method: 'POST',
+          body: { global_item_id, global_model: cleaned },
+        });
+        return jsonResp({ ok: !result.error, region: r, global_item_id, sent_global_model: cleaned, result });
       });
-      return jsonResp({ ok: !result.error, region: r, global_item_id, sent_global_model: cleaned, result });
     }
 
     // --- v20: product registration helpers ---

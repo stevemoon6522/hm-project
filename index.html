@@ -7375,7 +7375,7 @@ function _gkpBuildRows(filteredItems) {
   const rows = [];
   for (const it of filteredItems) {
     if (it.type === 'item') {
-      rows.push({ rowType: 'item', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, price: it.price, weight_kg: it.weight_kg, global_model_id: null });
+      rows.push({ rowType: 'item', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, price: it.price, weight_kg: it.weight_kg });
     } else {
       // model_header row
       rows.push({ rowType: 'model_header', global_item_id: it.global_item_id, item_name: it.item_name, item_sku: it.item_sku, weight_kg: it.weight_kg, tier_variation: it.tier_variation || [], modelCount: it.models.length, models: it.models || [] });
@@ -7485,7 +7485,6 @@ function _gkpRowsForSelection(row) {
     sku,
     product_name: row.item_name || null,
     shopee_item_id: globalItemId,
-    global_model_id: null,
     cost_krw: costKrw,
     weight_g: weightG,
   }];

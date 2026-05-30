@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="ko">
 <head>
   <meta charset="utf-8">
@@ -3091,6 +3091,8 @@
         <label for="pl-master-edit-description">Description 초안</label>
         <textarea id="pl-master-edit-description" rows="8" placeholder="상품 설명"></textarea>
       </div>
+      <textarea id="pl-master-edit-days" hidden aria-hidden="true"></textarea>
+      <textarea id="pl-master-edit-attrs" hidden aria-hidden="true"></textarea>
       <div class="field" style="grid-column:span 12;">
         <label>등록/이미지 초안</label>
         <div id="pl-master-edit-image-summary" class="pl-master-option-list"></div>
@@ -5088,6 +5090,10 @@ LEGACY END -->
     if (componentsInput) componentsInput.value = first.components_extracted_en || '';
     const descInput = document.getElementById('pl-master-edit-description');
     if (descInput) descInput.value = first.shopee_description || '';
+    const daysInput = document.getElementById('pl-master-edit-days');
+    if (daysInput) daysInput.value = plMasterEditJsonText(first.shopee_days_to_ship, {});
+    const attrsInput = document.getElementById('pl-master-edit-attrs');
+    if (attrsInput) attrsInput.value = plMasterEditJsonText(first.shopee_extra_attributes, []);
     plMasterEditRenderImageSummary(rows);
     plMasterEditRenderOptions(rows);
     const err = document.getElementById('pl-master-edit-error');
@@ -5156,6 +5162,8 @@ LEGACY END -->
         throw new Error('Shopee category ID는 현재 100740 또는 101390만 허용됩니다.');
       }
       const optionPatches = plMasterEditReadOptionPatches(rows);
+      const shopeeDaysToShip = plMasterEditReadJson('pl-master-edit-days', rows[0]?.shopee_days_to_ship || {}, 'Shopee DTS');
+      const shopeeExtraAttributes = plMasterEditReadJson('pl-master-edit-attrs', rows[0]?.shopee_extra_attributes || [], 'Shopee extra attributes');
       const patch = {
         product_name: productName,
         lifecycle_state: document.getElementById('pl-master-edit-lifecycle')?.value || rows[0]?.lifecycle_state || 'ready_stock',
@@ -5164,6 +5172,8 @@ LEGACY END -->
         shopee_brand_id: Number(document.getElementById('pl-master-edit-brand-id')?.value || 0) || 0,
         shopee_brand_name: stripNonMarketplaceText(document.getElementById('pl-master-edit-brand-name')?.value || '').trim() || 'No Brand',
         shopee_description: String(document.getElementById('pl-master-edit-description')?.value || '').trim() || null,
+        shopee_days_to_ship: shopeeDaysToShip,
+        shopee_extra_attributes: shopeeExtraAttributes,
         components_extracted_en: components || null,
         components_extracted_at: components ? new Date().toISOString() : null,
         components_approved: components ? 1 : 0,

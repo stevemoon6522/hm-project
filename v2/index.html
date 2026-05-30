@@ -2430,11 +2430,8 @@
           </select>
           <button id="cat-refresh" type="button">새로고침</button>
           <span id="cat-count" style="font-size:12px;font-weight:600;color:var(--accent);white-space:nowrap;"></span>
-          <button id="cat-dry-btn" type="button" class="btn-dry">📊 dry-run 선택 행</button>
-          <button id="cat-live-btn" type="button" class="btn-live"
-            title="선택 행을 Shopee shop-level update_price로 실동기화">🔥 Shopee 실호출 선택 행</button>
-          <button id="cat-joom-btn" type="button" class="btn-live"
-            title="선택 행을 Joom lookup-sku + update-price로 실동기화">🌐 Joom 가격 동기화</button>
+          <button id="cat-sync-btn" type="button" class="btn-live"
+            title="선택한 행의 가격을 현재 플랫폼(Shopee/Joom)에 동기화">🔄 동기화</button>
           <span id="cat-error" class="status err" style="display:none;font-size:12px;"></span>
         </div>
         <div class="cat-platform-row">
@@ -8981,6 +8978,35 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return _normalizeShopeeImageUrl(rawUrl, baseUrl || _rsh.master?.staronemall_url || window.location.href);
   }
 
+  function rshIsStaronemallBannerImageUrl(url) {
+    const raw = String(url || '').trim();
+    if (!raw) return false;
+    let haystack = raw.toLowerCase();
+    try {
+      const parsed = new URL(raw, 'https://www.staronemall.com');
+      haystack = decodeURIComponent(`${parsed.hostname}${parsed.pathname}${parsed.search}`).toLowerCase();
+    } catch (_) {
+      try { haystack = decodeURIComponent(raw).toLowerCase(); } catch (_) { haystack = raw.toLowerCase(); }
+    }
+    return [
+      /(?:^|[\/_.-])banner(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])bnr(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])event(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])notice(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])guide(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])common(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])footer(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])top(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])bottom(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])delivery(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])shipping(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])exchange(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])refund(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])return(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])cs(?:[\/_.-]|$)/,
+    ].some(re => re.test(haystack));
+  }
+
   function rshDataUrlToBase64(dataUrl) {
     const value = String(dataUrl || '');
     const commaIdx = value.indexOf(',');
@@ -9777,6 +9803,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         .map((u) => rshNormalizeImageUrl(u, staronemallUrl))
         .filter(Boolean)
         .filter((u) => !mainImages.includes(u))
+        .filter((u) => !rshIsStaronemallBannerImageUrl(u))
         .filter((u, i, arr) => arr.indexOf(u) === i);
 
       if (imgCrawlLoading) imgCrawlLoading.style.display = 'none';
@@ -13196,7 +13223,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
     if (!confirm('Shopee 가격을 실동기화합니다.\n\n대상 payload: ' + payloads.length + '건\n부분 실패 시 자동 rollback은 없습니다. 진행할까요?')) return;
 
-    const btn = document.getElementById('cat-live-btn');
+    const btn = document.getElementById('cat-sync-btn');
     const oldText = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Shopee 동기화 중...'; }
     showToast('Shopee preflight 확인 중...', '');
@@ -13283,7 +13310,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
     if (!confirm('Joom 가격을 실동기화합니다.\n\n대상 상품: ' + products.length + '건\nJoom lookup-sku 후 update-price를 호출합니다. 진행할까요?')) return;
 
-    const btn = document.getElementById('cat-joom-btn');
+    const btn = document.getElementById('cat-sync-btn');
     const oldText = btn ? btn.textContent : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Joom 동기화 중...'; }
 
@@ -13405,13 +13432,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   function catSyncPlatformActions() {
     const isJoom = _catActivePlatform === 'joom';
     const marketFilters = document.getElementById('cat-region-filters');
-    const dryBtn = document.getElementById('cat-dry-btn');
-    const liveBtn = document.getElementById('cat-live-btn');
-    const joomBtn = document.getElementById('cat-joom-btn');
     if (marketFilters) marketFilters.style.display = isJoom ? 'none' : '';
-    if (dryBtn) dryBtn.style.display = isJoom ? 'none' : '';
-    if (liveBtn) liveBtn.style.display = isJoom ? 'none' : '';
-    if (joomBtn) joomBtn.style.display = isJoom ? '' : 'none';
+  }
+
+  // Single "동기화" button routes to the active platform's live sync.
+  function catExecuteSelectedSync() {
+    if (_catActivePlatform === 'joom') catExecuteJoomSync();
+    else catExecuteShopeeLive();
   }
 
   function initCatPlatformTabs() {
@@ -13478,14 +13505,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const refreshBtn = document.getElementById('cat-refresh');
     if (refreshBtn) refreshBtn.addEventListener('click', function() { renderCatalogView(true); });
 
-    const dryBtn = document.getElementById('cat-dry-btn');
-    if (dryBtn) dryBtn.addEventListener('click', catShowDryRunModal);
-
-    const liveBtn = document.getElementById('cat-live-btn');
-    if (liveBtn) liveBtn.addEventListener('click', catExecuteShopeeLive);
-
-    const joomBtn = document.getElementById('cat-joom-btn');
-    if (joomBtn) joomBtn.addEventListener('click', catExecuteJoomSync);
+    const syncBtn = document.getElementById('cat-sync-btn');
+    if (syncBtn) syncBtn.addEventListener('click', catExecuteSelectedSync);
 
     const selectAll = document.getElementById('cat-select-all');
     if (selectAll) {
@@ -15151,12 +15172,53 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return group._cachedParentSku || mrPreviewParentSku({ rows: activeRows });
     }
 
-    function mrJoomNormalizeImageList(urls, baseUrl) {
+    function mrIsStaronemallBannerImageUrl(url) {
+      const raw = String(url || '').trim();
+      if (!raw) return false;
+      let haystack = raw.toLowerCase();
+      try {
+        const parsed = new URL(raw, 'https://www.staronemall.com');
+        haystack = decodeURIComponent(`${parsed.hostname}${parsed.pathname}${parsed.search}`).toLowerCase();
+      } catch (_) {
+        try { haystack = decodeURIComponent(raw).toLowerCase(); } catch (_) { haystack = raw.toLowerCase(); }
+      }
+      return [
+        /(?:^|[\\/_.-])banner(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])bnr(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])event(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])notice(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])guide(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])common(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])footer(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])top(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])bottom(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])delivery(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])shipping(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])exchange(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])refund(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])return(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])cs(?:[\\/_.-]|$)/,
+      ].some(re => re.test(haystack));
+    }
+
+    function mrFilterStaronemallDetailImageUrls(urls) {
       const seen = new Set();
       const out = [];
       (urls || []).forEach((url) => {
+        const value = String(url || '').trim();
+        if (!value || seen.has(value) || mrIsStaronemallBannerImageUrl(value)) return;
+        seen.add(value);
+        out.push(value);
+      });
+      return out;
+    }
+
+    function mrJoomNormalizeImageList(urls, baseUrl) {
+      const seen = new Set();
+      const out = [];
+      mrFilterStaronemallDetailImageUrls(urls || []).forEach((url) => {
         const normalized = _normalizeShopeeImageUrl(url, baseUrl || window.location.href);
-        if (!normalized || seen.has(normalized)) return;
+        if (!normalized || seen.has(normalized) || mrIsStaronemallBannerImageUrl(normalized)) return;
         seen.add(normalized);
         out.push(normalized);
       });
@@ -16062,7 +16124,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           if (!(Number(row._cost_krw) > 0)) row._cost_krw = Number(row.cost_krw || firstRow.cost_krw || firstRow._cost_krw || 0);
           if (row._weight_g == null) row._weight_g = row.weight_g || 0;
           if (row._main_image == null) row._main_image = '';
-          if (row._extra_images == null) row._extra_images = [];
+          if (row._extra_images == null) {
+            row._extra_images = mrJoomNormalizeImageList(row.observed?.detail_image_urls || [], row.url || firstRow.url || '').slice(0, 8);
+          }
 
           const optRow = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;padding:6px 8px;background:var(--surface2,#f8f9fa);border-radius:6px;' });
 
@@ -16265,7 +16329,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               _weight_g: firstRow.weight_g || firstRow._weight_g || 0,
               _main_image: '',
               _main_image_file_name: '',
-              _extra_images: [],
+              _extra_images: mrJoomNormalizeImageList(firstRow.observed?.detail_image_urls || [], firstRow.url || '').slice(0, 8),
               _twoAxis: group.twoAxis,
               // Share the group's idempotency token
               _group_token: group.idempotency_token,

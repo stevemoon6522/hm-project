@@ -3104,19 +3104,16 @@
           <div id="pl-master-edit-image-summary" class="pl-master-option-list"></div>
         </section>
 
-        <section class="pl-master-edit-card pl-master-edit-text-card">
+        <section class="pl-master-edit-card pl-master-edit-text-card" data-master-components-only="pl-master-components-only">
           <div class="pl-master-edit-card-title">
-            <span>구성품 / Description</span>
-            <small>Shopee 등록 초안</small>
+            <span>상품 구성품</span>
+            <small>플랫폼 Description은 전송 단계에서 구성품 기준으로 생성</small>
           </div>
           <div class="pl-master-edit-field-grid">
-            <div class="field span-6">
+            <div class="field span-12">
               <label for="pl-master-edit-components">상품 구성품</label>
               <textarea id="pl-master-edit-components" rows="8" placeholder="예: CD, Photobook, Photocard..."></textarea>
-            </div>
-            <div class="field span-6">
-              <label for="pl-master-edit-description">Description 초안</label>
-              <textarea id="pl-master-edit-description" rows="8" placeholder="상품 설명"></textarea>
+              <div class="subhead">마스터 상품에는 구성품만 저장합니다. Shopee/Joom 등 플랫폼별 description 초안은 등록/전송 모달에서 자동 생성됩니다.</div>
             </div>
           </div>
         </section>
@@ -5328,8 +5325,6 @@ LEGACY END -->
     if (staroneInput) staroneInput.value = first.staronemall_url || '';
     const componentsInput = document.getElementById('pl-master-edit-components');
     if (componentsInput) componentsInput.value = first.components_extracted_en || '';
-    const descInput = document.getElementById('pl-master-edit-description');
-    if (descInput) descInput.value = first.shopee_description || '';
     const daysInput = document.getElementById('pl-master-edit-days');
     if (daysInput) daysInput.value = plMasterEditJsonText(first.shopee_days_to_ship, {});
     const attrsInput = document.getElementById('pl-master-edit-attrs');
@@ -5410,7 +5405,6 @@ LEGACY END -->
         shopee_category_id: rows[0]?.shopee_category_id || 101390,
         shopee_brand_id: rows[0]?.shopee_brand_id ?? 0,
         shopee_brand_name: rows[0]?.shopee_brand_name || 'No Brand',
-        shopee_description: String(document.getElementById('pl-master-edit-description')?.value || '').trim() || null,
         shopee_days_to_ship: shopeeDaysToShip,
         shopee_extra_attributes: shopeeExtraAttributes,
         components_extracted_en: components || null,
@@ -9486,7 +9480,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   const RSH_PRODUCT_SELECT =
-    'id, sku, product_name, option_name, sourcing_price, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, main_image, extra_images, components_extracted_en, components_extracted_at, components_approved, product_group_id, variation_tier_names, variation_option_names, variation_tier_index';
+    'id, sku, product_name, option_name, sourcing_price, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_extra_attributes, shopee_days_to_ship, main_image, extra_images, components_extracted_en, components_extracted_at, components_approved, product_group_id, variation_tier_names, variation_option_names, variation_tier_index';
 
   function rshSortedProducts(rows) {
     return (rows || []).slice().sort((a, b) => plTierSortKey(a).localeCompare(plTierSortKey(b)));
@@ -9941,9 +9935,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       master.components_extracted_en,
     );
     if (descEl) {
-      descEl.value = master.shopee_description && /COD Policy/i.test(master.shopee_description)
-        ? master.shopee_description
-        : generatedDesc;
+      descEl.value = generatedDesc;
       descEl.dataset.generated = generatedDesc;
     }
     const descResetBtn = document.getElementById('rsh-desc-reset');
@@ -10424,7 +10416,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       package_height_cm: packageHeight,
       price: basePrice,
       stock: totalStock,
-      description: document.getElementById('rsh-description')?.value || master.shopee_description || productName || parentSku,
+      description: document.getElementById('rsh-description')?.value || rshDescriptionTemplate(productName || parentSku, master.lifecycle_state, master.components_extracted_en),
       image_id_list: globalImageIds.length ? globalImageIds.slice(0, REGISTER_MAX_IMAGE_IDS) : undefined,
       attribute_list: rshReadSpecAttributes(categoryId),
       condition: rshReadCondition(),
@@ -10653,7 +10645,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         shopee_category_id: liveCatId,
         shopee_brand_id: liveBrand.brand_id,
         shopee_brand_name: liveBrand.original_brand_name,
-        shopee_description: document.getElementById('rsh-description')?.value || _rsh.master.shopee_description,
         shopee_extra_attributes: rshReadSpecAttributes(liveCatId) || _rsh.master.shopee_extra_attributes,
         shopee_days_to_ship: updatedDts,
       };

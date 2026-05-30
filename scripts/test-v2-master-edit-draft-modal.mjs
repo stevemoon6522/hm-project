@@ -41,7 +41,7 @@ for (const token of [
   'id="pl-master-edit-staronemall-url"',
   'id="pl-master-edit-lifecycle"',
   'id="pl-master-edit-components"',
-  'id="pl-master-edit-description"',
+  'data-master-components-only="pl-master-components-only"',
   'id="pl-master-edit-days"',
   'id="pl-master-edit-attrs"',
   'id="pl-master-edit-image-summary"',
@@ -54,6 +54,9 @@ for (const removedToken of [
   'id="pl-master-edit-category"',
   'id="pl-master-edit-brand-name"',
   'id="pl-master-edit-brand-id"',
+  'id="pl-master-edit-description"',
+  'Description 초안',
+  '구성품 / Description',
   'Shopee category ID',
   'Shopee brand',
 ]) {
@@ -81,6 +84,8 @@ for (const removedToken of [
   "document.getElementById('pl-master-edit-category')",
   "document.getElementById('pl-master-edit-brand-id')",
   "document.getElementById('pl-master-edit-brand-name')",
+  "document.getElementById('pl-master-edit-description')",
+  'shopee_description:',
   'extra_images',
 ]) {
   assert(!editCode.includes(removedToken), `master edit save/open flow still reads removed field: ${removedToken}`);

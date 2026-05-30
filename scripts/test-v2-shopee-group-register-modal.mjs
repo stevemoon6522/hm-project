@@ -81,6 +81,12 @@ assert(
   'Shopee description must include COD policy and extracted components when available',
 );
 assert(
+  !rshModal.includes('master.shopee_description')
+    && !rshModal.includes('_rsh.master.shopee_description')
+    && !rshModal.includes('shopee_description:'),
+  'Shopee transfer must generate description at send time without reading or saving master shopee_description',
+);
+assert(
   html.includes('도매가 KRW')
     && html.includes('정산가 KRW')
     && rshModal.includes('model_sku: String(v.sku')

@@ -11,6 +11,7 @@
 // OPTIONS → 204 (CORS preflight, per feedback_supabase_cors_204_no_body)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { filterStaronemallDetailImageUrls } from "../_shared/staronemall-images.ts";
 
 // @ts-ignore Deno env
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -63,7 +64,7 @@ function extractDetailImageUrls(html: string): string[] {
       urls.push(u);
     }
   }
-  return urls;
+  return filterStaronemallDetailImageUrls(urls);
 }
 
 /** Pick the best detail image: prefer non-thumbnail, largest by URL path segment. */

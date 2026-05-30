@@ -47,6 +47,53 @@ function errResp(message: string, status = 400): Response {
   return jsonResp({ ok: false, error: message }, status);
 }
 
+function isStaronemallBannerImageUrl(url: string): boolean {
+  const raw = String(url || "").trim();
+  if (!raw) return false;
+
+  let haystack = raw.toLowerCase();
+  try {
+    const parsed = new URL(raw, "https://www.staronemall.com");
+    haystack = decodeURIComponent(`${parsed.hostname}${parsed.pathname}${parsed.search}`).toLowerCase();
+  } catch {
+    try {
+      haystack = decodeURIComponent(raw).toLowerCase();
+    } catch {
+      haystack = raw.toLowerCase();
+    }
+  }
+
+  return [
+    /(?:^|[\/_.-])banner(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])bnr(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])event(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])notice(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])guide(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])common(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])footer(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])top(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])bottom(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])delivery(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])shipping(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])exchange(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])refund(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])return(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])cs(?:[\/_.-]|$)/,
+  ].some((re) => re.test(haystack));
+}
+
+function filterStaronemallDetailImageUrls(urls: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const url of urls || []) {
+    const value = String(url || "").trim();
+    if (!value || seen.has(value) || isStaronemallBannerImageUrl(value)) continue;
+    seen.add(value);
+    out.push(value);
+  }
+  return out;
+}
+
 /** Extract all staronemall/wisacdn detail image URLs from HTML. */
 function extractDetailImageUrls(html: string): string[] {
   // Matches src/data-src attributes pointing to wisacdn detail image paths.
@@ -63,7 +110,7 @@ function extractDetailImageUrls(html: string): string[] {
       urls.push(u);
     }
   }
-  return urls;
+  return filterStaronemallDetailImageUrls(urls);
 }
 
 /** Pick the best detail image: prefer non-thumbnail, largest by URL path segment. */

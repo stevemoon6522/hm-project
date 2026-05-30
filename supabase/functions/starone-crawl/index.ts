@@ -27,6 +27,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
 import { requireAuthenticatedUser } from "../_shared/auth.ts";
+import { filterStaronemallDetailImageUrls } from "../_shared/staronemall-images.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
@@ -437,7 +438,7 @@ function extractDetailImages(doc, maxN = 20): string[] {
       }
     }
   }
-  return dedupArr(urls).slice(0, maxN);
+  return filterStaronemallDetailImageUrls(dedupArr(urls)).slice(0, maxN);
 }
 
 function extractPno(url: string): string | null {

@@ -2458,6 +2458,7 @@
               <th style="width:28px;"><input type="checkbox" id="cat-select-all" class="cat-cb" title="전체 선택"></th>
               <th style="min-width:180px;">SKU / 옵션</th>
               <th style="min-width:90px;">Lifecycle</th>
+              <th style="min-width:100px;">도매가 (₩)</th>
               <th style="min-width:110px;">Cost (₩)</th>
               <th style="min-width:70px;">무게(g)</th>
               <!-- 6 region 현재가 columns — injected by renderCatalogView() -->
@@ -2468,7 +2469,7 @@
             </tr>
           </thead>
           <tbody id="cat-body">
-            <tr><td colspan="9" class="cat-empty">로딩 중…</td></tr>
+            <tr><td colspan="10" class="cat-empty">로딩 중…</td></tr>
           </tbody>
         </table>
       </div>
@@ -11696,6 +11697,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // In-memory cache of pending cost edits: { [productId]: newCostKrw }
   const pendingCostEdits = {};
 
+  // In-memory cache of pending 도매가(sourcing) edits: { [productId]: sourcingKrw }
+  // Populated when the operator edits 도매가 or crawls Staronemall; persisted
+  // alongside cost_krw on the live-sync path so sourcing isn't silently dropped.
+  const pendingSourcingEdits = {};
+
   // Selected rows for batch dry-run: Set<productId string>
   const catSelectedIds = new Set();
 
@@ -11785,7 +11791,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let offset = 0;
     while (true) {
       const url = SUPABASE_URL + '/rest/v1/products'
-        + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
+        + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
         + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
       const res = await fetch(url, {
         headers: Object.assign({}, AUTH_HEADERS, {
@@ -11801,7 +11807,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           // Fallback query without cost_updated_at
           const res2 = await fetch(
             SUPABASE_URL + '/rest/v1/products'
-              + '?select=id,sku,product_name,option_name,cost_krw,weight_g,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
+              + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
               + '&order=lifecycle_state.asc,created_at.asc',
             {
               headers: Object.assign({}, AUTH_HEADERS, {
@@ -12125,6 +12131,102 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
   }
 
+  /**
+   * Apply a new 도매가(sourcing) to a row: derive 정산가(cost) = sourcing × 1.30,
+   * push it into the cost input + pendingCostEdits, and refresh region preview cells.
+   * Mirrors V1 startEdit() sourcingPrice → cost behavior.
+   */
+  function catApplySourcingToRow(pid, sourcing) {
+    const cost = Math.round(sourcing * RSH_SETTLEMENT_MULTIPLIER);
+    if (!Number.isFinite(cost) || cost <= 0) return;
+    const tr = document.querySelector('[data-cat-pid="' + pid + '"]');
+    if (tr) {
+      const costInput = tr.querySelector('.cat-cost-input');
+      if (costInput) costInput.value = cost;
+    }
+    pendingCostEdits[pid] = cost;
+    pendingSourcingEdits[pid] = sourcing;
+    // Stage the new sourcing in cache so the live-sync persist path writes it too.
+    if (_catCache) {
+      const product = _catCache.products.find(function(p) { return String(p.id) === String(pid); });
+      if (product) product.sourcing_price = sourcing;
+    }
+    catUpdateRowPriceCells(pid, cost);
+  }
+
+  /**
+   * Persist weight_g for a single product (PATCH), update in-memory cache,
+   * and refresh region preview cells. Does NOT trigger any live marketplace sync.
+   */
+  async function catPersistWeight(pid, weightG, input) {
+    const statusOk = function() { if (input) input.classList.remove('cost-warn'); };
+    try {
+      const { error } = await db.from('products')
+        .update({ weight_g: weightG, weight_measured_at: new Date().toISOString() })
+        .eq('id', pid);
+      if (error && /weight_measured_at|column|schema cache/i.test(error.message || '')) {
+        const { error: fallbackErr } = await db.from('products').update({ weight_g: weightG }).eq('id', pid);
+        if (fallbackErr) { if (input) input.classList.add('cost-warn'); showToast('무게 저장 실패: ' + (fallbackErr.message || fallbackErr), 'err'); return; }
+      } else if (error) {
+        if (input) input.classList.add('cost-warn');
+        showToast('무게 저장 실패: ' + (error.message || error), 'err');
+        return;
+      }
+    } catch (e) {
+      if (input) input.classList.add('cost-warn');
+      showToast('무게 저장 실패: ' + (e.message || e), 'err');
+      return;
+    }
+    statusOk();
+    if (_catCache) {
+      const product = _catCache.products.find(function(p) { return String(p.id) === String(pid); });
+      if (product) product.weight_g = weightG;
+    }
+    // Re-render region preview using the new weight (cost unchanged).
+    const product = _catCache && _catCache.products.find(function(p) { return String(p.id) === String(pid); });
+    if (product) catUpdateRowPriceCells(pid, catEffectiveCost(product));
+    showToast('무게 저장됨 (' + weightG.toLocaleString() + 'g)', 'ok');
+  }
+
+  /**
+   * Crawl Staronemall for a row's wholesalePrice via the Chrome extension,
+   * then apply 도매가 → 정산가 (× 1.30). Mirrors V1 refreshRowFromStaronemall.
+   * On missing extension / scrape failure, shows inline status — never throws.
+   */
+  async function catCrawlStaronemall(pid, btn) {
+    const product = _catCache && _catCache.products.find(function(p) { return String(p.id) === String(pid); });
+    const statusEl = document.querySelector('[data-cat-staronemall-status="' + pid + '"]');
+    const setStatus = function(msg, color) {
+      if (statusEl) { statusEl.textContent = msg; statusEl.style.color = color || 'var(--muted)'; }
+    };
+    const url = product && product.staronemall_url;
+    if (!url) { setStatus('URL 없음', 'var(--red)'); return; }
+    if (btn) { btn.disabled = true; }
+    setStatus('크롤링 중…');
+    try {
+      const result = await _sendToExtension({ type: 'scrapeStaronemall', url: url });
+      if (!result || !result.ok || !result.data) {
+        setStatus('실패: ' + ((result && result.error) || '추출 실패'), 'var(--red)');
+        return;
+      }
+      const wholesale = Number(result.data.wholesalePrice) || 0;
+      if (wholesale <= 0) { setStatus('도매가 0', 'var(--red)'); return; }
+      const tr = document.querySelector('[data-cat-pid="' + pid + '"]');
+      if (tr) {
+        const sourcingInput = tr.querySelector('.cat-sourcing-input');
+        if (sourcingInput) sourcingInput.value = wholesale;
+      }
+      catApplySourcingToRow(pid, wholesale);
+      const cost = Math.round(wholesale * RSH_SETTLEMENT_MULTIPLIER);
+      setStatus('✓ 도매 ₩' + wholesale.toLocaleString() + ' → 정산 ₩' + cost.toLocaleString(), 'var(--green)');
+    } catch (err) {
+      const msg = /not installed|not available/i.test(err.message || '') ? '확장 프로그램 없음' : (err.message || '오류');
+      setStatus('✗ ' + msg, 'var(--red)');
+    } finally {
+      if (btn) { btn.disabled = false; }
+    }
+  }
+
   function computeMaxDelta(costKrw, listingByRegion, weightG) {
     let max = 0;
     CAT_REGIONS.forEach(function(r) {
@@ -12242,6 +12344,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + '<div class="muted" style="font-size:11px;">' + esc(plParentSku(rows)) + ' · 옵션 묶음 ' + rows.length + '개' + (shownOptions ? ' · ' + shownOptions + esc(more) : '') + '</div></div>'
       + '</div></td>'
       + '<td>' + catLifecycleBadge(first.lifecycle_state) + '</td>'
+      + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows, 'sourcing_price') + '</td>'
       + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows, 'cost_krw') + '</td>'
       + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows, 'weight_g') + '</td>'
       + regionResult.html
@@ -12267,6 +12370,21 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + (isGroupChild ? '<div class="muted" style="font-size:11px;">' + esc(optionLabel || '옵션') + '</div>' : (p.option_name ? '<div class="muted" style="font-size:11px;">' + esc(p.option_name) + '</div>' : ''))
       + '</td>';
     const lcCell = '<td>' + catLifecycleBadge(p.lifecycle_state) + '</td>';
+    const hasStaronemall = !!(p.staronemall_url && String(p.staronemall_url).trim());
+    const sourcingVal = Number(p.sourcing_price || 0);
+    const sourcingCell = '<td>'
+      + '<input type="number" inputmode="decimal" class="cat-sourcing-input"'
+      + ' data-cat-sourcing-pid="' + esc(pid) + '"'
+      + ' value="' + (sourcingVal > 0 ? sourcingVal : '') + '"'
+      + ' min="0" max="999999999" step="1"'
+      + ' placeholder="도매가"'
+      + ' title="도매가(₩) — blur/Enter 시 × 1.30 정산가 자동 산출">'
+      + (hasStaronemall
+        ? '<button type="button" class="cat-staronemall-btn" data-cat-staronemall-pid="' + esc(pid) + '"'
+          + ' title="Staronemall 재크롤링 → 도매가/정산가 갱신" style="font-size:10px;margin-top:3px;padding:1px 6px;cursor:pointer;">↻ Staronemall</button>'
+          + '<div class="cat-staronemall-status" data-cat-staronemall-status="' + esc(pid) + '" style="font-size:10px;color:var(--muted);"></div>'
+        : '')
+      + '</td>';
     const costVal = effectiveCost > 0 ? effectiveCost : (origCost || '');
     const costWarn = isLargeChange ? ' cost-warn' : '';
     const costCell = '<td>'
@@ -12280,8 +12398,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           + '<input type="checkbox" class="cat-confirm-cb" title="매입가 30% 이상 변동 — 확인 체크 필요"> 확인↑30%</div>'
         : '<div data-cat-confirm></div>')
       + '</td>';
-    const wtCell = '<td class="mono" style="font-size:12px;">'
-      + (p.weight_g != null ? Number(p.weight_g).toLocaleString() : '—') + '</td>';
+    const wtCell = '<td>'
+      + '<input type="number" inputmode="decimal" class="cat-weight-input mono"'
+      + ' data-cat-weight-pid="' + esc(pid) + '"'
+      + ' value="' + (p.weight_g != null ? Number(p.weight_g) : '') + '"'
+      + ' min="1" max="999999999" step="1" style="width:64px;font-size:12px;"'
+      + ' title="무게(g) — blur/Enter 시 저장 + region preview 갱신 (실호출 아님)">'
+      + '</td>';
     const deltaCell = '<td data-cat-delta>'
       + (maxDelta > 0.5 ? '<span class="cat-price-up">' + maxDelta.toFixed(1) + '%</span>' : '<span class="cat-price-same">—</span>')
       + '</td>';
@@ -12290,7 +12413,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const staleCell = '<td>' + (isStale ? '<span class="cat-stale-badge">⚠ 14일+</span>' : '') + '</td>';
     return '<tr class="' + rowClass + '" data-cat-pid="' + esc(pid) + '">'
       + '<td><input type="checkbox" class="cat-cb cat-row-cb" data-cat-sel="' + esc(pid) + '" ' + (catSelectedIds.has(pid) ? 'checked' : '') + '></td>'
-      + skuCell + lcCell + costCell + wtCell
+      + skuCell + lcCell + sourcingCell + costCell + wtCell
       + regionResult.html
       + deltaCell + updatedCell + staleCell
       + '</tr>';
@@ -12338,9 +12461,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Remove existing dynamic price headers
     thead.querySelectorAll('[data-cat-region],[data-cat-region-new],[data-cat-joom-current],[data-cat-joom-new],[data-cat-joom-status]').forEach(function(th) { th.remove(); });
 
-    // Find anchor: the 5th th (무게(g) column), insert after it
+    // Find anchor: the 무게(g) column, insert region columns after it
     const ths = Array.from(thead.querySelectorAll('th'));
-    const weightTh = ths[4]; // 0=cb, 1=sku, 2=lifecycle, 3=cost, 4=weight
+    const weightTh = ths[5]; // 0=cb, 1=sku, 2=lifecycle, 3=sourcing(도매가), 4=cost, 5=weight
     if (!weightTh) return;
 
     const frag = document.createDocumentFragment();
@@ -12419,7 +12542,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     if (countEl) countEl.textContent = rows.length + '건';
 
-    const colCount = 3 + CAT_REGIONS.length * 2 + 5; // rough count for empty row
+    const colCount = 3 + CAT_REGIONS.length * 2 + 6; // rough count for empty row (incl. 도매가 col)
 
     if (!rows.length) {
       if (tbody) tbody.innerHTML = '<tr><td colspan="' + colCount + '" class="cat-empty">상품이 없습니다.</td></tr>';
@@ -12478,6 +12601,58 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       input.addEventListener('blur', onCostChange);
       input.addEventListener('keydown', function(e) {
         if (e.key === 'Enter') { e.preventDefault(); onCostChange(); input.blur(); }
+      });
+    });
+
+    // Wire 도매가(sourcing) input — auto-derive 정산가(cost) = sourcing × 1.30
+    tbody.querySelectorAll('.cat-sourcing-input').forEach(function(input) {
+      function onSourcingChange() {
+        const pid = input.dataset.catSourcingPid;
+        if (!pid) return;
+        const rawVal = input.value.trim();
+        if (rawVal === '') return;
+        const sourcing = Number(rawVal);
+        if (!Number.isFinite(sourcing) || sourcing <= 0 || sourcing > 999999999) {
+          input.classList.add('cost-warn');
+          return;
+        }
+        input.classList.remove('cost-warn');
+        catApplySourcingToRow(pid, sourcing);
+      }
+      input.addEventListener('blur', onSourcingChange);
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); onSourcingChange(); input.blur(); }
+      });
+    });
+
+    // Wire 무게(weight) input — persist weight_g + refresh region preview (NO live sync)
+    tbody.querySelectorAll('.cat-weight-input').forEach(function(input) {
+      let lastSaved = input.value.trim();
+      function onWeightChange() {
+        const pid = input.dataset.catWeightPid;
+        if (!pid) return;
+        const rawVal = input.value.trim();
+        if (rawVal === lastSaved) return;
+        const weight = Number(rawVal);
+        if (!Number.isFinite(weight) || weight <= 0 || weight > 999999999) {
+          input.classList.add('cost-warn');
+          return;
+        }
+        input.classList.remove('cost-warn');
+        lastSaved = rawVal;
+        catPersistWeight(pid, Math.round(weight), input);
+      }
+      input.addEventListener('blur', onWeightChange);
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { e.preventDefault(); onWeightChange(); input.blur(); }
+      });
+    });
+
+    // Wire Staronemall crawl buttons — scrape wholesalePrice → 도매가/정산가
+    tbody.querySelectorAll('.cat-staronemall-btn').forEach(function(btn) {
+      btn.addEventListener('click', function() {
+        const pid = btn.dataset.catStaronemallPid;
+        if (pid) catCrawlStaronemall(pid, btn);
       });
     });
 
@@ -12671,7 +12846,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // ── Dry-run execution ───────────────────────────────────────────
 
   async function catPersistProductCost(productId, newCost, nowIso) {
-    const costUpdateFields = { cost_krw: newCost };
+    const pidKey = String(productId);
+    // If 도매가 was edited/crawled for this row, persist it alongside cost_krw.
+    const sourcingEdited = pidKey in pendingSourcingEdits;
+    const sourcingVal = sourcingEdited ? pendingSourcingEdits[pidKey] : null;
+    const costUpdateFields = sourcingEdited
+      ? { cost_krw: newCost, sourcing_price: sourcingVal }
+      : { cost_krw: newCost };
     try {
       const { error: costErr } = await db.from('products')
         .update(Object.assign({}, costUpdateFields, { cost_updated_at: nowIso }))
@@ -12691,9 +12872,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (product) {
         product.cost_krw = newCost;
         product.cost_updated_at = nowIso;
+        if (sourcingEdited) product.sourcing_price = sourcingVal;
       }
     }
-    delete pendingCostEdits[String(productId)];
+    delete pendingCostEdits[pidKey];
+    delete pendingSourcingEdits[pidKey];
     return { ok: true };
   }
 

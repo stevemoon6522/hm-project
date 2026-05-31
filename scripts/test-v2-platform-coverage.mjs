@@ -133,13 +133,14 @@ assert(ebayAdapter.includes('lookupMiss') && ebayAdapter.includes('PLATFORM_NOT_
 assert(ebayAdapter.includes("title.slice(0, 50)"), 'eBay adapter aspect values must be clamped to bridge validation limits');
 assert(ebayBridge.includes('upstream_inventory_lookup_failed') && ebayBridge.includes('upstream_offer_lookup_failed'), 'eBay bridge lookup must distinguish upstream failures from true SKU misses');
 assert(joomAdapter.includes('x-platform-bridge-token') && joomAdapter.includes('PLATFORM_BRIDGE_INTERNAL_TOKEN'), 'Joom adapter must forward the internal bridge token');
-assert(edgeJoomBridge.includes('requireInternalBridge(req)') && edgeJoomBridge.includes('internal_bridge_required'), 'Joom bridge credential-backed SKU lookup must require an internal bridge token');
-assert(supabaseJoomBridge.includes('requireInternalBridge(req)') && supabaseJoomBridge.includes('internal_bridge_required'), 'deployed Supabase Joom bridge source must require an internal bridge token');
-for (const source of [edgeJoomBridge, supabaseJoomBridge]) {
-  for (const token of ['action === "publish" || action === "dryrun"', 'action === "update-price"', 'action === "delete"']) {
+for (const [label, source] of [['edge mirror', edgeJoomBridge], ['Supabase', supabaseJoomBridge]]) {
+  assert(source.includes('function requireInternalBridge') && source.includes('internal_bridge_required'), `${label} Joom bridge should retain internal bridge guard helper for server-routed calls`);
+  assert(source.includes('requireAuthenticatedUser(req)') && source.includes('requireBridgeTokenOrAuthenticatedUser'), `${label} Joom bridge must allow signed-in browser UI calls without exposing the internal bridge token`);
+  for (const token of ['action === "publish" || action === "dryrun"', 'action === "lookup-sku"', 'action === "update-price"', 'action === "delete"']) {
     const routeIndex = source.indexOf(token);
-    assert(routeIndex >= 0, `Joom bridge must include ${token}`);
-    assert(source.slice(routeIndex, routeIndex + 220).includes('requireInternalBridge(req)'), `Joom bridge ${token} route must require internal token`);
+    assert(routeIndex >= 0, `${label} Joom bridge must include ${token}`);
+    assert(source.slice(routeIndex, routeIndex + 260).includes('requireBridgeTokenOrAuthenticatedUser(req)'), `${label} Joom bridge ${token} route must use browser-session-or-internal-token auth`);
+    assert(!source.slice(routeIndex, routeIndex + 260).includes('requireInternalBridge(req)'), `${label} Joom browser ${token} route must not require only the internal bridge token`);
   }
   assert(source.includes('upstream_joom_lookup_failed'), 'Joom lookup must not classify every upstream failure as not found');
   assert(!source.includes('stack: e?.stack'), 'Joom bridge must not expose stack traces in JSON responses');

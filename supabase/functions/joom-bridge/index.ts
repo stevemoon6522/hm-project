@@ -8,6 +8,7 @@
 //   - Fix: include product SKU and categoryId in /products/create payload
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { AUTH_CORS, requireAuthenticatedUser } from "../_shared/auth.ts";
 
 const JOOM_V2 = "https://api-merchant.joom.com/api/v2";
 const JOOM_V3 = "https://api-merchant.joom.com/api/v3";
@@ -33,8 +34,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 const CORS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  ...AUTH_CORS,
   "Access-Control-Allow-Headers": "Content-Type, Authorization, apikey, x-client-info, x-platform-bridge-token",
   "Access-Control-Max-Age": "3600",
 };
@@ -429,6 +429,14 @@ function requireInternalBridge(req: Request): Response | null {
   return null;
 }
 
+async function requireBridgeTokenOrAuthenticatedUser(req: Request): Promise<Response | null> {
+  const expected = (Deno as any)["env"]["get"]("PLATFORM_BRIDGE_INTERNAL_TOKEN") || "";
+  const actual = req.headers.get("x-platform-bridge-token") || "";
+  if (expected && actual === expected) return null;
+  const authResult = await requireAuthenticatedUser(req);
+  return authResult.response || null;
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -454,8 +462,8 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if ((action === "publish" || action === "dryrun") && req.method === "POST") {
-      const internalDenied = requireInternalBridge(req);
-      if (internalDenied) return internalDenied;
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
       const body = await req.json();
       const row = body.row || {};
       const scraped = body.scrapedAssets || {};
@@ -517,8 +525,8 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if (action === "lookup-sku" && req.method === "GET") {
-      const internalDenied = requireInternalBridge(req);
-      if (internalDenied) return internalDenied;
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
       // GET /lookup-sku?sku=ABC&id=... → resolve Joom productId + variantId + currency.
       // Some imported/previously-published rows have products.joom_product_id even when
       // Joom no longer resolves the local master SKU as the parent SKU. In that case,
@@ -594,8 +602,8 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if (action === "update-price" && req.method === "POST") {
-      const internalDenied = requireInternalBridge(req);
-      if (internalDenied) return internalDenied;
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
       const body = await req.json();
       const { productId, sku, price } = body;
       if (!productId || !price || price <= 0) return jsonResp({ ok: false, error: "productId, price 필요" }, 400);
@@ -628,8 +636,8 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if (action === "delete" && req.method === "POST") {
-      const internalDenied = requireInternalBridge(req);
-      if (internalDenied) return internalDenied;
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
       const body = await req.json();
       const productId = body.productId;
       if (!productId) return jsonResp({ ok: false, error: "productId 필요" }, 400);

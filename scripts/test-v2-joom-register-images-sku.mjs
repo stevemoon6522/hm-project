@@ -55,6 +55,10 @@ assert(buildPayload.includes('hasExplicitVariants'), 'Joom bridge must distingui
 assert(buildPayload.includes('single variant product sku must equal option sku'), 'Joom bridge must enforce single-option parent SKU parity');
 assert(buildPayload.includes('cfg.sku || (!hasExplicitVariants'), 'Joom bridge must not invent SKUs for explicit variants');
 assert(buildPayload.indexOf('...(scrapedAssets.detailImages || [])') < buildPayload.indexOf('...(scrapedAssets.extraImages || [])'), 'Joom extraImages must place detail images immediately after the main image');
+assert(bridge.includes('import { AUTH_CORS, requireAuthenticatedUser } from "../_shared/auth.ts"'), 'Joom bridge must import the shared browser-session auth guard');
+assert(bridge.includes('async function requireBridgeTokenOrAuthenticatedUser'), 'Joom bridge must allow either server bridge token or signed-in browser session');
+assert(!bridge.includes('if ((action === "publish" || action === "dryrun") && req.method === "POST") {\n      const internalDenied = requireInternalBridge(req);'), 'Browser-originated Joom publish/dryrun must not require only the server internal bridge token');
+assert(!bridge.includes('if (action === "lookup-sku" && req.method === "GET") {\n      const internalDenied = requireInternalBridge(req);'), 'Browser-originated Joom lookup-sku must not require only the server internal bridge token');
 assert(bridge.includes('function readImageDimensions'), 'Joom detail splitter must read remote image dimensions without full decode');
 assert(bridge.includes('async function buildCloudinaryFetchTiles'), 'Joom detail splitter must support Cloudinary fetch transformations');
 assert(bridge.includes('/image/fetch/'), 'Joom detail splitter must produce Cloudinary fetch URLs');

@@ -21,6 +21,7 @@ const joomAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-p
 const ebayAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'ebay.ts'), 'utf8');
 const qoo10Adapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'qoo10.ts'), 'utf8');
 const ebayBridge = readFileSync(join(root, 'supabase', 'functions', 'ebay-bridge', 'index.ts'), 'utf8');
+const edgeEbayBridge = readFileSync(join(root, 'edge-functions', 'ebay-bridge', 'index.ts'), 'utf8');
 const edgeJoomBridge = readFileSync(join(root, 'edge-functions', 'joom-bridge', 'index.ts'), 'utf8');
 const supabaseJoomBridge = readFileSync(join(root, 'supabase', 'functions', 'joom-bridge', 'index.ts'), 'utf8');
 const globalImportMigration = readFileSync(
@@ -119,7 +120,14 @@ assert(platformPublish.includes('raw_response: adapterResult.rawResponse && dry_
 assert(joomAdapter.includes('raw?.joom_enabled !== false') && joomAdapter.includes("return 'listed'"), 'Joom adapter must treat enabled lookup hits as listed');
 assert(ebayBridge.includes('requireAuthenticatedUser(req)') && ebayBridge.includes('EBAY_OAUTH_ENDPOINT') && ebayBridge.includes('identity/v1/oauth2/token'), 'eBay bridge must require authenticated users and use a valid OAuth endpoint');
 assert(ebayBridge.includes('function requireInternalBridge') && ebayBridge.includes('internal_bridge_required'), 'eBay bridge should retain internal bridge guard helper for server-only routes');
-assert(ebayBridge.includes('V2 eBay registration UI calls ebay-bridge directly') && ebayBridge.includes('server-only platform bridge token'), 'eBay publish/lookup routes must allow authenticated browser UI calls without exposing the internal bridge token');
+for (const [label, source] of [['Supabase', ebayBridge], ['edge mirror', edgeEbayBridge]]) {
+  assert(source.includes('V2 eBay registration UI calls ebay-bridge directly') && source.includes('server-only platform bridge token'), `${label} eBay publish/lookup routes must allow authenticated browser UI calls without exposing the internal bridge token`);
+  for (const routeToken of ['action === "lookup-item" && req.method === "GET"', 'action === "publish" && req.method === "POST"']) {
+    const routeIndex = source.indexOf(routeToken);
+    assert(routeIndex >= 0, `${label} eBay bridge must include ${routeToken}`);
+    assert(!source.slice(routeIndex, routeIndex + 520).includes('requireInternalBridge(req)'), `${label} eBay browser ${routeToken} route must not require the internal bridge token`);
+  }
+}
 assert(ebayAdapter.includes('x-platform-bridge-token') && ebayAdapter.includes('PLATFORM_BRIDGE_INTERNAL_TOKEN'), 'eBay adapter must forward the internal bridge token when routed through platform-publish');
 assert(ebayAdapter.includes('lookupMiss') && ebayAdapter.includes('PLATFORM_NOT_FOUND'), 'eBay adapter must classify ordinary lookup misses as PLATFORM_NOT_FOUND');
 assert(ebayAdapter.includes("title.slice(0, 50)"), 'eBay adapter aspect values must be clamped to bridge validation limits');

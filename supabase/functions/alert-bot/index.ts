@@ -152,6 +152,24 @@ async function sendTelegram(
 // ---------------------------------------------------------------------------
 function buildTelegramText(payload: Record<string, unknown>, suppressedCount: number): string {
   const entityType = String(payload.entity_type || "");
+  if (entityType === "sd_daily_digest") {
+    const pending = Number(payload.pending_staronemall_sources || 0);
+    const preOrder = Number(payload.pre_order_products || 0);
+    const readyStock = Number(payload.ready_stock_products || 0);
+    const failed = Number(payload.failed_mutations || 0);
+    const retryErrors = Number(payload.retry_errors_24h || 0);
+    const lines = [
+      "[sd] Daily automation summary",
+      `🛒 StarOneMall registration candidates: ${pending}`,
+      `⏳ PRE ORDER: ${preOrder}`,
+      `✅ READY STOCK: ${readyStock}`,
+      `⚠️ Failed mutation logs: ${failed}`,
+      `🔁 Retry errors in 24h: ${retryErrors}`,
+      "🚫 가격/원가 변경 감지는 제외됨",
+    ];
+    if (suppressedCount > 0) lines.push(`same bucket suppressed: ${suppressedCount}`);
+    return lines.join("\n");
+  }
   // Phase C — region-by-region summary for Shopee multi-region publish.
   if (entityType === "shopee_multi_region_publish") {
     const sku = String(payload.sku || "");

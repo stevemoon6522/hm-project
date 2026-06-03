@@ -204,6 +204,66 @@ export function calculateJoomPrice({ costKrw, weightG, countrySettings } = {}) {
   return { ...full, ok: Number.isFinite(joomPrice) && joomPrice > 0, joomPrice };
 }
 
+// ── eBay US shipping rate table (standardKrw, weight bucket 100g–1000g) ──────
+const EBAY_US_SHIPPING_KRW = {
+  100: 7200,
+  200: 8900,
+  300: 10500,
+  400: 12300,
+  500: 14400,
+  600: 15800,
+  700: 17200,
+  800: 18500,
+  900: 19900,
+  1000: 20700,
+};
+
+/**
+ * Compute eBay US listing price in USD (2 decimals).
+ * Ported verbatim from _v2EbayCalcUsdListing in index.html.
+ * countrySettings = the EX row (catCountrySettings('EX')).
+ * Returns { ok: boolean, ebayPrice: number }.
+ */
+export function calculateEbayPrice({ costKrw, weightG, countrySettings } = {}) {
+  const c = countrySettings || {};
+  if (!costKrw || costKrw <= 0) return { ok: false, ebayPrice: 0 };
+  const exchangeRate = Number(c.exchangeRate || 0);
+  if (!exchangeRate || exchangeRate <= 0) return { ok: false, ebayPrice: 0 };
+  const w = Number(weightG) || 0;
+  const bucket = w <= 0 ? 0 : w <= 1000 ? Math.ceil(w / 100) * 100 : 1000;
+  const usShippingKrw = bucket ? (EBAY_US_SHIPPING_KRW[bucket] || 0) : 0;
+  if (!usShippingKrw) return { ok: false, ebayPrice: 0 };
+  const shipping = usShippingKrw / exchangeRate;
+  const effectiveCost = costKrw * (1 - (c.purchaseVat || 0) / 100);
+  const settlementLocal = effectiveCost / exchangeRate;
+  const cr = (c.salesFee || 0) / 100;
+  const vr = (c.gst || 0) / 100;
+  const sales_pg    = (c.pgFee || 0) / 100;
+  const sales_fsp   = (c.fspFee || 0) / 100;
+  const sales_other = (c.otherFee || 0) / 100;
+  const sales_ccb   = (c.fspCcb || 0) / 100;
+  const settle_pct  = (c.settlementFee || 0) / 100;
+  const fixedFee    = c.fixedServiceFee || 0;
+  const sf = sales_pg + sales_fsp + sales_other + sales_ccb;
+  const incomeTarget = settlementLocal / (1 - settle_pct);
+  const denom = (1 + vr) * (1 - sf) - (cr + vr);
+  const raw = denom > 0 ? (incomeTarget + shipping + fixedFee) / denom : 0;
+  const ebayPrice = Math.round(raw * 100) / 100;
+  return { ok: ebayPrice > 0, ebayPrice };
+}
+
+/**
+ * Compute Qoo10 JPY item base price (integer).
+ * Ported from mrQoo10BasePriceFromRows: max(1, round(costKrw/10)).
+ * Default 2990 when costKrw <= 0 (matches registration stub).
+ * Returns { ok: boolean, qoo10Price: number }.
+ */
+export function calculateQoo10Price({ costKrw } = {}) {
+  if (!costKrw || costKrw <= 0) return { ok: false, qoo10Price: 2990 };
+  const qoo10Price = Math.max(1, Math.round(costKrw / 10));
+  return { ok: true, qoo10Price };
+}
+
 export function formatPriceForRegion(region, value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return '-';

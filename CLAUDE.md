@@ -1,11 +1,14 @@
 # shopee-dashboard
 
-**Live:** https://shopee-dashboard-kohl.vercel.app
+**Live V2:** https://shopee-dashboard-kohl.vercel.app/v2/
 **Repo:** https://github.com/stevemoon6522/shopee-dashboard
-**Local:** `C:\dev\shopee-dashboard\index.html` (~2700 lines, ~200KB)
+**Default local app:** `C:\dev\shopee-dashboard\v2\index.html`
+**Legacy V1:** `C:\dev\shopee-dashboard\index.html`
+
+Default all dashboard work to the V2 app unless the user explicitly asks for V1 or the root `index.html` app.
 
 ## Stack
-Single `index.html` HTML+CSS+JS SPA, Supabase JS SDK for DB, fetch for `shopee-bridge` Edge Function. No build step.
+V2 is a static HTML/CSS/JS app under `v2/`, with Supabase JS SDK for DB and Edge Function calls for marketplace bridges. No build step.
 
 ## Shared Goal
 Project objective is documented at `plans/project-goal.md` and should be treated as the primary product direction for Codex/Claude collaboration.

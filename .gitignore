@@ -3,4 +3,11 @@
 .env.vercel
 .tmp_*
 tmp_*.json
+tmp/
+tmp-*
+.tmp/
+.hermes/
+.climpire-worktrees/
+sketches/
+docs/sessions/
 supabase/.temp/

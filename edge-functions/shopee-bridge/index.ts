@@ -688,6 +688,8 @@ const V2_MUTATION_ACTIONS = new Set([
   'update_global_model',
   'update_global_price',
   'update_shop_days_to_ship',
+  'update_shop_item_name',
+  'set_global_sync_fields',
   'set_price_sync_on',
 ]);
 
@@ -700,6 +702,55 @@ function canonicalize(value: any): any {
     }, {});
   }
   return value;
+}
+
+function stringArray(value: any): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry: any) => {
+      if (typeof entry === 'string') return entry.trim();
+      if (entry && typeof entry === 'object') {
+        return String(entry.image_id || entry.imageId || entry.id || entry.image_url || '').trim();
+      }
+      return '';
+    })
+    .filter((entry: string) => entry.length > 0);
+}
+
+function firstGlobalItemFromInfo(result: any, globalItemId: number) {
+  const list = result?.response?.global_item_list || result?.global_item_list || [];
+  if (!Array.isArray(list) || list.length === 0) return null;
+  return list.find((item: any) => Number(item?.global_item_id) === Number(globalItemId)) || list[0] || null;
+}
+
+function globalItemImageIds(item: any): string[] {
+  const image = item?.image || {};
+  const candidates = [
+    image.image_id_list,
+    image.image_url_list,
+    item?.image_id_list,
+    item?.image_url_list,
+    Array.isArray(image) ? image : null,
+  ];
+  for (const candidate of candidates) {
+    const ids = stringArray(candidate);
+    if (ids.length) return ids;
+  }
+  return [];
+}
+
+async function hydrateUpdateGlobalItemPayload(region: string, requestPayload: any) {
+  const payload = canonicalize(requestPayload);
+  if (payload.image?.image_id_list?.length) return payload;
+  const globalItemId = Number(payload.global_item_id || 0);
+  if (!Number.isFinite(globalItemId) || globalItemId <= 0) return payload;
+  const result = await merchantApiCall(region, '/api/v2/global_product/get_global_item_info', {
+    query: { global_item_id_list: String(globalItemId) },
+  });
+  const item = firstGlobalItemFromInfo(result, globalItemId);
+  const imageIds = globalItemImageIds(item);
+  if (imageIds.length) payload.image = { image_id_list: imageIds };
+  return payload;
 }
 
 async function sha256Hex(value: unknown): Promise<string> {
@@ -921,7 +972,6 @@ function stripFieldsForDegradedPayload(action: string, requestPayload: any, bloc
   const payload = canonicalize(requestPayload);
   if (action === 'update_global_item') {
     if (blockedFields.includes('item_name')) delete payload.item_name;
-    if (blockedFields.includes('global_item_name')) delete payload.global_item_name;
     if (blockedFields.includes('description')) delete payload.description;
     if (blockedFields.includes('weight')) delete payload.weight;
   }
@@ -940,7 +990,6 @@ async function enforceV2ProbePreflight(action: string, requestPayload: any, body
   const blockedFields: string[] = [];
   if (action === 'update_global_item') {
     if (requestPayload.item_name !== undefined && !flags.probe_item_name_ok) blockedFields.push('item_name');
-    if (requestPayload.global_item_name !== undefined && !flags.probe_item_name_ok) blockedFields.push('global_item_name');
     if (requestPayload.description !== undefined && !flags.probe_item_name_ok) blockedFields.push('description');
     if (requestPayload.weight !== undefined && !flags.probe_model_weight_ok) blockedFields.push('weight');
   }
@@ -1230,11 +1279,13 @@ async function runV2MutationAction(action: string, body: any) {
     const description = typeof body.description === 'string' ? body.description.trim() : '';
     const days_to_ship = Number(body.days_to_ship ?? body?.pre_order?.days_to_ship);
     const weight = Number(body.weight);
+    const imageIdList = stringArray(body?.image?.image_id_list || body?.image_id_list);
     if (global_item_sku) requestPayload.global_item_sku = global_item_sku;
     if (item_name) requestPayload.global_item_name = item_name;
     if (description) requestPayload.description = description;
     if (Number.isFinite(days_to_ship) && days_to_ship > 0) requestPayload.pre_order = { days_to_ship };
     if (Number.isFinite(weight) && weight > 0) requestPayload.weight = weight;
+    if (imageIdList.length) requestPayload.image = { image_id_list: imageIdList };
     if (!global_item_id) return { ok: false, error: 'global_item_id required' };
     if (!global_item_sku && !item_name && !description && !requestPayload.pre_order && !requestPayload.weight) {
       return { ok: false, error: 'at least one of global_item_sku, global_item_name, description, days_to_ship, weight required' };
@@ -1242,7 +1293,7 @@ async function runV2MutationAction(action: string, body: any) {
 
     const preflight = await enforceV2ProbePreflight(action, requestPayload, body);
     if (!preflight.ok) return { ok: false, ...preflight };
-    const finalPayload = preflight.requestPayload;
+    const finalPayload = await hydrateUpdateGlobalItemPayload(r, preflight.requestPayload);
     if (!finalPayload.global_item_sku && !finalPayload.global_item_name && !finalPayload.item_name && !finalPayload.description && !finalPayload.pre_order && !finalPayload.weight) {
       return { ok: false, error: 'v2_degraded_payload_empty', message: 'All requested fields were blocked by probe preflight.' };
     }
@@ -1304,7 +1355,7 @@ async function runV2MutationAction(action: string, body: any) {
   // possible — only required toggles are passed.
   // Docs: docs_ai_guides/guides/product/stock-price-management.md + docs_ai/
   //       apis/global_product/v2.global_product.set_sync_field.json
-  if (action === 'set_price_sync_on') {
+  if (action === 'set_price_sync_on' || action === 'set_global_sync_fields') {
     const shop_sync_list = Array.isArray(body.shop_sync_list) ? body.shop_sync_list : [];
     if (!shop_sync_list.length) return { ok: false, error: 'shop_sync_list required (each entry: { shop_id, shop_region })' };
     const normalized = shop_sync_list.map((entry: any) => ({
@@ -1326,6 +1377,18 @@ async function runV2MutationAction(action: string, body: any) {
       merchantApiCall(r, '/api/v2/global_product/set_sync_field', { method: 'POST', body: payload })
     );
     return { ...response, applied_shops: normalized.map(e => ({ shop_id: e.shop_id, shop_region: e.shop_region })) };
+  }
+
+  if (action === 'update_shop_item_name') {
+    const item_id = parseInt(body.item_id || body.shop_item_id);
+    const item_name = typeof body.item_name === 'string' ? body.item_name.trim() : '';
+    if (!item_id) return { ok: false, error: 'shop_item_id required' };
+    if (!item_name) return { ok: false, error: 'item_name required' };
+    const requestPayload = { item_id, item_name };
+    const response = await executeLoggedMutation(action, r, requestPayload, body, payload =>
+      shopApiCall(r, '/api/v2/product/update_item', { method: 'POST', body: payload })
+    );
+    return { ...response, item_id, sent_item_name: item_name };
   }
 
   const item_id = parseInt(body.item_id || body.shop_item_id);

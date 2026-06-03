@@ -44,9 +44,13 @@ assert(masterRegister.includes("readonly: 'readonly'"), 'SKU input must be read-
 assert(!masterRegister.includes('SKU (수동 입력)'), 'manual SKU wording must be removed from master register');
 
 assert(masterRegister.includes('mrUploadMasterImageFile'), 'master register must upload attached image files');
+assert(masterRegister.includes('return sdUploadProductImageFile('), 'master register image upload must use the shared product image upload helper');
 assert(masterRegister.includes("type: 'file'"), 'image input must be a file attachment');
 assert(masterRegister.includes("accept: 'image/*'"), 'image input must accept images only');
 assert(masterRegister.includes('메인/옵션 이미지 첨부 (1장)'), 'UI must communicate single option image attachment');
+assert(masterRegister.includes('마스터 옵션 이미지 첨부 (로컬 1장)'), 'master register must own local-folder option image attachment wording');
+assert(!masterRegister.includes('Joom 로컬 옵션 이미지'), 'master image attachment UI must not be labeled as Joom-specific');
+assert(masterRegister.includes('function mrMasterRepresentativeImage(group)'), 'master register must derive a visible representative image');
 assert(!masterRegister.includes('+ 추가 이미지'), 'master register must not render multiple extra image slots');
 assert(!masterRegister.includes('while (row._extra_images.length < 2)'), 'master register must not require two extra images');
 assert(masterRegister.includes('상품 구성품'), 'master register must expose a product components field');

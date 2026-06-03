@@ -26,6 +26,11 @@ const editCode = sliceBetween(
   'function plMasterEditJsonText',
   'function beginEditCell(cell)',
 );
+const representativeSetter = sliceBetween(
+  editCode,
+  'function plMasterEditSetRepresentativeImage',
+  'async function plMasterEditCrawlStaronemallImages',
+);
 
 for (const token of [
   'class="pl-master-edit-layout"',
@@ -44,6 +49,10 @@ for (const token of [
   'data-master-components-only="pl-master-components-only"',
   'id="pl-master-edit-days"',
   'id="pl-master-edit-attrs"',
+  'id="pl-master-edit-staronemall-image-status"',
+  'id="pl-master-edit-representative-image-file"',
+  'id="pl-master-edit-representative-image-url"',
+  'id="pl-master-edit-detail-image-state"',
   'id="pl-master-edit-image-summary"',
   'id="pl-master-edit-options"',
 ]) {
@@ -70,7 +79,32 @@ for (const token of [
   'plMasterEditRenderOptions(rows)',
   'plMasterEditReadOptionPatches(rows)',
   'variation_option_names',
-  'main_image',
+  'data-field="shopee_option_image_url"',
+  'shopee_option_image_url:',
+  'main_image: representativeImageUrl || null',
+  'plMasterEditRepresentativeImage(rows)',
+  '대표 이미지 미리보기',
+  'id="pl-master-edit-detail-images"',
+  'plMasterEditRenderDetailImageManager(detailUrls)',
+  'data-remove-detail-image',
+  'id="pl-master-edit-detail-image-url"',
+  'id="pl-master-edit-detail-image-file"',
+  'function plMasterEditBindDetailImageControls',
+  '상세 이미지',
+  'async function plMasterEditCrawlStaronemallImages',
+  'body: JSON.stringify({ urls: [url], write_to_source_records: false })',
+  'result.observed_values',
+  'plMasterEditSetRepresentativeImage(record.main_image_urls[0])',
+  'const detailImages = plMasterEditDetailImageUrls(renderedRows)',
+  'extra_images: detailImages',
+  'data-master-option-image-file',
+  'async function plMasterEditUploadOptionImage',
+  "sdUploadProductImageFile(file, uploadRow, { kind: 'option' })",
+  'async function plMasterEditUploadRepresentativeImage',
+  "sdUploadProductImageFile(file, uploadRow, { kind: 'representative' })",
+  'async function plMasterEditUploadDetailImage',
+  "sdUploadProductImageFile(file, uploadRow, { kind: 'detail' })",
+  '마스터 옵션 이미지 추가',
   'shopee_days_to_ship',
   'shopee_extra_attributes',
   'shopee_category_id: rows[0]?.shopee_category_id || 101390',
@@ -80,15 +114,34 @@ for (const token of [
   assert(editCode.includes(token), `master edit draft save/open flow missing token: ${token}`);
 }
 
+for (const token of [
+  "document.getElementById('pl-master-edit-staronemall-url')?.addEventListener('input'",
+  "document.getElementById('pl-master-edit-staronemall-url')?.addEventListener('change'",
+  "document.getElementById('pl-master-edit-representative-image-file')?.addEventListener('change'",
+  'async function sdUploadProductImageFile',
+  "const SD_PRODUCT_IMAGE_BUCKET = 'product-images'",
+]) {
+  assert(html.includes(token), `master edit StarOneMall URL binding missing token: ${token}`);
+}
+
 for (const removedToken of [
   "document.getElementById('pl-master-edit-category')",
   "document.getElementById('pl-master-edit-brand-id')",
   "document.getElementById('pl-master-edit-brand-name')",
   "document.getElementById('pl-master-edit-description')",
   'shopee_description:',
-  'extra_images',
+  'mrUploadMasterImageFile(file',
 ]) {
   assert(!editCode.includes(removedToken), `master edit save/open flow still reads removed field: ${removedToken}`);
 }
+
+assert(
+  !representativeSetter.includes('[data-field="main_image"]'),
+  'representative image changes must not write into option image inputs',
+);
+assert(
+  representativeSetter.includes('plMasterEditRepresentativeInput()'),
+  'representative image changes must use the independent representative-image state',
+);
 
 console.log('v2 master edit draft modal checks passed');

@@ -43,6 +43,10 @@ const EBAY_SCOPES = [
 // Codex review §d WARNING: listingDuration must be GTC
 const LISTING_DURATION = "GTC";
 
+// Steve's default eBay shipping business policy for K-pop album listings.
+const EBAY_DEFAULT_FULFILLMENT_POLICY_ID = "253030471025";
+const EBAY_DEFAULT_FULFILLMENT_POLICY_NAME = "ALBUM PRE-ORDER";
+
 const CORS: Record<string, string> = {
   ...AUTH_CORS,
   "Access-Control-Max-Age": "3600",
@@ -93,7 +97,7 @@ async function getValidAccessToken(): Promise<string> {
   }
 
   const j = await r.json();
-  if (j.error) throw new Error("eBay token refresh 오류: " + j.error_description || j.error);
+  if (j.error) throw new Error("eBay token refresh 오류: " + (j.error_description || j.error));
 
   const newExpiry = now + (j.expires_in || 7200);
   await supabase.from("ebay_tokens").update({
@@ -124,6 +128,7 @@ async function ebayFetch(
       ...(init.headers as Record<string, string> || {}),
       "Authorization": `Bearer ${token}`,
       "Content-Language": "en-US",  // required for all inventory writes
+      "Accept-Language": "en-US",
       "Content-Type": "application/json",
       "Accept": "application/json",
       ...extraHeaders,
@@ -133,6 +138,19 @@ async function ebayFetch(
   let body: any;
   try { body = await r.json(); } catch { body = null; }
   return { status: r.status, body };
+}
+
+function formatEbayErrorBody(body: any): string {
+  if (!body) return "empty response";
+  if (Array.isArray(body.errors) && body.errors.length) {
+    return body.errors.map((e: any) =>
+      [e.errorId, e.message, e.longMessage].filter(Boolean).join(" · ")
+    ).filter(Boolean).join(" / ");
+  }
+  if (body.error_description || body.error) {
+    return [body.error, body.error_description].filter(Boolean).join(" · ");
+  }
+  try { return JSON.stringify(body); } catch { return String(body); }
 }
 
 // ---------------------------------------------------------------------------
@@ -161,16 +179,17 @@ async function ensureMerchantLocation(): Promise<void> {
 
   if (get.status !== 404) {
     throw new Error(
-      `merchantLocation GET failed HTTP ${get.status}: ${JSON.stringify(get.body)}`
+      `merchantLocation GET failed HTTP ${get.status}: ${formatEbayErrorBody(get.body)}`
     );
   }
 
-  // Create location (PUT is idempotent)
+  // Create location. The local 2026-05 snapshot listed PUT, but the live eBay
+  // Inventory docs now require POST for createInventoryLocation.
   // Operator Decision #5: Suwon, Gyeonggi-do, KR
   const createResult = await ebayFetch(
     `/sell/inventory/v1/location/${MERCHANT_LOCATION_KEY}`,
     {
-      method: "PUT",
+      method: "POST",
       body: JSON.stringify({
         location: {
           address: {
@@ -192,7 +211,7 @@ async function ensureMerchantLocation(): Promise<void> {
 
   if (createResult.status !== 204 && createResult.status !== 200 && createResult.status !== 201) {
     throw new Error(
-      `merchantLocation PUT failed HTTP ${createResult.status}: ${JSON.stringify(createResult.body)}`
+      `merchantLocation POST failed HTTP ${createResult.status}: ${formatEbayErrorBody(createResult.body)}`
     );
   }
 }
@@ -205,6 +224,7 @@ async function ensureMerchantLocation(): Promise<void> {
 
 async function ensurePolicies(marketplaceId: string): Promise<{
   fulfillmentPolicyId: string;
+  fulfillmentPolicyName: string;
   returnPolicyId: string;
   paymentPolicyId: string;
 }> {
@@ -215,9 +235,21 @@ async function ensurePolicies(marketplaceId: string): Promise<{
     .eq("marketplace_id", marketplaceId)
     .single();
 
-  if (stored?.fulfillment_policy_id && stored?.return_policy_id && stored?.payment_policy_id) {
+  if (stored?.return_policy_id && stored?.payment_policy_id) {
+    if (stored.fulfillment_policy_id !== EBAY_DEFAULT_FULFILLMENT_POLICY_ID) {
+      await supabase.from("ebay_policy_ids").upsert({
+        marketplace_id: marketplaceId,
+        fulfillment_policy_id: EBAY_DEFAULT_FULFILLMENT_POLICY_ID,
+        return_policy_id: stored.return_policy_id,
+        payment_policy_id: stored.payment_policy_id,
+        merchant_location_key: MERCHANT_LOCATION_KEY,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "marketplace_id" });
+    }
+
     return {
-      fulfillmentPolicyId: stored.fulfillment_policy_id,
+      fulfillmentPolicyId: EBAY_DEFAULT_FULFILLMENT_POLICY_ID,
+      fulfillmentPolicyName: EBAY_DEFAULT_FULFILLMENT_POLICY_NAME,
       returnPolicyId: stored.return_policy_id,
       paymentPolicyId: stored.payment_policy_id,
     };
@@ -225,15 +257,14 @@ async function ensurePolicies(marketplaceId: string): Promise<{
 
   // Query eBay Account API for existing policies
   // Citation: sell/account.yaml — marketplace-scoped policy endpoints
-  const [fpRes, rpRes, ppRes] = await Promise.all([
-    ebayFetch(`/sell/account/v1/fulfillment_policy?marketplace_id=${marketplaceId}`),
+  const [rpRes, ppRes] = await Promise.all([
     ebayFetch(`/sell/account/v1/return_policy?marketplace_id=${marketplaceId}`),
     ebayFetch(`/sell/account/v1/payment_policy?marketplace_id=${marketplaceId}`),
   ]);
 
   function firstId(res: { status: number; body: any }, field: string): string {
     if (res.status !== 200 || !res.body) {
-      throw new Error(`Policy fetch failed HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+      throw new Error(`Policy fetch failed HTTP ${res.status}: ${formatEbayErrorBody(res.body)}`);
     }
     const items: any[] = res.body[field] || [];
     if (!items.length) throw new Error(`No ${field} found for marketplace ${marketplaceId}`);
@@ -242,7 +273,7 @@ async function ensurePolicies(marketplaceId: string): Promise<{
     return active.fulfillmentPolicyId || active.returnPolicyId || active.paymentPolicyId || active.id;
   }
 
-  const fulfillmentPolicyId = firstId(fpRes, "fulfillmentPolicies");
+  const fulfillmentPolicyId = EBAY_DEFAULT_FULFILLMENT_POLICY_ID;
   const returnPolicyId      = firstId(rpRes, "returnPolicies");
   const paymentPolicyId     = firstId(ppRes, "paymentPolicies");
 
@@ -256,7 +287,12 @@ async function ensurePolicies(marketplaceId: string): Promise<{
     updated_at: new Date().toISOString(),
   }, { onConflict: "marketplace_id" });
 
-  return { fulfillmentPolicyId, returnPolicyId, paymentPolicyId };
+  return {
+    fulfillmentPolicyId,
+    fulfillmentPolicyName: EBAY_DEFAULT_FULFILLMENT_POLICY_NAME,
+    returnPolicyId,
+    paymentPolicyId,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -277,7 +313,7 @@ async function getCategoryTreeId(marketplaceId: string): Promise<{ treeId: strin
     `/commerce/taxonomy/v1/get_default_category_tree_id?marketplace_id=${marketplaceId}`
   );
   if (res.status !== 200 || !res.body?.categoryTreeId) {
-    throw new Error(`getDefaultCategoryTreeId failed HTTP ${res.status}: ${JSON.stringify(res.body)}`);
+    throw new Error(`getDefaultCategoryTreeId failed HTTP ${res.status}: ${formatEbayErrorBody(res.body)}`);
   }
 
   _categoryTreeCache = {
@@ -341,11 +377,145 @@ function validateShippingSurcharges(rows: any[]): any[] {
   });
 }
 
+function normalizeStoreCategoryNames(value: any): string[] {
+  const raw = Array.isArray(value) ? value : [];
+  const clean = raw
+    .map((v) => String(v || "").trim())
+    .filter(Boolean)
+    .map((v) => v.startsWith("/") ? v : `/${v}`)
+    .slice(0, 2);
+  return clean.length ? clean : ["/K-pop"];
+}
+
+function normalizeImageUrls(value: any, max = 24): string[] {
+  const seen = new Set<string>();
+  return (Array.isArray(value) ? value : [])
+    .map((v) => String(v || "").trim())
+    .filter((v) => /^https:\/\//i.test(v) && !seen.has(v) && seen.add(v))
+    .slice(0, max);
+}
+
+function withPackageWeightAndSize(target: any, weightG: any, packageDimensions?: any): void {
+  const grams = Number(weightG || 0);
+  if (!grams && !packageDimensions) return;
+  target.packageWeightAndSize = {};
+  if (grams) {
+    target.packageWeightAndSize.weight = {
+      value: Number((grams / 1000).toFixed(3)),
+      unit: "KILOGRAM",
+    };
+  }
+  if (packageDimensions) target.packageWeightAndSize.dimensions = packageDimensions;
+}
+
+async function createOrUpdateOfferForSku(
+  sku: string,
+  marketplaceId: string,
+  offerBody: Record<string, unknown>
+): Promise<string> {
+  const offerRes = await ebayFetch(
+    "/sell/inventory/v1/offer",
+    { method: "POST", body: JSON.stringify(offerBody) }
+  );
+
+  if (offerRes.status === 200 || offerRes.status === 201) {
+    const offerId = offerRes.body?.offerId;
+    if (!offerId) throw new Error("createOffer returned no offerId: " + JSON.stringify(offerRes.body));
+    return offerId;
+  }
+
+  if (offerRes.status === 409 || (offerRes.body?.errors || []).some((e: any) => String(e.errorId) === "25002")) {
+    const existingOffers = await ebayFetch(
+      `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`
+    );
+    if (existingOffers.status !== 200 || !existingOffers.body?.offers?.length) {
+      throw new Error(`Offer already exists but could not find it: HTTP ${existingOffers.status}`);
+    }
+    const offerId = existingOffers.body.offers[0].offerId;
+    const updateRes = await ebayFetch(
+      `/sell/inventory/v1/offer/${offerId}`,
+      { method: "PUT", body: JSON.stringify(offerBody) }
+    );
+    if (updateRes.status !== 204 && updateRes.status !== 200) {
+      throw new Error(`updateOffer PUT failed HTTP ${updateRes.status}: ${formatEbayErrorBody(updateRes.body)}`);
+    }
+    return offerId;
+  }
+
+  throw new Error(`createOffer failed HTTP ${offerRes.status}: ${formatEbayErrorBody(offerRes.body)}`);
+}
+
+async function startEbayPublishRun(listingMode: "single" | "variation", body: any): Promise<string | null> {
+  try {
+    const { data, error } = await supabase
+      .from("ebay_publish_runs")
+      .insert({
+        product_id: body.productId || body.product_id || null,
+        product_group_id: body.productGroupId || body.product_group_id || null,
+        listing_mode: listingMode,
+        inventory_group_key: body.inventoryGroupKey || null,
+        marketplace_id: body.marketplaceId || "EBAY_US",
+        status: "started",
+        request_payload: body || {},
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+    return data?.id || null;
+  } catch (e) {
+    console.warn("[ebay-bridge] publish run insert skipped", e);
+    return null;
+  }
+}
+
+async function finishEbayPublishRun(runId: string | null, status: "published" | "failed", responsePayload: any, errorMsg = ""): Promise<void> {
+  if (!runId) return;
+  try {
+    const offers = responsePayload?.offers_by_sku && typeof responsePayload.offers_by_sku === "object"
+      ? Object.values(responsePayload.offers_by_sku).map((o: any) => String(o?.offerId || "")).filter(Boolean)
+      : [responsePayload?.ebay_offer_id].map((v) => String(v || "")).filter(Boolean);
+    await supabase
+      .from("ebay_publish_runs")
+      .update({
+        status,
+        response_payload: responsePayload || {},
+        error_msg: errorMsg || null,
+        ebay_item_id: responsePayload?.ebay_item_id || null,
+        ebay_offer_ids: offers,
+        completed_at: new Date().toISOString(),
+      })
+      .eq("id", runId);
+  } catch (e) {
+    console.warn("[ebay-bridge] publish run update skipped", e);
+  }
+}
+
+async function jsonFromResponse(resp: Response): Promise<any> {
+  try { return await resp.clone().json(); } catch { return {}; }
+}
+
+async function withEbayPublishRun(
+  listingMode: "single" | "variation",
+  body: any,
+  fn: () => Promise<Response>
+): Promise<Response> {
+  const runId = await startEbayPublishRun(listingMode, body);
+  try {
+    const resp = await fn();
+    const raw = await jsonFromResponse(resp);
+    await finishEbayPublishRun(runId, resp.status < 400 && raw?.ok ? "published" : "failed", raw, raw?.error || raw?.message || "");
+    return resp;
+  } catch (e: any) {
+    await finishEbayPublishRun(runId, "failed", {}, String(e?.message || e));
+    throw e;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // /publish handler — main listing orchestration
 // ---------------------------------------------------------------------------
 
-async function handlePublish(body: any): Promise<Response> {
+async function handlePublishSingle(body: any): Promise<Response> {
   const {
     sku,
     title,
@@ -358,6 +528,7 @@ async function handlePublish(body: any): Promise<Response> {
     categoryId,
     weightG,
     packageDimensions,
+    storeCategoryNames,
     shippingSurchargePolicy = "delta_vs_us_baseline",
     shippingSurchargesUsd = [],
     marketplaceId = "EBAY_US",
@@ -367,10 +538,12 @@ async function handlePublish(body: any): Promise<Response> {
   validateSku(sku);
   if (!title) throw new Error("title 은 필수입니다");
   const safeDescription = validateDescription(description || "");
-  if (!imageUrls || imageUrls.length === 0) throw new Error("imageUrls 는 최소 1개 필요합니다");
+  const safeImageUrls = normalizeImageUrls(imageUrls, 24);
+  if (!safeImageUrls.length) throw new Error("imageUrls 는 최소 1개 필요합니다");
   if (!priceUsd || priceUsd <= 0) throw new Error("priceUsd > 0 필요합니다");
   if (!categoryId) throw new Error("categoryId 는 필수입니다");
   const safeShippingSurcharges = validateShippingSurcharges(shippingSurchargesUsd);
+  const safeStoreCategoryNames = normalizeStoreCategoryNames(storeCategoryNames);
 
   // Validate aspects (name/value length guards)
   const safeAspects: Record<string, string[]> = aspects || {};
@@ -401,24 +574,13 @@ async function handlePublish(body: any): Promise<Response> {
     product: {
       title: title.slice(0, 80), // eBay title max 80 chars
       description: safeDescription,
-      imageUrls: imageUrls.slice(0, 24), // eBay max 24 images
+      imageUrls: safeImageUrls, // eBay max 24 images
       aspects: safeAspects,
     },
   };
 
   // Package weight and size (optional but recommended for shipping calc)
-  if (weightG || packageDimensions) {
-    inventoryItemBody.packageWeightAndSize = {};
-    if (weightG) {
-      inventoryItemBody.packageWeightAndSize.weight = {
-        value: Number((weightG / 1000).toFixed(3)),
-        unit: "KILOGRAM",
-      };
-    }
-    if (packageDimensions) {
-      inventoryItemBody.packageWeightAndSize.dimensions = packageDimensions;
-    }
-  }
+  withPackageWeightAndSize(inventoryItemBody, weightG, packageDimensions);
 
   const itemRes = await ebayFetch(
     `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
@@ -428,7 +590,7 @@ async function handlePublish(body: any): Promise<Response> {
   // PUT returns 204 on success (create or replace)
   if (itemRes.status !== 204 && itemRes.status !== 200 && itemRes.status !== 201) {
     throw new Error(
-      `inventory_item PUT failed HTTP ${itemRes.status}: ${JSON.stringify(itemRes.body)}`
+      `inventory_item PUT failed HTTP ${itemRes.status}: ${formatEbayErrorBody(itemRes.body)}`
     );
   }
 
@@ -442,6 +604,8 @@ async function handlePublish(body: any): Promise<Response> {
     format: "FIXED_PRICE",
     availableQuantity: quantity || 50,
     categoryId: String(categoryId),
+    storeCategoryNames: safeStoreCategoryNames,
+    includeCatalogProductDetails: false,
     listingDescription: safeDescription,
     listingPolicies: {
       fulfillmentPolicyId,
@@ -458,37 +622,7 @@ async function handlePublish(body: any): Promise<Response> {
     listingDuration: LISTING_DURATION, // GTC for fixed-price — Codex §d WARNING
   };
 
-  let offerId: string;
-
-  const offerRes = await ebayFetch(
-    "/sell/inventory/v1/offer",
-    { method: "POST", body: JSON.stringify(offerBody) }
-  );
-
-  if (offerRes.status === 200 || offerRes.status === 201) {
-    offerId = offerRes.body?.offerId;
-    if (!offerId) throw new Error("createOffer returned no offerId: " + JSON.stringify(offerRes.body));
-  } else if (offerRes.status === 409 || (offerRes.body?.errors || []).some((e: any) => String(e.errorId) === "25002")) {
-    // Offer already exists for this sku+marketplaceId+format — use updateOffer
-    // Citation: Codex WARNING §a — sell/inventory.yaml "SKU, marketplaceId and format should be unique"
-    const existingOffers = await ebayFetch(
-      `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`
-    );
-    if (existingOffers.status !== 200 || !existingOffers.body?.offers?.length) {
-      throw new Error(`Offer already exists but could not find it: HTTP ${existingOffers.status}`);
-    }
-    offerId = existingOffers.body.offers[0].offerId;
-    // Update the existing offer
-    const updateRes = await ebayFetch(
-      `/sell/inventory/v1/offer/${offerId}`,
-      { method: "PUT", body: JSON.stringify(offerBody) }
-    );
-    if (updateRes.status !== 204 && updateRes.status !== 200) {
-      throw new Error(`updateOffer PUT failed HTTP ${updateRes.status}: ${JSON.stringify(updateRes.body)}`);
-    }
-  } else {
-    throw new Error(`createOffer failed HTTP ${offerRes.status}: ${JSON.stringify(offerRes.body)}`);
-  }
+  const offerId = await createOrUpdateOfferForSku(sku, marketplaceId, offerBody);
 
   // Step 4: POST /sell/inventory/v1/offer/{offerId}/publish
   const publishRes = await ebayFetch(
@@ -498,7 +632,7 @@ async function handlePublish(body: any): Promise<Response> {
 
   if (publishRes.status !== 200) {
     throw new Error(
-      `publishOffer failed HTTP ${publishRes.status}: ${JSON.stringify(publishRes.body)}`
+      `publishOffer failed HTTP ${publishRes.status}: ${formatEbayErrorBody(publishRes.body)}`
     );
   }
 
@@ -514,6 +648,189 @@ async function handlePublish(body: any): Promise<Response> {
     shipping_surcharges_usd: safeShippingSurcharges,
     listingStatus: "PUBLISHED",
   });
+}
+
+async function handlePublish(body: any): Promise<Response> {
+  return await withEbayPublishRun("single", body, () => handlePublishSingle(body));
+}
+
+function validateInventoryGroupKey(value: string): void {
+  if (!value || !value.trim()) throw new Error("inventoryGroupKey 는 필수입니다");
+  if (value.length > 50) throw new Error(`inventoryGroupKey 최대 50자 초과: ${value.length}자`);
+}
+
+function mergeVariationAspects(aspects: Record<string, string[]>, axis: string, value: string): Record<string, string[]> {
+  return {
+    ...(aspects || {}),
+    [axis]: [value],
+  };
+}
+
+async function handlePublishVariationCore(body: any): Promise<Response> {
+  const {
+    inventoryGroupKey,
+    title,
+    description,
+    imageUrls,
+    aspects,
+    categoryId,
+    storeCategoryNames,
+    variationAxis = "Version",
+    variations = [],
+    shippingSurchargePolicy = "delta_vs_us_baseline",
+    shippingSurchargesUsd = [],
+    marketplaceId = "EBAY_US",
+  } = body;
+
+  validateInventoryGroupKey(String(inventoryGroupKey || ""));
+  if (!title) throw new Error("title 은 필수입니다");
+  if (!categoryId) throw new Error("categoryId 는 필수입니다");
+  const safeDescription = validateDescription(description || "");
+  const safeImageUrls = normalizeImageUrls(imageUrls, 24);
+  if (!safeImageUrls.length) throw new Error("imageUrls 는 최소 1개 필요합니다");
+  const safeStoreCategoryNames = normalizeStoreCategoryNames(storeCategoryNames);
+  const safeShippingSurcharges = validateShippingSurcharges(shippingSurchargesUsd);
+  const safeAspects: Record<string, string[]> = aspects || {};
+  validateAspects(safeAspects);
+  const axis = String(variationAxis || "Version").trim().slice(0, 40);
+  if (!axis) throw new Error("variationAxis 는 필수입니다");
+  if (!Array.isArray(variations) || variations.length < 2) throw new Error("variations 는 최소 2개 필요합니다");
+  if (variations.length > 25) throw new Error("variations 는 한 번에 최대 25개까지 지원합니다");
+
+  const normalizedVariations = variations.map((v: any, idx: number) => {
+    const sku = String(v?.sku || "").trim();
+    const variationValue = String(v?.variationValue || v?.optionName || "").trim().slice(0, 50);
+    validateSku(sku);
+    if (!variationValue) throw new Error(`variation ${idx + 1}: variationValue is required`);
+    const priceUsd = Number(v?.priceUsd || 0);
+    const quantity = Math.max(0, Math.floor(Number(v?.quantity || 0)));
+    const weightG = Number(v?.weightG || 0);
+    const optionImages = normalizeImageUrls(v?.imageUrls, 12);
+    if (priceUsd <= 0) throw new Error(`variation ${idx + 1}: priceUsd > 0 필요`);
+    if (quantity <= 0) throw new Error(`variation ${idx + 1}: quantity > 0 필요`);
+    if (weightG <= 0) throw new Error(`variation ${idx + 1}: weightG > 0 필요`);
+    if (!optionImages.length) throw new Error(`variation ${idx + 1}: option image is required`);
+    return { sku, variationValue, priceUsd, quantity, weightG, imageUrls: optionImages };
+  });
+
+  const skus = normalizedVariations.map((v) => v.sku);
+  const values = normalizedVariations.map((v) => v.variationValue);
+  if (new Set(skus).size !== skus.length) throw new Error("variation SKU values must be unique");
+  if (new Set(values).size !== values.length) throw new Error("variation values must be unique");
+
+  validateAspects({ [axis]: values });
+
+  await ensureMerchantLocation();
+  const { fulfillmentPolicyId, returnPolicyId, paymentPolicyId } = await ensurePolicies(marketplaceId);
+
+  const offersBySku: Record<string, { offerId: string; variationValue: string }> = {};
+
+  for (const v of normalizedVariations) {
+    const inventoryItemBody: any = {
+      availability: {
+        shipToLocationAvailability: {
+          quantity: v.quantity,
+        },
+      },
+      condition: "NEW",
+      product: {
+        imageUrls: v.imageUrls,
+        aspects: mergeVariationAspects(safeAspects, axis, v.variationValue),
+      },
+    };
+    withPackageWeightAndSize(inventoryItemBody, v.weightG);
+
+    const itemRes = await ebayFetch(
+      `/sell/inventory/v1/inventory_item/${encodeURIComponent(v.sku)}`,
+      { method: "PUT", body: JSON.stringify(inventoryItemBody) }
+    );
+    if (itemRes.status !== 204 && itemRes.status !== 200 && itemRes.status !== 201) {
+      throw new Error(`variation inventory_item PUT failed for ${v.sku} HTTP ${itemRes.status}: ${formatEbayErrorBody(itemRes.body)}`);
+    }
+
+    const offerBody = {
+      sku: v.sku,
+      marketplaceId,
+      format: "FIXED_PRICE",
+      availableQuantity: v.quantity,
+      categoryId: String(categoryId),
+      storeCategoryNames: safeStoreCategoryNames,
+      includeCatalogProductDetails: false,
+      listingPolicies: {
+        fulfillmentPolicyId,
+        paymentPolicyId,
+        returnPolicyId,
+      },
+      pricingSummary: {
+        price: {
+          value: String(Number(v.priceUsd).toFixed(2)),
+          currency: "USD",
+        },
+      },
+      merchantLocationKey: MERCHANT_LOCATION_KEY,
+      listingDuration: LISTING_DURATION,
+    };
+    const offerId = await createOrUpdateOfferForSku(v.sku, marketplaceId, offerBody);
+    offersBySku[v.sku] = { offerId, variationValue: v.variationValue };
+  }
+
+  const groupBody = {
+    title: String(title).slice(0, 80),
+    description: safeDescription,
+    aspects: safeAspects,
+    imageUrls: safeImageUrls,
+    variantSKUs: skus,
+    variesBy: {
+      aspectsImageVariesBy: [axis],
+      specifications: [
+        {
+          name: axis,
+          values,
+        },
+      ],
+    },
+  };
+
+  const groupRes = await ebayFetch(
+    `/sell/inventory/v1/inventory_item_group/${encodeURIComponent(String(inventoryGroupKey))}`,
+    { method: "PUT", body: JSON.stringify(groupBody) }
+  );
+  if (groupRes.status !== 204 && groupRes.status !== 200 && groupRes.status !== 201) {
+    throw new Error(`inventory_item_group PUT failed HTTP ${groupRes.status}: ${formatEbayErrorBody(groupRes.body)}`);
+  }
+
+  const publishRes = await ebayFetch(
+    "/sell/inventory/v1/offer/publish_by_inventory_item_group",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        inventoryItemGroupKey: inventoryGroupKey,
+        marketplaceId,
+      }),
+    }
+  );
+  if (publishRes.status !== 200) {
+    throw new Error(`publishOfferByInventoryItemGroup failed HTTP ${publishRes.status}: ${formatEbayErrorBody(publishRes.body)}`);
+  }
+
+  const listingId = publishRes.body?.listingId;
+  if (!listingId) throw new Error("publishOfferByInventoryItemGroup returned no listingId: " + JSON.stringify(publishRes.body));
+
+  return jsonResp({
+    ok: true,
+    ebay_item_id: listingId,
+    ebay_inventory_group_key: inventoryGroupKey,
+    offers_by_sku: offersBySku,
+    marketplace_id: marketplaceId,
+    variation_axis: axis,
+    shipping_surcharge_policy: shippingSurchargePolicy,
+    shipping_surcharges_usd: safeShippingSurcharges,
+    listingStatus: "PUBLISHED",
+  });
+}
+
+async function handlePublishVariation(body: any): Promise<Response> {
+  return await withEbayPublishRun("variation", body, () => handlePublishVariationCore(body));
 }
 
 // ---------------------------------------------------------------------------
@@ -573,6 +890,63 @@ async function handleLookupItem(sku: string, marketplaceId: string): Promise<Res
       sku: o.sku,
       marketplaceId: o.marketplaceId,
       listingId: o.listing?.listingId || o.listingId || null,
+    })),
+  });
+}
+
+async function handleLookupGroup(inventoryGroupKey: string, marketplaceId: string): Promise<Response> {
+  if (!inventoryGroupKey) return jsonResp({ ok: false, error: "inventory_group_key query param required" }, 400);
+  validateInventoryGroupKey(inventoryGroupKey);
+
+  const groupRes = await ebayFetch(`/sell/inventory/v1/inventory_item_group/${encodeURIComponent(inventoryGroupKey)}`);
+  if (groupRes.status === 404) {
+    return jsonResp({
+      ok: false,
+      verification: {
+        inventory_group_found: false,
+        offer_count: 0,
+        published_offer_found: false,
+        published_verification_passed: false,
+      },
+    });
+  }
+  if (groupRes.status !== 200) {
+    return jsonResp({
+      ok: false,
+      error: "upstream_inventory_group_lookup_failed",
+      upstream_status: groupRes.status,
+      upstream_body: groupRes.body,
+    }, groupRes.status === 401 || groupRes.status === 403 || groupRes.status === 429 ? groupRes.status : 502);
+  }
+
+  const variantSkus = Array.isArray(groupRes.body?.variantSKUs) ? groupRes.body.variantSKUs.map((v: any) => String(v || "")).filter(Boolean) : [];
+  const offerRows: any[] = [];
+  for (const sku of variantSkus) {
+    const offersRes = await ebayFetch(`/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`);
+    if (offersRes.status === 200 && Array.isArray(offersRes.body?.offers)) {
+      offersRes.body.offers.forEach((offer: any) => offerRows.push({ sku, offer }));
+    }
+  }
+  const publishedOffers = offerRows.filter(({ offer }) => String(offer?.status || "").toUpperCase() === "PUBLISHED");
+  const listingId = publishedOffers.map(({ offer }) => offer?.listing?.listingId || offer?.listingId || null).find(Boolean) || null;
+
+  return jsonResp({
+    ok: true,
+    verification: {
+      inventory_group_found: true,
+      variant_sku_count: variantSkus.length,
+      offer_count: offerRows.length,
+      published_offer_found: publishedOffers.length > 0,
+      published_verification_passed: publishedOffers.length > 0 && !!listingId,
+      listing_id: listingId,
+    },
+    inventory_item_group: groupRes.body,
+    offers: offerRows.map(({ sku, offer }) => ({
+      sku,
+      offerId: offer.offerId,
+      status: offer.status,
+      marketplaceId: offer.marketplaceId,
+      listingId: offer?.listing?.listingId || offer?.listingId || null,
     })),
   });
 }
@@ -638,12 +1012,23 @@ async function handleRequest(req: Request): Promise<Response> {
       return await handleLookupItem(sku, marketplaceId);
     }
 
+    if (action === "lookup-group" && req.method === "GET") {
+      const inventoryGroupKey = url.searchParams.get("inventory_group_key") || "";
+      const marketplaceId = url.searchParams.get("marketplace_id") || "EBAY_US";
+      return await handleLookupGroup(inventoryGroupKey, marketplaceId);
+    }
+
     if (action === "publish" && req.method === "POST") {
       // V2 eBay registration UI calls ebay-bridge directly, like shopee-bridge/joom-bridge.
       // requireAuthenticatedUser above remains the auth boundary; do not require the
       // server-only platform bridge token from browser-originated publish requests.
       const body = await req.json();
       return await handlePublish(body);
+    }
+
+    if (action === "publish-variation" && req.method === "POST") {
+      const body = await req.json();
+      return await handlePublishVariation(body);
     }
 
     return jsonResp({ ok: false, error: `unknown action: ${action} (${req.method})` }, 404);

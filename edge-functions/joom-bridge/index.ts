@@ -169,6 +169,10 @@ function buildDescription(opts: { artist?: string; album?: string; contents?: st
     "- The outer vinyl wrap may have slight tears or marks due to shipping.",
     "- These are not considered defects and are not grounds for return or refund.",
     "- Please purchase only if you agree to the above conditions.",
+    "",
+    "Cash on Delivery (COD) Policy",
+    "- COD availability depends on Joom buyer eligibility and destination rules.",
+    "- If COD is unavailable, please use prepaid payment methods.",
   ].join("\n");
 }
 
@@ -448,7 +452,12 @@ async function handleRequest(req: Request): Promise<Response> {
 
   try {
     if (action === "health" && req.method === "GET") {
-      return jsonResp({ ok: true, service: "joom-bridge", version: 12 });
+      try {
+        const token = await getValidAccessToken();
+        return jsonResp({ ok: true, service: "joom-bridge", version: 13, token_ok: !!token });
+      } catch (e: any) {
+        return jsonResp({ ok: false, service: "joom-bridge", version: 13, error: "joom_auth_unavailable", message: String(e?.message || e) }, 503);
+      }
     }
 
     if (action === "categories" && req.method === "GET") {

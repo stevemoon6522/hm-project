@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 const bridge = readFileSync(join(process.cwd(), 'supabase/functions/qoo10-bridge/index.ts'), 'utf8');
 const adapter = readFileSync(join(process.cwd(), 'supabase/functions/platform-publish/adapters/qoo10.ts'), 'utf8');
+const html = readFileSync(join(process.cwd(), 'v2/index.html'), 'utf8');
 
 test('Qoo10 option lookup only trusts seller option code fields, not internal OptionCode', () => {
   assert.doesNotMatch(
@@ -48,4 +49,45 @@ test('Qoo10 adapter sends an existing item code as a verification hint when pres
     /item_code=\$\{encodeURIComponent\(itemCode\)\}/,
     'lookup URL should include item_code when available'
   );
+});
+
+test('Qoo10 create listing contract includes official registration side fields', () => {
+  for (const token of [
+    'ItemsBasic.SetNewGoods',
+    'ItemsBasic.UpdateGoods',
+    'ItemsContents.EditGoodsContents',
+    'ItemsLookup.GetSellerDeliveryGroupInfo',
+    'CommonInfoLookup.SearchBrand',
+    'ItemsContents.EditGoodsHeaderFooter',
+    'ItemsOptions.EditGoodsInventory',
+    'ShippingNo',
+    'BrandNo',
+    'AvailableDateType',
+    'AvailableDateValue',
+    'ItemType',
+    'InventoryInfo',
+    'ProductionPlaceType: "2"',
+    'ProductionPlace: String(body.production_place || "KR")',
+  ]) {
+    assert.match(bridge, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `qoo10-bridge must include ${token}`);
+  }
+  assert.match(adapter, /supports:\s*new Set\(\['create_listing', 'sync'\]\)/, 'Qoo10 adapter should support create_listing and sync');
+  assert.match(adapter, /header_html/, 'Qoo10 create payload should forward header HTML for EditGoodsHeaderFooter');
+  assert.match(adapter, /Qoo10 BrandNo is required/, 'Qoo10 create payload should require an operator-selected BrandNo');
+  assert.match(adapter, /production_place:\s*norm\(qoo10\.production_place \|\| 'KR'\)/, 'Qoo10 create payload should default overseas origin to South Korea');
+  assert.match(adapter, /force_options:\s*options\.length > 1/, 'Qoo10 grouped create payload should force ItemType option creation');
+  assert.match(adapter, /option_products/, 'Qoo10 create result should expose option products for platform_listings fan-out');
+});
+
+test('Qoo10 V2 modal defaults match album preorder listing policy', () => {
+  assert.match(html, /first\.qoo10_category_id \|\| '300002851'/, 'Qoo10 category should default to KPOP CD');
+  assert.match(html, /const isPreOrder = true;/, 'Qoo10 modal should default to release-date preorder shipping');
+  assert.match(html, /Overseas \/ South Korea \(KR\)/, 'Qoo10 modal should display the fixed origin policy');
+  assert.match(html, /mrQoo10BuildDescription\(descriptionTemplateHtml\)/, 'Qoo10 description should combine template HTML with detail images');
+  assert.match(html, /sdv2:qoo10:description_template_html/, 'Qoo10 description template should be persisted for reuse');
+  assert.match(html, /mrQoo10LoadExistingItemCode/, 'Qoo10 modal should detect existing item codes before deciding create vs repair');
+  assert.match(html, /mrQoo10RepairExistingListing/, 'Qoo10 modal should repair existing items instead of duplicate-registering them');
+  assert.match(html, /\/update-goods/, 'Qoo10 existing repair should update BrandNo, origin, and release-date fields');
+  assert.match(html, /\/edit-contents/, 'Qoo10 existing repair should update detail contents');
+  assert.match(html, /\/edit-inventory/, 'Qoo10 existing repair should create/update option seller codes');
 });

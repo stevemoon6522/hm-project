@@ -25,7 +25,7 @@ const masterRegister = sliceBetween(
 const promoteJoom = sliceBetween(
   masterRegister,
   'async function mrPromoteJoom(group)',
-  'async function mrPromoteEbay(group)',
+  '// ── eBay registration modal + publish flow',
 );
 const buildPayload = sliceBetween(
   bridge,
@@ -44,14 +44,31 @@ assert(html.includes('window.mrDeriveFromTitle = mrDeriveFromTitle') && html.inc
 assert(html.includes("typeof window.mrDeriveFromTitle === 'function'"), 'Product-list Joom adapter must not reference private master-register helpers directly');
 assert(html.includes('function plBuildJoomPublishGroupFromProducts(rows)'), 'Product list Joom publish must adapt products rows into the tested mrPromoteJoom payload shape');
 assert(html.includes("_joomCategory: 'music_albums'"), 'Product list Joom publish must reuse the tested default Joom category');
+assert(html.includes("observed: { title: row.product_name || '', main_image_urls: row.main_image ? [row.main_image] : [], detail_image_urls: [] }"), 'Product-list Joom adapter must expose saved master representative images to the Joom modal');
+assert(html.includes("_main_image: row.shopee_option_image_url || ''"), 'Product-list Joom adapter must pass saved option images separately from representative main_image');
+assert(html.includes('id="mr-joom-modal-dryrun"'), 'Joom publish modal must expose a non-destructive dry-run button');
+assert(masterRegister.includes('const MR_JOOM_DEFAULT_STOCK = 5'), 'Joom draft must default option stock to the video-confirmed minimum stock value');
+assert(masterRegister.includes('function mrMasterRepresentativeImage(group)'), 'Joom draft must derive the main image from the master representative image');
+assert(masterRegister.includes('const mainImageUrl = mrMasterRepresentativeImage(group)'), 'Joom draft must use the master representative image as the payload main image');
+assert(!masterRegister.includes('data-joom-main-image-preview="1"'), 'Joom modal must not own the main-image confirmation UI');
+assert(!masterRegister.includes('data-joom-option-image-input'), 'Joom modal must not own local-folder option image attachment');
+assert(!masterRegister.includes('async function mrUploadJoomOptionImage'), 'Joom option image uploads must live in master-product UI, not Joom registration');
+assert(masterRegister.includes('function mrJoomAssertOptionSkuLocked'), 'Joom draft must have an explicit immutable SKU lock guard');
+assert(masterRegister.includes('optionSku !== masterSku'), 'Joom option SKU must be compared against the master product SKU before publishing');
+assert(masterRegister.includes("mrJoomBridgeUrl() + '/dryrun'"), 'Joom modal must call the browser-auth dryrun route before live publish');
+assert(masterRegister.includes('_mrPendingJoomDryRunOk'), 'Joom live publish must be gated by a successful dry-run');
+assert(masterRegister.includes('group._joomDryRunSignature = _mrPendingJoomDraftSignature'), 'Joom confirm must bind the live publish to the exact dry-run draft signature');
+assert(masterRegister.includes('return mrPromoteJoomLocked(group);'), 'Joom live publish must route through the locked draft/payload flow');
+assert(masterRegister.includes('Cash on Delivery (COD) Policy'), 'Joom modal draft must preview the fixed video-derived COD policy section');
 assert(promoteJoom.includes('detailImages = await mrJoomLoadDetailImages(group)'), 'Joom payload must include detail images');
 assert(!promoteJoom.includes('detailImages: []'), 'Joom detailImages must not be hard-coded empty');
-assert(promoteJoom.includes('image: r._main_image ||'), 'Joom variants must include master option image URLs');
+assert(masterRegister.includes('image: o.imageUrl'), 'Joom variants must include master option image URLs from the draft');
 assert(promoteJoom.includes('weight: weightG'), 'Joom variants must include per-option weight');
 assert(masterRegister.includes('if (allSkus.length === 1) return allSkus[0]'), 'Single-option Joom parent SKU must equal option SKU');
 assert(promoteJoom.includes('let parentSku = mrJoomParentSku(group, activeRows)'), 'Joom publish must use the explicit parent SKU helper');
 
 assert(buildPayload.includes('hasExplicitVariants'), 'Joom bridge must distinguish explicit variants from fallback DEFAULT');
+assert(bridge.includes('Cash on Delivery (COD) Policy'), 'Joom bridge description must include the fixed video-derived COD policy section');
 assert(buildPayload.includes('single variant product sku must equal option sku'), 'Joom bridge must enforce single-option parent SKU parity');
 assert(buildPayload.includes('cfg.sku || (!hasExplicitVariants'), 'Joom bridge must not invent SKUs for explicit variants');
 assert(buildPayload.indexOf('...(scrapedAssets.detailImages || [])') < buildPayload.indexOf('...(scrapedAssets.extraImages || [])'), 'Joom extraImages must place detail images immediately after the main image');

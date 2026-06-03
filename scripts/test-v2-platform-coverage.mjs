@@ -114,7 +114,8 @@ for (const [name, source, bridgeToken] of [
   assert(source.includes(bridgeToken), `${name} adapter must call ${bridgeToken}`);
   assert(source.includes('PLATFORM_VALIDATION_ERROR') && source.includes('PLATFORM_NOT_FOUND'), `${name} adapter must map validation/not-found errors`);
 }
-assert(qoo10Adapter.includes("supports: new Set(['sync'])") && qoo10Adapter.includes('qoo10 adapter only supports sync'), 'Qoo10 adapter must support sync only and explicitly block create/publish capabilities');
+assert(qoo10Adapter.includes("supports: new Set(['create_listing', 'sync'])") && qoo10Adapter.includes("bridgeFetch('/create-listing'"), 'Qoo10 adapter must support create_listing plus sync and call qoo10-bridge create-listing');
+assert(qoo10Adapter.includes('shipping_no') && qoo10Adapter.includes('brand_no') && qoo10Adapter.includes('available_date_type') && qoo10Adapter.includes('header_html') && qoo10Adapter.includes('production_place') && qoo10Adapter.includes('force_options'), 'Qoo10 create payload must include shipping template, brand, release-date, origin, option, and header fields');
 assert(platformPublish.includes('absorb_platform_sku_lookup') && platformPublish.includes('shouldAbsorbLookup'), 'platform-publish sync must absorb remote SKU hits through service-role RPC');
 assert(platformPublish.includes('raw_response: adapterResult.rawResponse && dry_run'), 'platform-publish must not return live bridge raw responses to browser callers');
 assert(joomAdapter.includes('raw?.joom_enabled !== false') && joomAdapter.includes("return 'listed'"), 'Joom adapter must treat enabled lookup hits as listed');

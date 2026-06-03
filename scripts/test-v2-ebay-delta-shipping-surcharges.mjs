@@ -20,10 +20,10 @@ assert.match(html, /const EBAY_SHIPPING_RATE_TABLE_KRW\s*=\s*\{[\s\S]*?DE\s*:\s*
 assert.match(html, /function _v2EbayGetShippingSurchargeUsd\s*\(\s*countryCode\s*,\s*weightG\s*,\s*exchangeRate/s, 'V2 must expose per-country USD surcharge helper');
 assert.match(html, /Math\.ceil\(\s*\(\s*deltaKrw\s*\/\s*exchangeRate\s*\)\s*\*\s*100\s*\)\s*\/\s*100/s, 'surcharge helper must round country delta up to cents');
 assert.match(html, /function _v2EbayBuildShippingSurchargeRows\s*\(\s*weightG\s*,\s*exchangeRate/s, 'V2 must build listing-specific surcharge rows from weight and exchange rate');
-assert.match(html, /shippingSurchargesUsd\s*:\s*ebayPricing\.shippingSurchargesUsd/s, 'publish payload must send country delta surcharge rows');
+assert.match(html, /shippingSurchargesUsd\s*:\s*draft\.ebayPricing\.shippingSurchargesUsd/s, 'publish payload must send country delta surcharge rows');
 assert.match(html, /shippingSurchargePolicy\s*:\s*['"]delta_vs_us_baseline['"]/s, 'publish payload must identify delta-vs-US surcharge policy');
-assert.match(html, /나머지 국가는 미국 대비 차액만 extra shipping/s, 'operator prompt must state non-US buyers pay only the delta');
-assert.match(html, /DE\s*\$\$\{[^}]*_v2EbayGetShippingSurchargeUsd\(\s*['"]DE['"]\s*,\s*weightG\s*,\s*exCountry\.exchangeRate\s*\)/s, 'publish prompt must preview a concrete higher-rate country surcharge');
+assert.match(html, /국가별 extra 예시/s, 'operator modal must state non-US buyers pay only the delta');
+assert.match(html, /const deExtra\s*=\s*_v2EbayGetShippingSurchargeUsd\(\s*['"]DE['"]\s*,\s*draft\.weightG\s*,\s*draft\.exCountry\.exchangeRate\s*\)/s, 'publish modal must preview a concrete higher-rate country surcharge');
 
 for (const source of [edge, edgeMirror]) {
   assert.match(source, /shippingSurchargesUsd\s*=\s*\[\]/s, 'ebay-bridge must accept shippingSurchargesUsd in publish body');

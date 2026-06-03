@@ -439,7 +439,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // =========================================================================
   const { data: product, error: productErr } = await svc
     .from('products')
-    .select('id, sku, product_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, joom_category_id, ebay_category_id, qoo10_category_id, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_extra_attributes, shopee_days_to_ship')
+    .select('id, sku, product_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, joom_category_id, ebay_category_id, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_extra_attributes, shopee_days_to_ship')
     .eq('id', master_product_id)
     .maybeSingle();
 
@@ -477,7 +477,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   // QOO10_CATEGORY_UNMAPPED — Qoo10 only, for create_listing.
-  if (platform === 'qoo10' && capability === 'create_listing' && !product.qoo10_category_id) {
+  const qoo10Input = (body as any).qoo10 || {};
+  const qoo10CategoryId = qoo10Input.category_id || product.qoo10_category_id;
+  if (platform === 'qoo10' && capability === 'create_listing' && !qoo10CategoryId) {
     audit('qoo10_category_unmapped', { sku: product.sku });
     await writeAuditLog(svc, {
       entity_uuid: master_product_id,
@@ -691,6 +693,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // BR needs at least 2 images. Adapter passes through to bridge.
         region_image_ids: (body as any).region_image_ids || {},
         region_prices: (body as any).region_prices || {},
+        // Qoo10 create_listing extras supplied by the V2 registration modal.
+        qoo10: (body as any).qoo10 || {},
       } as any);
     } catch (e) {
       adapterResult = {
@@ -748,6 +752,30 @@ Deno.serve(async (req: Request): Promise<Response> => {
       // Non-fatal: continue with audit + response.
     } else if (upsertedId) {
       listingId = upsertedId;
+    }
+
+    // Qoo10 SetNewGoods creates one goods_no with option seller codes. Mirror
+    // that goods_no into each selected option product so product-list LEDs roll
+    // up correctly for grouped registrations.
+    if (adapterResult.ok && platform === 'qoo10' && capability === 'create_listing') {
+      const optionProducts = Array.isArray((raw as any).option_products) ? (raw as any).option_products : [];
+      for (const option of optionProducts) {
+        const optionProductId = String(option?.product_id || '').trim();
+        const optionSku = String(option?.sku || '').trim();
+        if (!optionProductId || !optionSku) continue;
+        const { error: absorbErr } = await svc.rpc('absorb_platform_sku_lookup', {
+          p_master_product_id: optionProductId,
+          p_platform: platform,
+          p_external_sku: optionSku,
+          p_platform_item_id: adapterResult.platformItemId ?? (raw as any).platform_item_id ?? null,
+          p_external_variant_id: optionSku,
+          p_country: country ?? null,
+          p_shop_id: shop_id ?? null,
+          p_listing_status: adapterResult.listingStatus,
+          p_raw_payload: { capability, publish_request_id, platform_item_id: adapterResult.platformItemId, option },
+        });
+        if (absorbErr) audit('qoo10_option_absorb_failed', { product_id: optionProductId, sku: optionSku, error: absorbErr.message });
+      }
     }
   }
 

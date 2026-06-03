@@ -28,7 +28,8 @@ test('standalone products have master edit button and platform register button n
 });
 
 test('master edit modal supports manual option image edits including clearing URLs', () => {
-  assert.match(masterEdit, /data-field="main_image"/, 'option image URL input should be present');
+  assert.match(masterEdit, /data-field="shopee_option_image_url"/, 'option image URL input should be present');
+  assert.doesNotMatch(masterEdit, /data-field="main_image"/, 'representative image must not reuse the option image input');
   assert.match(masterEdit, /data-clear-option-image="1"/, 'clear image button should be present for manual removal');
   assert.match(masterEdit, /plMasterEditBindOptionImageControls/, 'image controls should refresh previews after edit');
 });

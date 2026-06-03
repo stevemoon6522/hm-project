@@ -169,6 +169,10 @@ function buildDescription(opts: { artist?: string; album?: string; contents?: st
     "- The outer vinyl wrap may have slight tears or marks due to shipping.",
     "- These are not considered defects and are not grounds for return or refund.",
     "- Please purchase only if you agree to the above conditions.",
+    "",
+    "Cash on Delivery (COD) Policy",
+    "- COD availability depends on Joom buyer eligibility and destination rules.",
+    "- If COD is unavailable, please use prepaid payment methods.",
   ].join("\n");
 }
 

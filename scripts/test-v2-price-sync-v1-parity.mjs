@@ -77,7 +77,7 @@ const joom = calculateJoomPrice({
 assertNear(joom.joomPrice, 7.75, 0.000001, 'Joom price must follow V1 JM fee row');
 
 const v2 = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
-assert(v2.includes("from './price-engine.js'"), 'V2 must import the shared V1 parity price engine');
+assert(v2.includes("from '/v2/price-engine.js'"), 'V2 must import the shared V1 parity price engine from the deployed /v2 path');
 assert(v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/update_price'"), 'V2 Shopee sync must use shop-level update_price');
 assert(!v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/update_global_price'"), 'V2 price sync must not build global update_price payloads');
 assert(v2.includes('shop_model_id,status,published_at,last_synced_price'), 'V2 listings fetch must include shop_model_id for variant price updates');

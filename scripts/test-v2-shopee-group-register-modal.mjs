@@ -114,6 +114,8 @@ assert(
 );
 assert(
   rshModal.includes('rshUploadOptionImages')
+    && rshModal.includes('function rshOptionImageUrl(product)')
+    && rshModal.includes('const src = rshOptionImageUrl(row)')
     && rshModal.includes('entry.image = { image_id: optionImageId }')
     && rshModal.includes('globalOptionImageIds'),
   'group modal must upload master option images and attach them to Shopee variation options',

@@ -22,9 +22,12 @@ const ebayCalcBlock = html.slice(
 assert.match(ebayCalcBlock, /_v2EbayGetShippingRateKrw\(\s*['"]US['"]\s*,\s*weightG\s*\)/, 'eBay listing formula must include US baseline shipping from product weight');
 assert.doesNotMatch(ebayCalcBlock, /const shipping\s*=\s*0\s*;/, 'eBay listing formula must not use zero shipping');
 assert.match(html, /weightG\s*<=\s*0[\s\S]{0,260}eBay 등록에는 마스터 상품 무게/, 'eBay publish must block rows without master weight');
-assert.match(html, /미국 기준 배송비[\s\S]{0,140}\$\$\{ebayPricing\.usShippingUsd\.toFixed\(2\)\}/, 'eBay publish prompt must show US shipping embedded in the price');
-assert.match(html, /weightBucketG\s*:\s*ebayPricing\.weightBucketG/, 'eBay publish payload must send the selected shipping weight bucket for auditability');
-assert.match(html, /usShippingKrw\s*:\s*ebayPricing\.usShippingKrw/, 'eBay publish payload must send US shipping KRW for auditability');
+assert.match(html, /id="mr-ebay-modal-overlay"/, 'V2 must render an eBay publish confirmation modal');
+assert.match(html, /function mrOpenEbayModal\s*\(/, 'eBay publish button must open the confirmation modal');
+assert.doesNotMatch(html, /prompt\s*\(/, 'eBay publish flow must not use browser prompt');
+assert.match(html, /미국 기준 배송비[\s\S]{0,220}draft\.ebayPricing\.usShippingUsd\.toFixed\(2\)/, 'eBay publish modal must show US shipping embedded in the price');
+assert.match(html, /weightBucketG\s*:\s*draft\.ebayPricing\.weightBucketG/, 'eBay publish payload must send the selected shipping weight bucket for auditability');
+assert.match(html, /usShippingKrw\s*:\s*draft\.ebayPricing\.usShippingKrw/, 'eBay publish payload must send US shipping KRW for auditability');
 assert.match(html, /domestic shipping\s*=\s*free[\s\S]{0,120}국가별 extra\s*=\s*미국 대비 차액/i, 'Fee UI copy must explain free US domestic + country delta extra policy');
 
 for (const [weight, rate] of [[100, 7200], [500, 14400], [1000, 20700]]) {

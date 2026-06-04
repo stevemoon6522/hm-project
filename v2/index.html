@@ -18645,24 +18645,104 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     function mrHasNonAscii(s) {
       return hasNonMarketplaceText(s);
     }
+    function mrNormalizeDerivedTitleToken(value) {
+      return mrStripNonAscii(value)
+        .replace(/^[\s\[\](){}'"]+|[\s\[\](){}'"]+$/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+    function mrIsListingStatusTag(value) {
+      const normalized = mrNormalizeDerivedTitleToken(value)
+        .replace(/[-_]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .toUpperCase();
+      return [
+        'READY STOCK',
+        'PRE ORDER',
+        'PREORDER',
+        'ON HAND',
+        'FAST DELIVERY',
+        'IN STOCK',
+        'RESTOCK',
+        'RESTOCKED',
+      ].includes(normalized);
+    }
+    function mrStripListingStatusPrefix(title) {
+      let s = mrStripNonAscii(title);
+      let changed = true;
+      while (changed && s) {
+        changed = false;
+        const wrapped = s.match(/^\s*[\[(]\s*([^\]\)]+?)\s*[\]\)]\s*/);
+        if (wrapped && mrIsListingStatusTag(wrapped[1])) {
+          s = s.slice(wrapped[0].length).trim();
+          changed = true;
+          continue;
+        }
+        const plain = s.match(/^\s*(READY\s*STOCK|PRE\s*-?\s*ORDER|PREORDER|ON\s*HAND|FAST\s*DELIVERY|IN\s*STOCK|RESTOCKED?|SALE)\s*[-:]\s*/i);
+        if (plain) {
+          s = s.slice(plain[0].length).trim();
+          changed = true;
+        }
+      }
+      return s;
+    }
+    function mrFirstMeaningfulBracketValue(title) {
+      const re = /\[([^\]]+)\]/g;
+      let m;
+      while ((m = re.exec(String(title || '')))) {
+        const value = mrNormalizeDerivedTitleToken(m[1]);
+        if (value && !mrIsListingStatusTag(value)) return value;
+      }
+      return '';
+    }
+    function mrFallbackAlbumFromDashRemainder(value) {
+      return mrNormalizeDerivedTitleToken(value)
+        .replace(/\([^)]*\)/g, ' ')
+        .replace(/\b(?:\d+(?:st|nd|rd|th)?\s+)?(?:EP|ALBUM|MINI|FULL|SINGLE)\b.*$/i, ' ')
+        .replace(/\b(?:WEVERSE|PLATFORM|PHOTOBOOK|DIGIPACK|JEWEL|STANDARD)\s+VER\.?.*$/i, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+    function mrLeadingUppercaseTokenBlock(value) {
+      const tokens = String(value || '').trim().split(/\s+/);
+      const artistTokens = [];
+      for (const token of tokens) {
+        const cleaned = token.replace(/^[^A-Za-z0-9&]+|[^A-Za-z0-9&]+$/g, '');
+        if (!cleaned) continue;
+        if (!/^[A-Z0-9&]+$/.test(cleaned) || !/[A-Z]/.test(cleaned)) break;
+        artistTokens.push(cleaned);
+      }
+      return artistTokens.join(' ');
+    }
     function mrDeriveFromTitle(title) {
       // Operator-supplied extraction rule (2026-05-20 msg #483):
       //   "CORTIS (코르티스) The 2nd EP [GREENGREEN] (CORTIS Ball ver.)"
       //   → artist=CORTIS, album=GREENGREEN, version=CORTIS Ball, member=''
       //
-      // Step 1: strip Korean/CJK + collapse empty parens/brackets.
-      // Step 2: artist = leading uppercase token block before any paren/bracket.
-      // Step 3: album = text inside the first [...].
+      // Step 1: strip Korean/CJK + leading listing status labels.
+      // Step 2: artist = text before " - ", otherwise leading uppercase token block.
+      // Step 3: album = first non-status [...], otherwise cleaned text after " - ".
       // Step 4: version = text inside (...) immediately before 'ver.' (case-insensitive).
       // Step 5: member = '' (operator fills in).
       const out = { artist: '', album: '', version: '', member: '' };
       if (!title) return out;
-      const eng = mrStripNonAscii(title);
+      const eng = mrStripListingStatusPrefix(title);
       if (!eng) return out;
-      const am = eng.match(/^([A-Z][A-Z0-9&]*(?:\s+[A-Z0-9&]+)*)/);
-      if (am) out.artist = am[1].trim();
-      const albumM = eng.match(/\[([^\]]+)\]/);
-      if (albumM) out.album = albumM[1].trim();
+      const dashM = eng.match(/^(.+?)\s+-\s+(.+)$/);
+      let remainder = eng;
+      if (dashM) {
+        const artist = mrNormalizeDerivedTitleToken(dashM[1].replace(/\([^)]*\)\s*$/, ''));
+        if (artist) out.artist = artist;
+        remainder = mrStripListingStatusPrefix(dashM[2]);
+      } else {
+        out.artist = mrLeadingUppercaseTokenBlock(eng);
+      }
+      const album = mrFirstMeaningfulBracketValue(remainder) || mrFirstMeaningfulBracketValue(eng);
+      if (album) {
+        out.album = album;
+      } else if (dashM) {
+        out.album = mrFallbackAlbumFromDashRemainder(remainder);
+      }
       // Version: anything inside parens that ends with 'ver' or 'ver.' (case-insensitive)
       const verM = eng.match(/\(([^)]+?)\s+[Vv][Ee][Rr]\.?\s*\)/);
       if (verM) out.version = verM[1].trim();
@@ -22122,9 +22202,29 @@ Contact
       return '';
     }
 
+    function mrEbayAspectValue(aspects, name) {
+      const values = aspects && Array.isArray(aspects[name]) ? aspects[name] : [];
+      for (const value of values) {
+        const normalized = String(value || '').trim();
+        if (normalized) return normalized;
+      }
+      return '';
+    }
+
     function mrEbayBuildAspects(firstRow, sourceRow) {
-      const artist = String(firstRow?.artist || sourceRow?.artist || '').trim().slice(0, 50);
-      const releaseTitle = String(firstRow?.album || sourceRow?.album || mrMasterProductName(firstRow) || '').trim().slice(0, 50);
+      const titleForDerivation = (
+        firstRow?.product_name
+        || sourceRow?.product_name
+        || firstRow?.observed?.title
+        || sourceRow?.observed?.title
+        || mrMasterProductName(firstRow)
+        || ''
+      );
+      const derived = mrDeriveFromTitle(titleForDerivation);
+      const storedArtist = mrNormalizeDerivedTitleToken(firstRow?.artist || sourceRow?.artist || '');
+      const storedAlbum = mrNormalizeDerivedTitleToken(firstRow?.album || sourceRow?.album || '');
+      const artist = String((mrIsListingStatusTag(storedArtist) ? '' : storedArtist) || derived.artist || '').trim().slice(0, 50);
+      const releaseTitle = String((mrIsListingStatusTag(storedAlbum) ? '' : storedAlbum) || derived.album || mrMasterProductName(firstRow) || '').trim().slice(0, 50);
       const aspects = {
         Type: [mrEbayReleaseType(firstRow)],
         Format: ['CD'],
@@ -22204,6 +22304,10 @@ Contact
     function mrEbayValidateDraft(draft) {
       const errors = [];
       const warnings = [];
+      if (String(draft.categoryId) === MR_EBAY_DEFAULT_CATEGORY_ID) {
+        if (!mrEbayAspectValue(draft.aspects, 'Artist')) errors.push('eBay item specific Artist is required for category 176984. Check the master product artist/title.');
+        if (!mrEbayAspectValue(draft.aspects, 'Release Title')) errors.push('eBay item specific Release Title is required for category 176984. Check the master product album/title.');
+      }
       if (!draft.activeRows.length) errors.push('eBay에 등록할 활성 옵션 행이 없습니다.');
       if (!draft.title) errors.push('eBay title이 비어 있습니다.');
       if (draft.title && draft.title.length > 80) errors.push(`eBay title 최대 80자 초과: ${draft.title.length}자`);

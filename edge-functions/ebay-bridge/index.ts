@@ -346,6 +346,22 @@ function validateAspects(aspects: Record<string, string[]>): void {
 }
 
 // description max 4000자 — sell/inventory.yaml L10843 (grill-with-docs Revision §6)
+const EBAY_KPOP_CD_CATEGORY_ID = "176984";
+const EBAY_KPOP_REQUIRED_ASPECTS = ["Artist", "Release Title"];
+
+function hasAspectValue(aspects: Record<string, string[]>, name: string): boolean {
+  const values = Array.isArray(aspects?.[name]) ? aspects[name] : [];
+  return values.some((value) => String(value || "").trim().length > 0);
+}
+
+function validateRequiredMusicAspects(categoryId: string, aspects: Record<string, string[]>): void {
+  if (String(categoryId || "") !== EBAY_KPOP_CD_CATEGORY_ID) return;
+  const missing = EBAY_KPOP_REQUIRED_ASPECTS.filter((name) => !hasAspectValue(aspects, name));
+  if (missing.length) {
+    throw new Error(`eBay category ${EBAY_KPOP_CD_CATEGORY_ID} requires item specific ${missing.join(", ")}.`);
+  }
+}
+
 function validateDescription(desc: string): string {
   if (!desc || desc.trim().length === 0) throw new Error("description 은 필수입니다 (Operator Decision #6: 운영자 직접 입력)");
   if (desc.length > 4000) {
@@ -548,6 +564,7 @@ async function handlePublishSingle(body: any): Promise<Response> {
   // Validate aspects (name/value length guards)
   const safeAspects: Record<string, string[]> = aspects || {};
   validateAspects(safeAspects);
+  validateRequiredMusicAspects(String(categoryId), safeAspects);
 
   // Condition: only NEW — Codex BLOCKER §a + Operator Decision #6 (conditionDescriptors OFF)
   // Citation: sell/inventory.yaml L8527 — NEW is the correct enum for brand new items
@@ -654,6 +671,147 @@ async function handlePublish(body: any): Promise<Response> {
   return await withEbayPublishRun("single", body, () => handlePublishSingle(body));
 }
 
+// ---------------------------------------------------------------------------
+// /update-price handler — price-only revision of a single published offer
+// Citation: sell/inventory.yaml bulkUpdatePriceQuantity :484-543
+//   BulkPriceQuantity :6987, PriceQuantity :10544, OfferPriceQuantity :10177,
+//   Amount :6734, BulkPriceQuantityResponse :7002, PriceQuantityResponse :10594
+// Design: §RC1 stock-safe (no availableQuantity), §RC2 one SKU/call,
+//   §RC3 PUBLISHED+FIXED_PRICE resolution, §RC4 strict per-offer success check,
+//   §RC5 ebay_sku required (no fallback), §RC7 Amount shape
+// ---------------------------------------------------------------------------
+
+async function handleUpdatePrice(body: any): Promise<Response> {
+  const { sku, priceUsd, offerId: callerOfferId, marketplaceId = "EBAY_US" } = body || {};
+
+  // §RC5: sku is required; no fallback
+  try { validateSku(sku); } catch (e: any) {
+    return jsonResp({ ok: false, error: e.message }, 400);
+  }
+
+  // §RC7: priceUsd must be finite and > 0
+  const priceNum = Number(priceUsd);
+  if (!Number.isFinite(priceNum) || priceNum <= 0) {
+    return jsonResp({ ok: false, error: "invalid_price" }, 400);
+  }
+
+  // Step 1: getOffers for this SKU on this marketplace
+  // Citation: sell/inventory.yaml getOffers :3787
+  const offersRes = await ebayFetch(
+    `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`
+  );
+
+  // Mirror 401/403/429 passthrough — matches handleLookupItem :854-858
+  if (offersRes.status !== 200 && offersRes.status !== 404) {
+    const passthroughStatus = (offersRes.status === 401 || offersRes.status === 403 || offersRes.status === 429)
+      ? offersRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_offer_lookup_failed",
+      upstream_status: offersRes.status,
+    }, passthroughStatus);
+  }
+
+  const allOffers: any[] = offersRes.status === 200 ? (offersRes.body?.offers || []) : [];
+  if (!allOffers.length) {
+    return jsonResp({ ok: false, error: "no_offer_for_sku" });
+  }
+
+  // §RC3: keep only PUBLISHED + FIXED_PRICE offers
+  // Citation: Offer.status :7478-7483, Offer.format :7330-7334
+  const candidates = allOffers.filter(
+    (o: any) => String(o.status || "").toUpperCase() === "PUBLISHED"
+      && String(o.format || "").toUpperCase() === "FIXED_PRICE"
+  );
+
+  let targetOffer: any;
+  if (callerOfferId) {
+    // Caller passed an explicit offerId — it MUST be in the candidate set
+    targetOffer = candidates.find((o: any) => String(o.offerId) === String(callerOfferId));
+    if (!targetOffer) {
+      return jsonResp({ ok: false, error: "offer_id_not_published_fixed_price" });
+    }
+  } else if (candidates.length === 1) {
+    targetOffer = candidates[0];
+  } else if (candidates.length === 0) {
+    return jsonResp({ ok: false, error: "offer_not_found" });
+  } else {
+    // >1 candidate and no offerId disambiguation — fail safely (§RC3)
+    return jsonResp({
+      ok: false,
+      error: "ambiguous_offers",
+      offerIds: candidates.map((o: any) => String(o.offerId)),
+    });
+  }
+
+  const resolvedOfferId: string = String(targetOffer.offerId);
+
+  // Step 2: build price-only BulkPriceQuantity payload
+  // §RC1: NO availableQuantity, NO shipToLocationAvailability, NO request-level sku
+  // §RC2: one SKU per call — single requests[] entry with one offer
+  // §RC7: Amount.value is a string, currency required
+  // Citation: BulkPriceQuantity :6987, PriceQuantity :10544, OfferPriceQuantity :10177, Amount :6734
+  const payload = {
+    requests: [
+      {
+        offers: [
+          {
+            offerId: resolvedOfferId,
+            price: {
+              value: priceNum.toFixed(2),
+              currency: "USD",
+            },
+          },
+        ],
+      },
+    ],
+  };
+
+  // Step 3: POST bulkUpdatePriceQuantity
+  // Citation: sell/inventory.yaml :484
+  const updateRes = await ebayFetch(
+    "/sell/inventory/v1/bulk_update_price_quantity",
+    { method: "POST", body: JSON.stringify(payload) }
+  );
+
+  // Mirror 401/403/429 passthrough
+  if (updateRes.status !== 200) {
+    const passthroughStatus = (updateRes.status === 401 || updateRes.status === 403 || updateRes.status === 429)
+      ? updateRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_update_failed",
+      upstream_status: updateRes.status,
+      upstream: formatEbayErrorBody(updateRes.body),
+    }, passthroughStatus);
+  }
+
+  // §RC4: strict per-offer success check
+  // Citation: BulkPriceQuantityResponse.responses :7005-7013
+  //   PriceQuantityResponse.statusCode :10614, PriceQuantityResponse.errors :10597
+  const responses: any[] = updateRes.body?.responses || [];
+  // Guard against a 200 with no per-offer response node — never report a silent no-op as success.
+  if (responses.length === 0) {
+    return jsonResp({ ok: false, error: "no_response_entries", upstream: updateRes.body });
+  }
+  const failedEntries = responses.filter(
+    (r: any) => r.statusCode !== 200 || (Array.isArray(r.errors) && r.errors.length > 0)
+  );
+  if (failedEntries.length > 0) {
+    return jsonResp({
+      ok: false,
+      error: "update_failed",
+      upstream: failedEntries.map((r: any) => ({
+        offerId: r.offerId,
+        statusCode: r.statusCode,
+        errors: r.errors || [],
+      })),
+    });
+  }
+
+  return jsonResp({ ok: true, offerId: resolvedOfferId, price: priceNum });
+}
+
 function validateInventoryGroupKey(value: string): void {
   if (!value || !value.trim()) throw new Error("inventoryGroupKey 는 필수입니다");
   if (value.length > 50) throw new Error(`inventoryGroupKey 최대 50자 초과: ${value.length}자`);
@@ -692,6 +850,7 @@ async function handlePublishVariationCore(body: any): Promise<Response> {
   const safeShippingSurcharges = validateShippingSurcharges(shippingSurchargesUsd);
   const safeAspects: Record<string, string[]> = aspects || {};
   validateAspects(safeAspects);
+  validateRequiredMusicAspects(String(categoryId), safeAspects);
   const axis = String(variationAxis || "Version").trim().slice(0, 40);
   if (!axis) throw new Error("variationAxis 는 필수입니다");
   if (!Array.isArray(variations) || variations.length < 2) throw new Error("variations 는 최소 2개 필요합니다");
@@ -1029,6 +1188,13 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === "publish-variation" && req.method === "POST") {
       const body = await req.json();
       return await handlePublishVariation(body);
+    }
+
+    if (action === "update-price" && req.method === "POST") {
+      // Price-only revision of one published fixed-price offer (Phase 2 live sync).
+      // No internal bridge token required; requireAuthenticatedUser above is the auth boundary.
+      const body = await req.json();
+      return await handleUpdatePrice(body);
     }
 
     return jsonResp({ ok: false, error: `unknown action: ${action} (${req.method})` }, 404);

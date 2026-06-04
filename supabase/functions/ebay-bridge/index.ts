@@ -346,6 +346,22 @@ function validateAspects(aspects: Record<string, string[]>): void {
 }
 
 // description max 4000자 — sell/inventory.yaml L10843 (grill-with-docs Revision §6)
+const EBAY_KPOP_CD_CATEGORY_ID = "176984";
+const EBAY_KPOP_REQUIRED_ASPECTS = ["Artist", "Release Title"];
+
+function hasAspectValue(aspects: Record<string, string[]>, name: string): boolean {
+  const values = Array.isArray(aspects?.[name]) ? aspects[name] : [];
+  return values.some((value) => String(value || "").trim().length > 0);
+}
+
+function validateRequiredMusicAspects(categoryId: string, aspects: Record<string, string[]>): void {
+  if (String(categoryId || "") !== EBAY_KPOP_CD_CATEGORY_ID) return;
+  const missing = EBAY_KPOP_REQUIRED_ASPECTS.filter((name) => !hasAspectValue(aspects, name));
+  if (missing.length) {
+    throw new Error(`eBay category ${EBAY_KPOP_CD_CATEGORY_ID} requires item specific ${missing.join(", ")}.`);
+  }
+}
+
 function validateDescription(desc: string): string {
   if (!desc || desc.trim().length === 0) throw new Error("description 은 필수입니다 (Operator Decision #6: 운영자 직접 입력)");
   if (desc.length > 4000) {
@@ -548,6 +564,7 @@ async function handlePublishSingle(body: any): Promise<Response> {
   // Validate aspects (name/value length guards)
   const safeAspects: Record<string, string[]> = aspects || {};
   validateAspects(safeAspects);
+  validateRequiredMusicAspects(String(categoryId), safeAspects);
 
   // Condition: only NEW — Codex BLOCKER §a + Operator Decision #6 (conditionDescriptors OFF)
   // Citation: sell/inventory.yaml L8527 — NEW is the correct enum for brand new items
@@ -833,6 +850,7 @@ async function handlePublishVariationCore(body: any): Promise<Response> {
   const safeShippingSurcharges = validateShippingSurcharges(shippingSurchargesUsd);
   const safeAspects: Record<string, string[]> = aspects || {};
   validateAspects(safeAspects);
+  validateRequiredMusicAspects(String(categoryId), safeAspects);
   const axis = String(variationAxis || "Version").trim().slice(0, 40);
   if (!axis) throw new Error("variationAxis 는 필수입니다");
   if (!Array.isArray(variations) || variations.length < 2) throw new Error("variations 는 최소 2개 필요합니다");

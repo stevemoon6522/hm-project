@@ -20,6 +20,33 @@ const edgeMirror = readFileSync(edgeMirrorPath, 'utf8');
 const migration = readFileSync(migrationPath, 'utf8');
 const plan = readFileSync(planPath, 'utf8');
 
+const parserStart = html.indexOf('    function mrStripNonAscii');
+const parserEnd = html.indexOf('    function mrUpdateStage1Summary', parserStart);
+assert(parserStart >= 0 && parserEnd > parserStart, 'title parser block must be extractable');
+const deriveFromTitle = new Function(
+  'stripNonMarketplaceText',
+  'hasNonMarketplaceText',
+  `${html.slice(parserStart, parserEnd)}\nreturn mrDeriveFromTitle;`,
+)(
+  (value) => String(value == null ? '' : value)
+    .replace(/[^\x00-\x7F]+/g, '')
+    .replace(/\(\s*\)/g, '')
+    .replace(/\[\s*\]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim(),
+  (value) => /[^\x00-\x7F]/.test(String(value || '')),
+);
+assert.deepEqual(
+  deriveFromTitle('[READY STOCK] CORTIS - [ GREENGREEN ] 2ND EP (WEVERSE Ver.)'),
+  { artist: 'CORTIS', album: 'GREENGREEN', version: 'WEVERSE', member: '' },
+  'READY STOCK prefix must not become the eBay Release Title',
+);
+assert.deepEqual(
+  deriveFromTitle('CORTIS (코르티스) The 2nd EP [GREENGREEN] (CORTIS Ball ver.)'),
+  { artist: 'CORTIS', album: 'GREENGREEN', version: 'CORTIS Ball', member: '' },
+  'existing CORTIS bracket-title derivation must keep working',
+);
+
 const hash = (s) => createHash('sha256').update(s).digest('hex');
 assert.equal(hash(edge), hash(edgeMirror), 'supabase and edge-functions ebay-bridge copies must match');
 
@@ -56,6 +83,13 @@ for (const token of [
   'function mrEbayPrettyVariationValue',
   'function mrEbayBuildDescription',
   'return mrMasterProductName(row).replace',
+  'function mrStripListingStatusPrefix',
+  'function mrFirstMeaningfulBracketValue',
+  'function mrFallbackAlbumFromDashRemainder',
+  'function mrLeadingUppercaseTokenBlock',
+  "mrIsListingStatusTag(storedAlbum) ? '' : storedAlbum",
+  'eBay item specific Artist is required for category 176984',
+  'eBay item specific Release Title is required for category 176984',
   'preservePublishedVariationValue',
   '🟣 ${productName}',
   '📌 Contents',
@@ -73,8 +107,8 @@ for (const token of [
   'data-open-ebay-single',
   'window.sdOpenRegisterEbayGroupModal',
   'function openRegisterEbayGroupModal',
-  'function sdHandleProductListEbayClick',
-  "document.addEventListener('click', sdHandleProductListEbayClick, true)",
+  "els.productBody.querySelectorAll('[data-open-ebay-group]')",
+  "btn.addEventListener('click', () => openRegisterEbayGroupModal",
   'mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows))',
   "'Country of Origin': ['Korea, South']",
 ]) {
@@ -101,6 +135,8 @@ for (const token of [
   'async function handleLookupGroup',
   'ebay_publish_runs',
   'withEbayPublishRun("variation"',
+  'validateRequiredMusicAspects(String(categoryId), safeAspects)',
+  'const EBAY_KPOP_REQUIRED_ASPECTS = ["Artist", "Release Title"]',
 ]) {
   assert(edge.includes(token), `ebay-bridge variation flow missing token: ${token}`);
 }

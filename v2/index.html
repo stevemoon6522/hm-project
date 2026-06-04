@@ -11919,12 +11919,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       showToast('eBay 등록 대상 ID가 없습니다.', 'err');
       return;
     }
+    if (typeof window.mrOpenEbayModal !== 'function') {
+      showToast('eBay 등록 모듈이 아직 초기화되지 않았습니다. 페이지를 새로고침 후 다시 시도하세요.', 'err');
+      console.error('[openRegisterEbayGroupModal] window.mrOpenEbayModal is not available');
+      return;
+    }
     const localRows = rshSortedProducts((state.products || []).filter((row) => (
       String(row.product_group_id || '') === targetId || String(row.id || '') === targetId
     )));
     if (localRows.length) {
       const localVariantRows = localRows.filter(plIsGroupedVariant);
-      mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(localVariantRows.length ? localVariantRows : localRows));
+      window.mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(localVariantRows.length ? localVariantRows : localRows));
       return;
     }
     let { data, error } = await db
@@ -11950,7 +11955,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       showToast('eBay 등록할 상품이 없습니다.', 'err');
       return;
     }
-    mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows));
+    window.mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows));
   }
   window.sdOpenRegisterEbayGroupModal = openRegisterEbayGroupModal;
 
@@ -22772,13 +22777,14 @@ Contact
       mrUpdateStage1Summary();
     }
 
-    // Expose the tested Joom register helpers to the product-list Joom button.
+    // Expose the tested Joom/eBay register helpers to the product-list buttons.
     // The master-register module is scoped in this IIFE, while the product list
-    // renderer/openRegisterJoomGroupModal lives in the outer script scope.
-    // Without this bridge, clicking the product-list Joom button raises a
-    // ReferenceError before the confirmation modal can open.
+    // renderer/openRegisterJoomGroupModal/openRegisterEbayGroupModal live in the
+    // outer script scope. Without this bridge, clicking the product-list Joom or
+    // eBay button raises a ReferenceError before the confirmation modal can open.
     window.mrDeriveFromTitle = mrDeriveFromTitle;
     window.mrOpenJoomModal = mrOpenJoomModal;
+    window.mrOpenEbayModal = mrOpenEbayModal;
 
     // Initialize after DOM is ready and auth has settled.
     if (document.readyState === 'loading') {

@@ -2469,9 +2469,9 @@
           <div id="cat-platform-tabs" class="cat-platform-tabs" role="tablist" aria-label="Platform">
             <button type="button" class="cat-platform-tab active" data-cat-platform="shopee" role="tab" aria-selected="true">Shopee</button>
             <button type="button" class="cat-platform-tab" data-cat-platform="joom" role="tab" aria-selected="false">Joom</button>
-            <button type="button" class="cat-platform-tab" data-cat-platform="qoo10" role="tab" aria-selected="false" aria-disabled="true">Qoo10</button>
+            <button type="button" class="cat-platform-tab" data-cat-platform="qoo10" role="tab" aria-selected="false">Qoo10</button>
             <button type="button" class="cat-platform-tab" data-cat-platform="alibaba" role="tab" aria-selected="false" aria-disabled="true">Alibaba</button>
-            <button type="button" class="cat-platform-tab" data-cat-platform="ebay" role="tab" aria-selected="false" aria-disabled="true">eBay</button>
+            <button type="button" class="cat-platform-tab" data-cat-platform="ebay" role="tab" aria-selected="false">eBay</button>
           </div>
           <div id="cat-region-filters" class="cat-market-filters" aria-label="Shopee markets"></div>
         </div>
@@ -3674,6 +3674,8 @@ LEGACY END -->
     PRICE_SYNC_CURRENCY,
     PRICE_SYNC_REGIONS,
     calculateJoomPrice,
+    calculateEbayPrice,
+    calculateQoo10Price,
     calculateShopeePrice,
     formatPriceForRegion,
     normalizeCountrySettings,
@@ -11920,12 +11922,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       showToast('eBay 등록 대상 ID가 없습니다.', 'err');
       return;
     }
+    if (typeof window.mrOpenEbayModal !== 'function') {
+      showToast('eBay 등록 모듈이 아직 초기화되지 않았습니다. 페이지를 새로고침 후 다시 시도하세요.', 'err');
+      console.error('[openRegisterEbayGroupModal] window.mrOpenEbayModal is not available');
+      return;
+    }
     const localRows = rshSortedProducts((state.products || []).filter((row) => (
       String(row.product_group_id || '') === targetId || String(row.id || '') === targetId
     )));
     if (localRows.length) {
       const localVariantRows = localRows.filter(plIsGroupedVariant);
-      mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(localVariantRows.length ? localVariantRows : localRows));
+      window.mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(localVariantRows.length ? localVariantRows : localRows));
       return;
     }
     let { data, error } = await db
@@ -11951,7 +11958,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       showToast('eBay 등록할 상품이 없습니다.', 'err');
       return;
     }
-    mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows));
+    window.mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows));
   }
   window.sdOpenRegisterEbayGroupModal = openRegisterEbayGroupModal;
 
@@ -14396,10 +14403,39 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return calc.ok ? calc.joomPrice : null;
   }
 
+  /** Compute the single eBay US listing price (USD, 2dp). Uses the EX country_settings row. */
+  function catComputeEbayPrice(costKrw, weightG) {
+    const calc = calculateEbayPrice({
+      costKrw,
+      weightG,
+      countrySettings: catCountrySettings('EX'),
+    });
+    return calc.ok ? calc.ebayPrice : null;
+  }
+
+  /** Compute the Qoo10 JPY base price (integer, stub: cost/10). */
+  function catComputeQoo10Price(costKrw) {
+    const calc = calculateQoo10Price({ costKrw });
+    // ok=false means costKrw<=0; still return the default 2990 so it renders
+    return calc.qoo10Price;
+  }
+
   function catFormatJoomPrice(value, currency) {
     const n = Number(value);
     if (!Number.isFinite(n)) return '—';
     return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ' + (currency || 'USD');
+  }
+
+  function catFormatEbayPrice(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return '—';
+    return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' USD';
+  }
+
+  function catFormatQoo10Price(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || n <= 0) return '—';
+    return Math.round(n).toLocaleString() + ' JPY';
   }
 
   /** Effective cost for a product row: pendingCostEdits override or DB value */
@@ -14450,7 +14486,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let offset = 0;
     while (true) {
       const url = SUPABASE_URL + '/rest/v1/products'
-        + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
+        + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
         + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
       const res = await fetch(url, {
         headers: Object.assign({}, AUTH_HEADERS, {
@@ -14466,7 +14502,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           // Fallback query without cost_updated_at
           const res2 = await fetch(
             SUPABASE_URL + '/rest/v1/products'
-              + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at'
+              + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
               + '&order=lifecycle_state.asc,created_at.asc',
             {
               headers: Object.assign({}, AUTH_HEADERS, {
@@ -14577,6 +14613,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   /** Build the region th column headers (current + new price pairs). */
   function catBuildRegionHeaders() {
     if (_catActivePlatform === 'joom') return catBuildJoomHeaders();
+    if (_catActivePlatform === 'ebay') return catBuildEbayHeaders();
+    if (_catActivePlatform === 'qoo10') return catBuildQoo10Headers();
     let html = '';
     CAT_REGIONS.forEach(function(r) {
       const dimStyle = _catRegionVisible.has(r) ? '' : 'opacity:0.35;';
@@ -14594,6 +14632,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + '<th data-cat-joom-status="1" style="min-width:135px;">Joom 매핑</th>';
   }
 
+  function catBuildEbayHeaders() {
+    return '<th data-cat-ebay-current="1" style="min-width:125px;">eBay 현재가 (USD)</th>'
+      + '<th data-cat-ebay-new="1" style="min-width:125px;">eBay 신규가 (USD)</th>'
+      + '<th data-cat-ebay-status="1" style="min-width:135px;">eBay 매핑</th>';
+  }
+
+  function catBuildQoo10Headers() {
+    return '<th data-cat-qoo10-current="1" style="min-width:125px;">Qoo10 현재가 (JPY)</th>'
+      + '<th data-cat-qoo10-new="1" style="min-width:125px;">Qoo10 신규가 (JPY)</th>'
+      + '<th data-cat-qoo10-status="1" style="min-width:135px;">Qoo10 매핑</th>';
+  }
+
   /**
    * Build region price cells for a product row.
    * listingByRegion: Map<region, listing>
@@ -14602,6 +14652,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
    */
   function catBuildRegionCells(listingByRegion, effectiveCost, weightG, product) {
     if (_catActivePlatform === 'joom') return catBuildJoomCells(product, effectiveCost, weightG);
+    if (_catActivePlatform === 'ebay') return catBuildEbayCells(product, effectiveCost, weightG);
+    if (_catActivePlatform === 'qoo10') return catBuildQoo10Cells(product, effectiveCost);
     let html = '';
     let maxDeltaPct = 0;
 
@@ -14681,6 +14733,53 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return { html: html, maxDeltaPct: maxDeltaPct };
   }
 
+  function catBuildEbayCells(product, effectiveCost, weightG) {
+    const currentPrice = product && product.ebay_last_synced_price != null
+      ? Number(product.ebay_last_synced_price) : null;
+    const newPrice = catComputeEbayPrice(effectiveCost, weightG);
+    let maxDeltaPct = 0;
+    let deltaClass = 'cat-price-same';
+    let deltaLabel = '';
+    if (currentPrice != null && currentPrice > 0 && newPrice != null) {
+      const deltaPct = (newPrice - currentPrice) / currentPrice * 100;
+      maxDeltaPct = Math.abs(deltaPct);
+      if (deltaPct > 0.5) {
+        deltaClass = 'cat-price-up';
+        deltaLabel = '▲' + deltaPct.toFixed(1) + '%';
+      } else if (deltaPct < -0.5) {
+        deltaClass = 'cat-price-down';
+        deltaLabel = '▼' + Math.abs(deltaPct).toFixed(1) + '%';
+      }
+    }
+    const ebayStatus = product && product.ebay_status
+      ? product.ebay_status
+      : (product && product.ebay_offer_id ? 'mapped' : '미매핑');
+    const html = '<td data-cat-ebay-current="1" style="font-size:12px;">'
+      + (currentPrice != null ? catFormatEbayPrice(currentPrice) : '<span class="muted">—</span>') + '</td>'
+      + '<td data-cat-ebay-new="1" class="cat-new-price ' + deltaClass + '">'
+      + (newPrice != null ? catFormatEbayPrice(newPrice) : '<span class="muted">—</span>')
+      + (deltaLabel ? '<br><span class="cat-delta-label">' + esc(deltaLabel) + '</span>' : '')
+      + '</td>'
+      + '<td data-cat-ebay-status="1" style="font-size:12px;">'
+      + esc(ebayStatus) + '</td>';
+    return { html: html, maxDeltaPct: maxDeltaPct };
+  }
+
+  function catBuildQoo10Cells(product, effectiveCost) {
+    // Phase 1: no qoo10_last_synced_price column yet — current price always null
+    const currentPrice = null;
+    const newPrice = catComputeQoo10Price(effectiveCost);
+    // No delta possible without current price
+    const qoo10Status = product && product.qoo10_category_id ? 'mapped' : '미매핑';
+    const html = '<td data-cat-qoo10-current="1" style="font-size:12px;color:var(--muted);">—</td>'
+      + '<td data-cat-qoo10-new="1" class="cat-new-price cat-price-same">'
+      + (newPrice != null ? catFormatQoo10Price(newPrice) : '<span class="muted">—</span>')
+      + '</td>'
+      + '<td data-cat-qoo10-status="1" style="font-size:12px;">'
+      + esc(qoo10Status) + '</td>';
+    return { html: html, maxDeltaPct: 0 };
+  }
+
   /**
    * Re-render ONLY the region price preview cells for a single row
    * when operator edits cost inline, without full table re-render.
@@ -14714,6 +14813,40 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         tdDelta.innerHTML = joomResult.maxDeltaPct > 0.5
           ? '<span class="cat-price-up">' + joomResult.maxDeltaPct.toFixed(1) + '%</span>'
           : '<span class="cat-price-same">—</span>';
+      }
+      return;
+    }
+
+    if (_catActivePlatform === 'ebay' && product) {
+      const ebayResult = catBuildEbayCells(product, newCost, weightG);
+      const temp = document.createElement('tbody');
+      temp.innerHTML = '<tr>' + ebayResult.html + '</tr>';
+      ['[data-cat-ebay-current]', '[data-cat-ebay-new]', '[data-cat-ebay-status]'].forEach(function(sel) {
+        const oldCell = tr.querySelector(sel);
+        const newCell = temp.querySelector(sel);
+        if (oldCell && newCell) oldCell.replaceWith(newCell);
+      });
+      const tdDelta = tr.querySelector('[data-cat-delta]');
+      if (tdDelta) {
+        tdDelta.innerHTML = ebayResult.maxDeltaPct > 0.5
+          ? '<span class="cat-price-up">' + ebayResult.maxDeltaPct.toFixed(1) + '%</span>'
+          : '<span class="cat-price-same">—</span>';
+      }
+      return;
+    }
+
+    if (_catActivePlatform === 'qoo10' && product) {
+      const qoo10Result = catBuildQoo10Cells(product, newCost);
+      const temp = document.createElement('tbody');
+      temp.innerHTML = '<tr>' + qoo10Result.html + '</tr>';
+      ['[data-cat-qoo10-current]', '[data-cat-qoo10-new]', '[data-cat-qoo10-status]'].forEach(function(sel) {
+        const oldCell = tr.querySelector(sel);
+        const newCell = temp.querySelector(sel);
+        if (oldCell && newCell) oldCell.replaceWith(newCell);
+      });
+      const tdDelta = tr.querySelector('[data-cat-delta]');
+      if (tdDelta) {
+        tdDelta.innerHTML = '<span class="cat-price-same">—</span>';
       }
       return;
     }
@@ -14921,6 +15054,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   function catRegionSummaryCells(rows, listingIdx) {
     if (_catActivePlatform === 'joom') return catJoomSummaryCells(rows);
+    if (_catActivePlatform === 'ebay') return catEbaySummaryCells(rows);
+    if (_catActivePlatform === 'qoo10') return catQoo10SummaryCells(rows);
     let html = '';
     let maxDeltaPct = 0;
     CAT_REGIONS.forEach(function(r) {
@@ -14981,6 +15116,56 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + '<span class="muted">옵션 ' + newPrices.length + '/' + rows.length + '</span><br>' + formatRange(newPrices) + '</td>'
       + '<td data-cat-joom-status="1" style="font-size:12px;">mapped ' + mappedCount + '/' + rows.length + '</td>';
     return { html: html, maxDeltaPct: maxDeltaPct };
+  }
+
+  function catEbaySummaryCells(rows) {
+    const currentPrices = [];
+    const newPrices = [];
+    let maxDeltaPct = 0;
+    rows.forEach(function(p) {
+      const current = p.ebay_last_synced_price != null ? Number(p.ebay_last_synced_price) : null;
+      const next = catComputeEbayPrice(catEffectiveCost(p), catEffectiveWeight(p));
+      if (current != null && Number.isFinite(current)) currentPrices.push(current);
+      if (next != null && Number.isFinite(next)) newPrices.push(next);
+      if (current != null && current > 0 && next != null) {
+        const pct = Math.abs((next - current) / current * 100);
+        if (pct > maxDeltaPct) maxDeltaPct = pct;
+      }
+    });
+    const formatRange = function(values) {
+      if (!values.length) return '—';
+      values.sort(function(a, b) { return a - b; });
+      if (values.length === 1 || values[0] === values[values.length - 1]) return catFormatEbayPrice(values[0]);
+      return catFormatEbayPrice(values[0]) + '-' + catFormatEbayPrice(values[values.length - 1]);
+    };
+    const mappedCount = rows.filter(function(p) { return p.ebay_offer_id || p.ebay_status === 'mapped'; }).length;
+    const html = '<td data-cat-ebay-current="1" style="font-size:12px;">'
+      + '<span class="muted">옵션 ' + currentPrices.length + '/' + rows.length + '</span><br>' + formatRange(currentPrices) + '</td>'
+      + '<td data-cat-ebay-new="1" class="cat-new-price" style="font-size:12px;">'
+      + '<span class="muted">옵션 ' + newPrices.length + '/' + rows.length + '</span><br>' + formatRange(newPrices) + '</td>'
+      + '<td data-cat-ebay-status="1" style="font-size:12px;">mapped ' + mappedCount + '/' + rows.length + '</td>';
+    return { html: html, maxDeltaPct: maxDeltaPct };
+  }
+
+  function catQoo10SummaryCells(rows) {
+    // Phase 1: no current price column — show only new price range
+    const newPrices = [];
+    rows.forEach(function(p) {
+      const next = catComputeQoo10Price(catEffectiveCost(p));
+      if (next != null && Number.isFinite(next)) newPrices.push(next);
+    });
+    const formatRange = function(values) {
+      if (!values.length) return '—';
+      values.sort(function(a, b) { return a - b; });
+      if (values.length === 1 || values[0] === values[values.length - 1]) return catFormatQoo10Price(values[0]);
+      return catFormatQoo10Price(values[0]) + '-' + catFormatQoo10Price(values[values.length - 1]);
+    };
+    const mappedCount = rows.filter(function(p) { return p.qoo10_category_id; }).length;
+    const html = '<td data-cat-qoo10-current="1" style="font-size:12px;color:var(--muted);">—</td>'
+      + '<td data-cat-qoo10-new="1" class="cat-new-price" style="font-size:12px;">'
+      + '<span class="muted">옵션 ' + newPrices.length + '/' + rows.length + '</span><br>' + formatRange(newPrices) + '</td>'
+      + '<td data-cat-qoo10-status="1" style="font-size:12px;">mapped ' + mappedCount + '/' + rows.length + '</td>';
+    return { html: html, maxDeltaPct: 0 };
   }
 
   function catRenderGroupRow(group, listingIdx) {
@@ -15119,8 +15304,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const thead = table.querySelector('thead tr');
     if (!thead) return;
 
-    // Remove existing dynamic price headers
-    thead.querySelectorAll('[data-cat-region],[data-cat-region-new],[data-cat-joom-current],[data-cat-joom-new],[data-cat-joom-status]').forEach(function(th) { th.remove(); });
+    // Remove existing dynamic price headers (all platform columns)
+    thead.querySelectorAll('[data-cat-region],[data-cat-region-new],[data-cat-joom-current],[data-cat-joom-new],[data-cat-joom-status],[data-cat-ebay-current],[data-cat-ebay-new],[data-cat-ebay-status],[data-cat-qoo10-current],[data-cat-qoo10-new],[data-cat-qoo10-status]').forEach(function(th) { th.remove(); });
 
     // Find anchor: the 무게(g) column, insert region columns after it
     const ths = Array.from(thead.querySelectorAll('th'));
@@ -15145,6 +15330,50 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       thStatus.dataset.catJoomStatus = '1';
       thStatus.style.cssText = 'min-width:135px;';
       thStatus.textContent = 'Joom 매핑';
+      frag.appendChild(thStatus);
+      weightTh.after(frag);
+      return;
+    }
+
+    if (_catActivePlatform === 'ebay') {
+      const thCurr = document.createElement('th');
+      thCurr.dataset.catEbayCurrent = '1';
+      thCurr.style.cssText = 'min-width:125px;';
+      thCurr.textContent = 'eBay 현재가 (USD)';
+      frag.appendChild(thCurr);
+
+      const thNew = document.createElement('th');
+      thNew.dataset.catEbayNew = '1';
+      thNew.style.cssText = 'min-width:125px;';
+      thNew.textContent = 'eBay 신규가 (USD)';
+      frag.appendChild(thNew);
+
+      const thStatus = document.createElement('th');
+      thStatus.dataset.catEbayStatus = '1';
+      thStatus.style.cssText = 'min-width:135px;';
+      thStatus.textContent = 'eBay 매핑';
+      frag.appendChild(thStatus);
+      weightTh.after(frag);
+      return;
+    }
+
+    if (_catActivePlatform === 'qoo10') {
+      const thCurr = document.createElement('th');
+      thCurr.dataset.catQoo10Current = '1';
+      thCurr.style.cssText = 'min-width:125px;';
+      thCurr.textContent = 'Qoo10 현재가 (JPY)';
+      frag.appendChild(thCurr);
+
+      const thNew = document.createElement('th');
+      thNew.dataset.catQoo10New = '1';
+      thNew.style.cssText = 'min-width:125px;';
+      thNew.textContent = 'Qoo10 신규가 (JPY)';
+      frag.appendChild(thNew);
+
+      const thStatus = document.createElement('th');
+      thStatus.dataset.catQoo10Status = '1';
+      thStatus.style.cssText = 'min-width:135px;';
+      thStatus.textContent = 'Qoo10 매핑';
       frag.appendChild(thStatus);
       weightTh.after(frag);
       return;
@@ -16290,18 +16519,124 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
   }
 
+  async function catExecuteEbaySync() {
+    await catFlushSelectedInlineEdits({ persistWeight: true });
+    const products = catSelectedProducts();
+    if (!products.length) {
+      showToast('eBay 동기화 대상 행을 선택하세요.', 'err');
+      return;
+    }
+    if (!confirm('eBay(US) 가격을 실동기화합니다.\n\n대상: ' + products.length + '건\n진행할까요?')) return;
+
+    const btn = document.getElementById('cat-sync-btn');
+    const oldText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'eBay 동기화 중...'; }
+
+    const EBAY_BRIDGE = SHOPEE_BRIDGE.replace('/shopee-bridge', '/ebay-bridge');
+    const now = new Date().toISOString();
+    let okCount = 0;
+    const errors = [];
+
+    try {
+      for (const product of products) {
+        // §RC5: use ebay_sku only — no fallback to product.sku
+        const sku = product.ebay_sku;
+        if (!sku) {
+          errors.push((product.sku || product.product_name || String(product.id)) + ': eBay 미등록 (ebay_sku 없음)');
+          continue;
+        }
+
+        const newCost = catEffectiveCost(product);
+        const weightG = catEffectiveWeight(product);
+        const priceUsd = catComputeEbayPrice(newCost, weightG);
+        if (priceUsd === null || !Number.isFinite(priceUsd) || priceUsd <= 0) {
+          errors.push(sku + ': eBay 가격 계산 실패');
+          continue;
+        }
+
+        let updateJson = null;
+        let updateOk = false;
+        try {
+          const updateResp = await fetch(EBAY_BRIDGE + '/update-price', {
+            method: 'POST',
+            headers: AUTH_HEADERS,
+            body: JSON.stringify({
+              sku: sku,
+              priceUsd: priceUsd,
+              offerId: product.ebay_offer_id || undefined,
+            }),
+          });
+          updateJson = await updateResp.json().catch(function() { return { ok: false, error: 'HTTP ' + updateResp.status }; });
+          updateOk = updateResp.ok && updateJson && updateJson.ok;
+        } catch (e) {
+          updateJson = { ok: false, error: e.message || String(e) };
+        }
+
+        if (!updateOk) {
+          errors.push(sku + ': ' + (updateJson?.error || updateJson?.message || 'update-price failed'));
+          continue;
+        }
+
+        const persisted = await catPersistProductCost(product.id, newCost, now);
+        if (!persisted.ok) errors.push(sku + ': cost update ' + persisted.error);
+
+        const { error: productErr } = await db.from('products').update({
+          ebay_last_synced_price: priceUsd,
+          ebay_last_synced_at: now,
+        }).eq('id', product.id);
+        if (productErr) {
+          errors.push(sku + ': products update ' + productErr.message);
+          continue;
+        }
+
+        Object.assign(product, {
+          ebay_last_synced_price: priceUsd,
+          ebay_last_synced_at: now,
+        });
+        okCount++;
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = oldText; }
+    }
+
+    applyAndRenderCatalog();
+    if (errors.length) {
+      console.warn('[CAT ebay] errors:', errors);
+      showToast('eBay 일부 실패: ' + errors[0], 'err');
+    } else {
+      showToast('eBay 가격 동기화 완료 (' + okCount + '건)', 'ok');
+    }
+  }
+
   // ── Platform + Shopee market controls ───────────────────────────
 
   function catSyncPlatformActions() {
-    const isJoom = _catActivePlatform === 'joom';
+    // Hide Shopee market chips for any single-global-price platform
+    const hideChips = _catActivePlatform === 'joom' || _catActivePlatform === 'ebay' || _catActivePlatform === 'qoo10';
     const marketFilters = document.getElementById('cat-region-filters');
-    if (marketFilters) marketFilters.style.display = isJoom ? 'none' : '';
+    if (marketFilters) marketFilters.style.display = hideChips ? 'none' : '';
   }
 
   // Single "동기화" button routes to the active platform's live sync.
+  // SAFETY: explicit switch — unknown platform never falls through to Shopee.
   function catExecuteSelectedSync() {
-    if (_catActivePlatform === 'joom') catExecuteJoomSync();
-    else catExecuteShopeeLive();
+    switch (_catActivePlatform) {
+      case 'joom':
+        catExecuteJoomSync();
+        break;
+      case 'shopee':
+        catExecuteShopeeLive();
+        break;
+      case 'ebay':
+        catExecuteEbaySync();
+        break;
+      case 'qoo10':
+        showToast('Qoo10 실시간 가격 동기화는 다음 단계에서 활성화됩니다 (미리보기 전용).', '');
+        break;
+      default:
+        showToast('알 수 없는 플랫폼 — 동기화를 실행할 수 없습니다.', '');
+        break;
+    }
   }
 
   function initCatPlatformTabs() {
@@ -16326,6 +16661,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         applyAndRenderCatalog();
         if (platform === 'joom') {
           showToast('Joom은 단일 글로벌 가격 공식으로 표시합니다.', '');
+        } else if (platform === 'ebay') {
+          showToast('eBay(US) — USD 가격 미리보기 전용입니다. 동기화는 다음 단계에서 활성화됩니다.', '');
+        } else if (platform === 'qoo10') {
+          showToast('Qoo10(JPY) — JPY 가격 미리보기 전용입니다. 동기화는 다음 단계에서 활성화됩니다.', '');
         }
       });
     });
@@ -22529,13 +22868,14 @@ Contact
       mrUpdateStage1Summary();
     }
 
-    // Expose the tested Joom register helpers to the product-list Joom button.
+    // Expose the tested Joom/eBay register helpers to the product-list buttons.
     // The master-register module is scoped in this IIFE, while the product list
-    // renderer/openRegisterJoomGroupModal lives in the outer script scope.
-    // Without this bridge, clicking the product-list Joom button raises a
-    // ReferenceError before the confirmation modal can open.
+    // renderer/openRegisterJoomGroupModal/openRegisterEbayGroupModal live in the
+    // outer script scope. Without this bridge, clicking the product-list Joom or
+    // eBay button raises a ReferenceError before the confirmation modal can open.
     window.mrDeriveFromTitle = mrDeriveFromTitle;
     window.mrOpenJoomModal = mrOpenJoomModal;
+    window.mrOpenEbayModal = mrOpenEbayModal;
 
     // Initialize after DOM is ready and auth has settled.
     if (document.readyState === 'loading') {

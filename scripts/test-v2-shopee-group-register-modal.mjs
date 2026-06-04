@@ -70,9 +70,20 @@ assert(
   'group modal must load variation metadata from products',
 );
 assert(
-  rshModal.includes('await rshCrawlImages(master.staronemall_url)')
-    && rshModal.indexOf('if (master.staronemall_url)') < rshModal.indexOf('} else if (_rsh.cachedImageId'),
-  'group modal must prefer StarOneMall layered cover over stale cached/raw master images',
+  rshModal.includes('async function rshUseMasterImages(master)')
+    && rshModal.includes('function rshMasterDetailImageRefs(master)')
+    && rshModal.includes("kind: 'master-layered-cover'")
+    && rshModal.includes('detailRefs.slice(0, REGISTER_MAX_IMAGE_IDS - 1)')
+    && rshModal.indexOf('if (master.main_image)') < rshModal.indexOf('} else if (master.staronemall_url)'),
+  'group modal must prefer master main_image/extra_images, with StarOneMall crawl only as fallback',
+);
+assert(
+  rshModal.includes('id="rsh-attr-brand-select"')
+    && rshModal.includes('rshLoadBrandOptions')
+    && rshModal.includes('rshPopulateBrandSelect')
+    && rshModal.includes('rshSyncBrandHidden')
+    && rshModal.includes('SHOPEE_BRIDGE}/global_brands?'),
+  'Shopee modal must load and show registered Shopee Global brand options',
 );
 assert(
   rshModal.includes('COD Policy')
@@ -82,9 +93,8 @@ assert(
 );
 assert(
   !rshModal.includes('master.shopee_description')
-    && !rshModal.includes('_rsh.master.shopee_description')
-    && !rshModal.includes('shopee_description:'),
-  'Shopee transfer must generate description at send time without reading or saving master shopee_description',
+    && !rshModal.includes('_rsh.master.shopee_description'),
+  'Shopee transfer must generate description at send time without reading saved master shopee_description',
 );
 assert(
   html.includes('도매가 KRW')
@@ -110,7 +120,12 @@ assert(
   rshModal.includes('rshBuildLayeredCoverDataUrl')
     && rshModal.includes('rshBuildDetailUploadRefs')
     && rshModal.includes('STARONEMALL_LAYER_VERSION'),
-  'group modal must build a shop-layer cover and upload StarOneMall detail images after it',
+  'group modal must build a shop-layer cover and upload detail images after it',
+);
+assert(
+  rshModal.includes("description: document.getElementById('rsh-description')?.value")
+    && html.includes("shopee_description: document.getElementById('rsh-description')?.value || ''"),
+  'Shopee registration must forward the modal Product Description for group and single publish flows',
 );
 assert(
   rshModal.includes('rshUploadOptionImages')

@@ -55,6 +55,7 @@ for (const token of [
 
 for (const token of [
   'region_prices: (body as any).region_prices || {}',
+  "shopee_description: (body as any).shopee_description || ''",
 ]) {
   assert(dispatcher.includes(token), `dispatcher missing token: ${token}`);
 }
@@ -62,6 +63,9 @@ for (const token of [
 for (const token of [
   'const regionPrices',
   'price: targetPrice',
+  'const registerDescription',
+  '(ctx as any).shopee_description',
+  'description: registerDescription || master.product_name || master.sku',
 ]) {
   assert(shopeeAdapter.includes(token), `Shopee adapter missing token: ${token}`);
 }
@@ -70,6 +74,8 @@ for (const token of [
   'normalizeVariation(target.variation || body.variation)',
   'item.tier_variation = publishVariation.tier_variation',
   'item.model = buildPublishModels(publishVariation, price)',
+  "const description = String(target.description ?? body.description ?? '').trim()",
+  'description,',
 ]) {
   assert(publishItemBlock.includes(token), `register_cbsc publish payload missing token: ${token}`);
 }

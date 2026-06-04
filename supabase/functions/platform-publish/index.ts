@@ -693,6 +693,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // BR needs at least 2 images. Adapter passes through to bridge.
         region_image_ids: (body as any).region_image_ids || {},
         region_prices: (body as any).region_prices || {},
+        shopee_description: (body as any).shopee_description || '',
         // Qoo10 create_listing extras supplied by the V2 registration modal.
         qoo10: (body as any).qoo10 || {},
       } as any);

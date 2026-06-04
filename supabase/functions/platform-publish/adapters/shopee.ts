@@ -350,6 +350,14 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   // - buildPublishItemPayload must send is_pre_order:true for pre_order lifecycle,
   //   otherwise items publish as Ready Stock with DTS > 10 → Shopee rejects.
   const is_pre_order = lifecycle_state === 'pre_order';
+  const registerDescription = String(
+    (ctx as any).shopee_description
+    || master.shopee_description
+    || master.description
+    || master.product_name
+    || master.sku
+    || ''
+  ).trim();
 
   const bridgeBody: Record<string, unknown> = {
     region: baseRegion,
@@ -362,7 +370,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     weight_g: Number(master.weight_g) || 100,
     price: cost_krw,            // Global SKU KRW price (model C — no margin multiplication)
     stock: Number(master.inventory) || 0,
-    description: master.shopee_description || master.product_name || master.sku,
+    description: registerDescription || master.product_name || master.sku,
     attribute_list,
     targets,
     lifecycle_state,            // 'ready_stock' | 'pre_order' — bridge consults this

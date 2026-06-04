@@ -10558,6 +10558,7 @@ LEGACY END -->
   // Platform-publish base URL (same Supabase project as the dashboard).
   const PLATFORM_PUBLISH_URL = `${SUPABASE_URL}/functions/v1/platform-publish`;
   let _rshCountrySettingsByRegion = new Map();
+  let _rshBrandOptionsCache = new Map();
 
   // Per-modal state — reset on each openRegisterShopeeModal() call.
   let _rsh = {
@@ -10778,7 +10779,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const brandHtml = `
       <div class="field span-4">
         <label>Brand</label>
-        <input id="rsh-attr-brand" type="text" value="${text(brandName)}">
+        <select id="rsh-attr-brand-select" data-current-id="${text(String(master.shopee_brand_id ?? 0))}" data-current-name="${text(brandName)}">
+          <option value="${text(String(master.shopee_brand_id ?? 0))}" selected>${text(brandName)}</option>
+        </select>
+        <button type="button" id="rsh-brand-refresh" style="margin-top:4px;font-size:11px;padding:3px 8px;">Refresh</button>
+        <div id="rsh-brand-status" class="muted" style="font-size:11px;margin-top:3px;"></div>
+        <input id="rsh-attr-brand" type="hidden" value="${text(brandName)}">
         <input type="hidden" id="rsh-attr-brand-id" value="${text(String(master.shopee_brand_id ?? 0))}">
       </div>`;
 
@@ -10843,6 +10849,104 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     grid.innerHTML = brandHtml + originHtml + extra100740;
+    void rshHydrateBrandSelect(categoryId, master);
+  }
+
+  function rshBrandListCacheKey(categoryId, status = '1') {
+    return `${Number(categoryId) || 0}:${String(status || '1')}`;
+  }
+
+  function rshBrandDisplayName(brand) {
+    return stripNonMarketplaceText(
+      brand?.display_brand_name || brand?.original_brand_name || brand?.brand_name || ''
+    ).trim();
+  }
+
+  function rshNormalizeBrandList(json) {
+    const response = json?.response || json?.result?.response || json?.result || json || {};
+    const rows = Array.isArray(json?.brands)
+      ? json.brands
+      : (Array.isArray(response.brand_list) ? response.brand_list : []);
+    const out = new Map();
+    rows.forEach((brand) => {
+      const brandId = Number(brand?.brand_id ?? brand?.id ?? 0);
+      const original = stripNonMarketplaceText(brand?.original_brand_name || brand?.brand_name || brand?.display_brand_name || '').trim();
+      const display = stripNonMarketplaceText(brand?.display_brand_name || original || '').trim();
+      if (!original && !display) return;
+      const key = `${brandId}:${(original || display).toLowerCase()}`;
+      if (!out.has(key)) out.set(key, { brand_id: brandId, original_brand_name: original || display, display_brand_name: display || original });
+    });
+    return Array.from(out.values()).sort((a, b) => rshBrandDisplayName(a).localeCompare(rshBrandDisplayName(b)));
+  }
+
+  async function rshLoadBrandOptions(categoryId, forceRefresh = false) {
+    const key = rshBrandListCacheKey(categoryId);
+    if (!forceRefresh && _rshBrandOptionsCache.has(key)) return _rshBrandOptionsCache.get(key);
+    const qs = new URLSearchParams({ region: 'SG', category_id: String(categoryId), status: '1' });
+    const resp = await fetch(`${SHOPEE_BRIDGE}/global_brands?${qs.toString()}`, { headers: AUTH_HEADERS });
+    const json = await resp.json().catch(() => null);
+    if (!resp.ok || !json?.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
+    const brands = rshNormalizeBrandList(json);
+    _rshBrandOptionsCache.set(key, brands);
+    return brands;
+  }
+
+  function rshSyncBrandHidden() {
+    const select = document.getElementById('rsh-attr-brand-select');
+    const option = select?.selectedOptions?.[0] || null;
+    const brandId = Number(option?.dataset?.brandId ?? select?.value ?? 0);
+    const originalName = stripNonMarketplaceText(option?.dataset?.originalName || option?.textContent || 'No Brand').trim() || 'No Brand';
+    const nameInput = document.getElementById('rsh-attr-brand');
+    const idInput = document.getElementById('rsh-attr-brand-id');
+    if (nameInput) nameInput.value = originalName;
+    if (idInput) idInput.value = String(Number.isFinite(brandId) ? brandId : 0);
+  }
+
+  function rshPopulateBrandSelect(brands, currentName = 'No Brand', currentId = 0) {
+    const select = document.getElementById('rsh-attr-brand-select');
+    if (!select) return;
+    const current = {
+      brand_id: Number(currentId) || 0,
+      original_brand_name: stripNonMarketplaceText(currentName || 'No Brand').trim() || 'No Brand',
+      display_brand_name: stripNonMarketplaceText(currentName || 'No Brand').trim() || 'No Brand',
+    };
+    const merged = new Map();
+    [current, { brand_id: 0, original_brand_name: 'No Brand', display_brand_name: 'No Brand' }, ...(brands || [])].forEach((brand) => {
+      const name = rshBrandDisplayName(brand);
+      if (!name) return;
+      const key = `${Number(brand.brand_id || 0)}:${name.toLowerCase()}`;
+      if (!merged.has(key)) merged.set(key, brand);
+    });
+    const selectedKey = `${current.brand_id}:${rshBrandDisplayName(current).toLowerCase()}`;
+    select.innerHTML = Array.from(merged.values()).map((brand) => {
+      const id = Number(brand.brand_id || 0);
+      const original = stripNonMarketplaceText(brand.original_brand_name || rshBrandDisplayName(brand) || 'No Brand').trim() || 'No Brand';
+      const display = rshBrandDisplayName(brand) || original;
+      const key = `${id}:${display.toLowerCase()}`;
+      return `<option value="${text(String(id))}" data-brand-id="${text(String(id))}" data-original-name="${text(original)}"${key === selectedKey ? ' selected' : ''}>${text(display)}${id ? ` (${text(String(id))})` : ''}</option>`;
+    }).join('');
+    select.onchange = rshSyncBrandHidden;
+    rshSyncBrandHidden();
+  }
+
+  async function rshHydrateBrandSelect(categoryId, master, forceRefresh = false) {
+    const select = document.getElementById('rsh-attr-brand-select');
+    const status = document.getElementById('rsh-brand-status');
+    const refresh = document.getElementById('rsh-brand-refresh');
+    if (!select) return;
+    const currentName = rshGuessBrandName(master, rshReadProductName());
+    const currentId = Number(master?.shopee_brand_id ?? 0);
+    if (refresh) refresh.onclick = () => rshHydrateBrandSelect(categoryId, master, true);
+    try {
+      if (status) status.textContent = 'Loading...';
+      const brands = await rshLoadBrandOptions(categoryId, forceRefresh);
+      if (!select.isConnected) return;
+      rshPopulateBrandSelect(brands, currentName, currentId);
+      if (status) status.textContent = `${brands.length} brands`;
+    } catch (e) {
+      rshPopulateBrandSelect([], currentName, currentId);
+      if (status) status.textContent = `Brand lookup failed: ${e.message || e}`;
+    }
   }
 
   // Build attribute_list array from spec form inputs.
@@ -10900,6 +11004,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function rshReadBrandObject() {
+    rshSyncBrandHidden();
     const brandName = stripNonMarketplaceText(document.getElementById('rsh-attr-brand')?.value || '').trim() || 'No Brand';
     const brandId = Number(document.getElementById('rsh-attr-brand-id')?.value || 0);
     return brandId > 0
@@ -11388,6 +11493,69 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     rshUpdateImageCount();
     const countEl = $rsh('img-count');
     if (countEl) countEl.textContent = `${label} 선택됨`;
+  }
+
+  function rshMasterMainImageUrl(master) {
+    return rshNormalizeImageUrl(master?.main_image || '', master?.staronemall_url || window.location.href);
+  }
+
+  function rshMasterDetailImageRefs(master) {
+    const mainUrl = rshMasterMainImageUrl(master);
+    const seen = new Set(mainUrl ? [mainUrl] : []);
+    const urls = Array.isArray(master?.extra_images) ? master.extra_images : [];
+    const refs = [];
+    urls.forEach((url) => {
+      const src = rshNormalizeImageUrl(url, master?.staronemall_url || window.location.href);
+      if (!src || seen.has(src) || rshIsStaronemallBannerImageUrl(src)) return;
+      seen.add(src);
+      refs.push({ src, sourceUrl: src, staronemallUrl: master?.staronemall_url || '', kind: 'master-detail', label: 'Detail' });
+    });
+    return refs;
+  }
+
+  async function rshUseMasterImages(master) {
+    const mainUrl = rshMasterMainImageUrl(master);
+    if (!mainUrl) return false;
+    let coverRef = null;
+    try {
+      const dataUrl = await rshBuildLayeredCoverDataUrl(mainUrl);
+      coverRef = {
+        src: dataUrl,
+        dataUrl,
+        sourceUrl: mainUrl,
+        staronemallUrl: master?.staronemall_url || '',
+        idx: 0,
+        kind: 'master-layered-cover',
+        label: 'Master cover',
+      };
+    } catch (e) {
+      console.warn('[rsh] master layered cover failed, falling back to raw master image:', e);
+      coverRef = {
+        src: mainUrl,
+        sourceUrl: mainUrl,
+        staronemallUrl: master?.staronemall_url || '',
+        idx: 0,
+        kind: 'master-cover-fallback',
+        label: 'Master cover',
+      };
+    }
+    const detailRefs = rshMasterDetailImageRefs(master);
+    const displayRefs = [coverRef, ...detailRefs.slice(0, REGISTER_MAX_IMAGE_IDS - 1)]
+      .map((ref, idx) => ({ ...ref, idx }));
+    _rsh.crawledImageRefs = displayRefs;
+    _rsh.crawledImages = displayRefs.map((ref) => ref.src);
+    _rsh.selectedImages = [displayRefs[0]];
+    _rsh.detailImageSources = detailRefs.slice(0, REGISTER_MAX_IMAGE_IDS - 1);
+    _rsh.uploadMode = true;
+    const imgMissing = $rsh('img-missing');
+    if (imgMissing) imgMissing.style.display = 'none';
+    rshRenderImageGrid(_rsh.crawledImages);
+    const imgGrid = $rsh('img-grid');
+    if (imgGrid) imgGrid.style.display = 'grid';
+    rshUpdateImageBadges();
+    rshUpdateImageCount();
+    rshCheckSubmitEnabled();
+    return true;
   }
 
   function plBuildJoomPublishGroupFromProducts(rows) {
@@ -12254,10 +12422,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const manualUrlSection = $rsh('manual-url-section');
     if (manualUrlSection) manualUrlSection.style.display = 'none';
 
-    if (master.staronemall_url) {
-      // StarOneMall products must use the shop-layer composited representative
-      // image as the cover. Existing Shopee image_id cache may be from an older
-      // raw upload, so crawl/rebuild by default and save the fresh IDs on publish.
+    if (master.main_image) {
+      // Master image fields are the operator-approved publishing source.
+      // The representative image is composited with the shop layer, and
+      // master.extra_images become the rest of image.image_id_list.
+      if (imgMissing) imgMissing.style.display = 'block';
+      await rshUseMasterImages(master);
+      if (reuploadBtn) {
+        reuploadBtn.style.display = 'inline-flex';
+        reuploadBtn.onclick = () => rshUseMasterImages(master);
+      }
+    } else if (master.staronemall_url) {
+      // Fallback for older rows without master image attachments.
       if (imgMissing) imgMissing.style.display = 'block';
       await rshCrawlImages(master.staronemall_url);
       if (reuploadBtn) {
@@ -12975,6 +13151,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         regions: activeRegions,
         publish_request_id: _rsh.publishRequestId,
         lifecycle_state: lifecycle,
+        shopee_description: document.getElementById('rsh-description')?.value || '',
         region_image_ids: _rsh.regionImageIds || {},
         region_prices: rshBuildSingleRegionPrices(activeRegions, costOverride, singleWeightG),
       };

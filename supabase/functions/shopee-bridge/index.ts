@@ -99,6 +99,7 @@ const PROXY_ALLOWED_HOSTS = new Set([
   'cf.shopee.com.my',
   'cf.shopee.co.th',
   'cf.shopee.com.br',
+  'bpdafetvjyvvwbksvowu.supabase.co',
 ]);
 const PROXY_ALLOWED_SUFFIXES = [
   '.wisacdn.com',
@@ -715,6 +716,50 @@ function stringArray(value: any): string[] {
       return '';
     })
     .filter((entry: string) => entry.length > 0);
+}
+
+function normalizeBrandRows(result: any): any[] {
+  const response = result?.response || result?.result?.response || result?.result || result || {};
+  const rows = Array.isArray(response.brand_list) ? response.brand_list : [];
+  return rows.map((brand: any) => ({
+    brand_id: Number(brand?.brand_id || 0),
+    original_brand_name: String(brand?.original_brand_name || brand?.brand_name || brand?.display_brand_name || '').trim(),
+    display_brand_name: String(brand?.display_brand_name || brand?.original_brand_name || brand?.brand_name || '').trim(),
+  })).filter((brand: any) => brand.original_brand_name || brand.display_brand_name);
+}
+
+async function fetchBrandListPages(region: string, scope: 'shop' | 'merchant', category_id: string, status: string) {
+  const pageSize = 100;
+  let offset = 0;
+  const brands: any[] = [];
+  const pages: any[] = [];
+  const seenOffsets = new Set<string>();
+  const path = scope === 'merchant'
+    ? '/api/v2/global_product/get_brand_list'
+    : '/api/v2/product/get_brand_list';
+  for (let i = 0; i < 20; i++) {
+    const key = String(offset);
+    if (seenOffsets.has(key)) break;
+    seenOffsets.add(key);
+    const result = scope === 'merchant'
+      ? await merchantApiCall(region, path, { query: { category_id, status, page_size: pageSize, offset } })
+      : await shopApiCall(region, path, { query: { category_id, status, page_size: pageSize, offset } });
+    pages.push(result);
+    if (result.error) {
+      return { ok: false, brands, result, pages, error: result.error, message: result.message };
+    }
+    brands.push(...normalizeBrandRows(result));
+    const response = result?.response || {};
+    if (!response.has_next_page) break;
+    const next = Number(response.next_offset);
+    if (!Number.isFinite(next) || next === offset) break;
+    offset = next;
+  }
+  const deduped = Array.from(new Map(brands.map((brand: any) => [
+    `${brand.brand_id}:${(brand.original_brand_name || brand.display_brand_name).toLowerCase()}`,
+    brand,
+  ])).values());
+  return { ok: true, brands: deduped, result: pages[0] || null, pages, page_count: pages.length };
 }
 
 function firstGlobalItemFromInfo(result: any, globalItemId: number) {
@@ -1769,9 +1814,11 @@ function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
   const dts = isPreOrder
     ? clampPreOrderRegionDts(dtsRaw)
     : clampReadyStockDts(dtsRaw);
+  const description = String(target.description ?? body.description ?? '').trim()
+    || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`;
   const item: any = {
     item_name: body.name,
-    description: body.description || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`,
+    description,
     item_status: body.item_status || 'NORMAL',
     original_price: price,
     image: imageBlockFrom(body),
@@ -2314,8 +2361,8 @@ Deno.serve(async (req) => {
       const category_id = url.searchParams.get('category_id') || '';
       const status = url.searchParams.get('status') || '1';
       if (!category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
-      const result = await shopApiCall(region, '/api/v2/product/get_brand_list', { query: { category_id, status, page_size: 100, offset: 0 } });
-      return jsonResp({ ok: !result.error, region, category_id, result });
+      const result = await fetchBrandListPages(region, 'shop', category_id, status);
+      return jsonResp({ ...result, region, category_id });
     }
     if (action === 'global_categories') {
       const result = await merchantApiCall(region, '/api/v2/global_product/get_category', { query: { language: 'en' } });
@@ -2325,8 +2372,8 @@ Deno.serve(async (req) => {
       const category_id = url.searchParams.get('category_id') || '';
       const status = url.searchParams.get('status') || '1';
       if (!category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
-      const result = await merchantApiCall(region, '/api/v2/global_product/get_brand_list', { query: { category_id, status, page_size: 100, offset: 0 } });
-      return jsonResp({ ok: !result.error, region, category_id, result });
+      const result = await fetchBrandListPages(region, 'merchant', category_id, status);
+      return jsonResp({ ...result, region, category_id });
     }
     if (action === 'global_attributes') {
       const category_id = url.searchParams.get('category_id') || '';

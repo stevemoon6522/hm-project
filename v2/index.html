@@ -11926,14 +11926,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       console.error('[openRegisterEbayGroupModal] window.mrOpenEbayModal is not available');
       return;
     }
-    const localRows = rshSortedProducts((state.products || []).filter((row) => (
-      String(row.product_group_id || '') === targetId || String(row.id || '') === targetId
-    )));
-    if (localRows.length) {
-      const localVariantRows = localRows.filter(plIsGroupedVariant);
-      window.mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(localVariantRows.length ? localVariantRows : localRows));
-      return;
-    }
+    // Always fetch the full RSH_PRODUCT_SELECT column set (mirrors Joom/Qoo10).
+    // The lean state.products rows omit ebay_variation_value / ebay_item_id /
+    // ebay_status, which breaks preservePublishedVariationValue: re-publishing an
+    // already-listed group then sends short variation values that no longer match
+    // the live eBay listing's variation specifics. Fetching the full row keeps the
+    // published variation values intact for createOrReplaceInventoryItem.
     let { data, error } = await db
       .from('products')
       .select(RSH_PRODUCT_SELECT)

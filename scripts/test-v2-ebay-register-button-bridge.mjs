@@ -32,21 +32,35 @@ assert(
   'Master-register eBay modal opener must be exported on window (bridge) for product-list eBay buttons',
 );
 
-// Both call sites inside openRegisterEbayGroupModal must go through the window
+// The publish call inside openRegisterEbayGroupModal must go through the window
 // bridge, never a bare `mrOpenEbayModal(...)` reference that ReferenceErrors.
 assert(
   html.includes('window.mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows))'),
-  'Product-list eBay button (remote path) must open the modal through window.mrOpenEbayModal',
-);
-assert(
-  html.includes('window.mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(localVariantRows.length ? localVariantRows : localRows))'),
-  'Product-list eBay button (local path) must open the modal through window.mrOpenEbayModal',
+  'Product-list eBay button must open the modal through window.mrOpenEbayModal',
 );
 
 // And it must guard against the bridge being uninitialized, like Joom does.
 assert(
   html.includes("if (typeof window.mrOpenEbayModal !== 'function')"),
   'openRegisterEbayGroupModal must guard against the eBay bridge being uninitialized',
+);
+
+// openRegisterEbayGroupModal must fetch the full RSH_PRODUCT_SELECT column set
+// (which includes ebay_variation_value / ebay_item_id / ebay_status), NOT the lean
+// state.products shortcut. The lean rows omit the eBay columns, which breaks
+// preservePublishedVariationValue and makes a re-publish send mismatched (short)
+// variation values that the live eBay listing rejects.
+const ebayOpenerStart = html.indexOf('async function openRegisterEbayGroupModal');
+const ebayOpenerEnd = html.indexOf('window.sdOpenRegisterEbayGroupModal = openRegisterEbayGroupModal');
+assert(ebayOpenerStart >= 0 && ebayOpenerEnd > ebayOpenerStart, 'openRegisterEbayGroupModal must exist');
+const ebayOpener = html.slice(ebayOpenerStart, ebayOpenerEnd);
+assert(
+  ebayOpener.includes('.select(RSH_PRODUCT_SELECT)'),
+  'openRegisterEbayGroupModal must load rows via RSH_PRODUCT_SELECT (full eBay columns)',
+);
+assert(
+  !ebayOpener.includes('localRows'),
+  'openRegisterEbayGroupModal must not use the lean state.products localRows shortcut (omits ebay_variation_value/ebay_item_id, breaks preservePublishedVariationValue)',
 );
 
 console.log('v2 eBay register button bridge checks passed');

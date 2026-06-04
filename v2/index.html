@@ -5299,7 +5299,7 @@ LEGACY END -->
         <td class="pl-platform-cell">
           <div class="pl-shopee-cell">
             ${plGroupPlatformCell(rows, 'ebay')}
-            <button type="button" data-open-ebay-group="${text(first.product_group_id || '')}" onclick="window.sdOpenRegisterEbayGroupModal && window.sdOpenRegisterEbayGroupModal('${text(first.product_group_id || '')}')" class="pl-shopee-register" title="eBay 등록" aria-label="eBay 등록">eB</button>
+            <button type="button" data-open-ebay-group="${text(first.product_group_id || '')}" class="pl-shopee-register" title="eBay 등록" aria-label="eBay 등록">eB</button>
           </div>
         </td>
         <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'alibaba')}</td>
@@ -5361,7 +5361,7 @@ LEGACY END -->
         <td class="pl-platform-cell">
           <div class="pl-shopee-cell">
             ${platformLedCell(p.id, 'ebay')}
-            ${(!isVariantRow && !isGroupChild) ? `<button type="button" data-open-ebay-single="${text(p.id)}" onclick="window.sdOpenRegisterEbayGroupModal && window.sdOpenRegisterEbayGroupModal('${text(p.id)}')" class="pl-shopee-register" title="eBay 등록" aria-label="eBay 등록">eB</button>` : ''}
+            ${(!isVariantRow && !isGroupChild) ? `<button type="button" data-open-ebay-single="${text(p.id)}" class="pl-shopee-register" title="eBay 등록" aria-label="eBay 등록">eB</button>` : ''}
           </div>
         </td>
         <td style="text-align:center;">${platformLedCell(p.id, 'alibaba')}</td>
@@ -8632,7 +8632,6 @@ LEGACY END -->
   document.getElementById('pl-master-edit-modal')?.addEventListener('click', (e) => {
     if (e.target && e.target.id === 'pl-master-edit-modal') closeProductMasterEditModal();
   });
-  document.addEventListener('click', sdHandleProductListEbayClick, true);
 
   // Step 0 (plan v2.2): real Supabase auth gate. Replaces the prior anon-JWT
   // bypass — every Edge Function mutating route now requires a signed-in
@@ -11961,25 +11960,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     window.mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows));
   }
   window.sdOpenRegisterEbayGroupModal = openRegisterEbayGroupModal;
-
-  function sdHandleProductListEbayClick(event) {
-    const rawTarget = event?.target;
-    const target = rawTarget?.closest ? rawTarget : rawTarget?.parentElement;
-    if (!target?.closest) return;
-    const groupBtn = target.closest('[data-open-ebay-group]');
-    if (groupBtn) {
-      event.preventDefault();
-      event.stopPropagation();
-      void openRegisterEbayGroupModal(groupBtn.dataset.openEbayGroup);
-      return;
-    }
-    const singleBtn = target.closest('[data-open-ebay-single]');
-    if (singleBtn) {
-      event.preventDefault();
-      event.stopPropagation();
-      void openRegisterEbayGroupModal(singleBtn.dataset.openEbaySingle);
-    }
-  }
 
   async function openRegisterJoomGroupModal(productGroupId) {
     const targetId = String(productGroupId || '').trim();

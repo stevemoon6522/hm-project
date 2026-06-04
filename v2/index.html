@@ -14478,7 +14478,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let offset = 0;
     while (true) {
       const url = SUPABASE_URL + '/rest/v1/products'
-        + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_offer_id,ebay_status,ebay_last_synced_price,qoo10_category_id'
+        + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
         + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
       const res = await fetch(url, {
         headers: Object.assign({}, AUTH_HEADERS, {
@@ -14494,7 +14494,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           // Fallback query without cost_updated_at
           const res2 = await fetch(
             SUPABASE_URL + '/rest/v1/products'
-              + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_offer_id,ebay_status,ebay_last_synced_price,qoo10_category_id'
+              + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
               + '&order=lifecycle_state.asc,created_at.asc',
             {
               headers: Object.assign({}, AUTH_HEADERS, {
@@ -16511,6 +16511,95 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
   }
 
+  async function catExecuteEbaySync() {
+    await catFlushSelectedInlineEdits({ persistWeight: true });
+    const products = catSelectedProducts();
+    if (!products.length) {
+      showToast('eBay 동기화 대상 행을 선택하세요.', 'err');
+      return;
+    }
+    if (!confirm('eBay(US) 가격을 실동기화합니다.\n\n대상: ' + products.length + '건\n진행할까요?')) return;
+
+    const btn = document.getElementById('cat-sync-btn');
+    const oldText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'eBay 동기화 중...'; }
+
+    const EBAY_BRIDGE = SHOPEE_BRIDGE.replace('/shopee-bridge', '/ebay-bridge');
+    const now = new Date().toISOString();
+    let okCount = 0;
+    const errors = [];
+
+    try {
+      for (const product of products) {
+        // §RC5: use ebay_sku only — no fallback to product.sku
+        const sku = product.ebay_sku;
+        if (!sku) {
+          errors.push((product.sku || product.product_name || String(product.id)) + ': eBay 미등록 (ebay_sku 없음)');
+          continue;
+        }
+
+        const newCost = catEffectiveCost(product);
+        const weightG = catEffectiveWeight(product);
+        const priceUsd = catComputeEbayPrice(newCost, weightG);
+        if (priceUsd === null || !Number.isFinite(priceUsd) || priceUsd <= 0) {
+          errors.push(sku + ': eBay 가격 계산 실패');
+          continue;
+        }
+
+        let updateJson = null;
+        let updateOk = false;
+        try {
+          const updateResp = await fetch(EBAY_BRIDGE + '/update-price', {
+            method: 'POST',
+            headers: AUTH_HEADERS,
+            body: JSON.stringify({
+              sku: sku,
+              priceUsd: priceUsd,
+              offerId: product.ebay_offer_id || undefined,
+            }),
+          });
+          updateJson = await updateResp.json().catch(function() { return { ok: false, error: 'HTTP ' + updateResp.status }; });
+          updateOk = updateResp.ok && updateJson && updateJson.ok;
+        } catch (e) {
+          updateJson = { ok: false, error: e.message || String(e) };
+        }
+
+        if (!updateOk) {
+          errors.push(sku + ': ' + (updateJson?.error || updateJson?.message || 'update-price failed'));
+          continue;
+        }
+
+        const persisted = await catPersistProductCost(product.id, newCost, now);
+        if (!persisted.ok) errors.push(sku + ': cost update ' + persisted.error);
+
+        const { error: productErr } = await db.from('products').update({
+          ebay_last_synced_price: priceUsd,
+          ebay_last_synced_at: now,
+        }).eq('id', product.id);
+        if (productErr) {
+          errors.push(sku + ': products update ' + productErr.message);
+          continue;
+        }
+
+        Object.assign(product, {
+          ebay_last_synced_price: priceUsd,
+          ebay_last_synced_at: now,
+        });
+        okCount++;
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = oldText; }
+    }
+
+    applyAndRenderCatalog();
+    if (errors.length) {
+      console.warn('[CAT ebay] errors:', errors);
+      showToast('eBay 일부 실패: ' + errors[0], 'err');
+    } else {
+      showToast('eBay 가격 동기화 완료 (' + okCount + '건)', 'ok');
+    }
+  }
+
   // ── Platform + Shopee market controls ───────────────────────────
 
   function catSyncPlatformActions() {
@@ -16531,7 +16620,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         catExecuteShopeeLive();
         break;
       case 'ebay':
-        showToast('eBay 실시간 가격 동기화는 다음 단계에서 활성화됩니다 (미리보기 전용).', '');
+        catExecuteEbaySync();
         break;
       case 'qoo10':
         showToast('Qoo10 실시간 가격 동기화는 다음 단계에서 활성화됩니다 (미리보기 전용).', '');

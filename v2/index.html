@@ -20504,7 +20504,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           gst:          0,
           fspCcb:       0,
           importDuty:   0,
-          fixedServiceFee: 0,
+          fixedServiceFee: Number(data.fixed_service_fee) || 0,
           purchaseVat:  Number(data.purchase_vat)  || 0,
         };
         return _v2EbayExCountryCache;
@@ -22477,6 +22477,7 @@ Contact
       { key: 'exchange_rate', label: 'Exchange Rate', unit: 'KRW', hint: 'USD 환율 (1 USD = ? 원)', isPercent: false },
       { key: 'sales_fee', label: 'Final Value Fee · CD/Music category', unit: '%', hint: 'CD/Music 카테고리 수수료. eBay 예시 기준 15.3%.', isPercent: true, defaultValue: 15.3 },
       { key: 'pg_fee', label: 'International Fee', unit: '%', hint: '글로벌 판매자 international fee. eBay 예시 기준 1.45%.', isPercent: true, defaultValue: 1.45 },
+      { key: 'fixed_service_fee', label: 'Final Value Fee · 주문당 고정', unit: 'USD', hint: '주문 $10.01+ 건당 고정 수수료. eBay 예시 기준 $0.40.', isPercent: false, defaultValue: 0.40 },
     ];
     function feeFieldsForCountry(code) {
       return code === 'EX' ? FEE_EBAY_FIELDS : FEE_FIELDS;

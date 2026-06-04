@@ -1671,8 +1671,11 @@
               <div class="register-form-row" style="margin-bottom:12px;">
                 <button type="button" id="mr-back-btn" style="font-size:12px;padding:5px 12px;">← 입력으로 돌아가기</button>
                 <span style="font-size:12px;color:var(--muted);" id="mr-stage2-summary"></span>
-                <button type="button" id="mr-retry-failed-btn" style="font-size:12px;padding:5px 12px;margin-left:auto;display:none;">↻ 크롤 실패 재크롤</button>
-                <button type="button" id="mr-promote-btn" class="primary" style="font-size:13px;padding:6px 14px;">전체 등록 → 상품 목록</button>
+                <label style="font-size:12px;display:flex;align-items:center;gap:4px;margin-left:auto;" title="등록 대상 카드 전체 선택/해제">
+                  <input type="checkbox" id="mr-select-all" checked> 전체 선택
+                </label>
+                <button type="button" id="mr-retry-failed-btn" style="font-size:12px;padding:5px 12px;display:none;">↻ 크롤 실패 재크롤</button>
+                <button type="button" id="mr-promote-btn" class="primary" style="font-size:13px;padding:6px 14px;">선택 등록 → 상품 목록</button>
               </div>
 
               <div id="mr-preview-cards" style="display:flex;flex-direction:column;gap:12px;"></div>
@@ -18026,6 +18029,27 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let MR_PREV = [];   // preview rows: {tempId, url, weight_g, cost_krw, status, source_record_id, observed, artist, album, version, member, sku, error, product_id, deduped, collisionMode}
     let MR_NEXT_ID = 1;
     let MR_PENDING_STARONE_LOADED = false;
+    // Dismissed StarOneMall source_record ids — persisted so deleting a prefilled
+    // row in stage 1 sticks across reloads / tab re-entry (it would otherwise be
+    // re-prefilled from source_records since the record stays pending_review).
+    const MR_DISMISSED_KEY = 'sdv2:mr:dismissed-staronemall';
+    const MR_DISMISSED_SOURCE_IDS = (() => {
+      try { return new Set(JSON.parse(localStorage.getItem(MR_DISMISSED_KEY) || '[]').map(String)); }
+      catch (_) { return new Set(); }
+    })();
+    function mrPersistDismissed() {
+      try { localStorage.setItem(MR_DISMISSED_KEY, JSON.stringify(Array.from(MR_DISMISSED_SOURCE_IDS))); }
+      catch (_) {}
+    }
+    // Stage 2 per-card promote selection. We track DESELECTED group keys so the
+    // default stays "all selected" (matching the previous register-all behavior).
+    const MR_PROMOTE_DESELECTED = new Set();
+    function mrGroupSelKey(group) {
+      return String(group.source_record_id || ('__tmp__' + (group.rows && group.rows[0] ? group.rows[0].tempId : '')));
+    }
+    function mrGroupSelected(group) {
+      return !MR_PROMOTE_DESELECTED.has(mrGroupSelKey(group));
+    }
     let MR_EXISTING_SKUS = new Set();    // products.sku set, fetched at stage 2 start
     let MR_EXISTING_URL_MAP = new Map(); // source_url → {source_record_id, status}, refreshed on stage 1 url input
 
@@ -18387,6 +18411,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const xTd = el('td');
       const xBtn = el('button', { type: 'button', style: 'font-size:11px;padding:3px 8px;' }, '✕');
       xBtn.addEventListener('click', () => {
+        // Remember dismissal so a prefilled StarOneMall row does not get restored
+        // on the next pending-records load (page reload / URL tab re-entry).
+        if (row.source_record_id) {
+          MR_DISMISSED_SOURCE_IDS.add(String(row.source_record_id));
+          mrPersistDismissed();
+        }
         MR_ROWS = MR_ROWS.filter(r => r.tempId !== row.tempId);
         tr.remove();
         mrUpdateStage1Summary();
@@ -18448,7 +18478,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const existingUrls = new Set(MR_ROWS.map(r => String(r.url || '').trim()).filter(Boolean));
         const prefills = (data || [])
           .map(mrPendingSourcePrefill)
-          .filter(row => row.url && !existingUrls.has(row.url));
+          .filter(row => row.url && !existingUrls.has(row.url) && !MR_DISMISSED_SOURCE_IDS.has(String(row.source_record_id)));
         if (!prefills.length) return;
         MR_ROWS = MR_ROWS.filter(r => String(r.url || '').trim());
         $('mr-input-body').innerHTML = '';
@@ -18919,6 +18949,23 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         // Card info column
         const infoCol = el('div', { style: 'display:flex;flex-direction:column;gap:5px;font-size:12px;min-width:0;' });
         const cardTop = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
+        // Per-card register selection. Only promotable cards (have a source record
+        // and at least one preview/failed option) can be toggled; done cards are locked.
+        const cardPromotable = !!group.source_record_id && group.rows.some(r => r.status === 'preview' || r.status === 'failed');
+        if (cardPromotable) {
+          const selLab = el('label', { style: 'display:flex;align-items:center;gap:3px;font-weight:600;cursor:pointer;', title: '이 카드를 등록 대상에 포함' });
+          const selCb = el('input', { type: 'checkbox' });
+          selCb.checked = mrGroupSelected(group);
+          selCb.addEventListener('change', () => {
+            const k = mrGroupSelKey(group);
+            if (selCb.checked) MR_PROMOTE_DESELECTED.delete(k);
+            else MR_PROMOTE_DESELECTED.add(k);
+            mrUpdatePromoteSelectionUi();
+          });
+          selLab.appendChild(selCb);
+          selLab.appendChild(el('span', null, '등록'));
+          cardTop.appendChild(selLab);
+        }
         cardTop.appendChild(el('span', { style: 'font-weight:700;' }, `카드 #${gIdx + 1}`));
         const lab = mrStatusLabel(cardStatus);
         cardTop.appendChild(el('span', { style: `color:${lab.color};font-weight:600;` }, lab.text));
@@ -19567,6 +19614,29 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
         wrap.appendChild(card);
       });
+
+      mrUpdatePromoteSelectionUi();
+    }
+
+    // Sync the "전체 선택" checkbox, promote button state and label with the
+    // current per-card register selection.
+    function mrUpdatePromoteSelectionUi() {
+      const groups = mrGroupCards();
+      const promotable = groups.filter(g => g.source_record_id && g.rows.some(r => r.status === 'preview' || r.status === 'failed'));
+      const selected = promotable.filter(mrGroupSelected);
+      const selAll = $('mr-select-all');
+      if (selAll) {
+        selAll.disabled = promotable.length === 0;
+        selAll.checked = promotable.length > 0 && selected.length === promotable.length;
+        selAll.indeterminate = selected.length > 0 && selected.length < promotable.length;
+      }
+      const btn = $('mr-promote-btn');
+      if (btn) {
+        btn.disabled = selected.length === 0;
+        btn.textContent = (selected.length > 0 && selected.length < promotable.length)
+          ? `선택 등록 (${selected.length}/${promotable.length}) → 상품 목록`
+          : '선택 등록 → 상품 목록';
+      }
     }
 
     async function mrLoadExistingSkus() {
@@ -19794,11 +19864,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       mrBuildTierCoords(groups);
 
       // Filter to groups that have at least one preview/failed row with source_record_id
-      const activeGroups = groups.filter(g =>
+      const promotableGroups = groups.filter(g =>
         g.source_record_id &&
         g.rows.some(r => r.status === 'preview' || r.status === 'failed')
       );
-      if (activeGroups.length === 0) { err.textContent = '등록할 카드가 없습니다.'; err.style.display = 'block'; return; }
+      // Only register cards the operator has selected (default: all selected).
+      const activeGroups = promotableGroups.filter(mrGroupSelected);
+      if (activeGroups.length === 0) {
+        err.textContent = promotableGroups.length === 0
+          ? '등록할 카드가 없습니다.'
+          : '선택된 카드가 없습니다. 등록할 카드를 체크한 뒤 다시 시도하세요.';
+        err.style.display = 'block';
+        return;
+      }
 
       // ── Cross-card SKU collision check (P1 #2) ────────────────────
       // Collect all SKUs that belong to ANY card with active/committed intent.
@@ -22403,6 +22481,19 @@ Contact
         $('mr-stage1').style.display = '';
       });
       $('mr-promote-btn').addEventListener('click', mrPromoteAll);
+      const mrSelectAll = $('mr-select-all');
+      if (mrSelectAll) {
+        mrSelectAll.addEventListener('change', () => {
+          const groups = mrGroupCards();
+          const promotable = groups.filter(g => g.source_record_id && g.rows.some(r => r.status === 'preview' || r.status === 'failed'));
+          if (mrSelectAll.checked) {
+            promotable.forEach(g => MR_PROMOTE_DESELECTED.delete(mrGroupSelKey(g)));
+          } else {
+            promotable.forEach(g => MR_PROMOTE_DESELECTED.add(mrGroupSelKey(g)));
+          }
+          mrRenderPreviewCards();
+        });
+      }
       $('mr-retry-failed-btn').addEventListener('click', async () => {
         const failed = MR_PREV.filter(r => r.status === 'failed' && !r.source_record_id);
         if (failed.length === 0) return;

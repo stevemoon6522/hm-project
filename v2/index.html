@@ -20972,6 +20972,29 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       SK: { 100: { baselineKrw: 7200, standardKrw: 6350, deltaKrw: 0 }, 200: { baselineKrw: 8900, standardKrw: 8400, deltaKrw: 0 }, 300: { baselineKrw: 10500, standardKrw: 10450, deltaKrw: 0 }, 400: { baselineKrw: 12300, standardKrw: 12500, deltaKrw: 200 }, 500: { baselineKrw: 14400, standardKrw: 14450, deltaKrw: 50 }, 600: { baselineKrw: 15800, standardKrw: 16500, deltaKrw: 700 }, 700: { baselineKrw: 17200, standardKrw: 18550, deltaKrw: 1350 }, 800: { baselineKrw: 18500, standardKrw: 20600, deltaKrw: 2100 }, 900: { baselineKrw: 19900, standardKrw: 22550, deltaKrw: 2650 }, 1000: { baselineKrw: 20700, standardKrw: 24600, deltaKrw: 3900 } },
       US: { 100: { baselineKrw: 7200, standardKrw: 7200, deltaKrw: 0 }, 200: { baselineKrw: 8900, standardKrw: 8900, deltaKrw: 0 }, 300: { baselineKrw: 10500, standardKrw: 10500, deltaKrw: 0 }, 400: { baselineKrw: 12300, standardKrw: 12300, deltaKrw: 0 }, 500: { baselineKrw: 14400, standardKrw: 14400, deltaKrw: 0 }, 600: { baselineKrw: 15800, standardKrw: 15800, deltaKrw: 0 }, 700: { baselineKrw: 17200, standardKrw: 17200, deltaKrw: 0 }, 800: { baselineKrw: 18500, standardKrw: 18500, deltaKrw: 0 }, 900: { baselineKrw: 19900, standardKrw: 19900, deltaKrw: 0 }, 1000: { baselineKrw: 20700, standardKrw: 20700, deltaKrw: 0 } }
     };
+    // Higher-rate / 보류 국가 목록 — _v2EbayBuildShippingSurchargeRows 의 surcharge 계산에 사용.
+    // 동일 목록이 아래 fee-settings IIFE 에도 EBAY_SHIPPING_HIGHER_RATE_1KG_COUNTRIES 로 존재한다.
+    // 두 IIFE 스코프가 분리돼 closure 로 공유되지 않으므로 계산 스코프용 사본을 둔다.
+    // 국가를 추가/삭제하면 두 목록을 함께 갱신할 것.
+    const EBAY_SHIPPING_HIGHER_RATE_1KG_COUNTRIES = [
+      { code: 'DE', name: '독일' }, { code: 'IT', name: '이탈리아' },
+      { code: 'NL', name: '네덜란드' }, { code: 'PL', name: '폴란드' },
+      { code: 'PT', name: '포르투갈' }, { code: 'IE', name: '아일랜드' },
+      { code: 'FI', name: '핀란드' }, { code: 'CH', name: '스위스' },
+      { code: 'LU', name: '룩셈부르크' }, { code: 'AT', name: '오스트리아' },
+      { code: 'BE', name: '벨기에' }, { code: 'CZ', name: '체코' },
+      { code: 'HU', name: '헝가리' }, { code: 'DK', name: '덴마크' },
+      { code: 'NO', name: '노르웨이' }, { code: 'GR', name: '그리스' },
+      { code: 'MT', name: '몰타' }, { code: 'LT', name: '리투아니아' },
+      { code: 'LV', name: '라트비아' }, { code: 'RO', name: '루마니아' },
+      { code: 'SI', name: '슬로베니아' }, { code: 'SK', name: '슬로바키아' },
+      { code: 'HR', name: '크로아티아' }, { code: 'EE', name: '에스토니아' },
+      { code: 'CY', name: '키프로스' }, { code: 'IL', name: '이스라엘' },
+      { code: 'CA', name: '캐나다' }, { code: 'MX', name: '멕시코' },
+      { code: 'BR', name: '브라질' }, { code: 'CL', name: '칠레' },
+      { code: 'CO', name: '콜롬비아' }, { code: 'SA', name: '사우디아라비아' },
+      { code: 'AE', name: '아랍에미리트' },
+    ];
     function _v2EbayShippingWeightBucketG(weightG) {
       const w = Number(weightG) || 0;
       if (w <= 0) return 0;

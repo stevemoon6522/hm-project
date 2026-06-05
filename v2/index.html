@@ -1645,7 +1645,7 @@
                 <table id="mr-input-table" style="table-layout:fixed;width:100%;margin:0;">
                   <thead>
                     <tr>
-                      <th style="width:46px;">#</th>
+                      <th style="width:62px;"><input type="checkbox" id="mr-input-select-all" checked title="URL 행 전체 선택/해제" style="width:auto;margin:0 6px 0 0;vertical-align:middle;">#</th>
                       <th>URL</th>
                       <th style="width:110px;">무게 (g)</th>
                       <th style="width:90px;">상태</th>
@@ -11589,7 +11589,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return Object.assign({}, row, {
         status: row.status || 'ready',
         url: row.staronemall_url || '',
-        observed: { title: row.product_name || '', main_image_urls: row.main_image ? [row.main_image] : [], detail_image_urls: [] },
+        observed: {
+          title: row.product_name || '',
+          main_image_urls: row.main_image ? [row.main_image] : [],
+          detail_image_urls: Array.isArray(row.extra_images) ? row.extra_images : [],
+        },
         artist,
         album,
         _sku: row.sku || '',
@@ -11597,13 +11601,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         _opt1: optionNames[1] || '',
         _cost_krw: Number(row.cost_krw || row.sourcing_price || 0),
         _weight_g: Number(row.weight_g || 0),
-        _main_image: row.shopee_option_image_url || '',
+        _main_image: row.shopee_option_image_url || row.main_image || '',
         _extra_images: Array.isArray(row.extra_images) ? row.extra_images : [],
         _components_en: row.components_extracted_en || '',
         _tierNames: tierNames,
         _twoAxis: twoAxis,
         _joomCategory: 'music_albums',
-        _joomBrand: row.shopee_brand_name || artist,
+        _joomBrand: (/^no brand$/i.test(String(row.shopee_brand_name || '').trim()) ? '' : row.shopee_brand_name) || row.qoo10_brand_name || artist,
         _joomMainImageOverride: '',
       });
     });
@@ -12336,16 +12340,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     const sourcingEl = document.getElementById('rsh-sourcing-price-krw');
     const costEl = document.getElementById('rsh-cost-krw');
-    if (sourcingEl) sourcingEl.value = String(rshDefaultSourcingPrice(master) || '');
-    if (costEl) costEl.value = String(rshDefaultSettlementPrice(master) || '');
-
-    const weightEl = $rsh('weight');
     const stockField = document.getElementById('rsh-stock-field');
     const stockEl = document.getElementById('rsh-stock');
-    if (weightEl) {
-      weightEl.textContent = _rsh.mode === 'group'
+    if (sourcingEl) sourcingEl.value = String(rshDefaultSourcingPrice(master) || '');
+    if (costEl) costEl.value = String(rshDefaultSettlementPrice(master) || '');
     if (stockField) stockField.style.display = _rsh.mode === 'group' ? 'none' : '';
     if (stockEl) stockEl.value = _rsh.mode === 'group' ? '' : String(rshDefaultVariantStock(master));
+
+    const weightEl = $rsh('weight');
+    if (weightEl) {
+      weightEl.textContent = _rsh.mode === 'group'
         ? rshWeightSummary(_rsh.products)
         : (master.weight_g ? `${Number(master.weight_g).toLocaleString()} g` : '(미설정)');
     }
@@ -12366,6 +12370,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (catSel) {
       catSel.onchange = () => {
         rshBuildSpecSection(Number(catSel.value), _rsh.master);
+        rshCheckSubmitEnabled();
       };
     }
 
@@ -12376,12 +12381,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       });
     }
     if (costEl) costEl.addEventListener('input', rshCheckSubmitEnabled);
+    if (stockEl) stockEl.addEventListener('input', rshCheckSubmitEnabled);
 
     // Description
     const descEl = document.getElementById('rsh-description');
     const generatedDesc = rshDescriptionTemplate(
       rshReadProductName() || formattedShopeeName || master.sku,
-    if (stockEl) stockEl.addEventListener('input', rshCheckSubmitEnabled);
       master.lifecycle_state,
       master.components_extracted_en,
     );
@@ -12646,11 +12651,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // the representative cover; StarOneMall detail images follow it in the
   // image_id_list. KRSC requires target-region image IDs, and BR needs 2+ IDs.
   // Returns { regionImageIds: { SG: [cover, detail...], ... }, coverImageId, extraImageIds }.
-  async function rshUploadImages(session, regions) {
-    const SHOPEE_BRIDGE_UPLOAD = `${SUPABASE_URL}/functions/v1/shopee-bridge/upload_image`;
-    const uploadHeaders = {
-      Authorization: `Bearer ${session.access_token}`,
-      apikey: SUPABASE_ANON,
   async function rshMapWithConcurrency(items, limit, worker) {
     const list = Array.isArray(items) ? items : [];
     const out = new Array(list.length);
@@ -12665,6 +12665,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return out;
   }
 
+  async function rshUploadImages(session, regions) {
+    const SHOPEE_BRIDGE_UPLOAD = `${SUPABASE_URL}/functions/v1/shopee-bridge/upload_image`;
+    const uploadHeaders = {
+      Authorization: `Bearer ${session.access_token}`,
+      apikey: SUPABASE_ANON,
       'Content-Type': 'application/json',
     };
 
@@ -12682,8 +12687,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         b64,
         outputHash: await sha256TextHex(b64),
         isCover: i === 0,
-      });
-    }
+      };
+    });
 
     async function uploadPrepared(region, ref, duplicateIndex = 0) {
       const body = {
@@ -13100,19 +13105,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Read sourcing/settlement overrides from the form
     const sourcingOverride = Number(document.getElementById('rsh-sourcing-price-krw')?.value) || Number(_rsh.master.sourcing_price || 0);
     const costOverride = Number(document.getElementById('rsh-cost-krw')?.value) || Number(_rsh.master.cost_krw);
+    const stockOverride = _rsh.mode === 'group' ? null : rshReadSingleStock();
+    if (_rsh.mode !== 'group' && stockOverride <= 0) {
+      _rsh.publishInFlight = false;
+      if (errorEl) { errorEl.textContent = 'Stock must be 1 or more.'; errorEl.style.display = 'block'; }
+      activeRegions.forEach((r) => { const el = document.getElementById(`rsh-status-${r}`); if (el) { el.textContent = '대기'; el.style.color = '#94a3b8'; } });
+      rshShowStage2Buttons(false);
+      return;
+    }
 
     // Fix2+Fix3: persist all Stage 1 edits before dispatching.
     // Reads values fresh from the DOM (not _rsh.master which is stale after user edits).
     // Fix3: treat update failure as fatal — do NOT dispatch with stale DB state.
     if (!regionsOverride) {
-    const stockOverride = _rsh.mode === 'group' ? null : rshReadSingleStock();
-    if (_rsh.mode !== 'group' && stockOverride <= 0) {
-      _rsh.publishInFlight = false;
-      if (errorEl) { errorEl.textContent = 'Stock must be 1 or more.'; errorEl.style.display = 'block'; }
-      activeRegions.forEach((r) => { const el = document.getElementById(`rsh-status-${r}`); if (el) { el.textContent = '??'; el.style.color = '#94a3b8'; } });
-      rshShowStage2Buttons(false);
-      return;
-    }
       const existingDts = _rsh.master.shopee_days_to_ship || {};
       const updatedDts = { ...existingDts, [lifecycle]: dtsValues };
       const liveCatId = Number(document.getElementById('rsh-category')?.value) || _rsh.master.shopee_category_id;
@@ -13127,12 +13132,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (_rsh.mode !== 'group') {
         stage1Updates.sourcing_price = sourcingOverride;
         stage1Updates.cost_krw = costOverride;
+        stage1Updates.inventory = stockOverride;
         stage1Updates.cost_updated_at = new Date().toISOString();
       }
       const productIds = rshProductIds();
       let stage1Query = db.from('products').update(stage1Updates);
       stage1Query = productIds.length > 1 ? stage1Query.in('id', productIds) : stage1Query.eq('id', _rsh.productId);
-        stage1Updates.inventory = stockOverride;
       const { error: stage1PersistErr } = await stage1Query;
       if (stage1PersistErr) {
         _rsh.publishInFlight = false;
@@ -13185,12 +13190,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         publish_request_id: _rsh.publishRequestId,
         lifecycle_state: lifecycle,
         shopee_description: document.getElementById('rsh-description')?.value || '',
+        stock_override: stockOverride,
         region_image_ids: _rsh.regionImageIds || {},
         region_prices: rshBuildSingleRegionPrices(activeRegions, costOverride, singleWeightG),
       };
       const resp = await fetch(PLATFORM_PUBLISH_URL, {
         method: 'POST',
-        stock_override: stockOverride,
         headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
@@ -18553,7 +18558,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const MR_MASTER_ONLY_MODE = true;
     const MR_IMAGE_BUCKET = 'product-images';
     let MR_STAGE = 1;
-    let MR_ROWS = [];   // input rows: {tempId, url, weight_g, duplicateOfSourceId}
+    let MR_ROWS = [];   // input rows: {tempId, url, weight_g, selected, duplicateOfSourceId}
     let MR_PREV = [];   // preview rows: {tempId, url, weight_g, cost_krw, status, source_record_id, observed, artist, album, version, member, sku, error, product_id, deduped, collisionMode}
     let MR_NEXT_ID = 1;
     let MR_PENDING_STARONE_LOADED = false;
@@ -18561,13 +18566,86 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // row in stage 1 sticks across reloads / tab re-entry (it would otherwise be
     // re-prefilled from source_records since the record stays pending_review).
     const MR_DISMISSED_KEY = 'sdv2:mr:dismissed-staronemall';
+    const MR_DISMISSED_URL_KEY = 'sdv2:mr:dismissed-staronemall-urls';
     const MR_DISMISSED_SOURCE_IDS = (() => {
       try { return new Set(JSON.parse(localStorage.getItem(MR_DISMISSED_KEY) || '[]').map(String)); }
       catch (_) { return new Set(); }
     })();
+    const MR_DISMISSED_URLS = (() => {
+      try { return new Set(JSON.parse(localStorage.getItem(MR_DISMISSED_URL_KEY) || '[]').map(String)); }
+      catch (_) { return new Set(); }
+    })();
+    function mrDismissUrlKey(url) {
+      const raw = String(url || '').trim();
+      if (!raw) return '';
+      try {
+        const parsed = new URL(raw, 'https://www.staronemall.com');
+        parsed.hash = '';
+        parsed.hostname = parsed.hostname.toLowerCase();
+        return parsed.href.replace(/\/$/, '');
+      } catch (_) {
+        return raw.replace(/#.*$/, '').replace(/\/$/, '');
+      }
+    }
     function mrPersistDismissed() {
       try { localStorage.setItem(MR_DISMISSED_KEY, JSON.stringify(Array.from(MR_DISMISSED_SOURCE_IDS))); }
       catch (_) {}
+      try { localStorage.setItem(MR_DISMISSED_URL_KEY, JSON.stringify(Array.from(MR_DISMISSED_URLS))); }
+      catch (_) {}
+    }
+    function mrSourceRecordId(ref) {
+      return String(ref?.source_record_id || ref?.duplicateOfSourceId || '').trim();
+    }
+    function mrIsDismissedSource(ref) {
+      const id = mrSourceRecordId(ref);
+      const urlKey = mrDismissUrlKey(ref?.url || ref?.source_url);
+      return (id && MR_DISMISSED_SOURCE_IDS.has(id)) || (urlKey && MR_DISMISSED_URLS.has(urlKey));
+    }
+    async function mrRejectSourceRecord(sourceRecordId, reason) {
+      const id = String(sourceRecordId || '').trim();
+      if (!id) return false;
+      try {
+        const { error } = await db.rpc('reject_source_record', {
+          p_source_record_id: id,
+          p_reason: reason || 'url_bulk_dismissed',
+        });
+        if (error) throw error;
+        return true;
+      } catch (e) {
+        console.warn('[mr] source_record reject RPC unavailable or failed; local dismissal retained', id, e);
+        return false;
+      }
+    }
+    function mrDismissSourceRef(ref, reason, options = {}) {
+      const id = mrSourceRecordId(ref);
+      const urlKey = mrDismissUrlKey(ref?.url || ref?.source_url);
+      if (id) MR_DISMISSED_SOURCE_IDS.add(id);
+      if (id && urlKey) MR_DISMISSED_URLS.add(urlKey);
+      mrPersistDismissed();
+      if (id && options.remote !== false) void mrRejectSourceRecord(id, reason || 'url_bulk_dismissed');
+    }
+    function mrDismissGroup(group, reason) {
+      const seen = new Set();
+      (group?.rows || []).forEach(row => {
+        const id = mrSourceRecordId(row);
+        if (id && seen.has(id)) {
+          const urlKey = mrDismissUrlKey(row.url || row.source_url);
+          if (urlKey) MR_DISMISSED_URLS.add(urlKey);
+          return;
+        }
+        if (id) seen.add(id);
+        mrDismissSourceRef(row, reason || 'url_bulk_card_excluded');
+      });
+      mrPersistDismissed();
+    }
+    function mrDropInputRowsForGroup(group) {
+      const ids = new Set((group?.rows || []).map(mrSourceRecordId).filter(Boolean));
+      const urls = new Set((group?.rows || []).map(row => mrDismissUrlKey(row.url)).filter(Boolean));
+      MR_ROWS = MR_ROWS.filter(row => {
+        const id = mrSourceRecordId(row);
+        const url = mrDismissUrlKey(row.url);
+        return !((id && ids.has(id)) || (url && urls.has(url)));
+      });
     }
     // Stage 2 per-card promote selection. We track DESELECTED group keys so the
     // default stays "all selected" (matching the previous register-all behavior).
@@ -18735,7 +18813,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const sourceUrl = firstRow.url || firstRow.staronemall_url || '';
       const observed = firstRow.observed || {};
       let details = mrJoomNormalizeImageList(observed.detail_image_urls || [], sourceUrl);
-      if (details.length || !sourceUrl) return details.slice(0, 9);
+      if (details.length || !sourceUrl) return details.slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
 
       const session = (await db.auth.getSession()).data.session;
       if (!session) throw new Error('로그인이 만료되었습니다. 다시 로그인해주세요.');
@@ -18756,7 +18834,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         firstRow.observed = Object.assign({}, observed, nextObserved);
       }
       details = mrJoomNormalizeImageList(nextObserved.detail_image_urls || [], sourceUrl);
-      return details.slice(0, 9);
+      return details.slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
     }
 
     function mrRefreshGroupAutoSkus(card, group) {
@@ -18962,14 +19040,42 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     function mrUpdateStage1Summary() {
       const rows = mrCollectStage1Rows();
-      const withW = rows.filter(r => r.weight_g != null && r.weight_g > 0).length;
-      $('mr-stage1-summary').textContent = `${rows.length} URL · 무게 입력 ${withW}건`;
+      const selectedRows = rows.filter(mrStage1RowSelected);
+      const withW = selectedRows.filter(r => r.weight_g != null && r.weight_g > 0).length;
+      $('mr-stage1-summary').textContent = `${rows.length} URL · 선택 ${selectedRows.length}건 · 선택 무게 입력 ${withW}건`;
+      mrSyncStage1SelectAll(rows, selectedRows);
+    }
+
+    function mrStage1RowSelected(row) {
+      return row?._selected !== false;
+    }
+
+    function mrSyncStage1SelectAll(rows = mrCollectStage1Rows(), selectedRows = rows.filter(mrStage1RowSelected)) {
+      const selectAll = $('mr-input-select-all');
+      if (!selectAll) return;
+      selectAll.disabled = rows.length === 0;
+      selectAll.checked = rows.length > 0 && selectedRows.length === rows.length;
+      selectAll.indeterminate = selectedRows.length > 0 && selectedRows.length < rows.length;
     }
 
     function mrRenderInputRow(row) {
       const tbody = $('mr-input-body');
       const tr = el('tr', { dataset: { tempId: String(row.tempId) } });
-      tr.appendChild(el('td', null, String(row.tempId)));
+      const indexTd = el('td', { style: 'white-space:nowrap;' });
+      const selectCb = el('input', {
+        type: 'checkbox',
+        dataset: { mrRowSelect: String(row.tempId) },
+        title: '이 URL 행을 미리보기/등록 대상에 포함',
+        style: 'width:auto;margin:0 6px 0 0;vertical-align:middle;',
+      });
+      selectCb.checked = mrStage1RowSelected(row);
+      selectCb.addEventListener('change', (e) => {
+        row._selected = !!e.target.checked;
+        mrUpdateStage1Summary();
+      });
+      indexTd.appendChild(selectCb);
+      indexTd.appendChild(el('span', null, String(row.tempId)));
+      tr.appendChild(indexTd);
       const urlTd = el('td');
       const urlInput = el('input', { type: 'text', placeholder: 'https://www.staronemall.com/product/...', style: 'width:100%;font-size:12px;padding:5px 7px;', value: row.url || '' });
       const statusCell = el('td', { style: 'color:var(--muted);font-size:11px;' }, '대기');
@@ -19021,10 +19127,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       xBtn.addEventListener('click', () => {
         // Remember dismissal so a prefilled StarOneMall row does not get restored
         // on the next pending-records load (page reload / URL tab re-entry).
-        if (row.source_record_id) {
-          MR_DISMISSED_SOURCE_IDS.add(String(row.source_record_id));
-          mrPersistDismissed();
-        }
+        mrDismissSourceRef(row, 'url_bulk_input_delete');
         MR_ROWS = MR_ROWS.filter(r => r.tempId !== row.tempId);
         tr.remove();
         mrUpdateStage1Summary();
@@ -19039,6 +19142,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         tempId: MR_NEXT_ID++,
         url: (prefill && prefill.url) || '',
         weight_g: (prefill && prefill.weight_g != null) ? prefill.weight_g : null,
+        _selected: prefill && prefill.selected != null ? !!prefill.selected : true,
         source_record_id: prefill && prefill.source_record_id,
         discovery_title: prefill && prefill.discovery_title,
         discovery_price_krw: prefill && prefill.discovery_price_krw,
@@ -19086,7 +19190,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const existingUrls = new Set(MR_ROWS.map(r => String(r.url || '').trim()).filter(Boolean));
         const prefills = (data || [])
           .map(mrPendingSourcePrefill)
-          .filter(row => row.url && !existingUrls.has(row.url) && !MR_DISMISSED_SOURCE_IDS.has(String(row.source_record_id)));
+          .filter(row => row.url && !existingUrls.has(row.url) && !mrIsDismissedSource(row));
         if (!prefills.length) return;
         MR_ROWS = MR_ROWS.filter(r => String(r.url || '').trim());
         $('mr-input-body').innerHTML = '';
@@ -19111,8 +19215,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
     }
 
-    function mrCollectStage1Rows() {
-      return MR_ROWS.filter(r => (r.url || '').trim().length > 0);
+    function mrCollectStage1Rows(options = {}) {
+      const rows = MR_ROWS.filter(r => (r.url || '').trim().length > 0);
+      return options.selectedOnly ? rows.filter(mrStage1RowSelected) : rows;
     }
 
     function mrParseCsv(text) {
@@ -19132,8 +19237,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     async function mrPreviewClick() {
       const err = $('mr-stage1-error');
       err.style.display = 'none';
-      const rows = mrCollectStage1Rows();
-      if (rows.length === 0) { err.textContent = 'URL을 한 개 이상 입력해주세요.'; err.style.display = 'block'; return; }
+      const allRows = mrCollectStage1Rows();
+      const rows = mrCollectStage1Rows({ selectedOnly: true });
+      if (allRows.length === 0) { err.textContent = 'URL을 한 개 이상 입력해주세요.'; err.style.display = 'block'; return; }
+      if (rows.length === 0) { err.textContent = '선택된 URL이 없습니다. 등록할 행을 체크한 뒤 다시 시도하세요.'; err.style.display = 'block'; return; }
       const lifecycle = mrLifecycle();
       if (lifecycle === 'ready_stock' && !mrLocation()) {
         err.textContent = 'READY STOCK은 위치 코드를 먼저 입력해야 합니다.'; err.style.display = 'block'; return;
@@ -19177,6 +19284,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           if (!hit) { r.status = 'failed'; r.error = '응답에 해당 URL이 없습니다.'; continue; }
           if (hit.ok === false) { r.status = 'failed'; r.error = hit.error || '크롤 실패'; continue; }
           r.source_record_id = hit.source_record_id;
+          const sourceInputRow = MR_ROWS.find(x => x.tempId === r.tempId);
+          if (sourceInputRow) sourceInputRow.source_record_id = hit.source_record_id;
           r.observed = hit.observed_values || {};
           r.deduped = !!hit.deduped;
           r.sourcing_price = (r.observed && Number.isFinite(Number(r.observed.price_krw))) ? Number(r.observed.price_krw) : 0;
@@ -19765,7 +19874,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             { id: 'fan_attributes',  label: 'Fan Attributes' },
           ];
           if (!firstRow._joomCategory) firstRow._joomCategory = 'music_albums';
-          if (firstRow._joomBrand == null) firstRow._joomBrand = firstRow.artist || '';
+          if (firstRow._joomBrand == null) firstRow._joomBrand = mrJoomDefaultBrand(firstRow);
           if (firstRow._joomMainImageOverride == null) firstRow._joomMainImageOverride = '';
 
           const joomRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;' });
@@ -19784,12 +19893,49 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           joomCatWr.appendChild(joomCatSel);
           joomRow.appendChild(joomCatWr);
 
-          // Brand input
+          // Brand picker
           const joomBrandWr = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
           joomBrandWr.appendChild(el('span', { style: 'color:var(--muted);' }, 'Brand'));
-          const joomBrandInp = el('input', { type: 'text', style: 'font-size:12px;padding:3px 6px;width:110px;', value: firstRow._joomBrand || '', placeholder: 'artist 자동' });
-          joomBrandInp.addEventListener('input', (e) => { firstRow._joomBrand = e.target.value; });
-          joomBrandWr.appendChild(joomBrandInp);
+          const joomBrandSel = el('select', {
+            style: 'font-size:12px;padding:2px 4px;width:136px;',
+            title: 'Joom brand candidates from saved product brands',
+            dataset: { joomBrandSelect: '1' },
+          });
+          const joomBrandCustom = el('input', {
+            type: 'text',
+            style: 'font-size:12px;padding:3px 6px;width:118px;display:none;',
+            value: firstRow._joomBrand || '',
+            placeholder: 'brand',
+          });
+          const syncJoomBrandCustom = () => {
+            const isCustom = joomBrandSel.value === MR_JOOM_BRAND_CUSTOM_VALUE;
+            joomBrandCustom.style.display = isCustom ? '' : 'none';
+            if (isCustom) joomBrandCustom.value = firstRow._joomBrand || '';
+          };
+          mrPopulateJoomBrandSelect(joomBrandSel, firstRow._joomBrand, group);
+          syncJoomBrandCustom();
+          joomBrandSel.addEventListener('change', (e) => {
+            const value = e.target.value;
+            if (value === MR_JOOM_BRAND_CUSTOM_VALUE) {
+              firstRow._joomBrand = mrJoomCleanBrand(joomBrandCustom.value || firstRow._joomBrand || '');
+              syncJoomBrandCustom();
+              joomBrandCustom.focus();
+              return;
+            }
+            firstRow._joomBrand = mrJoomCleanBrand(value);
+            joomBrandCustom.value = firstRow._joomBrand;
+            mrRememberJoomBrandOption(firstRow._joomBrand);
+            syncJoomBrandCustom();
+          });
+          joomBrandCustom.addEventListener('input', (e) => { firstRow._joomBrand = mrJoomCleanBrand(e.target.value); });
+          joomBrandCustom.addEventListener('change', () => { mrRememberJoomBrandOption(firstRow._joomBrand); });
+          void mrLoadJoomBrandOptions(group).then(() => {
+            if (!joomBrandSel.isConnected) return;
+            mrPopulateJoomBrandSelect(joomBrandSel, firstRow._joomBrand, group);
+            syncJoomBrandCustom();
+          });
+          joomBrandWr.appendChild(joomBrandSel);
+          joomBrandWr.appendChild(joomBrandCustom);
           joomRow.appendChild(joomBrandWr);
 
           infoCol.appendChild(joomRow);
@@ -20214,6 +20360,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (cardStatus !== 'done') {
           const cardSkipBtn = el('button', { type: 'button', style: 'font-size:11px;padding:4px 10px;margin-top:8px;background:#fee2e2;color:#991b1b;' }, '✕ 카드 전체 제외');
           cardSkipBtn.addEventListener('click', () => {
+            mrDismissGroup(group, 'url_bulk_preview_card_excluded');
+            mrDropInputRowsForGroup(group);
             MR_PREV = MR_PREV.filter(r => !group.rows.includes(r));
             mrRenderPreviewCards();
           });
@@ -21428,9 +21576,117 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const MR_JOOM_DEFAULT_CATEGORY_LABEL = 'Music';
     const MR_JOOM_DEFAULT_NAME_PREFIX = '[PRE ORDER]';
     const MR_JOOM_DEFAULT_STOCK = 5;
+    const MR_JOOM_MAX_EXTRA_IMAGES = 20;
+    const MR_JOOM_BRAND_CACHE_KEY = 'sdv2:joom:brand-options:v1';
+    const MR_JOOM_BRAND_CUSTOM_VALUE = '__custom__';
+    let _mrJoomBrandOptionsCache = null;
+    let _mrJoomBrandOptionsPromise = null;
 
     function mrJoomBridgeUrl() {
       return SHOPEE_BRIDGE.replace('/shopee-bridge', '/joom-bridge');
+    }
+
+    function mrJoomCleanBrand(value) {
+      const raw = typeof stripNonMarketplaceText === 'function'
+        ? stripNonMarketplaceText(value || '')
+        : String(value || '');
+      return raw.replace(/\s+/g, ' ').trim();
+    }
+
+    function mrJoomIsUsableBrand(value) {
+      const brand = mrJoomCleanBrand(value);
+      return !!brand && !/^no brand$/i.test(brand);
+    }
+
+    function mrJoomAddBrandOption(map, value) {
+      const brand = mrJoomCleanBrand(value);
+      if (!mrJoomIsUsableBrand(brand)) return;
+      const key = brand.toLowerCase();
+      if (!map.has(key)) map.set(key, brand);
+    }
+
+    function mrJoomDefaultBrand(row) {
+      const candidates = [row?._joomBrand, row?.shopee_brand_name, row?.qoo10_brand_name, row?.artist];
+      return candidates.map(mrJoomCleanBrand).find(mrJoomIsUsableBrand) || '';
+    }
+
+    function mrReadStoredJoomBrandOptions() {
+      try {
+        const rows = JSON.parse(localStorage.getItem(MR_JOOM_BRAND_CACHE_KEY) || '[]');
+        return Array.isArray(rows) ? rows.map(mrJoomCleanBrand).filter(mrJoomIsUsableBrand) : [];
+      } catch (_) {
+        return [];
+      }
+    }
+
+    function mrPersistJoomBrandOptions(options) {
+      try {
+        localStorage.setItem(MR_JOOM_BRAND_CACHE_KEY, JSON.stringify((options || []).slice(0, 200)));
+      } catch (_) {}
+    }
+
+    function mrRememberJoomBrandOption(value) {
+      if (!mrJoomIsUsableBrand(value)) return;
+      const map = new Map();
+      mrReadStoredJoomBrandOptions().forEach(v => mrJoomAddBrandOption(map, v));
+      (_mrJoomBrandOptionsCache || []).forEach(v => mrJoomAddBrandOption(map, v));
+      mrJoomAddBrandOption(map, value);
+      const next = Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+      _mrJoomBrandOptionsCache = next;
+      mrPersistJoomBrandOptions(next);
+    }
+
+    function mrJoomBrandOptionsForGroup(group, currentBrand = '') {
+      const map = new Map();
+      (group?.rows || []).forEach(row => {
+        [row?._joomBrand, row?.shopee_brand_name, row?.qoo10_brand_name, row?.artist].forEach(v => mrJoomAddBrandOption(map, v));
+      });
+      mrReadStoredJoomBrandOptions().forEach(v => mrJoomAddBrandOption(map, v));
+      (_mrJoomBrandOptionsCache || []).forEach(v => mrJoomAddBrandOption(map, v));
+      mrJoomAddBrandOption(map, currentBrand);
+      return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+    }
+
+    async function mrLoadJoomBrandOptions(group = null) {
+      if (_mrJoomBrandOptionsCache) return _mrJoomBrandOptionsCache;
+      if (_mrJoomBrandOptionsPromise) return _mrJoomBrandOptionsPromise;
+      _mrJoomBrandOptionsPromise = (async () => {
+        const map = new Map();
+        mrJoomBrandOptionsForGroup(group).forEach(v => mrJoomAddBrandOption(map, v));
+        try {
+          const { data, error } = await db
+            .from('products')
+            .select('shopee_brand_name,qoo10_brand_name')
+            .limit(1000);
+          if (error) throw error;
+          (data || []).forEach(row => {
+            mrJoomAddBrandOption(map, row?.shopee_brand_name);
+            mrJoomAddBrandOption(map, row?.qoo10_brand_name);
+          });
+        } catch (e) {
+          console.warn('[mrJoom] brand option load failed; using local candidates only', e);
+        }
+        _mrJoomBrandOptionsCache = Array.from(map.values()).sort((a, b) => a.localeCompare(b)).slice(0, 200);
+        mrPersistJoomBrandOptions(_mrJoomBrandOptionsCache);
+        return _mrJoomBrandOptionsCache;
+      })();
+      try {
+        return await _mrJoomBrandOptionsPromise;
+      } finally {
+        _mrJoomBrandOptionsPromise = null;
+      }
+    }
+
+    function mrPopulateJoomBrandSelect(selectEl, currentBrand, group) {
+      if (!selectEl) return;
+      const selectedBrand = mrJoomCleanBrand(currentBrand);
+      const options = mrJoomBrandOptionsForGroup(group, selectedBrand);
+      selectEl.innerHTML = '';
+      selectEl.appendChild(el('option', { value: '' }, 'Select brand'));
+      options.forEach((brand) => selectEl.appendChild(el('option', { value: brand }, brand)));
+      selectEl.appendChild(el('option', { value: MR_JOOM_BRAND_CUSTOM_VALUE }, 'Custom...'));
+      const exact = options.find(brand => brand.toLowerCase() === selectedBrand.toLowerCase());
+      selectEl.value = exact ? exact : (selectedBrand ? MR_JOOM_BRAND_CUSTOM_VALUE : '');
     }
 
     function mrJoomActiveRows(group) {
@@ -21544,6 +21800,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return JSON.stringify({
         parentSku: draft.parentSku,
         categoryId: draft.categoryId,
+        brand: draft.brand,
         mainImageUrl: draft.mainImageUrl,
         variants: draft.options.map(o => ({
           sku: o.optionSku,
@@ -21585,16 +21842,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       const categoryId = MR_JOOM_DEFAULT_CATEGORY_ID;
       const categoryLabel = MR_JOOM_DEFAULT_CATEGORY_LABEL;
-      const brand = String(firstRow._joomBrand || firstRow.artist || '').trim();
+      const brand = mrJoomCleanBrand(firstRow._joomBrand || mrJoomDefaultBrand(firstRow));
       const mainImageUrl = mrMasterRepresentativeImage(group);
-      const extraImages = (firstRow._extra_images || []).filter(Boolean).slice(0, 8);
+      const extraImages = (firstRow._extra_images || []).filter(Boolean).slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
       const contents = mrGroupComponents(group);
       const title = mrJoomBuildTitle(firstRow);
       const description = mrJoomDefaultDescription(group);
       const searchTags = mrJoomSearchTags(group);
 
       if (!categoryId) errors.push('Joom category is required.');
-      if (!brand) warnings.push('Brand is empty. The artist name is normally used as the default brand.');
+      if (!brand) errors.push('Joom brand is required.');
       if (!mainImageUrl) errors.push('Main image URL is required.');
 
       const options = activeRows.map((r, idx) => {
@@ -22279,9 +22536,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     function mrEbayOptionImageUrl(row) {
       return String(
         row?._ebayOptionImageUrl
+        || mrEbayMasterOptionImageUrl(row)
         || row?.ebay_variation_image_url
-        || row?.shopee_option_image_url
+        || ''
+      ).trim();
+    }
+
+    function mrEbayMasterOptionImageUrl(row) {
+      return String(
+        row?.shopee_option_image_url
         || row?._main_image
+        || row?.main_image
         || ''
       ).trim();
     }
@@ -22313,6 +22578,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (suffix) return suffix.slice(0, 50);
       }
       return `Option ${idx + 1}`;
+    }
+
+    function mrEbayIsSkuLikeVariationValue(value, sku, parent) {
+      const v = String(value || '').trim();
+      if (!v) return false;
+      const skuValue = String(sku || '').trim();
+      const parentValue = String(parent || '').trim();
+      if (skuValue && v.toUpperCase() === skuValue.toUpperCase()) return true;
+      if (parentValue && v.toUpperCase().startsWith(parentValue.toUpperCase() + '-')) return true;
+      return /^[A-Z0-9]+-[A-Z0-9][A-Z0-9_-]*-[A-Z0-9_-]+$/i.test(v) && /\d/.test(v);
     }
 
     function mrEbayBuildGroupKey(group, firstRow) {
@@ -22392,6 +22667,14 @@ Contact
 - If you're looking for something but it's not in our store, please contact us and we will find it and give you reasonable price.
 - When you want to buy more than 2 items, we can give you an additional discount if you contact us in advance.
 - Your positive feedbacks are very important to us. When you have any problems about items, please contact us first.`.slice(0, 4000);
+    }
+
+    function mrEbayDescriptionForPayload(value) {
+      return String(value || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .trim()
+        .replace(/\n/g, '<br>\n');
     }
 
     function mrEbayReleaseType(firstRow) {
@@ -22484,7 +22767,9 @@ Contact
         const optionName = mrJoomOptionName(group, row);
         const sku = mrEbayRowSku(row);
         const savedVariationValue = String(row?._ebayVariationValue || row?.ebay_variation_value || '').trim();
-        const preservePublishedVariationValue = savedVariationValue && (
+        const parent = mrPreviewParentSku(group);
+        const usableSavedVariationValue = mrEbayIsSkuLikeVariationValue(savedVariationValue, sku, parent) ? '' : savedVariationValue;
+        const preservePublishedVariationValue = usableSavedVariationValue && (
           row?.ebay_item_id
           || String(row?.ebay_status || '').toUpperCase() === 'PUBLISHED'
         );
@@ -22500,7 +22785,7 @@ Contact
           rowKey: mrRowKey(row),
           sku,
           optionName,
-          variationValue: (preservePublishedVariationValue || (savedVariationValue && savedVariationValue !== sku) ? savedVariationValue : defaultVariationValue).slice(0, 50),
+          variationValue: (preservePublishedVariationValue || (usableSavedVariationValue && usableSavedVariationValue !== sku) ? usableSavedVariationValue : defaultVariationValue).slice(0, 50),
           priceUsd,
           computedPriceUsd: Number(pricing.priceUsd || 0),
           quantity: mrEbayOptionStock(row),
@@ -22643,7 +22928,7 @@ Contact
           productGroupId: draft.firstRow?.product_group_id || draft.group?.source_record_id || '',
           inventoryGroupKey: String(draft.inventoryGroupKey).slice(0, 50),
           title: draft.title.slice(0, 80),
-          description: draft.description.slice(0, 4000),
+          description: mrEbayDescriptionForPayload(draft.description).slice(0, 4000),
           imageUrls: draft.imageUrls.slice(0, 24),
           aspects: draft.aspects,
           condition: 'NEW',
@@ -22674,7 +22959,7 @@ Contact
         productGroupId: draft.firstRow?.product_group_id || draft.group?.source_record_id || '',
         sku: draft.sku,
         title: draft.title.slice(0, 80),
-        description: draft.description.slice(0, 4000),
+        description: mrEbayDescriptionForPayload(draft.description).slice(0, 4000),
         imageUrls: draft.imageUrls.slice(0, 24),
         aspects: draft.aspects,
         condition: 'NEW',
@@ -23087,6 +23372,9 @@ Contact
 
       $('mr-add-row').addEventListener('click', () => mrAddRow());
       $('mr-clear-rows').addEventListener('click', () => {
+        MR_ROWS.forEach(row => {
+          if (mrSourceRecordId(row)) mrDismissSourceRef(row, 'url_bulk_input_clear', { remote: false });
+        });
         MR_ROWS = [];
         $('mr-input-body').innerHTML = '';
         mrUpdateStage1Summary();
@@ -23128,6 +23416,15 @@ Contact
         for (const p of parsed) mrAddRow(p);
         e.target.value = '';
       });
+      const mrInputSelectAll = $('mr-input-select-all');
+      if (mrInputSelectAll) {
+        mrInputSelectAll.addEventListener('change', () => {
+          const checked = !!mrInputSelectAll.checked;
+          MR_ROWS.forEach(row => { row._selected = checked; });
+          document.querySelectorAll('#mr-input-body input[data-mr-row-select]').forEach(cb => { cb.checked = checked; });
+          mrUpdateStage1Summary();
+        });
+      }
 
       $('mr-preview-btn').addEventListener('click', mrPreviewClick);
       $('mr-back-btn').addEventListener('click', () => {

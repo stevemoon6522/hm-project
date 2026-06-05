@@ -3311,6 +3311,10 @@
             <label for="rsh-cost-krw">정산가 KRW</label>
             <input id="rsh-cost-krw" type="number" min="1" step="1">
           </div>
+          <div class="field span-2" id="rsh-stock-field">
+            <label for="rsh-stock">Stock</label>
+            <input id="rsh-stock" type="number" min="1" step="1">
+          </div>
           <div class="field span-2">
             <label>Weight</label>
             <div id="rsh-weight" class="rsh-readbox mono"></div>
@@ -11282,6 +11286,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const hasCost = _rsh.mode === 'group'
       ? variantInputs.every((v) => Number(v.price || 0) > 0)
       : Number(document.getElementById('rsh-cost-krw')?.value) > 0;
+    const hasStock = _rsh.mode === 'group' ? true : rshReadSingleStock() > 0;
     const hasWeight = rows.every((p) => Number(p.weight_g || 0) > 0);
     const hasSku = _rsh.mode === 'group'
       ? variantInputs.every((v) => String(v.sku || '').trim())
@@ -11294,7 +11299,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // P1-4a: block if staronemall URL is missing (banner already shown)
     const staronemallMissing = $rsh('no-staronemall') && $rsh('no-staronemall').style.display !== 'none';
 
-    btn.disabled = !hasImage || !hasCost || !hasWeight || !hasSku || !hasProductName || catBlocked || staronemallMissing;
+    btn.disabled = !hasImage || !hasCost || !hasStock || !hasWeight || !hasSku || !hasProductName || catBlocked || staronemallMissing;
   }
 
   // Show cached image preview strip.
@@ -11341,6 +11346,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   function rshDefaultVariantStock(product) {
     const inventory = Number(product?.inventory || 0);
     return Number.isFinite(inventory) && inventory > 0 ? inventory : 5;
+  }
+
+  function rshReadSingleStock() {
+    const raw = Number(document.getElementById('rsh-stock')?.value || 0);
+    return Number.isFinite(raw) ? Math.floor(raw) : 0;
   }
 
   function rshReadVariationName(products = _rsh.products) {
@@ -12330,8 +12340,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (costEl) costEl.value = String(rshDefaultSettlementPrice(master) || '');
 
     const weightEl = $rsh('weight');
+    const stockField = document.getElementById('rsh-stock-field');
+    const stockEl = document.getElementById('rsh-stock');
     if (weightEl) {
       weightEl.textContent = _rsh.mode === 'group'
+    if (stockField) stockField.style.display = _rsh.mode === 'group' ? 'none' : '';
+    if (stockEl) stockEl.value = _rsh.mode === 'group' ? '' : String(rshDefaultVariantStock(master));
         ? rshWeightSummary(_rsh.products)
         : (master.weight_g ? `${Number(master.weight_g).toLocaleString()} g` : '(미설정)');
     }
@@ -12367,6 +12381,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const descEl = document.getElementById('rsh-description');
     const generatedDesc = rshDescriptionTemplate(
       rshReadProductName() || formattedShopeeName || master.sku,
+    if (stockEl) stockEl.addEventListener('input', rshCheckSubmitEnabled);
       master.lifecycle_state,
       master.components_extracted_en,
     );
@@ -12636,6 +12651,20 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const uploadHeaders = {
       Authorization: `Bearer ${session.access_token}`,
       apikey: SUPABASE_ANON,
+  async function rshMapWithConcurrency(items, limit, worker) {
+    const list = Array.isArray(items) ? items : [];
+    const out = new Array(list.length);
+    let next = 0;
+    const workerCount = Math.max(1, Math.min(Number(limit) || 1, list.length || 1));
+    await Promise.all(Array.from({ length: workerCount }, async () => {
+      while (next < list.length) {
+        const index = next++;
+        out[index] = await worker(list[index], index);
+      }
+    }));
+    return out;
+  }
+
       'Content-Type': 'application/json',
     };
 
@@ -12644,13 +12673,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     const detailRefs = await rshBuildDetailUploadRefs(REGISTER_MAX_IMAGE_IDS - 1);
     const uploadRefs = [imgRef, ...detailRefs].slice(0, REGISTER_MAX_IMAGE_IDS);
-    const preparedRefs = [];
-    for (let i = 0; i < uploadRefs.length; i++) {
-      const ref = uploadRefs[i];
-      const dataUrl = ref.dataUrl || (/^data:/i.test(ref.src || '') ? ref.src : await rshFetchImageDataUrl(ref.src || ref.sourceUrl));
+    const preparedRefs = await rshMapWithConcurrency(uploadRefs, 3, async (uploadRef, i) => {
+      const dataUrl = uploadRef.dataUrl || (/^data:/i.test(uploadRef.src || '') ? uploadRef.src : await rshFetchImageDataUrl(uploadRef.src || uploadRef.sourceUrl));
       const b64 = rshDataUrlToBase64(dataUrl);
-      preparedRefs.push({
-        ...ref,
+      return {
+        ...uploadRef,
         dataUrl,
         b64,
         outputHash: await sha256TextHex(b64),
@@ -12684,19 +12711,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     const targetRegions = Array.isArray(regions) && regions.length ? regions : ['SG'];
     const regionImageIds = {};
-    let coverImageId = null;
-    for (const r of targetRegions) {
-      const ids = [];
-      for (const ref of preparedRefs) {
-        ids.push(await uploadPrepared(r, ref));
-        if (r === 'SG' && !coverImageId) coverImageId = ids[0];
-      }
+    const uploadedByRegion = await rshMapWithConcurrency(targetRegions, 3, async (r) => {
+      const ids = await rshMapWithConcurrency(preparedRefs, 3, (ref) => uploadPrepared(r, ref));
       if (r === 'BR' && ids.length === 1 && preparedRefs[0]) {
         ids.push(await uploadPrepared(r, preparedRefs[0], 1));
       }
-      regionImageIds[r] = ids.slice(0, REGISTER_MAX_IMAGE_IDS);
-    }
-    if (!coverImageId) coverImageId = regionImageIds[targetRegions[0]][0];
+      return { region: r, ids: ids.slice(0, REGISTER_MAX_IMAGE_IDS) };
+    });
+    uploadedByRegion.forEach((entry) => { regionImageIds[entry.region] = entry.ids; });
+    let coverImageId = regionImageIds.SG?.[0] || regionImageIds[targetRegions[0]]?.[0] || null;
     const primaryRegionIds = regionImageIds.SG || regionImageIds[targetRegions[0]] || [];
     const extraImageIds = primaryRegionIds.slice(1);
 
@@ -12726,11 +12749,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       apikey: SUPABASE_ANON,
       'Content-Type': 'application/json',
     };
-    const out = {};
-    for (const row of rows) {
+    const entries = await rshMapWithConcurrency(rows, 3, async (row) => {
       const sku = String(row.sku || '').trim();
       const src = rshOptionImageUrl(row);
-      if (!sku || !src) continue;
+      if (!sku || !src) return null;
       const dataUrl = await rshFetchImageDataUrl(src);
       const resp = await fetch(`${SUPABASE_URL}/functions/v1/shopee-bridge/upload_image`, {
         method: 'POST',
@@ -12746,8 +12768,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!json.ok || !json.image_id) {
         throw new Error(`${sku} 옵션 이미지 업로드 실패: ${json.error || json.message || '알 수 없는 오류'}`);
       }
-      out[sku] = json.image_id;
-    }
+      return [sku, json.image_id];
+    });
+    const out = {};
+    entries.filter(Boolean).forEach(([sku, imageId]) => { out[sku] = imageId; });
     _rsh.globalOptionImageIds = out;
     return out;
   }
@@ -13081,6 +13105,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Reads values fresh from the DOM (not _rsh.master which is stale after user edits).
     // Fix3: treat update failure as fatal — do NOT dispatch with stale DB state.
     if (!regionsOverride) {
+    const stockOverride = _rsh.mode === 'group' ? null : rshReadSingleStock();
+    if (_rsh.mode !== 'group' && stockOverride <= 0) {
+      _rsh.publishInFlight = false;
+      if (errorEl) { errorEl.textContent = 'Stock must be 1 or more.'; errorEl.style.display = 'block'; }
+      activeRegions.forEach((r) => { const el = document.getElementById(`rsh-status-${r}`); if (el) { el.textContent = '??'; el.style.color = '#94a3b8'; } });
+      rshShowStage2Buttons(false);
+      return;
+    }
       const existingDts = _rsh.master.shopee_days_to_ship || {};
       const updatedDts = { ...existingDts, [lifecycle]: dtsValues };
       const liveCatId = Number(document.getElementById('rsh-category')?.value) || _rsh.master.shopee_category_id;
@@ -13100,6 +13132,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const productIds = rshProductIds();
       let stage1Query = db.from('products').update(stage1Updates);
       stage1Query = productIds.length > 1 ? stage1Query.in('id', productIds) : stage1Query.eq('id', _rsh.productId);
+        stage1Updates.inventory = stockOverride;
       const { error: stage1PersistErr } = await stage1Query;
       if (stage1PersistErr) {
         _rsh.publishInFlight = false;
@@ -13157,6 +13190,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       };
       const resp = await fetch(PLATFORM_PUBLISH_URL, {
         method: 'POST',
+        stock_override: stockOverride,
         headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON, 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });

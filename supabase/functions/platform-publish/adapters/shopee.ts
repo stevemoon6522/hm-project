@@ -358,6 +358,10 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     || master.sku
     || ''
   ).trim();
+  const stockOverride = Number((ctx as any).stock_override);
+  const registerStock = Number.isFinite(stockOverride) && stockOverride > 0
+    ? Math.floor(stockOverride)
+    : Math.max(0, Math.floor(Number(master.inventory) || 0));
 
   const bridgeBody: Record<string, unknown> = {
     region: baseRegion,
@@ -369,7 +373,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     image_url: !master.shopee_image_id ? (master.main_image || undefined) : undefined,
     weight_g: Number(master.weight_g) || 100,
     price: cost_krw,            // Global SKU KRW price (model C — no margin multiplication)
-    stock: Number(master.inventory) || 0,
+    stock: registerStock,
     description: registerDescription || master.product_name || master.sku,
     attribute_list,
     targets,

@@ -35,6 +35,7 @@ assert(
   'Shopee modal must expose bulk sourcing/settlement/stock inputs',
 );
 assert(html.includes('id="rsh-ship-weight-kg"'), 'Shopee modal must expose Shipping weight in kg');
+assert(html.includes('id="rsh-stock" type="number"'), 'Shopee modal must expose single-product stock input');
 assert(html.includes('id="rsh-others-section"'), 'Shopee modal must include Others/Condition section');
 assert(productList.includes('data-open-shopee-group'), 'master group row must expose a Shopee register button');
 assert(productList.includes('openRegisterShopeeGroupModal'), 'group register button must open the Shopee modal');
@@ -99,6 +100,8 @@ assert(
 assert(
   html.includes('도매가 KRW')
     && html.includes('정산가 KRW')
+    && html.includes('stock_override: stockOverride')
+    && html.includes('stage1Updates.inventory = stockOverride')
     && rshModal.includes('model_sku: String(v.sku')
     && rshModal.includes('stock: Number(v.stock || 0)'),
   'group modal must transmit visible option sourcing/settlement/stock/SKU fields',

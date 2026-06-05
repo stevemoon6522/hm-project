@@ -2482,14 +2482,14 @@ Deno.serve(async (req) => {
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       const _isPreOrderRepublish = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
       const results: any[] = [];
-      for (const target of targetInputs) {
+      await Promise.all(targetInputs.map(async (target: any) => {
         const targetRegion = String(target.region || '').toUpperCase();
         try {
           const shop_id = target.shop_id ? Number(target.shop_id) : await getRegionShopId(targetRegion);
           const BRIDGE_BANNED_SHOP_IDS = new Set([1002269093]);
           if (BRIDGE_BANNED_SHOP_IDS.has(shop_id)) {
             results.push({ ok: false, region: targetRegion, shop_id, stage: 'banned_shop', error: 'shop_id is permanently banned' });
-            continue;
+            return;
           }
           const logistics = await getPublishLogistics(targetRegion, _isPreOrderRepublish);
           const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
@@ -2497,7 +2497,7 @@ Deno.serve(async (req) => {
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });
           if (publishRes.error) {
             results.push({ ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes });
-            continue;
+            return;
           }
           const publish_task_id = Number(publishRes.response?.publish_task_id);
           let task: any = null;
@@ -2845,7 +2845,7 @@ Deno.serve(async (req) => {
       }
 
       const results: any[] = [];
-      for (const target of targetInputs) {
+      await Promise.all(targetInputs.map(async (target: any) => {
         const targetRegion = String(target.region || '').toUpperCase();
         try {
           // Prefer caller-provided shop_id; only fall back to region default when omitted.
@@ -2856,7 +2856,7 @@ Deno.serve(async (req) => {
           const BRIDGE_BANNED_SHOP_IDS = new Set([1002269093]);
           if (BRIDGE_BANNED_SHOP_IDS.has(shop_id)) {
             results.push({ ok: false, region: targetRegion, shop_id, stage: 'banned_shop', error: 'shop_id is permanently banned', message: `shop_id ${shop_id} is banned and cannot be published to` });
-            continue;
+            return;
           }
           // Pre-check: if KRSC reported this shop as unpublishable, surface the
           // reason verbatim instead of letting create_publish_task return a
@@ -2864,7 +2864,7 @@ Deno.serve(async (req) => {
           const blockedReason = unpublishableByShop.get(shop_id);
           if (blockedReason) {
             results.push({ ok: false, region: targetRegion, shop_id, stage: 'shop_unpublishable', error: 'shop_unpublishable', message: blockedReason });
-            continue;
+            return;
           }
           const logistics = await getPublishLogistics(targetRegion, _isPreOrderRegister);
           const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
@@ -2872,7 +2872,7 @@ Deno.serve(async (req) => {
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody });
           if (publishRes.error) {
             results.push({ ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes });
-            continue;
+            return;
           }
           const publish_task_id = Number(publishRes.response?.publish_task_id);
           console.log(`[register_cbsc] region=${targetRegion} shop_id=${shop_id} publish_task_id=${publish_task_id} create_publish_task_response=${JSON.stringify(publishRes).slice(0, 800)}`);
@@ -2943,7 +2943,7 @@ Deno.serve(async (req) => {
         } catch (e: any) {
           results.push({ ok: false, region: target.region || r, stage: 'publish_exception', error: String(e?.message || e) });
         }
-      }
+      }));
       return jsonResp({ ok: true, region: r, global_item_id, stage_logs, results, publishable_shops, publishable_status });
       }); // end withPublishRequestId for register_cbsc
     }

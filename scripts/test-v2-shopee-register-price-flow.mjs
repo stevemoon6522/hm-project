@@ -23,6 +23,7 @@ const shopeeAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform
 const rshBlock = sliceBetween(html, 'PHASE B', '// P2-1: Legacy modal URL flag');
 const mrBlock = sliceBetween(html, 'const MR_MASTER_ONLY_MODE', "// country_settings 'EX' row");
 const publishItemBlock = sliceBetween(bridge, 'function buildPublishItemPayload', 'function isPublishPending');
+const registerCbscBlock = sliceBetween(bridge, "if (action === 'register_cbsc' && req.method === 'POST')", "if (action === 'item_info')");
 
 for (const token of [
   'const RSH_SETTLEMENT_MULTIPLIER = 1.30',
@@ -30,6 +31,8 @@ for (const token of [
   'rshSettlementFromSourcing',
   'calculateShopeePrice',
   'rshBuildSingleRegionPrices',
+  'rshMapWithConcurrency',
+  'const uploadedByRegion = await rshMapWithConcurrency(targetRegions, 3',
   'region_prices: rshBuildSingleRegionPrices',
   'modelForRegion(region)',
   'price: calc.originalPrice',
@@ -56,6 +59,7 @@ for (const token of [
 for (const token of [
   'region_prices: (body as any).region_prices || {}',
   "shopee_description: (body as any).shopee_description || ''",
+  'stock_override: (body as any).stock_override',
 ]) {
   assert(dispatcher.includes(token), `dispatcher missing token: ${token}`);
 }
@@ -65,6 +69,9 @@ for (const token of [
   'price: targetPrice',
   'const registerDescription',
   '(ctx as any).shopee_description',
+  'const registerStock',
+  '(ctx as any).stock_override',
+  'stock: registerStock',
   'description: registerDescription || master.product_name || master.sku',
 ]) {
   assert(shopeeAdapter.includes(token), `Shopee adapter missing token: ${token}`);
@@ -79,5 +86,12 @@ for (const token of [
 ]) {
   assert(publishItemBlock.includes(token), `register_cbsc publish payload missing token: ${token}`);
 }
+
+assert(
+  registerCbscBlock.includes('await Promise.all(targetInputs.map(async (target: any) => {')
+    && registerCbscBlock.includes('/api/v2/global_product/create_publish_task')
+    && registerCbscBlock.includes('/api/v2/global_product/get_publish_task_result'),
+  'register_cbsc must publish target regions concurrently and still poll publish task results',
+);
 
 console.log('v2 Shopee register price flow checks passed');

@@ -694,6 +694,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         region_image_ids: (body as any).region_image_ids || {},
         region_prices: (body as any).region_prices || {},
         shopee_description: (body as any).shopee_description || '',
+        stock_override: (body as any).stock_override,
         // Qoo10 create_listing extras supplied by the V2 registration modal.
         qoo10: (body as any).qoo10 || {},
       } as any);

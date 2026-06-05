@@ -47,6 +47,46 @@ assert.deepEqual(
   'existing CORTIS bracket-title derivation must keep working',
 );
 
+const descStart = html.indexOf('    function mrEbayDescriptionForPayload');
+const descEnd = html.indexOf('    function mrEbayReleaseType', descStart);
+assert(descStart >= 0 && descEnd > descStart, 'eBay description payload formatter must be extractable');
+const descriptionForPayload = new Function(`${html.slice(descStart, descEnd)}\nreturn mrEbayDescriptionForPayload;`)();
+assert.equal(
+  descriptionForPayload('Line 1\n\nLine 2'),
+  'Line 1<br>\n<br>\nLine 2',
+  'eBay payload description must preserve textarea line breaks as HTML breaks',
+);
+
+const optionImageStart = html.indexOf('    function mrEbayOptionImageUrl');
+const optionImageEnd = html.indexOf('    function mrEbayOptionStock', optionImageStart);
+assert(optionImageStart >= 0 && optionImageEnd > optionImageStart, 'eBay option image helper block must be extractable');
+const ebayOptionImageUrl = new Function(`${html.slice(optionImageStart, optionImageEnd)}\nreturn mrEbayOptionImageUrl;`)();
+assert.equal(
+  ebayOptionImageUrl({ _ebayOptionImageUrl: 'manual.jpg', shopee_option_image_url: 'master.jpg', ebay_variation_image_url: 'old.jpg' }),
+  'manual.jpg',
+  'modal-edited eBay option image must remain first priority',
+);
+assert.equal(
+  ebayOptionImageUrl({ shopee_option_image_url: 'master.jpg', ebay_variation_image_url: 'old.jpg' }),
+  'master.jpg',
+  'current master option image must override stale saved eBay variation image',
+);
+
+const skuLikeStart = html.indexOf('    function mrEbayIsSkuLikeVariationValue');
+const skuLikeEnd = html.indexOf('    function mrEbayBuildGroupKey', skuLikeStart);
+assert(skuLikeStart >= 0 && skuLikeEnd > skuLikeStart, 'eBay SKU-like variation helper must be extractable');
+const isSkuLikeVariationValue = new Function(`${html.slice(skuLikeStart, skuLikeEnd)}\nreturn mrEbayIsSkuLikeVariationValue;`)();
+assert.equal(
+  isSkuLikeVariationValue('V1-COR-GREEN-WEV-PORTRAIT A', 'V1-COR-GREEN-WEV-PORTRAIT A', 'V1-COR-GREEN-WEV'),
+  true,
+  'stored SKU-shaped variation values must be discarded in favor of master option names',
+);
+assert.equal(
+  isSkuLikeVariationValue('PORTRAIT A', 'V1-COR-GREEN-WEV-PORTRAIT A', 'V1-COR-GREEN-WEV'),
+  false,
+  'plain master option names must be preserved',
+);
+
 const hash = (s) => createHash('sha256').update(s).digest('hex');
 assert.equal(hash(edge), hash(edgeMirror), 'supabase and edge-functions ebay-bridge copies must match');
 
@@ -82,6 +122,7 @@ for (const token of [
   "const MR_EBAY_VARIATION_AXIS = 'Version'",
   'function mrEbayPrettyVariationValue',
   'function mrEbayBuildDescription',
+  'function mrEbayDescriptionForPayload',
   'return mrMasterProductName(row).replace',
   'function mrStripListingStatusPrefix',
   'function mrFirstMeaningfulBracketValue',
@@ -95,6 +136,9 @@ for (const token of [
   '📌 Contents',
   "The item price do not included import duties",
   'function mrEbayBuildVariationOptions',
+  'function mrEbayIsSkuLikeVariationValue',
+  'mrEbayMasterOptionImageUrl(row)',
+  'description: mrEbayDescriptionForPayload(draft.description).slice(0, 4000)',
   "listingMode: 'variation'",
   "listingMode: 'single'",
   "storeCategoryNames: draft.storeCategoryNames",

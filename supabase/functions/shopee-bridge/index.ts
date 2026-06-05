@@ -2553,7 +2553,7 @@ Deno.serve(async (req) => {
         } catch (e: any) {
           results.push({ ok: false, region: targetRegion, stage: 'publish_exception', error: String(e?.message || e) });
         }
-      }
+      }));
       return jsonResp({ ok: true, global_item_id, results });
     }
     if (action === 'oauth_exchange') {

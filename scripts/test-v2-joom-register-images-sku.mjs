@@ -44,10 +44,16 @@ assert(html.includes('window.mrDeriveFromTitle = mrDeriveFromTitle') && html.inc
 assert(html.includes("typeof window.mrDeriveFromTitle === 'function'"), 'Product-list Joom adapter must not reference private master-register helpers directly');
 assert(html.includes('function plBuildJoomPublishGroupFromProducts(rows)'), 'Product list Joom publish must adapt products rows into the tested mrPromoteJoom payload shape');
 assert(html.includes("_joomCategory: 'music_albums'"), 'Product list Joom publish must reuse the tested default Joom category');
-assert(html.includes("observed: { title: row.product_name || '', main_image_urls: row.main_image ? [row.main_image] : [], detail_image_urls: [] }"), 'Product-list Joom adapter must expose saved master representative images to the Joom modal');
-assert(html.includes("_main_image: row.shopee_option_image_url || ''"), 'Product-list Joom adapter must pass saved option images separately from representative main_image');
+assert(html.includes('main_image_urls: row.main_image ? [row.main_image] : []') && html.includes('detail_image_urls: Array.isArray(row.extra_images) ? row.extra_images : []'), 'Product-list Joom adapter must expose saved master representative/detail images to the Joom modal');
+assert(html.includes('_main_image: row.shopee_option_image_url || row.main_image || \'\''), 'Product-list Joom/eBay adapter must pass saved master option images with a representative fallback');
 assert(html.includes('id="mr-joom-modal-dryrun"'), 'Joom publish modal must expose a non-destructive dry-run button');
 assert(masterRegister.includes('const MR_JOOM_DEFAULT_STOCK = 5'), 'Joom draft must default option stock to the video-confirmed minimum stock value');
+assert(masterRegister.includes('const MR_JOOM_MAX_EXTRA_IMAGES = 20'), 'Joom extra images must honor the API max of 20 images');
+assert(masterRegister.includes('function mrLoadJoomBrandOptions'), 'Joom flow must load saved local brand candidates for selection');
+assert(masterRegister.includes('function mrPopulateJoomBrandSelect'), 'Joom flow must render a brand select, not only a free-text input');
+assert(masterRegister.includes('MR_JOOM_BRAND_CUSTOM_VALUE'), 'Joom brand select must keep a custom-entry fallback');
+assert(masterRegister.includes('brand: draft.brand'), 'Joom dry-run signature must include the selected brand');
+assert(masterRegister.includes("if (!brand) errors.push('Joom brand is required.')"), 'Joom draft must block empty brand values');
 assert(masterRegister.includes('function mrMasterRepresentativeImage(group)'), 'Joom draft must derive the main image from the master representative image');
 assert(masterRegister.includes('const mainImageUrl = mrMasterRepresentativeImage(group)'), 'Joom draft must use the master representative image as the payload main image');
 assert(!masterRegister.includes('data-joom-main-image-preview="1"'), 'Joom modal must not own the main-image confirmation UI');
@@ -81,6 +87,9 @@ assert(bridge.includes('async function buildCloudinaryFetchTiles'), 'Joom detail
 assert(bridge.includes('/image/fetch/'), 'Joom detail splitter must produce Cloudinary fetch URLs');
 assert(bridge.includes('async function uploadTileToProductStorage'), 'Joom detail splitter must fall back to Supabase Storage tile hosting');
 assert(bridge.includes('product-images'), 'Joom storage tile fallback must use the public product-images bucket');
+assert(bridge.includes('const JOOM_MAX_EXTRA_IMAGES = 20'), 'Joom bridge must cap extraImages at the API max of 20');
+assert(buildPayload.includes('if (!brandName) throw new Error("brand required")'), 'Joom bridge must reject publish payloads without a selected brand');
+assert(!bridge.includes('return [imageUrl];'), 'Joom detail processing must not fall back to sending unsquared source URLs');
 assert(bridge.includes('Math.min(Math.ceil(img.height / tileSize), 9)'), 'Joom detail splitter must use up to 9 square tiles');
 assert(bridge.includes('tile.crop(0, y, img.width, h)'), 'Joom detail splitter must crop tiles explicitly');
 assert(bridge.includes('square.encodeJPEG(90)'), 'Joom detail splitter must encode tiles as JPEGs before Cloudinary upload');

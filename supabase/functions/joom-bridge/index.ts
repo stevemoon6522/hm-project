@@ -226,14 +226,16 @@ async function uploadTileToCloudinary(imageData: Uint8Array): Promise<string | n
 }
 
 // ---------------------------------------------------------------------------
-// Portrait image splitting
-// Tall images (height > width * 1.5) are split into square tiles.
+// Detail image square processing.
+// Every detail/extra image sent to Joom is converted into square image URLs.
+// Very tall images are split into square tiles so important content is not lost.
 // Prefer Cloudinary fetch transformations so we do not download/decode the full
 // remote image. Fall back to Supabase Storage-hosted tiles when direct fetch
 // transforms are unavailable.
 // ---------------------------------------------------------------------------
 
 type ImageDimensions = { width: number; height: number };
+const JOOM_MAX_EXTRA_IMAGES = 20;
 
 function parseJpegSize(bytes: Uint8Array): ImageDimensions | null {
   let i = 2;
@@ -270,13 +272,20 @@ async function buildCloudinaryFetchTiles(imageUrl: string, img: ImageDimensions)
   // @ts-ignore
   const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
   if (!cloudName) return [];
-  const tileSize = img.width;
-  const numTiles = Math.min(Math.ceil(img.height / tileSize), 9);
-  return Array.from({ length: numTiles }, (_, i) => {
-    const y = i * tileSize;
-    const h = Math.min(tileSize, img.height - y);
-    return `https://res.cloudinary.com/${cloudName}/image/fetch/c_crop,w_${img.width},h_${h},x_0,y_${y},c_pad,b_white,w_${tileSize},h_${tileSize},f_jpg,q_90/${encodeURIComponent(imageUrl)}`;
-  });
+  if (img.height > img.width * 1.5) {
+    const tileSize = img.width;
+    const numTiles = Math.min(Math.ceil(img.height / tileSize), 9);
+    return Array.from({ length: numTiles }, (_, i) => {
+      const y = i * tileSize;
+      const h = Math.min(tileSize, img.height - y);
+      return `https://res.cloudinary.com/${cloudName}/image/fetch/c_crop,w_${img.width},h_${h},x_0,y_${y},c_pad,b_white,w_${tileSize},h_${tileSize},f_jpg,q_90/${encodeURIComponent(imageUrl)}`;
+    });
+  }
+
+  const tileSize = Math.min(img.width, img.height);
+  const x = Math.max(0, Math.floor((img.width - tileSize) / 2));
+  const y = Math.max(0, Math.floor((img.height - tileSize) / 2));
+  return [`https://res.cloudinary.com/${cloudName}/image/fetch/c_crop,w_${tileSize},h_${tileSize},x_${x},y_${y},f_jpg,q_90/${encodeURIComponent(imageUrl)}`];
 }
 
 async function uploadTileToProductStorage(imageData: Uint8Array, sourceUrl: string, index: number): Promise<string | null> {
@@ -295,49 +304,61 @@ async function uploadTileToProductStorage(imageData: Uint8Array, sourceUrl: stri
 async function processDetailImage(imageUrl: string): Promise<string[]> {
   try {
     const dims = await readImageDimensions(imageUrl);
-    if (!dims || dims.height <= dims.width * 1.5) return [imageUrl];
-
-    const cloudinaryTiles = await buildCloudinaryFetchTiles(imageUrl, dims);
-    if (cloudinaryTiles.length) return cloudinaryTiles;
+    if (dims) {
+      const cloudinaryTiles = await buildCloudinaryFetchTiles(imageUrl, dims);
+      if (cloudinaryTiles.length) return cloudinaryTiles;
+    }
 
     const resp = await fetch(imageUrl, {
       headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://www.staronemall.com/" },
       signal: AbortSignal.timeout(15000),
     });
-    if (!resp.ok) return [imageUrl];
+    if (!resp.ok) throw new Error(`image fetch failed: HTTP ${resp.status}`);
     const buf = new Uint8Array(await resp.arrayBuffer());
 
     // @ts-ignore
     const { Image } = await import("https://deno.land/x/imagescript@1.3.0/mod.ts");
     const img = await Image.decode(buf);
-    const tileSize = img.width;
-    const numTiles = Math.min(Math.ceil(img.height / tileSize), 9);
     const tiles: string[] = [];
 
-    for (let i = 0; i < numTiles; i++) {
-      const y = i * tileSize;
-      const h = Math.min(tileSize, img.height - y);
-      const tile = img.clone();
-      tile.crop(0, y, img.width, h);
+    if (img.height > img.width * 1.5) {
+      const tileSize = img.width;
+      const numTiles = Math.min(Math.ceil(img.height / tileSize), 9);
+      for (let i = 0; i < numTiles; i++) {
+        const y = i * tileSize;
+        const h = Math.min(tileSize, img.height - y);
+        const tile = img.clone();
+        tile.crop(0, y, img.width, h);
 
-      let square;
-      if (h < tileSize) {
-        square = new Image(tileSize, tileSize);
-        square.fill(0xFFFFFFFF);
-        square.composite(tile, 0, 0);
-      } else {
-        square = tile;
+        let square;
+        if (h < tileSize) {
+          square = new Image(tileSize, tileSize);
+          square.fill(0xFFFFFFFF);
+          square.composite(tile, 0, 0);
+        } else {
+          square = tile;
+        }
+
+        const encoded: Uint8Array = await square.encodeJPEG(90);
+        const url = await uploadTileToCloudinary(encoded) || await uploadTileToProductStorage(encoded, imageUrl, i);
+        if (url) tiles.push(url);
       }
-
+    } else {
+      const tileSize = Math.min(img.width, img.height);
+      const x = Math.max(0, Math.floor((img.width - tileSize) / 2));
+      const y = Math.max(0, Math.floor((img.height - tileSize) / 2));
+      const square = img.clone();
+      square.crop(x, y, tileSize, tileSize);
       const encoded: Uint8Array = await square.encodeJPEG(90);
-      const url = await uploadTileToCloudinary(encoded) || await uploadTileToProductStorage(encoded, imageUrl, i);
+      const url = await uploadTileToCloudinary(encoded) || await uploadTileToProductStorage(encoded, imageUrl, 0);
       if (url) tiles.push(url);
     }
 
-    return tiles.length > 0 ? tiles : [imageUrl];
+    if (tiles.length > 0) return tiles;
+    throw new Error("square image upload failed");
   } catch (e) {
     console.error("[joom-bridge] processDetailImage failed:", imageUrl, e);
-    return [imageUrl];
+    throw new Error(`Joom detail image square processing failed: ${imageUrl}`);
   }
 }
 
@@ -348,6 +369,8 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
 async function buildPayload(opts: any): Promise<any> {
   const { row, scrapedAssets, variantsConfig, categoryId, enabled, namePrefix, artist, album, contents, brand } = opts;
   if (!scrapedAssets?.mainImage) throw new Error("scrapedAssets.mainImage 가 비어있음");
+  const brandName = String(brand || "").trim();
+  if (!brandName) throw new Error("brand required");
 
   const productSku = String(row.sku || "").trim();
   if (!productSku) throw new Error("row.sku required");
@@ -392,14 +415,14 @@ async function buildPayload(opts: any): Promise<any> {
   const rawExtras: string[] = [
     ...(scrapedAssets.detailImages || []),
     ...(scrapedAssets.extraImages || []),
-  ].slice(0, 9);
+  ].slice(0, JOOM_MAX_EXTRA_IMAGES);
 
   const processedExtras: string[] = [];
   for (const url of rawExtras) {
-    if (processedExtras.length >= 9) break;
+    if (processedExtras.length >= JOOM_MAX_EXTRA_IMAGES) break;
     const tiles = await processDetailImage(url);
     for (const t of tiles) {
-      if (processedExtras.length < 9) processedExtras.push(t);
+      if (processedExtras.length < JOOM_MAX_EXTRA_IMAGES) processedExtras.push(t);
     }
   }
 
@@ -413,7 +436,7 @@ async function buildPayload(opts: any): Promise<any> {
     categoryId,
     variants,
   };
-  if (brand && brand.trim()) payload.brand = brand.trim();
+  payload.brand = brandName;
   return payload;
 }
 
@@ -658,7 +681,7 @@ async function handleRequest(req: Request): Promise<Response> {
     return jsonResp({ ok: false, error: `unknown action: ${action} (${req.method})` }, 404);
   } catch (e: any) {
     console.error("[joom-bridge] error", e);
-    return jsonResp({ ok: false, error: "joom_bridge_failed" }, 500);
+    return jsonResp({ ok: false, error: "joom_bridge_failed", message: String(e?.message || e) }, 500);
   }
 }
 

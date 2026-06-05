@@ -20,6 +20,10 @@ _Avoid_: master row, uploaded product
 A reusable seller-controlled content block displayed above a marketplace listing's product detail content. It is platform listing content, not a canonical Master Product description.
 _Avoid_: master description, product template
 
+**Joom Brand**:
+The brand or manufacturer name sent with a Joom Platform Listing. It is selected as listing content, usually from existing marketplace brand names or the artist name, and is not a canonical Master Product fact.
+_Avoid_: Shopee brand ID, Qoo10 BrandNo, master brand
+
 **Shopee Global Product**:
 The merchant-level Shopee catalog item that acts as the canonical Shopee parent for CBSC/KRSC-published regional shop listings.
 _Avoid_: region product, shop item

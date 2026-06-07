@@ -16,7 +16,15 @@ function sliceBetween(source, start, end) {
 const nav = sliceBetween(html, '<div class="nav-tabs">', '</div>');
 const productsView = sliceBetween(html, '<div id="view-products" class="view">', '</div><!-- /view-products -->');
 const productRender = sliceBetween(html, 'function renderProductOptionRow(p, groupKey, isGroupChild) {', 'function plGroupRowsById(productGroupId) {');
+const productGrouping = sliceBetween(html, 'function plIsGroupedVariant(product) {', 'function renderProductGroup(group) {');
+const nameHelpers = sliceBetween(html, 'function cleanProductName(value, fallback = \'\') {', 'function numberOrNull(value) {');
+const productNameDisplay = sliceBetween(html, 'function plProductName(product) {', 'function productLifecycleFilterKey(product) {');
 const masterEdit = sliceBetween(html, 'function plMasterEditRenderOptions(rows) {', 'async function saveProductMasterEditModal() {');
+const masterEditOpenSave = sliceBetween(html, 'async function openProductMasterEditModal(productGroupId) {', 'function beginEditCell(cell) {');
+const inlineEdit = sliceBetween(html, 'function beginEditCell(cell) {', 'async function deleteOneMasterProduct(btn) {');
+const shopeeGlobalImport = sliceBetween(html, 'async function sgUpsertProduct(row, model, productGroupId, lifecycleState) {', 'function sgReadSelectedStaronemallUrls() {');
+const shopeeRegisterOpen = sliceBetween(html, 'async function openRegisterShopeeGroupModal(productGroupId) {', 'function rshCrawlImages(staronemallUrl) {');
+const masterRegisterNaming = sliceBetween(html, 'function mrMasterProductName(row) {', 'function mrGroupComponents(group) {');
 const platformSync = sliceBetween(html, 'async function syncPlatformSkus() {', 'function productListings(productId) {');
 const coverageLookup = sliceBetween(html, 'async function coverageLookupViaPlatformPublish(platform, sku, productId) {', 'async function coverageCheckExistingPlatformsBySku() {');
 const masterRegisterImageTools = sliceBetween(html, 'function mrGetGroupOptionImages(group, firstRow) {', 'function mrMasterPatchForGroup(group) {');
@@ -25,8 +33,30 @@ const masterRegisterRender = sliceBetween(html, 'function mrRenderPreviewCards()
 
 test('standalone products have master edit button and platform register button next to Shopee LED', () => {
   assert.match(productRender, /data-edit-master="\$\{text\(plMasterEditTargetKey\(p\)\)\}"/, 'single row should expose master edit target');
+  assert.match(productRender, /isVariantRow && optionDisplay[\s\S]*\$\{editButton\}/, 'option-like single rows should also expose the master edit button');
   assert.match(productRender, /data-open-shopee-single="\$\{text\(p\.id\)\}"/, 'single row Shopee register should live in Shopee platform cell');
   assert.doesNotMatch(productRender, /data-open="\$\{text\(p\.id\)\}"[^>]*>Register<\/button>/, 'legacy action-column Register button should be removed');
+});
+
+test('single-option master products use the same Shopee single registration form', () => {
+  assert.match(productGrouping, /function plShouldRenderAsGrouped\(product, sourceRows = state\.products \|\| \[\]\)/, 'product list should distinguish true multi-option groups from single-option masters');
+  assert.match(productGrouping, /plVariantGroupMemberCount\(product\?\.product_group_id, sourceRows\) > 1/, 'only groups with more than one variant row should render as grouped Shopee registrations');
+  assert.match(productRender, /!\s*isGroupChild[\s\S]*data-open-shopee-single="\$\{text\(p\.id\)\}"/, 'option-like standalone rows should still expose the single Shopee register button');
+  assert.match(shopeeRegisterOpen, /function openRegisterShopeeSingleModal\(productId\)/, 'single Shopee button should route through a normalizing opener');
+  assert.match(shopeeRegisterOpen, /allowVariant: true[\s\S]*mode: 'single'/, 'single-option variants should bypass the variant guard but keep the single form');
+  assert.match(shopeeRegisterOpen, /if \(rows\.length === 1\)[\s\S]*openRegisterShopeeModal\(rows\[0\]\.id,[\s\S]*mode: 'single'/, 'group opener should downgrade one-row groups to the single Shopee form');
+});
+
+test('master product names are normalized with lifecycle prefix everywhere they are saved or displayed', () => {
+  assert.match(nameHelpers, /function lifecycleProductNamePrefix\(lifecycleState\)/, 'lifecycle prefix helper should exist');
+  assert.match(nameHelpers, /function normalizeMasterProductNameForLifecycle\(value, lifecycleState, fallback = ''\)/, 'master name lifecycle normalizer should exist');
+  assert.ok(nameHelpers.includes("replace(/\\[\\s*(PRE\\s*[-]?\\s*ORDER|READY\\s*STOCK)\\s*\\]/gi"), 'normalizer should strip bracketed lifecycle tags before adding the canonical prefix');
+  assert.match(productNameDisplay, /normalizeMasterProductNameForLifecycle\(product\?\.product_name, product\?\.lifecycle_state/, 'product list display should normalize names by lifecycle');
+  assert.match(masterEditOpenSave, /nameInput\) nameInput\.value = normalizeMasterProductNameForLifecycle\(first\.product_name, first\.lifecycle_state/, 'master edit modal should open with the canonical lifecycle prefix');
+  assert.match(masterEditOpenSave, /normalizeMasterProductNameForLifecycle\(rawName, lifecycleState, rows\[0\]\?\.sku/, 'master edit save should enforce the canonical lifecycle prefix');
+  assert.match(inlineEdit, /normalizeMasterProductNameForLifecycle\(newVal, product\?\.lifecycle_state/, 'inline product-name edits should enforce the canonical lifecycle prefix');
+  assert.match(shopeeGlobalImport, /product_name: normalizeMasterProductNameForLifecycle\(sgItemName\(item\), lifecycleState, sku\)/, 'Shopee Global import should store canonical lifecycle-prefixed master names');
+  assert.match(masterRegisterNaming, /return normalizeMasterProductNameForLifecycle\(title, mrLifecycle\(\), derived/, 'master register should store canonical lifecycle-prefixed master names');
 });
 
 test('master register cards expose master edit action whenever any master row was created', () => {

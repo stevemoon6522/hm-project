@@ -24,8 +24,8 @@ test('single master product rows use the same highlighted background as option g
   );
   assert.match(
     productListRender,
-    /const rowClass = isGroupChild\s*\? 'pl-option-row'\s*:\s*\(isVariantRow \? '' : 'pl-single-product-row'\);/,
-    'standalone non-option products should render with pl-single-product-row',
+    /const rowClass = isGroupChild\s*\? 'pl-option-row'\s*:\s*'pl-single-product-row';/,
+    'every standalone master row, including a single-option master, should render with pl-single-product-row',
   );
   assert.match(
     productListRender,

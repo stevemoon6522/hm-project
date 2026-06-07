@@ -20,11 +20,26 @@ const masterEdit = sliceBetween(html, 'function plMasterEditRenderOptions(rows) 
 const platformSync = sliceBetween(html, 'async function syncPlatformSkus() {', 'function productListings(productId) {');
 const coverageLookup = sliceBetween(html, 'async function coverageLookupViaPlatformPublish(platform, sku, productId) {', 'async function coverageCheckExistingPlatformsBySku() {');
 const masterRegisterImageTools = sliceBetween(html, 'function mrGetGroupOptionImages(group, firstRow) {', 'function mrMasterPatchForGroup(group) {');
+const openCreatedMasterEdit = sliceBetween(html, 'async function mrOpenCreatedMasterEdit(productId) {', 'function mrRenderPreviewCards() {');
+const masterRegisterRender = sliceBetween(html, 'function mrRenderPreviewCards() {', 'async function mrPromoteAll() {');
 
 test('standalone products have master edit button and platform register button next to Shopee LED', () => {
   assert.match(productRender, /data-edit-master="\$\{text\(plMasterEditTargetKey\(p\)\)\}"/, 'single row should expose master edit target');
   assert.match(productRender, /data-open-shopee-single="\$\{text\(p\.id\)\}"/, 'single row Shopee register should live in Shopee platform cell');
   assert.doesNotMatch(productRender, /data-open="\$\{text\(p\.id\)\}"[^>]*>Register<\/button>/, 'legacy action-column Register button should be removed');
+});
+
+test('master register cards expose master edit action whenever any master row was created', () => {
+  assert.match(masterRegisterRender, /createdProductIds = group\.rows/, 'register card must collect every created option product id');
+  assert.match(masterRegisterRender, /createdProductIds\.length/, 'register card must show edit action whenever at least one row was created');
+  assert.doesNotMatch(masterRegisterRender, /cardStatus === 'done' && doneProductId/, 'edit action must not be limited to fully completed cards');
+  assert.match(masterRegisterRender, /data-open-created-master-edit/, 'registered cards should expose a master edit button target');
+  assert.match(masterRegisterRender, /mrOpenCreatedMasterEdit\(createdProductIds\[0\]\)/, 'registered cards should open the master edit modal from the created master row');
+});
+
+test('created master edit action still opens when product list refresh fails', () => {
+  assert.match(openCreatedMasterEdit, /catch \(loadErr\)/, 'product list refresh failure should be isolated');
+  assert.match(openCreatedMasterEdit, /openProductMasterEditModal\(id\)/, 'modal open should still run after refresh failure');
 });
 
 test('master edit modal supports manual option image edits including clearing URLs', () => {

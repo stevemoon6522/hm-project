@@ -6444,35 +6444,61 @@ LEGACY END -->
   }
 
   async function openProductMasterEditModal(productGroupId) {
-    const groupId = String(productGroupId || '').trim();
+    let groupId = String(productGroupId || '').trim();
     let rows = plGroupRowsById(groupId);
     if (!rows.length) {
       const single = (state.products || []).find((p) => String(p.id) === groupId);
-      if (single) rows = [single];
-    }
-    if (!rows.length) {
-      showToast('수정할 마스터 상품 묶음을 찾지 못했습니다.', 'err');
-      return;
+      if (single) {
+        groupId = String(single.product_group_id || single.id || groupId);
+        rows = single.product_group_id ? plGroupRowsById(groupId) : [single];
+        if (!rows.length) rows = [single];
+      }
     }
     const overlay = document.getElementById('pl-master-edit-modal');
     if (!overlay) return;
     try {
       let query = db.from('products').select(RSH_PRODUCT_SELECT);
-      query = rows.length === 1 && !rows[0]?.product_group_id ? query.eq('id', rows[0].id) : query.eq('product_group_id', groupId);
-      const { data, error } = await query;
+      if (rows.length) {
+        const known = rows[0] || {};
+        const knownGroupId = String(known.product_group_id || '').trim();
+        if (knownGroupId) {
+          groupId = knownGroupId;
+          query = query.eq('product_group_id', groupId);
+        } else {
+          query = query.eq('id', known.id || groupId);
+        }
+      } else {
+        query = query.or(`id.eq.${groupId},product_group_id.eq.${groupId}`);
+      }
+      let { data, error } = await query;
       if (error) throw error;
+      if (Array.isArray(data) && data.length === 1 && data[0]?.product_group_id && String(data[0].product_group_id) !== groupId) {
+        const resolvedGroupId = String(data[0].product_group_id);
+        const groupFetch = await db.from('products').select(RSH_PRODUCT_SELECT).eq('product_group_id', resolvedGroupId);
+        if (groupFetch.error) throw groupFetch.error;
+        if (Array.isArray(groupFetch.data) && groupFetch.data.length) {
+          groupId = resolvedGroupId;
+          data = groupFetch.data;
+        }
+      }
       if (Array.isArray(data) && data.length) {
         rows = rshSortedProducts(data);
-        const byId = new Map(state.products.map((p) => [String(p.id), p]));
+        const byId = new Map((state.products || []).map((p) => [String(p.id), p]));
         rows.forEach((row) => {
           const current = byId.get(String(row.id));
           if (current) Object.assign(current, row);
+          else state.products.push(row);
         });
       }
     } catch (e) {
       console.warn('[pl-master-edit] full draft fetch failed, using list cache:', e);
     }
+    if (!rows.length) {
+      showToast('수정할 마스터 상품 묶음을 찾지 못했습니다.', 'err');
+      return;
+    }
     const first = rows[0] || {};
+    groupId = String(first.product_group_id || first.id || groupId);
     overlay.dataset.productGroupId = groupId;
     const subtitle = document.getElementById('pl-master-edit-subtitle');
     if (subtitle) subtitle.textContent = `${plParentSku(rows)} / ${rows.length} options`;
@@ -19619,6 +19645,25 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (error) throw error;
     }
 
+    async function mrOpenCreatedMasterEdit(productId) {
+      const id = String(productId || '').trim();
+      if (!id) return;
+      try {
+        if (!plProductById(id) && typeof window.loadData === 'function') {
+          try {
+            await window.loadData();
+          } catch (loadErr) {
+            console.warn('[mrOpenCreatedMasterEdit] product refresh failed; opening from product id:', loadErr);
+          }
+        }
+        if (typeof window.showView === 'function') window.showView('view-products');
+        await openProductMasterEditModal(id);
+      } catch (e) {
+        console.warn('[mrOpenCreatedMasterEdit] failed:', e);
+        if (typeof showToast === 'function') showToast(`마스터 상품 수정 열기 실패: ${e?.message || e}`, 'err');
+      }
+    }
+
     function mrRenderPreviewCards() {
       const wrap = $('mr-preview-cards');
       wrap.innerHTML = '';
@@ -19686,6 +19731,20 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         cardTop.appendChild(el('span', { style: 'font-weight:700;' }, `카드 #${gIdx + 1}`));
         const lab = mrStatusLabel(cardStatus);
         cardTop.appendChild(el('span', { style: `color:${lab.color};font-weight:600;` }, lab.text));
+        const createdProductIds = group.rows
+          .map((r) => String(r.product_id || '').trim())
+          .filter(Boolean)
+          .filter((id, idx, ids) => ids.indexOf(id) === idx);
+        if (createdProductIds.length) {
+          const editBtn = el('button', {
+            type: 'button',
+            class: 'pl-master-edit',
+            'data-open-created-master-edit': createdProductIds[0],
+            title: '마스터 상품 데이터 수정',
+          }, '수정');
+          editBtn.addEventListener('click', () => { void mrOpenCreatedMasterEdit(createdProductIds[0]); });
+          cardTop.appendChild(editBtn);
+        }
         if (firstRow.deduped) cardTop.appendChild(el('span', { style: 'color:var(--muted);' }, '· 중복 재사용'));
         if (firstRow.url) {
           cardTop.appendChild(el('a', { href: firstRow.url, target: '_blank', rel: 'noopener', style: 'color:var(--muted);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px;' }, firstRow.url));

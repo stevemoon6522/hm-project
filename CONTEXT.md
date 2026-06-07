@@ -17,7 +17,7 @@ A product or variant that already exists on a marketplace account. It belongs to
 _Avoid_: master row, uploaded product
 
 **Platform Listing Header**:
-A reusable seller-controlled content block displayed above a marketplace listing's product detail content. It is platform listing content, not a canonical Master Product description.
+A reusable seller-controlled content block displayed above a marketplace listing's product detail content. Its title line may quote the Master Product name as marketplace copy, but the header is still platform listing content, not a canonical Master Product description.
 _Avoid_: master description, product template
 
 **Joom Brand**:

@@ -19061,12 +19061,30 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return out;
     }
 
-    async function mrJoomLoadDetailImages(group) {
-      const firstRow = group.rows[0] || {};
-      const sourceUrl = firstRow.url || firstRow.staronemall_url || '';
+    function mrJoomSourceUrl(group) {
+      const firstRow = group?.rows?.[0] || {};
+      return firstRow.url || firstRow.staronemall_url || '';
+    }
+
+    function mrJoomApplyObservedImages(group, observedValues) {
+      const firstRow = group?.rows?.[0] || {};
+      const sourceUrl = mrJoomSourceUrl(group);
       const observed = firstRow.observed || {};
-      let details = mrJoomNormalizeImageList(observed.detail_image_urls || [], sourceUrl);
-      if (details.length || !sourceUrl) return details.slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
+      const mainImages = mrJoomNormalizeImageList(observedValues?.main_image_urls || [], sourceUrl);
+      const detailImages = mrJoomNormalizeImageList(observedValues?.detail_image_urls || [], sourceUrl);
+      firstRow.observed = Object.assign({}, observed, observedValues || {}, {
+        main_image_urls: mainImages.length ? mainImages : (observed.main_image_urls || []),
+        detail_image_urls: detailImages.length ? detailImages : (observed.detail_image_urls || []),
+      });
+      if ((!Array.isArray(firstRow._extra_images) || !firstRow._extra_images.filter(Boolean).length) && detailImages.length) {
+        firstRow._extra_images = detailImages.slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
+      }
+      return { mainImages, detailImages };
+    }
+
+    async function mrJoomFetchSourceImages(group) {
+      const sourceUrl = mrJoomSourceUrl(group);
+      if (!sourceUrl) return null;
 
       const session = (await db.auth.getSession()).data.session;
       if (!session) throw new Error('로그인이 만료되었습니다. 다시 로그인해주세요.');
@@ -19082,11 +19100,39 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         throw new Error(body?.error || body?.message || `StarOneMall 상세 이미지 크롤 실패 (HTTP ${resp.status})`);
       }
       const hit = Array.isArray(body.results) ? body.results.find(x => x.url === sourceUrl) || body.results[0] : null;
-      const nextObserved = hit?.observed_values || {};
+      return hit?.observed_values || null;
+    }
+
+    async function mrEnsureJoomSourceImages(group) {
+      const firstRow = group?.rows?.[0];
+      if (!firstRow) return;
+      const sourceUrl = mrJoomSourceUrl(group);
+      const observed = firstRow.observed || {};
+      const storedDetails = [
+        ...(firstRow._extra_images || []),
+        ...(firstRow.extra_images || []),
+        ...(observed.detail_image_urls || []),
+      ];
+      const hasMain = !!mrMasterRepresentativeImage(group);
+      const hasDetail = mrJoomNormalizeImageList(storedDetails, sourceUrl).length > 0;
+      if ((hasMain && hasDetail) || !sourceUrl) return;
+      const nextObserved = await mrJoomFetchSourceImages(group);
       if (nextObserved && Object.keys(nextObserved).length) {
-        firstRow.observed = Object.assign({}, observed, nextObserved);
+        mrJoomApplyObservedImages(group, nextObserved);
       }
-      details = mrJoomNormalizeImageList(nextObserved.detail_image_urls || [], sourceUrl);
+    }
+
+    async function mrJoomLoadDetailImages(group) {
+      const firstRow = group.rows[0] || {};
+      const sourceUrl = mrJoomSourceUrl(group);
+      await mrEnsureJoomSourceImages(group);
+      const observed = firstRow.observed || {};
+      const rawDetails = [
+        ...(firstRow._extra_images || []),
+        ...(firstRow.extra_images || []),
+        ...(observed.detail_image_urls || []),
+      ];
+      const details = mrJoomNormalizeImageList(rawDetails, sourceUrl);
       return details.slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
     }
 
@@ -22003,6 +22049,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const rows = group?.rows || [];
       const firstRow = rows[0] || {};
       const observedMain = Array.isArray(firstRow.observed?.main_image_urls) ? firstRow.observed.main_image_urls : [];
+      const observedDetail = Array.isArray(firstRow.observed?.detail_image_urls) ? firstRow.observed.detail_image_urls : [];
       const candidates = [
         firstRow._joomMainImageOverride,
         firstRow.main_image,
@@ -22010,6 +22057,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         ...observedMain,
         firstRow._main_image,
         ...rows.map(r => r._main_image),
+        ...(firstRow._extra_images || []),
+        ...(firstRow.extra_images || []),
+        ...observedDetail,
         firstRow.discovery_thumbnail_url,
       ];
       return candidates.map(v => String(v || '').trim()).find(Boolean) || '';
@@ -22027,9 +22077,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return `${MR_JOOM_DEFAULT_NAME_PREFIX} ${fallbackName}`.slice(0, 200);
     }
 
+    function mrJoomDescriptionTitle(row) {
+      return mrMasterProductName(row).replace(/\s+/g, ' ').trim().slice(0, 200);
+    }
+
     function mrJoomDefaultDescription(group) {
       const row = group?.rows?.[0] || {};
-      const title = mrJoomBuildTitle(row).replace(`${MR_JOOM_DEFAULT_NAME_PREFIX} `, '').trim();
+      const title = mrJoomDescriptionTitle(row) || mrJoomBuildTitle(row).replace(`${MR_JOOM_DEFAULT_NAME_PREFIX} `, '').trim();
       const defaultContents = '- PACKAGE\n- CD\n- PHOTOCARD\n- POSTER (varies by version)';
       const contents = mrGroupComponents(group) || defaultContents;
       return [
@@ -22153,7 +22207,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (!costKrw) errors.push(`Option ${idx + 1} (${optionName}): cost KRW is empty.`);
         if (!weightG) errors.push(`Option ${idx + 1} (${optionName}): weight is empty.`);
         if (parseFloat(priceUsd) < 1) errors.push(`Option ${idx + 1} (${optionName}): USD price ${priceUsd} is below the $1 floor.`);
-        if (!imageUrl) errors.push(`Option ${idx + 1} (${optionName}): option image is empty.`);
 
         return {
           index: idx + 1,
@@ -22177,6 +22230,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           enabled: true,
         };
       });
+      const optionImageRequired = options.length > 1;
+      if (optionImageRequired) {
+        options.forEach(o => {
+          if (!o.imageUrl) errors.push(`Option ${o.index} (${o.optionName}): option image is empty.`);
+        });
+      }
 
       const optionSkus = options.map(o => o.optionSku).filter(Boolean);
       const duplicateSkus = optionSkus.filter((sku, idx) => optionSkus.indexOf(sku) !== idx);
@@ -22223,6 +22282,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     async function mrBuildJoomPayload(group, opts = {}) {
       const firstRow = group?.rows?.[0];
       if (!firstRow) throw new Error('No product row was found.');
+      await mrEnsureJoomSourceImages(group);
       const joomCountry = opts.joomCountry || await _v2LoadJoomCountry();
       const draft = mrBuildJoomDraft(group, joomCountry);
       if (draft.errors.length) throw new Error(draft.errors.join('\n'));
@@ -22351,6 +22411,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (overlay) overlay.classList.add('show');
 
       try {
+        await mrEnsureJoomSourceImages(group);
         const joomCountry = await _v2LoadJoomCountry();
         const draft = mrBuildJoomDraft(group, joomCountry);
         _mrPendingJoomDraftSignature = mrJoomDraftSignature(draft);
@@ -22443,6 +22504,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         return;
       }
       try {
+        await mrEnsureJoomSourceImages(_mrPendingJoomGroup);
         const joomCountry = await _v2LoadJoomCountry();
         const draft = mrBuildJoomDraft(_mrPendingJoomGroup, joomCountry);
         if (draft.errors.length) {

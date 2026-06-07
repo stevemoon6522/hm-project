@@ -54,8 +54,15 @@ assert(masterRegister.includes('function mrPopulateJoomBrandSelect'), 'Joom flow
 assert(masterRegister.includes('MR_JOOM_BRAND_CUSTOM_VALUE'), 'Joom brand select must keep a custom-entry fallback');
 assert(masterRegister.includes('brand: draft.brand'), 'Joom dry-run signature must include the selected brand');
 assert(masterRegister.includes("if (!brand) errors.push('Joom brand is required.')"), 'Joom draft must block empty brand values');
+assert(masterRegister.includes('function mrJoomDescriptionTitle(row)'), 'Joom fixed description template title must have an explicit master-name helper');
+assert(masterRegister.includes('const title = mrJoomDescriptionTitle(row) ||'), 'Joom fixed description template title must use the master product name before listing-title fallback');
 assert(masterRegister.includes('function mrMasterRepresentativeImage(group)'), 'Joom draft must derive the main image from the master representative image');
 assert(masterRegister.includes('const mainImageUrl = mrMasterRepresentativeImage(group)'), 'Joom draft must use the master representative image as the payload main image');
+assert(masterRegister.includes('...(firstRow._extra_images || [])') && masterRegister.includes('...(firstRow.extra_images || [])'), 'Joom representative image must fall back to saved detail images when main_image is missing');
+assert(masterRegister.includes('async function mrEnsureJoomSourceImages(group)'), 'Joom draft must be able to fill missing saved images from the source URL');
+assert(masterRegister.includes('await mrEnsureJoomSourceImages(group);'), 'Joom payload/draft opening must refresh source images before validating');
+assert(masterRegister.includes('const optionImageRequired = options.length > 1'), 'Single-option Joom products must not require a variant/option image');
+assert(masterRegister.includes('if (optionImageRequired)') && masterRegister.includes('if (!o.imageUrl) errors.push'), 'Joom option image validation must only block multi-option products');
 assert(!masterRegister.includes('data-joom-main-image-preview="1"'), 'Joom modal must not own the main-image confirmation UI');
 assert(!masterRegister.includes('data-joom-option-image-input'), 'Joom modal must not own local-folder option image attachment');
 assert(!masterRegister.includes('async function mrUploadJoomOptionImage'), 'Joom option image uploads must live in master-product UI, not Joom registration');

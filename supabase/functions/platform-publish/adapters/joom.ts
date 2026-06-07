@@ -19,6 +19,23 @@ function n(value: unknown, fallback = 0): number {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function lifecycleOf(master: Record<string, unknown>): string {
+  return s(master.lifecycle_state).toLowerCase() === 'pre_order' ? 'pre_order' : 'ready_stock';
+}
+
+function lifecyclePrefix(lifecycle: string): string {
+  return lifecycle === 'pre_order' ? '[PRE ORDER]' : '[READY STOCK]';
+}
+
+function stripLifecycleTags(value: unknown): string {
+  return s(value).replace(/\s*\[(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\]\s*/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function lifecycleProductName(value: unknown, lifecycle: string, fallback = ''): string {
+  const body = stripLifecycleTags(value) || stripLifecycleTags(fallback) || s(fallback).trim();
+  return `${lifecyclePrefix(lifecycle)} ${body}`.replace(/\s+/g, ' ').trim();
+}
+
 function imagesFrom(master: Record<string, unknown>): string[] {
   const images = [s(master.main_image), ...(Array.isArray(master.extra_images) ? master.extra_images.map((v) => s(v)) : [])]
     .map((v) => v.trim())
@@ -119,7 +136,7 @@ function buildCreateBody(ctx: BridgeContext): Record<string, unknown> | AdapterR
     row: { sku, cost, weight },
     scrapedAssets: {
       mainImage: imgs[0],
-      name: s(master.product_name, sku),
+      name: lifecycleProductName(master.product_name, lifecycleOf(master), sku),
       detailImages: imgs.slice(1),
       extraImages: imgs.slice(1),
     },

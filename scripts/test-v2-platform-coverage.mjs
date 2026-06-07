@@ -20,6 +20,7 @@ const platformPublish = readFileSync(join(root, 'supabase', 'functions', 'platfo
 const joomAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'joom.ts'), 'utf8');
 const ebayAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'ebay.ts'), 'utf8');
 const qoo10Adapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'qoo10.ts'), 'utf8');
+const shopeeAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'shopee.ts'), 'utf8');
 const ebayBridge = readFileSync(join(root, 'supabase', 'functions', 'ebay-bridge', 'index.ts'), 'utf8');
 const edgeEbayBridge = readFileSync(join(root, 'edge-functions', 'ebay-bridge', 'index.ts'), 'utf8');
 const edgeJoomBridge = readFileSync(join(root, 'edge-functions', 'joom-bridge', 'index.ts'), 'utf8');
@@ -116,6 +117,17 @@ for (const [name, source, bridgeToken] of [
 }
 assert(qoo10Adapter.includes("supports: new Set(['create_listing', 'sync'])") && qoo10Adapter.includes("bridgeFetch('/create-listing'"), 'Qoo10 adapter must support create_listing plus sync and call qoo10-bridge create-listing');
 assert(qoo10Adapter.includes('shipping_no') && qoo10Adapter.includes('brand_no') && qoo10Adapter.includes('available_date_type') && qoo10Adapter.includes('header_html') && qoo10Adapter.includes('production_place') && qoo10Adapter.includes('force_options'), 'Qoo10 create payload must include shipping template, brand, release-date, origin, option, and header fields');
+assert(html.includes("return normalizeMasterProductNameForLifecycle(row?.product_name, productLifecycleFilterKey(row), row?.sku || '').slice(0, 100);"), 'Qoo10 modal title must be normalized from each master product lifecycle');
+assert(html.includes('const isPreOrder = mrQoo10IsPreOrder(rows);'), 'Qoo10 modal must not hard-code PRE ORDER shipping state');
+assert(html.includes("const defaultAvailableType = mrQoo10IsPreOrder(rows) ? '2' : '0';"), 'Qoo10 payload fallback must derive AvailableDateType from master lifecycle');
+assert(qoo10Adapter.includes('function lifecycleProductName') && qoo10Adapter.includes('lifecycleProductName(master.product_name, lifecycleOf(master, qoo10), master.sku)'), 'Qoo10 adapter fallback title must be lifecycle-normalized');
+assert(qoo10Adapter.includes("if (!explicitType && lifecycle !== 'pre_order' && type === '2') type = '0';"), 'Qoo10 adapter must ignore stale stored preorder shipping type for READY STOCK fallback payloads');
+assert(joomAdapter.includes('function lifecycleProductName') && joomAdapter.includes('name: lifecycleProductName(master.product_name, lifecycleOf(master), sku)'), 'Joom adapter fallback scraped name must be lifecycle-normalized');
+assert(ebayAdapter.includes('function lifecycleProductName') && ebayAdapter.includes('title: lifecycleProductName(master.product_name, lifecycleOf(master), sku).slice(0, 80)'), 'eBay adapter fallback title must be lifecycle-normalized');
+assert(ebayAdapter.includes('const title = stripLifecycleTags(master.album || master.release_title || master.product_name || master.sku);'), 'eBay adapter release-title aspect must not carry stock-state tags');
+assert(shopeeAdapter.includes('function shopeeLifecycleProductName') && shopeeAdapter.includes('const lifecycle_state: string = shopeeLifecycleOf(master, (ctx as any).lifecycle_state);'), 'Shopee multi-region adapter must derive lifecycle with a ready-stock-safe helper');
+assert(shopeeAdapter.includes('|| shopeeLifecycleProductName(master.product_name, lifecycle_state, master.sku)') && shopeeAdapter.includes('is_pre_order,'), 'Shopee adapter fallback name and preorder flag must follow lifecycle');
+assert(shopeeAdapter.includes('global_item_name: shopeeLifecycleProductName(masterProduct.product_name, lifecycle_state, masterProduct.sku) || undefined'), 'Shopee metadata update must not push stale stock-state title tags');
 assert(platformPublish.includes('absorb_platform_sku_lookup') && platformPublish.includes('shouldAbsorbLookup'), 'platform-publish sync must absorb remote SKU hits through service-role RPC');
 assert(platformPublish.includes('raw_response: adapterResult.rawResponse && dry_run'), 'platform-publish must not return live bridge raw responses to browser callers');
 assert(joomAdapter.includes('raw?.joom_enabled !== false') && joomAdapter.includes("return 'listed'"), 'Joom adapter must treat enabled lookup hits as listed');

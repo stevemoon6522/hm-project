@@ -19,8 +19,29 @@ function qoo10Payload(ctx: AdapterContext) {
   return ((ctx as any).qoo10 || {}) as Record<string, any>;
 }
 
+function lifecycleOf(master: Record<string, any> = {}, overrides: Record<string, any> = {}): string {
+  const lifecycle = norm(overrides.lifecycle_state || master.lifecycle_state).toLowerCase();
+  return lifecycle === 'pre_order' ? 'pre_order' : 'ready_stock';
+}
+
+function lifecyclePrefix(lifecycle: string): string {
+  return lifecycle === 'pre_order' ? '[PRE ORDER]' : '[READY STOCK]';
+}
+
+function stripLifecycleTags(value: unknown): string {
+  return norm(value).replace(/\s*\[(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\]\s*/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function lifecycleProductName(value: unknown, lifecycle: string, fallback = ''): string {
+  const body = stripLifecycleTags(value) || stripLifecycleTags(fallback) || norm(fallback);
+  return `${lifecyclePrefix(lifecycle)} ${body}`.replace(/\s+/g, ' ').trim();
+}
+
 function titleFrom(ctx: AdapterContext, qoo10: Record<string, any>): string {
-  return norm(qoo10.title || ctx.masterProduct?.product_name || ctx.masterProduct?.sku).slice(0, 100);
+  const explicitTitle = norm(qoo10.title);
+  if (explicitTitle) return explicitTitle.slice(0, 100);
+  const master = (ctx.masterProduct || {}) as Record<string, any>;
+  return lifecycleProductName(master.product_name, lifecycleOf(master, qoo10), master.sku).slice(0, 100);
 }
 
 function categoryFrom(ctx: AdapterContext, qoo10: Record<string, any>): string {
@@ -37,8 +58,11 @@ function brandNoFrom(ctx: AdapterContext, qoo10: Record<string, any>): string {
 }
 
 function availableDateFrom(ctx: AdapterContext, qoo10: Record<string, any>) {
-  const lifecycle = norm(qoo10.lifecycle_state || ctx.masterProduct?.lifecycle_state);
-  const type = norm(qoo10.available_date_type || ctx.masterProduct?.qoo10_available_date_type || (lifecycle === 'pre_order' ? '2' : '0'));
+  const lifecycle = lifecycleOf((ctx.masterProduct || {}) as Record<string, any>, qoo10);
+  const explicitType = norm(qoo10.available_date_type);
+  const storedType = norm(ctx.masterProduct?.qoo10_available_date_type);
+  let type = norm(explicitType || storedType || (lifecycle === 'pre_order' ? '2' : '0'));
+  if (!explicitType && lifecycle !== 'pre_order' && type === '2') type = '0';
   const raw = norm(qoo10.available_date_value || qoo10.release_date || ctx.masterProduct?.qoo10_available_date_value || ctx.masterProduct?.qoo10_release_date);
   if (type === '2') return { type: '2', value: raw.replace(/-/g, '/') };
   return { type: '0', value: norm(raw || '3') };

@@ -176,6 +176,24 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '
 const ALERT_BOT_URL = Deno.env.get('ALERT_BOT_URL') || '';
 const ALERT_HMAC_SECRET = Deno.env.get('ALERT_HMAC_SECRET') || '';
 
+function shopeeLifecycleOf(master: Record<string, unknown> = {}, override: unknown = ''): string {
+  const lifecycle = String(override || (master as any).lifecycle_state || '').toLowerCase();
+  return lifecycle === 'pre_order' ? 'pre_order' : 'ready_stock';
+}
+
+function shopeeLifecyclePrefix(lifecycle: string): string {
+  return lifecycle === 'pre_order' ? '[PRE ORDER]' : '[READY STOCK]';
+}
+
+function stripShopeeLifecycleTags(value: unknown): string {
+  return String(value || '').replace(/\s*\[(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\]\s*/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function shopeeLifecycleProductName(value: unknown, lifecycle: string, fallback = ''): string {
+  const body = stripShopeeLifecycleTags(value) || stripShopeeLifecycleTags(fallback) || String(fallback || '').trim();
+  return `${shopeeLifecyclePrefix(lifecycle)} ${body}`.replace(/\s+/g, ' ').trim();
+}
+
 // HMAC helper (mirrors index.ts; both files use @ts-nocheck so duplication is acceptable).
 async function _hmacSha256Hex(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -229,7 +247,7 @@ function makeSvcClient() {
 async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
   const master = ctx.masterProduct as any;
   const regions: string[] = Array.isArray((ctx as any).regions) ? (ctx as any).regions : [];
-  const lifecycle_state: string = (ctx as any).lifecycle_state || master.lifecycle_state || 'pre_order';
+  const lifecycle_state: string = shopeeLifecycleOf(master, (ctx as any).lifecycle_state);
 
   // ------------------------------------------------------------------
   // STEP B: Validate required master-data fields (gate 7 pre-checks).
@@ -352,7 +370,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   const is_pre_order = lifecycle_state === 'pre_order';
   const registerName = String(
     (ctx as any).shopee_product_name
-    || master.product_name
+    || shopeeLifecycleProductName(master.product_name, lifecycle_state, master.sku)
     || master.sku
     || ''
   ).trim();
@@ -666,9 +684,11 @@ async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterRe
   // shopee-bridge's /upload_image action first. The adapter passes image_url here;
   // the bridge's register_cbsc handles the logistics of getting an image_id if needed.
 
+  const lifecycle_state = shopeeLifecycleOf(masterProduct as any, (ctx as any).lifecycle_state);
+  const is_pre_order = lifecycle_state === 'pre_order';
   const payload: Record<string, unknown> = {
     region,
-    name: masterProduct.product_name || masterProduct.sku,
+    name: shopeeLifecycleProductName(masterProduct.product_name, lifecycle_state, masterProduct.sku) || masterProduct.sku,
     sku: masterProduct.sku,
     // category_id must be set on masterProduct or provided via shopee_listings;
     // dispatcher gate 7 does not yet check this for shopee. We'll pass null and
@@ -676,10 +696,12 @@ async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterRe
     category_id: (masterProduct as any).shopee_category_id ?? null,
     image_url: masterProduct.main_image || null,
     weight_g: masterProduct.weight_g || 100,
-    days_to_ship: (masterProduct as any).days_to_ship ?? 2,
+    days_to_ship: (masterProduct as any).days_to_ship ?? (is_pre_order ? 10 : 2),
     price: Number(price),
     stock: Number(stock),
     targets: [{ region, shop_id: Number(shopId) }],
+    lifecycle_state,
+    is_pre_order,
     publish_request_id: publishRequestId,
     dry_run: dryRun ? true : undefined,
   };
@@ -757,6 +779,8 @@ async function handleUpdateMetadata(ctx: ShopeeAdapterContext): Promise<AdapterR
     return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'platformItemId required for update_metadata' };
   }
 
+  const lifecycle_state = shopeeLifecycleOf(masterProduct as any, (ctx as any).lifecycle_state);
+
   // NOTE: weight is intentionally omitted here.
   // Sending weight on update_global_item overwrites child model weights too,
   // which breaks per-variant weight on multi-variation listings.
@@ -764,7 +788,7 @@ async function handleUpdateMetadata(ctx: ShopeeAdapterContext): Promise<AdapterR
   const payload: Record<string, unknown> = {
     region: region || 'SG',
     global_item_id: Number(platformItemId),
-    global_item_name: masterProduct.product_name || undefined,
+    global_item_name: shopeeLifecycleProductName(masterProduct.product_name, lifecycle_state, masterProduct.sku) || undefined,
     description: masterProduct.description || undefined,
     global_item_sku: masterProduct.sku || undefined,
     publish_request_id: publishRequestId,

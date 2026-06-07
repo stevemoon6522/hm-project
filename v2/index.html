@@ -3262,12 +3262,9 @@
 
         <!-- Basic Information: media + core fields in Shopee Seller Center order -->
         <section id="rsh-image-section" class="rsh-seller-section" style="display:none;">
-          <div class="rsh-section-title">
-            <span>Basic Information · Product Images</span>
-            <div style="display:flex;gap:8px;align-items:center;">
-              <span id="rsh-img-count" class="muted" style="font-size:12px;"></span>
-              <button type="button" id="rsh-reupload-btn" style="font-size:11px;padding:3px 8px;display:none;">이미지 재업로드</button>
-            </div>
+          <div id="rsh-image-toolbar" style="display:flex;justify-content:flex-end;gap:8px;align-items:center;margin-bottom:6px;">
+            <span id="rsh-img-count" class="muted" style="font-size:12px;"></span>
+            <button type="button" id="rsh-reupload-btn" style="font-size:11px;padding:3px 8px;display:none;">이미지 재업로드</button>
           </div>
           <div id="rsh-img-cached" style="display:none;">
             <div class="notice ok" style="font-size:12px;margin-bottom:8px;">캐시된 Shopee 이미지 ID 사용 중. "이미지 재업로드"를 누르면 새로 크롤링합니다.</div>
@@ -3276,21 +3273,30 @@
           <div id="rsh-img-missing" class="notice error" style="display:none;">이미지 등록 필요 — shopee_image_id가 없습니다. 아래에서 이미지를 선택해 주세요.</div>
           <div id="rsh-img-crawl-loading" class="notice" style="display:none;">StarOneMall 이미지 크롤링 중...</div>
           <div id="rsh-img-crawl-error" class="notice error" style="display:none;"></div>
+          <div id="rsh-image-source-label" style="display:none;margin-top:8px;font-size:12px;font-weight:700;color:var(--text);">
+            Source thumbnails - click one thumbnail to set the Shopee representative image.
+          </div>
           <div id="rsh-img-grid" style="display:none;margin-top:8px;">
             <!-- 4-column thumbnail grid, rendered by JS -->
           </div>
+          <div id="rsh-image-upload-label" style="margin-top:12px;font-size:12px;font-weight:700;color:var(--text);">
+            Shopee upload order preview
+          </div>
+          <div id="rsh-image-role-note" class="notice ok" style="font-size:12px;margin-top:6px;margin-bottom:0;">
+            Representative image is uploaded first as image_id_list[0]. Detail images are uploaded after it as image_id_list[1..8].
+          </div>
           <div id="rsh-image-role-layout" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:10px;align-items:start;">
-            <div style="border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff;">
+            <div id="rsh-cover-role-card" style="border:2px solid var(--accent);border-radius:8px;padding:10px;background:#fff;">
               <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:8px;">
-                <strong style="font-size:12px;">Representative image</strong>
-                <small class="muted">image_id_list[0]</small>
+                <strong id="rsh-cover-role-title" style="font-size:12px;">1. Representative image</strong>
+                <small class="muted">Shopee cover | image_id_list[0]</small>
               </div>
               <div id="rsh-cover-preview"></div>
             </div>
-            <div style="border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff;">
+            <div id="rsh-detail-role-card" style="border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff;">
               <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:8px;">
-                <strong style="font-size:12px;">Detail images</strong>
-                <small class="muted">image_id_list[1..8]</small>
+                <strong id="rsh-detail-role-title" style="font-size:12px;">2. Detail images</strong>
+                <small class="muted">After cover | image_id_list[1..8]</small>
               </div>
               <div id="rsh-detail-preview" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;"></div>
             </div>
@@ -11275,9 +11281,22 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return refs.slice(0, maxPieces);
   }
 
+  function rshImageRefKey(ref) {
+    const raw = ref?.sourceUrl || ref?.src || ref?.dataUrl || '';
+    return String(raw || '').trim();
+  }
+
+  function rshActiveDetailImageSources() {
+    const detailSources = Array.isArray(_rsh.detailImageSources) ? _rsh.detailImageSources : [];
+    const coverKey = rshImageRefKey((_rsh.selectedImages || [])[0]);
+    return detailSources
+      .filter((ref) => !coverKey || rshImageRefKey(ref) !== coverKey)
+      .slice(0, REGISTER_MAX_IMAGE_IDS - 1);
+  }
+
   async function rshBuildDetailUploadRefs(maxCount) {
     const refs = [];
-    const detailSources = Array.isArray(_rsh.detailImageSources) ? _rsh.detailImageSources : [];
+    const detailSources = rshActiveDetailImageSources();
     for (const detail of detailSources) {
       if (refs.length >= maxCount) break;
       try {
@@ -11293,12 +11312,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // Render crawled image grid (4-column, click to select).
   function rshRenderImageGrid(images) {
     const grid = $rsh('img-grid');
+    const sourceLabel = $rsh('image-source-label');
     if (!grid) return;
     if (!images.length) {
       grid.innerHTML = '<div class="notice" style="font-size:12px;">크롤링된 이미지가 없습니다.</div>';
       grid.style.display = 'block';
+      if (sourceLabel) sourceLabel.style.display = 'none';
       return;
     }
+    if (sourceLabel) sourceLabel.style.display = 'block';
     grid.style.display = 'grid';
     grid.style.gridTemplateColumns = 'repeat(4, 1fr)';
     grid.style.gap = '8px';
@@ -11342,9 +11364,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       coverEl.innerHTML = '<div class="rsh-muted-box" style="font-size:12px;">No representative image selected</div>';
     }
 
-    const detailRefs = Array.isArray(_rsh.detailImageSources)
-      ? _rsh.detailImageSources.slice(0, REGISTER_MAX_IMAGE_IDS - 1)
-      : [];
+    const detailRefs = rshActiveDetailImageSources();
     if (detailRefs.length) {
       detailEl.innerHTML = detailRefs.map((ref, i) => renderThumb(ref, `Detail ${i + 1}`)).join('');
     } else if (Array.isArray(_rsh.cachedExtraIds) && _rsh.cachedExtraIds.length) {
@@ -11393,7 +11413,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!cell || !badge) return;
       cell.style.borderColor = 'var(--accent)';
       badge.style.display = 'block';
-      badge.textContent = '선택됨';
+      badge.textContent = 'Representative';
     });
   }
 
@@ -11401,7 +11421,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // P0-1: No N/9 count — single-select only; show "선택됨" when one is picked
     const countEl = $rsh('img-count');
     if (countEl) {
-      const detailCount = Array.isArray(_rsh.detailImageSources) ? _rsh.detailImageSources.length : 0;
+      const detailCount = rshActiveDetailImageSources().length;
       countEl.textContent = _rsh.selectedImages.length > 0
         ? `대표 선택됨${detailCount ? ` · 상세 ${detailCount}장` : ''}`
         : '';
@@ -11818,7 +11838,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function mrQoo10FormatTitle(row) {
-    return cleanProductName(row?.product_name, row?.sku || '').slice(0, 100);
+    return normalizeMasterProductNameForLifecycle(row?.product_name, productLifecycleFilterKey(row), row?.sku || '').slice(0, 100);
   }
 
   function mrQoo10ReleaseDateDefault(rows) {
@@ -12000,7 +12020,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (!body) return;
     const first = rows[0] || {};
     const basePrice = mrQoo10BasePriceFromRows(rows);
-    const isPreOrder = true;
+    const isPreOrder = mrQoo10IsPreOrder(rows);
     const selectedShipping = first.qoo10_shipping_no || '715009';
     const detailImageCount = mrQoo10DetailImageUrls().length;
     const existingItemCode = _mrQoo10.existingItemCode || '';
@@ -12078,7 +12098,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const rows = _mrQoo10.rows || [];
     const first = rows[0] || {};
     const basePrice = mrQoo10ReadNumber('mr-qoo10-base-price', 0);
-    const availableType = String(document.getElementById('mr-qoo10-available-type')?.value || '2');
+    const defaultAvailableType = mrQoo10IsPreOrder(rows) ? '2' : '0';
+    const availableType = String(document.getElementById('mr-qoo10-available-type')?.value || defaultAvailableType);
     const releaseDate = String(document.getElementById('mr-qoo10-release-date')?.value || '').trim();
     const headerHtml = String(document.getElementById('mr-qoo10-header-html')?.value || '');
     const descriptionTemplateHtml = String(document.getElementById('mr-qoo10-description-template-html')?.value || '');
@@ -12631,6 +12652,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const imgCrawlLoading = $rsh('img-crawl-loading');
     const imgCrawlError = $rsh('img-crawl-error');
     const imgGrid = $rsh('img-grid');
+    const imgSourceLabel = $rsh('image-source-label');
     const reuploadBtn = $rsh('reupload-btn');
 
     // Reset image sub-elements
@@ -12639,6 +12661,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (imgCrawlLoading) imgCrawlLoading.style.display = 'none';
     if (imgCrawlError) imgCrawlError.style.display = 'none';
     if (imgGrid) imgGrid.style.display = 'none';
+    if (imgSourceLabel) imgSourceLabel.style.display = 'none';
     const noStaronemallBanner = $rsh('no-staronemall');
     if (noStaronemallBanner) noStaronemallBanner.style.display = 'none';
     const manualUrlSection = $rsh('manual-url-section');
@@ -19123,17 +19146,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     async function mrJoomLoadDetailImages(group) {
-      const firstRow = group.rows[0] || {};
-      const sourceUrl = mrJoomSourceUrl(group);
       await mrEnsureJoomSourceImages(group);
-      const observed = firstRow.observed || {};
-      const rawDetails = [
-        ...(firstRow._extra_images || []),
-        ...(firstRow.extra_images || []),
-        ...(observed.detail_image_urls || []),
-      ];
-      const details = mrJoomNormalizeImageList(rawDetails, sourceUrl);
-      return details.slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
+      return mrJoomDetailImageCandidates(group, mrMasterRepresentativeImage(group));
     }
 
     function mrRefreshGroupAutoSkus(card, group) {
@@ -19662,6 +19676,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Used in both mrRenderPreviewCards and mrPromoteAll.
     const CROSS_SKU_INACTIVE = new Set(['rejected', 'skipped', 'crawling']);
 
+    function mrRowLifecycle(row) {
+      const lifecycle = String(row?._lifecycle_state || row?.lifecycle_state || '').toLowerCase();
+      if (lifecycle === 'pre_order' || lifecycle === 'ready_stock') return lifecycle;
+      return mrLifecycle();
+    }
+
     function mrMasterProductName(row) {
       const title = row?.observed?.title || row?.product_name || row?.name || '';
       const derived = [
@@ -19669,7 +19689,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         row?.album ? `[${row.album}]` : '',
         row?.version || '',
       ].filter(Boolean).join(' ');
-      return normalizeMasterProductNameForLifecycle(title, mrLifecycle(), derived || row?.artist || row?._sku || 'UNKNOWN');
+      return normalizeMasterProductNameForLifecycle(title, mrRowLifecycle(row), derived || row?.artist || row?._sku || 'UNKNOWN');
     }
 
     function mrGroupComponents(group) {
@@ -21906,7 +21926,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     const MR_JOOM_DEFAULT_CATEGORY_ID = 'music_albums';
     const MR_JOOM_DEFAULT_CATEGORY_LABEL = 'Music';
-    const MR_JOOM_DEFAULT_NAME_PREFIX = '[PRE ORDER]';
     const MR_JOOM_DEFAULT_STOCK = 5;
     const MR_JOOM_MAX_EXTRA_IMAGES = 20;
     const MR_JOOM_BRAND_CACHE_KEY = 'sdv2:joom:brand-options:v1';
@@ -22065,16 +22084,43 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return candidates.map(v => String(v || '').trim()).find(Boolean) || '';
     }
 
+    function mrJoomDetailImageCandidates(group, mainImageUrl = '') {
+      const firstRow = group?.rows?.[0] || {};
+      const observed = firstRow.observed || {};
+      const sourceUrl = mrJoomSourceUrl(group);
+      const raw = [
+        ...(firstRow._extra_images || []),
+        ...(firstRow.extra_images || []),
+        ...(observed.detail_image_urls || []),
+      ];
+      const seen = new Set();
+      const mainKey = String(mainImageUrl || '').trim();
+      if (mainKey) seen.add(mainKey);
+      return mrJoomNormalizeImageList(raw, sourceUrl)
+        .filter((url) => {
+          const key = String(url || '').trim();
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
+    }
+
     function mrJoomOptionImageUrl(row) {
       return String(row?._main_image || row?.shopee_option_image_url || '').trim();
+    }
+
+    function mrJoomNamePrefix(row) {
+      return lifecycleProductNamePrefix(mrRowLifecycle(row));
     }
 
     function mrJoomBuildTitle(row) {
       const artist = String(row?.artist || '').trim();
       const album = String(row?.album || '').trim();
       const fallbackName = mrMasterProductName(row);
-      if (artist && album) return `${MR_JOOM_DEFAULT_NAME_PREFIX} ${artist} - ${album}`.slice(0, 200);
-      return `${MR_JOOM_DEFAULT_NAME_PREFIX} ${fallbackName}`.slice(0, 200);
+      const prefix = mrJoomNamePrefix(row);
+      if (artist && album) return `${prefix} ${artist} - ${album}`.slice(0, 200);
+      return (fallbackName || `${prefix} K-POP Album`).slice(0, 200);
     }
 
     function mrJoomDescriptionTitle(row) {
@@ -22083,7 +22129,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     function mrJoomDefaultDescription(group) {
       const row = group?.rows?.[0] || {};
-      const title = mrJoomDescriptionTitle(row) || mrJoomBuildTitle(row).replace(`${MR_JOOM_DEFAULT_NAME_PREFIX} `, '').trim();
+      const title = mrJoomDescriptionTitle(row) || mrJoomBuildTitle(row).replace(`${mrJoomNamePrefix(row)} `, '').trim();
       const defaultContents = '- PACKAGE\n- CD\n- PHOTOCARD\n- POSTER (varies by version)';
       const contents = mrGroupComponents(group) || defaultContents;
       return [
@@ -22184,7 +22230,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const categoryLabel = MR_JOOM_DEFAULT_CATEGORY_LABEL;
       const brand = mrJoomCleanBrand(firstRow._joomBrand || mrJoomDefaultBrand(firstRow));
       const mainImageUrl = mrMasterRepresentativeImage(group);
-      const extraImages = (firstRow._extra_images || []).filter(Boolean).slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
+      const extraImages = mrJoomDetailImageCandidates(group, mainImageUrl);
       const contents = mrGroupComponents(group);
       const title = mrJoomBuildTitle(firstRow);
       const description = mrJoomDefaultDescription(group);
@@ -22303,13 +22349,59 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         variantsConfig: draft.variantsConfig,
         categoryId: draft.categoryId,
         enabled: true,
-        namePrefix: MR_JOOM_DEFAULT_NAME_PREFIX,
+        namePrefix: mrJoomNamePrefix(firstRow),
         artist: firstRow.artist || '',
         album: firstRow.album || '',
         contents: draft.contents,
         brand: draft.brand,
       };
       return { draft, payload, detailImages };
+    }
+
+    function mrJoomImageThumbHtml(url, label, meta = '') {
+      const imageUrl = String(url || '').trim();
+      if (!imageUrl) {
+        return '<div class="rsh-muted-box" style="font-size:12px;min-height:88px;">No image</div>';
+      }
+      return `
+        <div style="min-width:0;">
+          <div style="border:1px solid var(--border);border-radius:6px;overflow:hidden;aspect-ratio:1;background:#f8fafc;">
+            <img src="${text(imageUrl)}" alt="${text(label)}" style="width:100%;height:100%;object-fit:cover;" loading="lazy"
+              onerror="this.parentElement.style.opacity='0.35';this.parentElement.title='Image failed to load';">
+          </div>
+          <div style="font-size:11px;font-weight:700;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${text(label)}</div>
+          ${meta ? `<div class="muted" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${text(meta)}</div>` : ''}
+          <div class="mono" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${text(imageUrl)}">${text(imageUrl)}</div>
+        </div>`;
+    }
+
+    function mrJoomOptionImageCellHtml(url) {
+      const imageUrl = String(url || '').trim();
+      if (!imageUrl) return '<span class="muted">-</span>';
+      return '<div style="width:68px;">' + mrJoomImageThumbHtml(imageUrl, 'Option', 'variant.mainImage') + '</div>';
+    }
+
+    function mrJoomRenderImagePreview(draft) {
+      const detailImages = Array.isArray(draft.extraImages) ? draft.extraImages : [];
+      const detailHtml = detailImages.length
+        ? detailImages.map((url, i) => mrJoomImageThumbHtml(url, `Detail ${i + 1}`, `extraImages[${i}]`)).join('')
+        : '<div class="rsh-muted-box" style="font-size:12px;">No detail images found</div>';
+      return ''
+        + '<div class="field" style="margin-top:10px;"><label>Joom image preview</label>'
+        + '<div id="mr-joom-image-role-layout" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:8px;align-items:start;">'
+        + '<div id="mr-joom-main-role-card" style="border:2px solid var(--accent);border-radius:8px;padding:10px;background:#fff;">'
+        + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:8px;">'
+        + '<strong style="font-size:12px;">1. Main image</strong><small class="muted">Joom mainImage</small>'
+        + '</div>'
+        + mrJoomImageThumbHtml(draft.mainImageUrl, 'Main image', 'mainImage')
+        + '</div>'
+        + '<div id="mr-joom-detail-role-card" style="border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff;">'
+        + '<div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:8px;">'
+        + '<strong style="font-size:12px;">2. Detail images</strong><small class="muted">Joom extraImages[0..19]</small>'
+        + '</div>'
+        + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;">' + detailHtml + '</div>'
+        + '</div>'
+        + '</div></div>';
     }
 
     function mrRenderJoomDraftModal(draft, dryRunResult = null) {
@@ -22346,7 +22438,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           + '<td style="text-align:right;">' + esc(o.stock) + '</td>'
           + '<td style="text-align:right;">' + esc(o.weightKg || '-') + ' kg</td>'
           + '<td style="text-align:right;">$' + esc(o.shippingPrice) + '</td>'
-          + '<td class="mono" style="font-size:10px;max-width:180px;word-break:break-all;">' + esc(o.imageUrl || '-') + '</td>'
+          + '<td>' + mrJoomOptionImageCellHtml(o.imageUrl) + '</td>'
           + '</tr>';
       }).join('');
 
@@ -22360,10 +22452,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         + '<div class="field" style="grid-column:span 4;"><label>Category default</label><div>' + esc(draft.categoryLabel) + ' <span class="mono" style="font-size:10px;">' + esc(draft.categoryId) + '</span></div></div>'
         + '<div class="field" style="grid-column:span 4;"><label>Brand</label><div>' + esc(draft.brand || '-') + '</div></div>'
         + '<div class="field" style="grid-column:span 12;"><label>Title</label><div>' + esc(draft.title) + '</div></div>'
-        + '<div class="field" style="grid-column:span 8;"><label>Main image from master product</label><div class="mono" style="font-size:11px;overflow-wrap:anywhere;">' + esc(draft.mainImageUrl || '-') + '</div></div>'
         + '<div class="field" style="grid-column:span 4;"><label>Dry-run status</label><div>' + dryRunLabel + '</div></div>'
         + '<div class="field" style="grid-column:span 12;"><label>Search tags draft (max 10, preview only)</label><div style="font-size:12px;">' + esc(draft.searchTags.join(', ') || '-') + '</div></div>'
         + '</div>'
+        + mrJoomRenderImagePreview(draft)
         + '<div class="field" style="margin-top:10px;"><label>Fixed description template</label><pre style="white-space:pre-wrap;max-height:180px;overflow:auto;background:#f8fafc;border:1px solid var(--border);border-radius:6px;padding:8px;font-size:11px;line-height:1.45;">' + esc(draft.description) + '</pre></div>'
         + '<div class="field" style="margin-top:10px;"><label>Options mapped from master products</label>'
         + '<div style="overflow:auto;border:1px solid var(--border);border-radius:6px;">'
@@ -22770,7 +22862,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         variantsConfig,
         categoryId: firstRow._joomCategory || 'music_albums',
         enabled: true,
-        namePrefix: '[PRE ORDER]',
+        namePrefix: mrJoomNamePrefix(firstRow),
         artist: firstRow.artist || '',
         album: firstRow.album || '',
         contents: mrGroupComponents(group),

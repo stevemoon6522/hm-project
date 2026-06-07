@@ -25,7 +25,8 @@ const rshModal = sliceBetween(
 
 assert(html.includes('id="rsh-variant-section"'), 'Shopee modal must show grouped option rows');
 assert(html.includes('id="rsh-variant-body"'), 'Shopee modal must have a variant tbody');
-assert(html.includes('Basic Information · Product Images'), 'Shopee modal must mirror Seller Center basic image section');
+assert(!html.includes('Basic Information · Product Images'), 'Shopee image section must not show the old Basic Information product-image heading');
+assert(html.includes('id="rsh-image-toolbar"'), 'Shopee image section must keep a compact image toolbar without the old heading');
 assert(html.includes('id="rsh-product-name" type="text"'), 'Shopee modal must allow editing the Shopee product name');
 assert(html.includes('id="rsh-desc-reset"'), 'Shopee modal must allow regenerating the Seller Center description');
 assert(html.includes('Sales Information · Variations'), 'Shopee modal must include Seller Center sales information section');
@@ -33,6 +34,9 @@ assert(html.includes('id="rsh-variation-name"'), 'Shopee modal must expose the V
 assert(html.includes('id="rsh-cover-preview"'), 'Shopee modal must show a separate representative image preview');
 assert(html.includes('id="rsh-detail-preview"'), 'Shopee modal must show a separate detail image preview');
 assert(html.includes('image_id_list[0]') && html.includes('image_id_list[1..8]'), 'Shopee modal image roles must distinguish cover and detail image_id positions');
+assert(html.includes('id="rsh-image-source-label"') && html.includes('Source thumbnails - click one thumbnail to set the Shopee representative image.'), 'Shopee modal must label the source thumbnail selector separately from upload roles');
+assert(html.includes('id="rsh-image-upload-label"') && html.includes('Shopee upload order preview'), 'Shopee modal must label the actual Shopee upload order preview');
+assert(html.includes('id="rsh-cover-role-card"') && html.includes('id="rsh-detail-role-card"'), 'Shopee modal must render visually distinct cover/detail role cards');
 assert(
   html.includes('id="rsh-var-bulk-sourcing"') && html.includes('id="rsh-var-bulk-price"') && html.includes('id="rsh-var-bulk-stock"'),
   'Shopee modal must expose bulk sourcing/settlement/stock inputs',
@@ -77,6 +81,7 @@ assert(
 assert(
   rshModal.includes('async function rshUseMasterImages(master)')
     && rshModal.includes('function rshMasterDetailImageRefs(master)')
+    && rshModal.includes('function rshActiveDetailImageSources()')
     && rshModal.includes('function rshRenderImageRolePreview()')
     && rshModal.includes("kind: 'master-layered-cover'")
     && rshModal.includes('detailRefs.slice(0, REGISTER_MAX_IMAGE_IDS - 1)')
@@ -127,8 +132,15 @@ assert(
 assert(
   rshModal.includes('rshBuildLayeredCoverDataUrl')
     && rshModal.includes('rshBuildDetailUploadRefs')
+    && rshModal.includes('const detailSources = rshActiveDetailImageSources()')
     && rshModal.includes('STARONEMALL_LAYER_VERSION'),
   'group modal must build a shop-layer cover and upload detail images after it',
+);
+assert(
+  rshModal.includes("badge.textContent = 'Representative'")
+    && rshModal.includes('const coverKey = rshImageRefKey((_rsh.selectedImages || [])[0])')
+    && rshModal.includes(".filter((ref) => !coverKey || rshImageRefKey(ref) !== coverKey)"),
+  'Shopee image UI must mark the representative thumbnail and exclude it from detail uploads',
 );
 assert(
   rshModal.includes("description: document.getElementById('rsh-description')?.value")

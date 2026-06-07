@@ -21,6 +21,23 @@ function n(value: unknown, fallback = 0): number {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function lifecycleOf(master: Record<string, unknown>): string {
+  return s(master.lifecycle_state).toLowerCase() === 'pre_order' ? 'pre_order' : 'ready_stock';
+}
+
+function lifecyclePrefix(lifecycle: string): string {
+  return lifecycle === 'pre_order' ? '[PRE ORDER]' : '[READY STOCK]';
+}
+
+function stripLifecycleTags(value: unknown): string {
+  return s(value).replace(/\s*\[(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\]\s*/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function lifecycleProductName(value: unknown, lifecycle: string, fallback = ''): string {
+  const body = stripLifecycleTags(value) || stripLifecycleTags(fallback) || s(fallback).trim();
+  return `${lifecyclePrefix(lifecycle)} ${body}`.replace(/\s+/g, ' ').trim();
+}
+
 function imagesFrom(master: Record<string, unknown>): string[] {
   const images = [s(master.main_image), ...(Array.isArray(master.extra_images) ? master.extra_images.map((v) => s(v)) : [])]
     .map((v) => v.trim())
@@ -99,7 +116,7 @@ async function ebayPriceUsd(master: Record<string, unknown>): Promise<string> {
 
 function aspectsFrom(master: Record<string, unknown>) {
   const artist = s(master.artist || master.brand || master.shopee_brand_name || '').trim();
-  const title = s(master.album || master.release_title || master.product_name || master.sku).trim();
+  const title = stripLifecycleTags(master.album || master.release_title || master.product_name || master.sku);
   const aspects: Record<string, string[]> = {
     Type: ['Album'],
     Format: ['CD'],
@@ -136,7 +153,7 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   }
   const body = {
     sku,
-    title: s(master.product_name || sku).slice(0, 80),
+    title: lifecycleProductName(master.product_name, lifecycleOf(master), sku).slice(0, 80),
     description: description.slice(0, 4000),
     imageUrls: images,
     aspects: aspectsFrom(master),

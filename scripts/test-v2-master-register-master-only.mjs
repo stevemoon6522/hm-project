@@ -33,7 +33,8 @@ assert(masterRegister.includes('mrSlug(row.album, 12)'), 'SKU must include Album
 assert(masterRegister.includes('mrSlug(row.version, 12)'), 'SKU must include full Version text such as PHOTOBOOK');
 assert(masterRegister.includes('mrSlug(member, 12)'), 'SKU must include member/option name');
 assert(masterRegister.includes('function mrMasterProductName(row)'), 'master register must build sanitized master product names');
-assert(masterRegister.includes('normalizeMasterProductNameForLifecycle(title, mrLifecycle(), derived'), 'master product names must be sanitized and lifecycle-prefixed before saving');
+assert(masterRegister.includes('function mrRowLifecycle(row)'), 'master product names must resolve lifecycle from each row when available');
+assert(masterRegister.includes('normalizeMasterProductNameForLifecycle(title, mrRowLifecycle(row), derived'), 'master product names must be sanitized and row-lifecycle-prefixed before saving');
 assert(
   masterRegister.includes('if (!(Number(row._cost_krw) > 0)) row._cost_krw')
     && masterRegister.includes('initialDefaultCost'),

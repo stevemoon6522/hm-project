@@ -350,11 +350,17 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   // - buildPublishItemPayload must send is_pre_order:true for pre_order lifecycle,
   //   otherwise items publish as Ready Stock with DTS > 10 → Shopee rejects.
   const is_pre_order = lifecycle_state === 'pre_order';
+  const registerName = String(
+    (ctx as any).shopee_product_name
+    || master.product_name
+    || master.sku
+    || ''
+  ).trim();
   const registerDescription = String(
     (ctx as any).shopee_description
     || master.shopee_description
     || master.description
-    || master.product_name
+    || registerName
     || master.sku
     || ''
   ).trim();
@@ -365,7 +371,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
 
   const bridgeBody: Record<string, unknown> = {
     region: baseRegion,
-    name: master.product_name || master.sku,
+    name: registerName,
     sku: master.sku,
     category_id: Number(master.shopee_category_id),
     brand: brand_obj,
@@ -374,7 +380,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     weight_g: Number(master.weight_g) || 100,
     price: cost_krw,            // Global SKU KRW price (model C — no margin multiplication)
     stock: registerStock,
-    description: registerDescription || master.product_name || master.sku,
+    description: registerDescription || registerName || master.sku,
     attribute_list,
     targets,
     lifecycle_state,            // 'ready_stock' | 'pre_order' — bridge consults this
@@ -554,7 +560,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
       p_platform_item_id: summary.global_item_id ? String(summary.global_item_id) : null,
       p_listing_status: summary.status === 'mapped' ? 'listed' : 'error',
       p_last_publish_request_id: ctx.publishRequestId,
-      p_last_payload: { capability: 'create_listing_multi_region', regions, lifecycle_state },
+      p_last_payload: { capability: 'create_listing_multi_region', regions, lifecycle_state, shopee_product_name: registerName },
       p_last_sync_at: new Date().toISOString(),
       p_error_msg: summary.error || null,
       p_error_code: summary.error ? 'PLATFORM_VALIDATION_ERROR' : null,

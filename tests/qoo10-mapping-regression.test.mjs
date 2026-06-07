@@ -87,6 +87,9 @@ test('Qoo10 V2 modal defaults match album preorder listing policy', () => {
   assert.match(html, /sdv2:qoo10:description_template_html/, 'Qoo10 description template should be persisted for reuse');
   assert.match(html, /mrQoo10LoadExistingItemCode/, 'Qoo10 modal should detect existing item codes before deciding create vs repair');
   assert.match(html, /mrQoo10RepairExistingListing/, 'Qoo10 modal should repair existing items instead of duplicate-registering them');
+  assert.match(html, /mrQoo10LoadCountrySettings/, 'Qoo10 modal should load the Q10 fee settings row before rendering prices');
+  assert.match(html, /calculateQoo10Price\(\{\s*costKrw: Number\(row\.cost_krw \|\| 0\),\s*weightG: Number\(row\.weight_g \|\| 0\),\s*countrySettings: settings,\s*\}\)/, 'Qoo10 modal option prices should use the shared Qoo10 price engine with shipping weight');
+  assert.doesNotMatch(html, /Math\.round\(Number\(row\.cost_krw \|\| 0\) \/ 10\)/, 'Qoo10 modal must not fall back to the old cost/10 pricing stub');
   assert.match(html, /\/update-goods/, 'Qoo10 existing repair should update BrandNo, origin, and release-date fields');
   assert.match(html, /\/edit-contents/, 'Qoo10 existing repair should update detail contents');
   assert.match(html, /\/edit-inventory/, 'Qoo10 existing repair should create/update option seller codes');

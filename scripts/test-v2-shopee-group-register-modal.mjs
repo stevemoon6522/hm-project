@@ -30,6 +30,9 @@ assert(html.includes('id="rsh-product-name" type="text"'), 'Shopee modal must al
 assert(html.includes('id="rsh-desc-reset"'), 'Shopee modal must allow regenerating the Seller Center description');
 assert(html.includes('Sales Information · Variations'), 'Shopee modal must include Seller Center sales information section');
 assert(html.includes('id="rsh-variation-name"'), 'Shopee modal must expose the Variation1 name field');
+assert(html.includes('id="rsh-cover-preview"'), 'Shopee modal must show a separate representative image preview');
+assert(html.includes('id="rsh-detail-preview"'), 'Shopee modal must show a separate detail image preview');
+assert(html.includes('image_id_list[0]') && html.includes('image_id_list[1..8]'), 'Shopee modal image roles must distinguish cover and detail image_id positions');
 assert(
   html.includes('id="rsh-var-bulk-sourcing"') && html.includes('id="rsh-var-bulk-price"') && html.includes('id="rsh-var-bulk-stock"'),
   'Shopee modal must expose bulk sourcing/settlement/stock inputs',
@@ -47,6 +50,7 @@ for (const token of [
   'rshRenderVariantSection',
   'rshFormatShopeeProductName',
   'rshReadProductName',
+  'rshCanonicalShopeeProductName',
   'rshReadBrandObject',
   'rshReadVariantInputs',
   'rshComputeRegionPrice',
@@ -73,6 +77,7 @@ assert(
 assert(
   rshModal.includes('async function rshUseMasterImages(master)')
     && rshModal.includes('function rshMasterDetailImageRefs(master)')
+    && rshModal.includes('function rshRenderImageRolePreview()')
     && rshModal.includes("kind: 'master-layered-cover'")
     && rshModal.includes('detailRefs.slice(0, REGISTER_MAX_IMAGE_IDS - 1)')
     && rshModal.indexOf('if (master.main_image)') < rshModal.indexOf('} else if (master.staronemall_url)'),
@@ -129,6 +134,12 @@ assert(
   rshModal.includes("description: document.getElementById('rsh-description')?.value")
     && html.includes("shopee_description: document.getElementById('rsh-description')?.value || ''"),
   'Shopee registration must forward the modal Product Description for group and single publish flows',
+);
+assert(
+  rshModal.includes('name: productName || parentSku')
+    && rshModal.includes('const shopeeProductName = rshCanonicalShopeeProductName(lifecycle)')
+    && html.includes('shopee_product_name: shopeeProductName'),
+  'Shopee registration must forward the canonical modal product name for group and single publish flows',
 );
 assert(
   rshModal.includes('rshUploadOptionImages')

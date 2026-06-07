@@ -59,6 +59,7 @@ for (const token of [
 for (const token of [
   'region_prices: (body as any).region_prices || {}',
   "shopee_description: (body as any).shopee_description || ''",
+  "shopee_product_name: (body as any).shopee_product_name || ''",
   'stock_override: (body as any).stock_override',
 ]) {
   assert(dispatcher.includes(token), `dispatcher missing token: ${token}`);
@@ -66,15 +67,28 @@ for (const token of [
 
 for (const token of [
   'const regionPrices',
+  'const registerName',
+  '(ctx as any).shopee_product_name',
+  'name: registerName',
   'price: targetPrice',
   'const registerDescription',
   '(ctx as any).shopee_description',
   'const registerStock',
   '(ctx as any).stock_override',
   'stock: registerStock',
-  'description: registerDescription || master.product_name || master.sku',
+  'description: registerDescription || registerName || master.sku',
 ]) {
   assert(shopeeAdapter.includes(token), `Shopee adapter missing token: ${token}`);
+}
+
+for (const token of [
+  'function rshCanonicalShopeeProductName',
+  'shopee_product_name: shopeeProductName',
+  'rshExtractRegionResults(dispatchResult)',
+  'await rshFetchShopeeListingResults(_rsh.productId, activeRegions)',
+  ".from('product_shopee_listings')",
+]) {
+  assert(rshBlock.includes(token), `single-product Shopee result/name flow missing token: ${token}`);
 }
 
 for (const token of [

@@ -3279,6 +3279,22 @@
           <div id="rsh-img-grid" style="display:none;margin-top:8px;">
             <!-- 4-column thumbnail grid, rendered by JS -->
           </div>
+          <div id="rsh-image-role-layout" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:10px;align-items:start;">
+            <div style="border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff;">
+              <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:8px;">
+                <strong style="font-size:12px;">Representative image</strong>
+                <small class="muted">image_id_list[0]</small>
+              </div>
+              <div id="rsh-cover-preview"></div>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff;">
+              <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:8px;">
+                <strong style="font-size:12px;">Detail images</strong>
+                <small class="muted">image_id_list[1..8]</small>
+              </div>
+              <div id="rsh-detail-preview" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;"></div>
+            </div>
+          </div>
           <div class="rsh-muted-box">Product Video: 미사용</div>
         </section>
 
@@ -10766,7 +10782,13 @@ LEGACY END -->
 
   function rshReadProductName() {
     const el = document.getElementById('rsh-product-name');
-    return stripNonMarketplaceText(el?.value || '').slice(0, 180).trim();
+    return stripNonMarketplaceText(el?.value || '').replace(/\s+/g, ' ').slice(0, 180).trim();
+  }
+
+  function rshCanonicalShopeeProductName(lifecycleState, fallback = '') {
+    const lifecycle = lifecycleState || _rsh.master?.lifecycle_state || 'ready_stock';
+    const raw = rshReadProductName() || fallback || _rsh.master?.product_name || _rsh.master?.sku || '';
+    return normalizeMasterProductNameForLifecycle(raw, lifecycle, _rsh.master?.sku || fallback || '').slice(0, 180);
   }
 
   // P1-5: Description template now mirrors the Seller Center text captured in
@@ -11292,6 +11314,48 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   // P0-1: Single-select (radio-style) — only 1 cover image supported in Phase B.
   // Backend buildPublishItemPayload only accepts a single image_id.
+  function rshRenderImageRolePreview() {
+    const coverEl = $rsh('cover-preview');
+    const detailEl = $rsh('detail-preview');
+    if (!coverEl || !detailEl) return;
+
+    const renderThumb = (ref, label) => {
+      const src = ref?.src || ref?.dataUrl || ref?.sourceUrl || '';
+      const origin = ref?.sourceUrl || ref?.staronemallUrl || '';
+      if (!src) return '';
+      return `
+        <div style="min-width:0;">
+          <div style="border:1px solid var(--border);border-radius:6px;overflow:hidden;aspect-ratio:1;background:#f8fafc;">
+            <img src="${text(src)}" alt="${text(label)}" style="width:100%;height:100%;object-fit:cover;" loading="lazy">
+          </div>
+          <div style="font-size:11px;font-weight:700;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${text(label)}</div>
+          ${origin ? `<div class="muted" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${text(origin)}</div>` : ''}
+        </div>`;
+    };
+
+    const coverRef = (_rsh.selectedImages || [])[0] || null;
+    if (coverRef) {
+      coverEl.innerHTML = renderThumb(coverRef, 'Cover');
+    } else if (_rsh.cachedImageId) {
+      coverEl.innerHTML = `<div class="rsh-muted-box" style="font-size:12px;">Cached cover image_id<br><code>${text(String(_rsh.cachedImageId))}</code></div>`;
+    } else {
+      coverEl.innerHTML = '<div class="rsh-muted-box" style="font-size:12px;">No representative image selected</div>';
+    }
+
+    const detailRefs = Array.isArray(_rsh.detailImageSources)
+      ? _rsh.detailImageSources.slice(0, REGISTER_MAX_IMAGE_IDS - 1)
+      : [];
+    if (detailRefs.length) {
+      detailEl.innerHTML = detailRefs.map((ref, i) => renderThumb(ref, `Detail ${i + 1}`)).join('');
+    } else if (Array.isArray(_rsh.cachedExtraIds) && _rsh.cachedExtraIds.length) {
+      detailEl.innerHTML = _rsh.cachedExtraIds.map((id, i) =>
+        `<div class="rsh-muted-box" style="font-size:11px;min-height:54px;">Detail ${i + 1}<br><code>${text(String(id))}</code></div>`
+      ).join('');
+    } else {
+      detailEl.innerHTML = '<div class="rsh-muted-box" style="font-size:12px;">No detail images selected</div>';
+    }
+  }
+
   window._rshToggleImage = function(idx) {
     const existing = _rsh.selectedImages.findIndex((s) => s.idx === idx);
     if (existing !== -1) {
@@ -11309,6 +11373,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     _rsh.uploadMode = _rsh.selectedImages.length > 0;
     rshUpdateImageBadges();
     rshUpdateImageCount();
+    rshRenderImageRolePreview();
     rshCheckSubmitEnabled();
   };
 
@@ -11570,6 +11635,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (imgGrid) imgGrid.style.display = 'grid';
     rshUpdateImageBadges();
     rshUpdateImageCount();
+    rshRenderImageRolePreview();
     const countEl = $rsh('img-count');
     if (countEl) countEl.textContent = `${label} 선택됨`;
   }
@@ -11633,6 +11699,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (imgGrid) imgGrid.style.display = 'grid';
     rshUpdateImageBadges();
     rshUpdateImageCount();
+    rshRenderImageRolePreview();
     rshCheckSubmitEnabled();
     return true;
   }
@@ -11697,7 +11764,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     existingItemCode: '',
     selectedBrand: null,
     publishInFlight: false,
+    countrySettings: null,
+    countrySettingsPromise: null,
   };
+
+  function mrQoo10CountrySettings() {
+    return _mrQoo10.countrySettings || normalizeCountrySettings(null, 'Q10');
+  }
+
+  async function mrQoo10LoadCountrySettings() {
+    if (_mrQoo10.countrySettings) return _mrQoo10.countrySettings;
+    if (_mrQoo10.countrySettingsPromise) return _mrQoo10.countrySettingsPromise;
+    _mrQoo10.countrySettingsPromise = (async () => {
+      try {
+        const { data, error } = await db
+          .from('country_settings')
+          .select('*')
+          .eq('country_code', 'Q10')
+          .maybeSingle();
+        if (error) throw error;
+        _mrQoo10.countrySettings = data ? normalizeCountrySettings(data, 'Q10') : normalizeCountrySettings(null, 'Q10');
+      } catch (e) {
+        console.warn('[qoo10] country_settings Q10 load failed; using defaults:', e);
+        _mrQoo10.countrySettings = normalizeCountrySettings(null, 'Q10');
+      } finally {
+        _mrQoo10.countrySettingsPromise = null;
+      }
+      return _mrQoo10.countrySettings;
+    })();
+    return _mrQoo10.countrySettingsPromise;
+  }
 
   function mrQoo10DefaultHeaderHtml() {
     return localStorage.getItem('sdv2:qoo10:header_html') || '';
@@ -11708,7 +11804,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function mrQoo10BasePriceFromRows(rows) {
-    const prices = (rows || []).map((row) => Math.max(1, Math.round(Number(row.cost_krw || 0) / 10))).filter(Boolean);
+    const settings = mrQoo10CountrySettings();
+    const prices = (rows || []).map((row) => calculateQoo10Price({
+      costKrw: Number(row.cost_krw || 0),
+      weightG: Number(row.weight_g || 0),
+      countrySettings: settings,
+    }).qoo10Price).filter(Boolean);
     return prices.length ? Math.max(1, Math.min(...prices)) : 2990;
   }
 
@@ -11795,8 +11896,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function mrQoo10RenderOptions(rows, basePrice) {
+    const settings = mrQoo10CountrySettings();
     return (rows || []).map((row, idx) => {
-      const defaultPrice = Math.max(1, Math.round(Number(row.cost_krw || 0) / 10)) || basePrice;
+      const calc = calculateQoo10Price({
+        costKrw: Number(row.cost_krw || 0),
+        weightG: Number(row.weight_g || 0),
+        countrySettings: settings,
+      });
+      const defaultPrice = calc.qoo10Price || basePrice;
       const price = Math.max(basePrice, defaultPrice);
       return `
         <tr>
@@ -12162,7 +12269,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (body) body.innerHTML = '<div class="muted">Qoo10 배송 템플릿을 불러오는 중...</div>';
     await mrQoo10LoadShippingGroups();
     if (body) body.innerHTML = '<div class="muted">Loading Qoo10 templates and StarOneMall detail images...</div>';
-    await mrQoo10LoadDetailImages(rows);
+    await Promise.all([mrQoo10LoadDetailImages(rows), mrQoo10LoadCountrySettings()]);
     mrQoo10RenderModal(rows);
   }
 
@@ -12400,7 +12507,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     // Populate info fields
     const nameEl = $rsh('product-name');
-    const formattedShopeeName = rshFormatShopeeProductName(master.product_name, master.sku, master.lifecycle_state || 'ready_stock');
+    const lifecycleState = master.lifecycle_state || 'ready_stock';
+    const formattedShopeeName = normalizeMasterProductNameForLifecycle(
+      master.product_name || rshFormatShopeeProductName(master.product_name, master.sku, lifecycleState),
+      lifecycleState,
+      master.sku,
+    ).slice(0, 180);
     if (nameEl) {
       nameEl.value = formattedShopeeName || master.sku || '';
       nameEl.oninput = () => {
@@ -12476,7 +12588,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Description
     const descEl = document.getElementById('rsh-description');
     const generatedDesc = rshDescriptionTemplate(
-      rshReadProductName() || formattedShopeeName || master.sku,
+      rshCanonicalShopeeProductName(lifecycleState, formattedShopeeName || master.sku),
       master.lifecycle_state,
       master.components_extracted_en,
     );
@@ -12488,7 +12600,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (descResetBtn) {
       descResetBtn.onclick = () => {
         const fresh = rshDescriptionTemplate(
-          rshReadProductName() || formattedShopeeName || master.sku,
+          rshCanonicalShopeeProductName(lifecycleState, formattedShopeeName || master.sku),
           master.lifecycle_state,
           master.components_extracted_en,
         );
@@ -12554,6 +12666,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       // Cached path: show badge + re-upload button
       if (imgCached) imgCached.style.display = 'block';
       rshShowCachedImages(master);
+      rshRenderImageRolePreview();
       if (reuploadBtn) {
         reuploadBtn.style.display = 'inline-flex';
         reuploadBtn.onclick = () => rshStartImageReupload(master);
@@ -12678,6 +12791,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       rshRenderImageGrid(_rsh.crawledImages);
       rshUpdateImageBadges();
       rshUpdateImageCount();
+      rshRenderImageRolePreview();
       const imgMissing = $rsh('img-missing');
       if (imgMissing && coverRef) imgMissing.style.display = 'none';
       if (imgGrid) imgGrid.style.display = '';
@@ -12714,6 +12828,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       // Pre-mark it as selected
       rshUpdateImageBadges();
       rshUpdateImageCount();
+      rshRenderImageRolePreview();
       rshCheckSubmitEnabled();
       if (section) section.style.display = 'none';
       console.log('[rsh] manual image URL added:', url);
@@ -12905,7 +13020,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       ? Math.round(weightKg * 1000)
       : (productWeights.length ? Math.max(...productWeights) : Number(master.weight_g || 100));
     const parentSku = rshParentSku(products) || `${products[0]?.sku || master.sku || 'V2-SHOPEE'}-P`;
-    const productName = rshReadProductName()
+    const productName = rshCanonicalShopeeProductName(lifecycle)
       || rshFormatShopeeProductName(master.product_name || products[0]?.product_name, parentSku, lifecycle);
     const imageId = _rsh.cachedImageId || master.shopee_image_id || '';
     const globalImageIds = Array.isArray(_rsh.regionImageIds?.SG)
@@ -13097,6 +13212,46 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // Stage 1 → Stage 2: execute registration.
   // P0-2: regionsOverride — when retrying, pass only the failed region codes.
   //        When undefined, all RSH_REGIONS are used (initial publish).
+  function rshNormalizeRegionResult(row) {
+    const region = String(row?.region || row?.country || '').toUpperCase();
+    const status = String(row?.status || row?.listing_status || '').toLowerCase();
+    const item = row?.shop_item_id || row?.item_id || row?.platform_item_id || row?.global_item_id || null;
+    const ok = row?.ok === true || status === 'mapped' || status === 'listed' || !!row?.shop_item_id;
+    const message = row?.error || row?.last_error || row?.error_msg || row?.message || (ok ? 'mapped' : 'result missing');
+    return { ...row, region, status, ok, item, message };
+  }
+
+  function rshExtractRegionResults(dispatchResult) {
+    const results = [];
+    try {
+      const raw = typeof dispatchResult?.raw_response === 'string'
+        ? JSON.parse(dispatchResult.raw_response)
+        : (dispatchResult?.raw_response || {});
+      if (Array.isArray(raw.results)) results.push(...raw.results);
+    } catch (e) {
+      console.warn('[rsh] failed to parse raw_response:', e);
+    }
+    if (Array.isArray(dispatchResult?.results)) results.push(...dispatchResult.results);
+    if (Array.isArray(dispatchResult?.regions_summary)) results.push(...dispatchResult.regions_summary);
+    return results.map(rshNormalizeRegionResult).filter((row) => row.region);
+  }
+
+  async function rshFetchShopeeListingResults(productId, activeRegions) {
+    const regions = (activeRegions || []).map((r) => String(r).toUpperCase()).filter(Boolean);
+    if (!productId || !regions.length) return [];
+    try {
+      const { data, error } = await db.from('product_shopee_listings')
+        .select('region,status,shop_item_id,global_item_id,last_error,last_synced_at')
+        .eq('product_id', productId)
+        .in('region', regions);
+      if (error) throw error;
+      return (data || []).map(rshNormalizeRegionResult).filter((row) => row.region);
+    } catch (e) {
+      console.warn('[rsh] product_shopee_listings result fallback failed:', e);
+      return [];
+    }
+  }
+
   async function rshProceedToStage2(regionsOverride) {
     const activeRegions = Array.isArray(regionsOverride) && regionsOverride.length > 0
       ? regionsOverride
@@ -13191,6 +13346,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Read current DTS overrides from the table (they were filled in Stage 1)
     const dtsValues = rshReadDts();
     const lifecycle = _rsh.master.lifecycle_state || 'ready_stock';
+    const shopeeProductName = rshCanonicalShopeeProductName(lifecycle);
 
     // Read sourcing/settlement overrides from the form
     const sourcingOverride = Number(document.getElementById('rsh-sourcing-price-krw')?.value) || Number(_rsh.master.sourcing_price || 0);
@@ -13220,6 +13376,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         shopee_days_to_ship: updatedDts,
       };
       if (_rsh.mode !== 'group') {
+        stage1Updates.product_name = shopeeProductName;
         stage1Updates.sourcing_price = sourcingOverride;
         stage1Updates.cost_krw = costOverride;
         stage1Updates.inventory = stockOverride;
@@ -13279,6 +13436,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         regions: activeRegions,
         publish_request_id: _rsh.publishRequestId,
         lifecycle_state: lifecycle,
+        shopee_product_name: shopeeProductName,
         shopee_description: document.getElementById('rsh-description')?.value || '',
         stock_override: stockOverride,
         region_image_ids: _rsh.regionImageIds || {},
@@ -13305,15 +13463,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     _rsh.publishInFlight = false;
 
-    // Parse per-region results from raw_response
-    let regionResults = [];
-    try {
-      const raw = typeof dispatchResult.raw_response === 'string'
-        ? JSON.parse(dispatchResult.raw_response)
-        : (dispatchResult.raw_response || {});
-      regionResults = Array.isArray(raw.results) ? raw.results : [];
-    } catch (e) {
-      console.warn('[rsh] failed to parse raw_response:', e);
+    let regionResults = rshExtractRegionResults(dispatchResult);
+    if (dispatchResult.ok && !regionResults.length) {
+      regionResults = await rshFetchShopeeListingResults(_rsh.productId, activeRegions);
+    }
+    if (dispatchResult.ok && !regionResults.length) {
+      regionResults = activeRegions.map((region) => rshNormalizeRegionResult({
+        region,
+        status: 'mapped',
+        platform_item_id: dispatchResult.platform_item_id || null,
+        message: dispatchResult.listing_status || 'listed',
+      }));
     }
 
     // If top-level error (before any region processing), show on active rows
@@ -13352,17 +13512,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         return;
       }
 
-      const ok = res.status === 'mapped' || res.ok === true;
+      const ok = !!res.ok;
       if (statusEl) {
         statusEl.textContent = ok ? '성공' : '실패';
         statusEl.style.color = ok ? 'var(--green)' : 'var(--red)';
       }
-      if (itemEl && res.shop_item_id) {
-        itemEl.textContent = String(res.shop_item_id);
+      if (itemEl && res.item) {
+        itemEl.textContent = String(res.item);
       }
-      if (msgEl && res.error) {
-        msgEl.textContent = res.error;
-        msgEl.style.color = 'var(--red)';
+      if (msgEl) {
+        msgEl.textContent = res.message || (ok ? 'mapped' : 'result missing');
+        msgEl.style.color = ok ? 'var(--muted)' : 'var(--red)';
       }
       if (!ok) anyFailed = true;
     });
@@ -14697,10 +14857,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return calc.ok ? calc.ebayPrice : null;
   }
 
-  /** Compute the Qoo10 JPY base price (integer, stub: cost/10). */
-  function catComputeQoo10Price(costKrw) {
-    const calc = calculateQoo10Price({ costKrw });
-    // ok=false means costKrw<=0; still return the default 2990 so it renders
+  /** Compute the Qoo10 JPY base price using the Q10 country_settings row. */
+  function catComputeQoo10Price(costKrw, weightG) {
+    const calc = calculateQoo10Price({
+      costKrw,
+      weightG,
+      countrySettings: catCountrySettings('Q10'),
+    });
     return calc.qoo10Price;
   }
 
@@ -15052,7 +15215,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   function catBuildQoo10Cells(product, effectiveCost) {
     // Phase 1: no qoo10_last_synced_price column yet — current price always null
     const currentPrice = null;
-    const newPrice = catComputeQoo10Price(effectiveCost);
+    const newPrice = catComputeQoo10Price(effectiveCost, catEffectiveWeight(product));
     // No delta possible without current price
     const qoo10Status = product && product.qoo10_category_id ? 'mapped' : '미매핑';
     const html = '<td data-cat-qoo10-current="1" style="font-size:12px;color:var(--muted);">—</td>'
@@ -15435,7 +15598,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Phase 1: no current price column — show only new price range
     const newPrices = [];
     rows.forEach(function(p) {
-      const next = catComputeQoo10Price(catEffectiveCost(p));
+      const next = catComputeQoo10Price(catEffectiveCost(p), catEffectiveWeight(p));
       if (next != null && Number.isFinite(next)) newPrices.push(next);
     });
     const formatRange = function(values) {
@@ -23623,7 +23786,7 @@ Contact
   // ════════════════════════════════════════════════════════════════
   // FEE / EXCHANGE-RATE SETTINGS  (ported from V1 §03 수수료/환율 설정)
   // Operates on country_settings table directly via Supabase client.
-  // Supported rows: SG TW TH MY PH BR EX (eBay virtual)
+  // Supported rows: SG TW TH MY PH BR JM Q10 EX (virtual marketplace rows included)
   // ════════════════════════════════════════════════════════════════
   (() => {
     // Field definitions (mirrors V1 FEE_FIELDS)
@@ -23646,18 +23809,59 @@ Contact
       { key: 'pg_fee', label: 'International Fee', unit: '%', hint: '글로벌 판매자 international fee. eBay 예시 기준 1.45%.', isPercent: true, defaultValue: 1.45 },
       { key: 'fixed_service_fee', label: 'Final Value Fee · 주문당 고정', unit: 'USD', hint: '주문 $10.01+ 건당 고정 수수료. eBay 예시 기준 $0.40.', isPercent: false, defaultValue: 0.40 },
     ];
+    const FEE_QOO10_FIELDS = [
+      { key: 'exchange_rate', label: 'JPY Exchange Rate', unit: 'KRW', hint: 'Qoo10 applied exchange rate. Default: 1 JPY = 9.1 KRW.', isPercent: false, defaultValue: 9.1 },
+      { key: 'sales_fee', label: 'Category Fee', unit: '%', hint: 'Qoo10 K-pop/CD category fee. Default: 11%.', isPercent: true, defaultValue: 11 },
+      { key: 'fsp_fee', label: 'PRE ORDER Fee', unit: '%', hint: 'K-pop preorder fee. Default: 2%.', isPercent: true, defaultValue: 2 },
+      { key: 'other_fee', label: 'Megawari Fee', unit: '%', hint: 'Megawari event fee included in normal pricing. Default: 1%.', isPercent: true, defaultValue: 1 },
+    ];
     function feeFieldsForCountry(code) {
+      if (code === 'Q10') return FEE_QOO10_FIELDS;
       return code === 'EX' ? FEE_EBAY_FIELDS : FEE_FIELDS;
     }
 
     // Operating country codes in display order
-    const FEE_COUNTRIES = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'EX'];
+    const FEE_COUNTRIES = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'Q10', 'EX'];
     const FEE_COUNTRY_LABELS = {
       JM: 'Joom (Global)',
+      Q10: 'Qoo10 JP',
       EX: 'eBay EX (가상)',
+    };
+    const FEE_COUNTRY_CURRENCIES = {
+      SG: 'SGD',
+      TW: 'NTD',
+      TH: 'THB',
+      MY: 'MYR',
+      PH: 'PHP',
+      BR: 'BRL',
+      JM: 'USD',
+      Q10: 'JPY',
+      EX: 'USD',
     };
     function feeCountryLabel(code) {
       return FEE_COUNTRY_LABELS[code] || code;
+    }
+    function feeDefaultRow(code) {
+      const row = {
+        country_code: code,
+        name: feeCountryLabel(code),
+        currency: FEE_COUNTRY_CURRENCIES[code] || code,
+        exchange_rate: 1,
+        pg_fee: 0,
+        sales_fee: 0,
+        fsp_fee: 0,
+        other_fee: 0,
+        settlement_fee: 0,
+        gst: 0,
+        fsp_ccb: 0,
+        import_duty: 0,
+        fixed_service_fee: 0,
+        purchase_vat: 0,
+      };
+      feeFieldsForCountry(code).forEach(function(f) {
+        if (f.defaultValue != null) row[f.key] = f.defaultValue;
+      });
+      return row;
     }
 
     const EBAY_SHIPPING_BASELINE_1KG_COUNTRIES = [
@@ -23710,6 +23914,18 @@ Contact
         '</div>';
     }
 
+    function renderQoo10FeeSummary(row) {
+      const n = function(key, fallback) {
+        const value = Number(row && row[key] != null ? row[key] : fallback);
+        return Number.isFinite(value) ? value : Number(fallback || 0);
+      };
+      const total = n('pg_fee', 0) + n('sales_fee', 11) + n('fsp_fee', 2) + n('other_fee', 1) + n('fsp_ccb', 0);
+      return '<div class="notice ok" style="margin:0 0 14px 0;">' +
+        '<b>Qoo10 JP pricing</b> · JPY exchange <code>' + n('exchange_rate', 9.1).toLocaleString() + ' KRW</code>, ' +
+        'category <code>' + n('sales_fee', 11).toLocaleString() + '%</code> + PRE ORDER <code>' + n('fsp_fee', 2).toLocaleString() + '%</code> + Megawari <code>' + n('other_fee', 1).toLocaleString() + '%</code> = total <code>' + total.toLocaleString() + '%</code>.' +
+        '</div>';
+    }
+
     let feeActiveCountry = 'SG';
     // In-memory cache of loaded rows: { [code]: {...db row fields} }
     let feeRows = {};
@@ -23756,6 +23972,7 @@ Contact
 
       panelEl.innerHTML =
         (feeActiveCountry === 'EX' ? renderEbayShippingPhase1Summary() : '') +
+        (feeActiveCountry === 'Q10' ? renderQoo10FeeSummary(row) : '') +
         '<div class="fee-grid-v2">' + fieldsHtml + '</div>' +
         '<div class="fee-save-bar">' +
         '<span class="fee-save-status" id="fee-save-status">변경 사항은 자동 저장됩니다</span>' +
@@ -23829,8 +24046,7 @@ Contact
       if (!row) return;
       const { error } = await db
         .from('country_settings')
-        .update(row)
-        .eq('country_code', code);
+        .upsert(row, { onConflict: 'country_code' });
       if (error) throw new Error(error.message);
     }
 
@@ -23844,6 +24060,10 @@ Contact
       try { _v2JoomSgCountryPromise = null; } catch (_) {}
       try { _v2EbayExCountryCache = null; } catch (_) {}
       try { _v2EbayExCountryPromise = null; } catch (_) {}
+      try { _mrQoo10.countrySettings = null; } catch (_) {}
+      try { _mrQoo10.countrySettingsPromise = null; } catch (_) {}
+      try { _catCache = null; } catch (_) {}
+      try { _catCountrySettingsByRegion = new Map(); } catch (_) {}
     }
 
     // ── Reset: reload active country from DB ────────────────────
@@ -23868,7 +24088,7 @@ Contact
         console.error('[fee-settings] loadRow error', code, error);
         return;
       }
-      feeRows[code] = data ? data : { country_code: code };
+      feeRows[code] = data ? data : feeDefaultRow(code);
     }
 
     // ── Load all operating rows ─────────────────────────────────

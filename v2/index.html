@@ -3967,9 +3967,12 @@ LEGACY END -->
     }[c]));
   }
 
+  const NON_MARKETPLACE_TEXT_RE = /[\u3130-\u318f\u1100-\u11ff\u3040-\u309f\u30a0-\u30ff\u3400-\u9fff\uac00-\ud7af\u200b-\u200f\ufeff]+/g;
+  const NON_MARKETPLACE_TEXT_TEST_RE = /[\u3130-\u318f\u1100-\u11ff\u3040-\u309f\u30a0-\u30ff\u3400-\u9fff\uac00-\ud7af]/;
+
   function stripNonMarketplaceText(value) {
     return String(value == null ? '' : value)
-      .replace(/[가-힯㄰-㆏ᄀ-ᇿ぀-ゟ゠-ヿ一-鿿\u200b-\u200f\ufeff]+/g, '')
+      .replace(NON_MARKETPLACE_TEXT_RE, '')
       .replace(/\(\s*\)/g, '')
       .replace(/\[\s*\]/g, '')
       .replace(/\s+/g, ' ')
@@ -3977,7 +3980,7 @@ LEGACY END -->
   }
 
   function hasNonMarketplaceText(value) {
-    return /[가-힯㄰-㆏ᄀ-ᇿ぀-ゟ゠-ヿ一-鿿]/.test(String(value || ''));
+    return NON_MARKETPLACE_TEXT_TEST_RE.test(String(value || ''));
   }
 
   function cleanProductName(value, fallback = '') {
@@ -6621,7 +6624,9 @@ LEGACY END -->
       const sku = stripNonMarketplaceText(field('sku')?.value || '').trim();
       if (!sku) throw new Error('옵션 SKU는 비울 수 없습니다.');
       if (hasNonMarketplaceText(sku)) throw new Error(`SKU는 영문/숫자만 허용됩니다: ${sku}`);
-      const optionName = stripNonMarketplaceText(field('option_name')?.value || '').trim();
+      const rawOptionName = String(field('option_name')?.value || '').trim();
+      if (hasNonMarketplaceText(rawOptionName)) throw new Error(`Option name must be English: ${rawOptionName}`);
+      const optionName = stripNonMarketplaceText(rawOptionName).trim();
       const cost = Number(field('cost_krw')?.value || 0);
       const weight = Number(field('weight_g')?.value || 0);
       if (!(cost >= 0)) throw new Error(`${sku} 매입가가 올바르지 않습니다.`);
@@ -7245,6 +7250,43 @@ LEGACY END -->
     return READY_STOCK_SYNC_REGIONS.join(', ');
   }
 
+  function readyOptionNamesForProduct(product) {
+    const names = [];
+    if (Array.isArray(product?.variation_option_names)) {
+      names.push(...product.variation_option_names);
+    }
+    const optionDisplay = plOptionDisplay(product);
+    if (optionDisplay) names.push(...String(optionDisplay).split(/\s*\/\s*/));
+    const optionName = String(product?.option_name || '').trim();
+    if (optionName) names.push(...optionName.split(/\s*\/\s*/));
+    const seen = new Set();
+    return names
+      .map((name) => String(name || '').replace(/\s+/g, ' ').trim())
+      .filter((name) => {
+        if (!name) return false;
+        const key = name.toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+  }
+
+  function readyOptionNameEnglishIssues(product) {
+    return readyOptionNamesForProduct(product).filter((name) => hasNonMarketplaceText(name));
+  }
+
+  function readyOptionNamePreview(product) {
+    const names = readyOptionNamesForProduct(product);
+    return names.length ? names.join(' / ') : 'No options';
+  }
+
+  function readyAddRowError(rowErrors, productId, message) {
+    const id = String(productId || '');
+    const errors = rowErrors.get(id) || [];
+    errors.push(message);
+    rowErrors.set(id, errors);
+  }
+
   function readyPublishedItemsFromResponse(json) {
     if (Array.isArray(json?.published_list)) return json.published_list;
     if (Array.isArray(json?.published_item)) return json.published_item;
@@ -7320,6 +7362,15 @@ LEGACY END -->
       const primary = primaryListing(product);
       const globalItemId = Number(primary.global_item_id || product.shopee_item_id || 0);
       let hasTarget = false;
+      const optionNameIssues = readyOptionNameEnglishIssues(product);
+
+      if (optionNameIssues.length) {
+        readyAddRowError(
+          rowErrors,
+          productId,
+          `Option names must be English before READY STOCK sync: ${optionNameIssues.join(' / ')}`,
+        );
+      }
 
       if (Number.isFinite(globalItemId) && globalItemId > 0) {
         hasTarget = true;
@@ -7353,7 +7404,7 @@ LEGACY END -->
       });
 
       if (!hasTarget) {
-        rowErrors.set(productId, ['Shopee global_item_id 또는 shop_item_id 매핑 없음']);
+        readyAddRowError(rowErrors, productId, 'Shopee global_item_id or shop_item_id mapping is missing');
       }
     });
 
@@ -7369,9 +7420,11 @@ LEGACY END -->
   function readyDtsOnlyPreviewHtml(plan) {
     const productRows = plan.products.map((product) => {
       const errors = plan.rowErrors.get(String(product.id)) || [];
+      const optionNames = readyOptionNamePreview(product);
       return `<tr>
         <td class="mono">${text(product.sku || '')}</td>
         <td>${text(product.product_name || '')}${product.option_name ? '<br><span class="muted">' + text(product.option_name) + '</span>' : ''}</td>
+        <td>${text(optionNames)}</td>
         <td class="${errors.length ? 'row-error' : 'row-ok'}">${errors.length ? text(errors.join(', ')) : 'Ready'}</td>
       </tr>`;
     }).join('');
@@ -7388,13 +7441,14 @@ LEGACY END -->
     return `
       <div class="notice" style="margin-bottom:12px;">
         READY STOCK name sync: Shopee sync field is enabled first, then global_item_name is changed from [PRE ORDER] to [READY STOCK]. Active regions: ${text(readyActiveSyncRegionsText())}.
+        Option names also sync through tier_variation_name_and_option, so selected master option names must already be English.
       </div>
       <div class="notice ok" style="display:none;margin-bottom:12px;">
         READY STOCK 전환은 DTS만 수정합니다. 가격, 무게, SKU, 상품명, 이미지, 설명은 변경하지 않습니다.
       </div>
       <div class="panel table-scroll" style="margin-bottom:12px;">
         <table>
-          <thead><tr><th>SKU</th><th>Product</th><th>Status</th></tr></thead>
+          <thead><tr><th>SKU</th><th>Product</th><th>Option names</th><th>Status</th></tr></thead>
           <tbody>${productRows}</tbody>
         </table>
       </div>
@@ -13070,7 +13124,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const seen = new Set();
     const optionList = [];
     rows.forEach((row) => {
-      const raw = stripNonMarketplaceText(rshOptionName(row)).trim();
+      const source = rshOptionName(row);
+      if (hasNonMarketplaceText(source)) throw new Error(`Shopee option name must be English before registration: ${source}`);
+      const raw = stripNonMarketplaceText(source).trim();
       const key = raw.toLowerCase();
       if (!raw || seen.has(key)) return;
       seen.add(key);

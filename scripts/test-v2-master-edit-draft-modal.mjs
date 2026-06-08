@@ -79,6 +79,8 @@ for (const token of [
   'plMasterEditRenderOptions(rows)',
   'plMasterEditReadOptionPatches(rows)',
   'variation_option_names',
+  'rawOptionName',
+  'Option name must be English',
   'data-field="shopee_option_image_url"',
   'shopee_option_image_url:',
   'main_image: representativeImageUrl || null',

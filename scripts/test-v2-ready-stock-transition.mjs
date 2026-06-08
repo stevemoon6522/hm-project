@@ -32,6 +32,10 @@ for (const token of [
   'READY_STOCK_REGION_DTS',
   'READY_STOCK_SYNC_REGIONS',
   'readyStockDtsForRegion',
+  'readyOptionNamesForProduct',
+  'readyOptionNameEnglishIssues',
+  'readyOptionNamePreview',
+  'readyAddRowError',
   'buildReadyDtsOnlyPlan',
   'showReadyDtsOnlyModal',
   'applyReadyDtsOnlyTransition',
@@ -46,6 +50,8 @@ for (const token of [
   'global_item_name',
   'update_shop_item_name',
   'update_shop_item_dts',
+  'Option names must be English before READY STOCK sync',
+  'Option names also sync through tier_variation_name_and_option',
   "lifecycle_state: 'ready_stock'",
   "title_state: 'READY_STOCK'",
   'last_pushed_name',
@@ -130,6 +136,8 @@ const dtsSlice = html.slice(
   html.indexOf('function listingTargetSummary'),
 );
 assert(dtsSlice.includes("callBridgeMutation('set_global_sync_fields'"), 'READY STOCK flow must enable global sync fields before renaming');
+assert(html.includes('tier_variation_name_and_option: true'), 'READY STOCK flow must sync option names from Global Product');
+assert(dtsSlice.includes('readyOptionNameEnglishIssues(product)'), 'READY STOCK flow must validate option names before sync');
 assert(dtsSlice.includes("callBridgeMutation('update_global_item'"), 'READY STOCK flow must update global item name+DTS');
 assert(dtsSlice.includes('global_item_name: call.newName'), 'READY STOCK flow must send global_item_name');
 assert(dtsSlice.includes("callBridgeMutation('update_shop_item_name'"), 'READY STOCK flow must fall back to shop item name updates when sync readback is stale');
@@ -141,6 +149,7 @@ assert(dtsSlice.includes('product_name: pushedName'), 'DB product update must st
 assert(dtsSlice.includes('readyVerifyShopItemNames'), 'READY STOCK flow must verify region shop item names after sync');
 assert(!dtsSlice.includes('update_global_price'), 'DTS-only flow must not update price');
 assert(!dtsSlice.includes('update_global_model'), 'DTS-only flow must not update model SKU or weight');
+assert(!dtsSlice.includes('update_tier_variation'), 'READY STOCK flow must not call deprecated shop-level tier variation update');
 assert(!dtsSlice.includes('weight_g:'), 'DTS-only flow must not update product weight');
 assert(!dtsSlice.includes('sku:'), 'DTS-only flow must not update product SKU');
 

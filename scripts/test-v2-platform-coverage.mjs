@@ -16,10 +16,15 @@ const skuCoverageMigration = readFileSync(
   join(root, 'supabase', 'migrations', '202605290001_sku_coverage_and_absorb_lookup.sql'),
   'utf8',
 );
+const joomPendingLedMigration = readFileSync(
+  join(root, 'supabase', 'migrations', '202606080001_joom_pending_led_status.sql'),
+  'utf8',
+);
 const platformPublish = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'index.ts'), 'utf8');
 const joomAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'joom.ts'), 'utf8');
 const ebayAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'ebay.ts'), 'utf8');
 const qoo10Adapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'qoo10.ts'), 'utf8');
+const qoo10Bridge = readFileSync(join(root, 'supabase', 'functions', 'qoo10-bridge', 'index.ts'), 'utf8');
 const shopeeAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'shopee.ts'), 'utf8');
 const ebayBridge = readFileSync(join(root, 'supabase', 'functions', 'ebay-bridge', 'index.ts'), 'utf8');
 const edgeEbayBridge = readFileSync(join(root, 'edge-functions', 'ebay-bridge', 'index.ts'), 'utf8');
@@ -91,9 +96,13 @@ assert(!skuCoverageMigration.includes("('alibaba')"), 'SKU coverage migration mu
 assert(!globalImportMigration.includes('grant select, insert, update on public.products to authenticated'), 'Shopee import migration must not add broad authenticated products grants');
 assert(!globalImportMigration.includes('grant select, insert, update on public.product_shopee_listings to authenticated'), 'Shopee import migration must not add broad authenticated listing grants');
 assert(html.includes('id="coverage-sku-check"'), 'coverage UI must include SKU lookup action');
-assert(html.includes('async function coverageLookupViaPlatformPublish'), 'coverage UI must route Joom/eBay SKU lookup through platform-publish');
+assert(html.includes('async function coverageLookupViaPlatformPublish'), 'coverage UI must route non-Shopee SKU lookup through platform-publish');
 assert(html.includes('async function coverageLookupQoo10BySku'), 'coverage UI must represent Qoo10 lookup state');
 assert(html.includes('PLATFORM_PUBLISH') && html.includes("capability: 'sync'"), 'coverage UI must absorb found SKU lookups via platform-publish sync');
+assert(html.includes("coverageLookupViaPlatformPublish('qoo10', sku, productId)"), 'Qoo10 SKU lookup must go through platform-publish sync');
+assert(html.includes('coverageClearPlatformMapping(group.id, platform, hit)'), 'product list sync must clear stale mappings when remote lookup misses');
+assert(html.includes('coverageClearShopeePublishedMappings'), 'Shopee stale published_list rows must be marked not_listed');
+assert(!html.includes('if (localHit) return coverageNormalizeShopeePublishedHit'), 'Shopee sync must not trust cached local rows before remote verification');
 assert(!html.includes("coverageBridgeUrl('joom') + '/lookup-sku") && !html.includes("coverageBridgeUrl('ebay') + '/lookup-item"), 'browser Joom/eBay SKU lookup must not call internal bridges directly');
 assert(!html.includes("db.rpc('absorb_platform_sku_lookup'"), 'coverage UI must not expose SECURITY DEFINER absorb RPC directly to browser users');
 
@@ -122,6 +131,8 @@ assert(html.includes('const isPreOrder = mrQoo10IsPreOrder(rows);'), 'Qoo10 moda
 assert(html.includes("const defaultAvailableType = mrQoo10IsPreOrder(rows) ? '2' : '0';"), 'Qoo10 payload fallback must derive AvailableDateType from master lifecycle');
 assert(qoo10Adapter.includes('function lifecycleProductName') && qoo10Adapter.includes('lifecycleProductName(master.product_name, lifecycleOf(master, qoo10), master.sku)'), 'Qoo10 adapter fallback title must be lifecycle-normalized');
 assert(qoo10Adapter.includes("if (!explicitType && lifecycle !== 'pre_order' && type === '2') type = '0';"), 'Qoo10 adapter must ignore stale stored preorder shipping type for READY STOCK fallback payloads');
+assert(qoo10Adapter.includes('function mapQoo10ListingStatus') && qoo10Adapter.includes("status === 'S4'") && qoo10Adapter.includes("return 'not_listed'"), 'Qoo10 sync must map deleted/discontinued statuses out of green LED state');
+assert(qoo10Bridge.includes('"S2,S1,S3,S0,S4,S5,S8"'), 'Qoo10 SKU scan must include deleted/restricted/rejected statuses');
 assert(joomAdapter.includes('function lifecycleProductName') && joomAdapter.includes('name: lifecycleProductName(master.product_name, lifecycleOf(master), sku)'), 'Joom adapter fallback scraped name must be lifecycle-normalized');
 assert(ebayAdapter.includes('function lifecycleProductName') && ebayAdapter.includes('title: lifecycleProductName(master.product_name, lifecycleOf(master), sku).slice(0, 80)'), 'eBay adapter fallback title must be lifecycle-normalized');
 assert(ebayAdapter.includes('const title = stripLifecycleTags(master.album || master.release_title || master.product_name || master.sku);'), 'eBay adapter release-title aspect must not carry stock-state tags');
@@ -129,8 +140,14 @@ assert(shopeeAdapter.includes('function shopeeLifecycleProductName') && shopeeAd
 assert(shopeeAdapter.includes('|| shopeeLifecycleProductName(master.product_name, lifecycle_state, master.sku)') && shopeeAdapter.includes('is_pre_order,'), 'Shopee adapter fallback name and preorder flag must follow lifecycle');
 assert(shopeeAdapter.includes('global_item_name: shopeeLifecycleProductName(masterProduct.product_name, lifecycle_state, masterProduct.sku) || undefined'), 'Shopee metadata update must not push stale stock-state title tags');
 assert(platformPublish.includes('absorb_platform_sku_lookup') && platformPublish.includes('shouldAbsorbLookup'), 'platform-publish sync must absorb remote SKU hits through service-role RPC');
+assert(platformPublish.includes('shouldClearRemoteMissingMapping') && platformPublish.includes('clearRemoteMissingMapping'), 'platform-publish sync must clear stale rows when remote listings are deleted');
+assert(platformPublish.includes("mapping_status: 'unmatched'") && platformPublish.includes('deleted_at: now'), 'remote-missing rows must be removed from active LED rollups');
+assert(platformPublish.includes('joom_product_id: null') && platformPublish.includes('joom_variant_id: null'), 'remote-missing Joom sync must clear legacy Joom IDs');
 assert(platformPublish.includes('raw_response: adapterResult.rawResponse && dry_run'), 'platform-publish must not return live bridge raw responses to browser callers');
-assert(joomAdapter.includes('raw?.joom_enabled !== false') && joomAdapter.includes("return 'listed'"), 'Joom adapter must treat enabled lookup hits as listed');
+assert(joomAdapter.includes("if (raw?.hasActiveVersion === false) return 'pending';"), 'Joom adapter must not treat non-active lookup hits as listed');
+assert(joomAdapter.includes("state === 'archived' || state === 'not_listed'"), 'Joom adapter must treat archived lookup hits as missing');
+assert(joomPendingLedMigration.includes("lower(coalesce(p.joom_mapping_status, '')) in ('pending', 'draft')"), 'Joom legacy rollup must count pending legacy mappings as pending');
+assert(joomPendingLedMigration.includes("lower(coalesce(p.joom_status, '')) = 'archived'"), 'Joom legacy rollup must keep archived products out of listed count');
 assert(ebayBridge.includes('requireAuthenticatedUser(req)') && ebayBridge.includes('EBAY_OAUTH_ENDPOINT') && ebayBridge.includes('identity/v1/oauth2/token'), 'eBay bridge must require authenticated users and use a valid OAuth endpoint');
 assert(ebayBridge.includes('function requireInternalBridge') && ebayBridge.includes('internal_bridge_required'), 'eBay bridge should retain internal bridge guard helper for server-only routes');
 for (const [label, source] of [['Supabase', ebayBridge], ['edge mirror', edgeEbayBridge]]) {

@@ -30,6 +30,7 @@ const coverageLookup = sliceBetween(html, 'async function coverageLookupViaPlatf
 const masterRegisterImageTools = sliceBetween(html, 'function mrGetGroupOptionImages(group, firstRow) {', 'function mrMasterPatchForGroup(group) {');
 const openCreatedMasterEdit = sliceBetween(html, 'async function mrOpenCreatedMasterEdit(productId) {', 'function mrRenderPreviewCards() {');
 const masterRegisterRender = sliceBetween(html, 'function mrRenderPreviewCards() {', 'async function mrPromoteAll() {');
+const joomRegisterStatus = sliceBetween(html, 'function mrJoomListingStatusFromResponse(json) {', 'function mrJoomAssertOptionSkuLocked(row, idx, errors) {');
 
 test('standalone products have master edit button and platform register button next to Shopee LED', () => {
   assert.match(productRender, /data-edit-master="\$\{text\(plMasterEditTargetKey\(p\)\)\}"/, 'single row should expose master edit target');
@@ -56,7 +57,7 @@ test('master product names are normalized with lifecycle prefix everywhere they 
   assert.match(masterEditOpenSave, /normalizeMasterProductNameForLifecycle\(rawName, lifecycleState, rows\[0\]\?\.sku/, 'master edit save should enforce the canonical lifecycle prefix');
   assert.match(inlineEdit, /normalizeMasterProductNameForLifecycle\(newVal, product\?\.lifecycle_state/, 'inline product-name edits should enforce the canonical lifecycle prefix');
   assert.match(shopeeGlobalImport, /product_name: normalizeMasterProductNameForLifecycle\(sgItemName\(item\), lifecycleState, sku\)/, 'Shopee Global import should store canonical lifecycle-prefixed master names');
-  assert.match(masterRegisterNaming, /return normalizeMasterProductNameForLifecycle\(title, mrLifecycle\(\), derived/, 'master register should store canonical lifecycle-prefixed master names');
+  assert.match(masterRegisterNaming, /return normalizeMasterProductNameForLifecycle\(title, mrRowLifecycle\(row\), derived/, 'master register should store canonical lifecycle-prefixed master names from each row lifecycle');
 });
 
 test('master register cards expose master edit action whenever any master row was created', () => {
@@ -98,11 +99,17 @@ test('master register flow has a manual option-image management modal and sends 
 
 test('platform SKU sync includes Shopee and absorbs published_list region ids for global-only rows', () => {
   assert.match(platformSync, /const targetPlatforms = \['shopee', 'joom', 'qoo10', 'ebay'\]/, 'product list platform sync should include Shopee');
+  assert.doesNotMatch(platformSync, /rollupListedCountForLed\(rollup, platform\) > 0\)[\s\S]{0,120}continue;/, 'green LED rows must be remotely rechecked instead of skipped');
+  assert.match(platformSync, /const wasListed = rollupListedCountForLed\(rollup, platform\) > 0/, 'sync should remember whether a green LED is being verified');
+  assert.match(platformSync, /coverageClearPlatformMapping\(group\.id, platform, hit\)/, 'remote not-found should clear stale local LED mappings');
   assert.match(coverageLookup, /coverageLookupShopeePublishedBySku/, 'Shopee lookup should use published_list/global data');
   assert.match(coverageLookup, /coverageAbsorbShopeePublishedHit/, 'Shopee hit should be absorbed into product_shopee_listings');
+  assert.match(coverageLookup, /coverageClearShopeePublishedMappings/, 'Shopee not-found should mark product_shopee_listings as not_listed');
   assert.match(coverageLookup, /coverageShopeePublishedItemsFromRaw/, 'Shopee sync should normalize bridge and cached published list shapes');
   assert.match(coverageLookup, /result\?\.response\?\.published_item/, 'Shopee bridge published_list shape should be accepted');
   assert.match(coverageLookup, /SHOPEE_BRIDGE\}\/published_list\?region=SG&global_item_id=/, 'Shopee sync should fetch published_list when only global_item_id is present');
+  assert.match(coverageLookup, /coverageLookupShopeeLocalRowsByItemInfo/, 'Shopee stale shop item rows should be verified by item_info when global_item_id is unavailable');
+  assert.doesNotMatch(coverageLookup, /if \(localHit\) return coverageNormalizeShopeePublishedHit/, 'Shopee sync must not trust cached local rows before remote verification');
   assert.doesNotMatch(coverageLookup, /row\?\.shopee_item_id \|\| row\?\.platform_item_id/, 'products.shopee_item_id is a global id and must not be treated as shop_item_id');
   assert.match(coverageLookup, /global_item_id: row\.global_item_id \|\| null/, 'absorbed listing should preserve global_item_id for later price/sync operations');
 });
@@ -113,6 +120,14 @@ test('platform SKU sync absorbs Joom/Qoo10/eBay lookup hits through platform-pub
   assert.match(coverageLookup, /capability: 'sync'/, 'non-Shopee absorb should use sync capability, not publish/create');
   assert.match(coverageLookup, /country: hit\.country \|\| \(hit\.platform === 'joom' \? 'GLOBAL' : \(hit\.platform === 'ebay' \? 'EBAY_US' : undefined\)\)/, 'Joom/eBay lookup absorbs should use stable rollup country keys');
   assert.doesNotMatch(coverageLookup, /db\.rpc\('absorb_platform_sku_lookup'/, 'browser must not call SECURITY DEFINER absorb RPC directly');
-  assert.match(coverageLookup, /if \(resp\.status === 501\)/, 'Qoo10 501 should be treated as unsupported');
-  assert.doesNotMatch(coverageLookup, /resp\.status === 404 \|\| resp\.status === 501/, 'Qoo10 404 should be notFound, not unsupported');
+  assert.match(coverageLookup, /async function coverageLookupQoo10BySku\(sku, productId\)[\s\S]*coverageLookupViaPlatformPublish\('qoo10', sku, productId\)/, 'Qoo10 SKU sync should use platform-publish so stale mappings are cleared server-side');
+  assert.match(coverageLookup, /syncedByPlatformPublish/, 'platform-publish lookup responses should not be re-synced by the browser');
+  assert.match(coverageLookup, /listingStatus === 'not_listed'[\s\S]*notFound: true/, 'non-Shopee not_listed sync responses should clear stale LEDs');
+});
+
+test('Joom registration stores pending/non-active responses without marking them mapped', () => {
+  assert.match(joomRegisterStatus, /json\?\.hasActiveVersion === false[\s\S]*return 'pending'/, 'Joom publish response with no active version should stay pending');
+  assert.match(joomRegisterStatus, /state === 'archived'[\s\S]*return 'not_listed'/, 'archived Joom products should not be treated as listed');
+  assert.match(html, /const joomMappingStatus = mrJoomMappingStatusFromResponse\(json\)/, 'Joom DB update should derive mapping status from publish response');
+  assert.match(html, /joom_mapping_status: joomMappingStatus/, 'Joom DB update should not hard-code mapped after publish');
 });

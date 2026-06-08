@@ -6976,7 +6976,8 @@ LEGACY END -->
     const targetPlatforms = ['shopee', 'joom', 'qoo10', 'ebay'];
     const groups = platformSkuSyncGroups();
     let found = 0;
-    let alreadyMapped = 0;
+    let verified = 0;
+    let removed = 0;
     let missing = 0;
     let skipped = 0;
     let errors = 0;
@@ -7006,10 +7007,7 @@ LEGACY END -->
         const sku = String(group.sku || '').trim();
         for (const platform of targetPlatforms) {
           const rollup = rollupFor(group.id, platform);
-          if (rollupListedCountForLed(rollup, platform) > 0) {
-            alreadyMapped += 1;
-            continue;
-          }
+          const wasListed = rollupListedCountForLed(rollup, platform) > 0;
           if (!available[platform]) {
             skipped += 1;
             continue;
@@ -7019,11 +7017,14 @@ LEGACY END -->
             if (hit.found) {
               if (platform === 'shopee') await coverageAbsorbShopeePublishedHit(group.id, hit);
               else await coverageAbsorbLookupHit(group.id, hit);
-              found += 1;
+              if (wasListed) verified += 1;
+              else found += 1;
             } else if (hit.unsupported) {
               skipped += 1;
             } else if (hit.notFound) {
-              missing += 1;
+              const cleared = await coverageClearPlatformMapping(group.id, platform, hit);
+              if (wasListed || cleared) removed += 1;
+              else missing += 1;
             } else {
               errors += 1;
               console.warn('[product list platform sku sync] lookup blocked', { sku, platform, hit });
@@ -7040,7 +7041,7 @@ LEGACY END -->
       const mappedByPlatform = ['shopee', ...targetPlatforms]
         .map((platform) => `${COVERAGE_LABELS[platform] || platform} ${(state.rollups || []).filter((r) => r.platform === platform && rollupListedCountForLed(r, platform) > 0).length}`)
         .join(' · ');
-      setStatus(`플랫폼 SKU 동기화 완료 · 신규/재확인 ${found}건 · 기존 ${alreadyMapped}건 · 미등록 ${missing}건 · 스킵 ${skipped}건 · 오류 ${errors}건 · ${mappedByPlatform}`, errors ? 'err' : 'ok');
+      setStatus(`플랫폼 SKU 동기화 완료 · 신규 ${found}건 · 원격 확인 ${verified}건 · 삭제 반영 ${removed}건 · 미등록 ${missing}건 · 스킵 ${skipped}건 · 오류 ${errors}건 · ${mappedByPlatform}`, errors ? 'err' : 'ok');
       if (typeof showToast === 'function') showToast('플랫폼 SKU 동기화 완료', errors ? 'err' : 'ok');
     } catch (e) {
       setStatus(`플랫폼 SKU 동기화 실패: ${e.message || e}`, 'err');
@@ -18400,9 +18401,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       body: JSON.stringify(body),
     });
     const json = await resp.json().catch(function() { return { ok: false, error_msg: 'HTTP ' + resp.status }; });
+    const listingStatus = String(json.listing_status || '').toLowerCase();
     if (!resp.ok || json.ok === false) {
       const err = json.error_msg || json.message || json.error || ('HTTP ' + resp.status);
-      return { platform, sku, found: false, notFound: json.listing_status === 'not_listed' || json.error_code === 'PLATFORM_NOT_FOUND', error: err, raw: json };
+      return { platform, sku, found: false, notFound: listingStatus === 'not_listed' || json.error_code === 'PLATFORM_NOT_FOUND', error: err, syncedByPlatformPublish: true, raw: json };
+    }
+    if (listingStatus === 'not_listed') {
+      return { platform, sku, found: false, notFound: true, error: json.error_msg || json.message || 'platform_listing_not_found', syncedByPlatformPublish: true, raw: json };
     }
     const platformItemId = json.platform_item_id || null;
     if (!platformItemId) {
@@ -18416,36 +18421,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       externalVariantId: null,
       listingStatus: json.listing_status || 'listed',
       country: platform === 'joom' ? 'GLOBAL' : (platform === 'ebay' ? 'EBAY_US' : null),
+      platformListingId: json.platform_listing_id || null,
+      syncedByPlatformPublish: true,
       raw: json,
     };
   }
 
-  async function coverageLookupQoo10BySku(sku) {
-    try {
-      const resp = await fetch(coverageBridgeUrl('qoo10') + '/lookup-sku?sku=' + encodeURIComponent(sku), { headers: AUTH_HEADERS });
-      const json = await resp.json().catch(function() { return { ok: false, error: 'HTTP ' + resp.status }; });
-      if (resp.status === 501) {
-        return { platform: 'qoo10', sku, found: false, unsupported: true, error: 'qoo10_lookup_not_implemented', raw: json };
-      }
-      if (!resp.ok || json.ok === false) {
-        return { platform: 'qoo10', sku, found: false, notFound: resp.status === 404, error: json.error || ('HTTP ' + resp.status), raw: json };
-      }
-      const platformItemId = json.goods_no || json.goodsNo || json.item_no || json.itemNo || json.platform_item_id || null;
-      if (!platformItemId) {
-        return { platform: 'qoo10', sku, found: false, notFound: false, error: 'lookup_missing_qoo10_item_id', raw: json };
-      }
-      return {
-        platform: 'qoo10',
-        sku,
-        found: true,
-        platformItemId,
-        externalVariantId: json.seller_code || json.sellerCode || null,
-        listingStatus: 'listed',
-        raw: json,
-      };
-    } catch (err) {
-      return { platform: 'qoo10', sku, found: false, unsupported: true, error: err?.message || String(err), raw: {} };
-    }
+  async function coverageLookupQoo10BySku(sku, productId) {
+    return coverageLookupViaPlatformPublish('qoo10', sku, productId);
   }
 
 
@@ -18499,9 +18482,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   async function coverageLookupShopeePublishedBySku(sku, productId) {
     const product = (state.products || []).find((p) => String(p.id) === String(productId));
     const localRows = (state.listings || []).filter((row) => String(row.product_id) === String(productId));
-    const localHit = localRows.find((row) => row.shop_item_id || row.platform_item_id || coverageShopeePublishedItemsFromRaw(row.raw_payload).length);
-    if (localHit) return coverageNormalizeShopeePublishedHit(localHit, sku);
-    const globalItemId = product?.shopee_item_id || product?.global_item_id || product?.shopee_global_item_id || '';
+    const globalItemId = product?.shopee_item_id || product?.global_item_id || product?.shopee_global_item_id || localRows.find((row) => row.global_item_id)?.global_item_id || '';
     if (globalItemId) {
       try {
         const resp = await fetch(`${SHOPEE_BRIDGE}/published_list?region=SG&global_item_id=${encodeURIComponent(globalItemId)}`, { headers: AUTH_HEADERS });
@@ -18515,7 +18496,64 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         return { platform: 'shopee', sku, found: false, notFound: false, error: err?.message || String(err), raw: {} };
       }
     }
+    const itemInfoHit = await coverageLookupShopeeLocalRowsByItemInfo(localRows, sku);
+    if (itemInfoHit) return itemInfoHit;
     return { platform: 'shopee', sku, found: false, notFound: true, error: 'shopee_published_list_not_found', raw: {} };
+  }
+
+  function coverageShopeeItemInfoRows(raw) {
+    const root = raw?.result || raw?.raw || raw || {};
+    const rows = root?.response?.item_list || root?.response?.item || root?.item_list || [];
+    return Array.isArray(rows) ? rows : [];
+  }
+
+  async function coverageLookupShopeeLocalRowsByItemInfo(localRows, sku) {
+    const candidates = (localRows || [])
+      .map((row) => ({
+        region: String(row.region || '').toUpperCase(),
+        shop_item_id: row.shop_item_id || row.platform_item_id || null,
+        shop_model_id: row.shop_model_id || null,
+        shop_id: row.shop_id || null,
+        global_item_id: row.global_item_id || null,
+      }))
+      .filter((row) => row.region && row.shop_item_id);
+    if (!candidates.length) return null;
+    const regionHits = [];
+    const inconclusive = [];
+    for (const row of candidates) {
+      try {
+        const url = `${SHOPEE_BRIDGE}/item_info?region=${encodeURIComponent(row.region)}&item_id=${encodeURIComponent(row.shop_item_id)}`;
+        const resp = await fetch(url, { headers: AUTH_HEADERS });
+        const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+        const items = coverageShopeeItemInfoRows(json);
+        const item = items.find((entry) => String(entry?.item_id || '') === String(row.shop_item_id));
+        const status = String(item?.item_status || item?.status || '').toUpperCase();
+        const msg = String(json.error || json.message || '');
+        const remoteMissing = /not\s*found|item_id is not found|product not found|invalid request item_id/i.test(msg);
+        if (resp.ok && json.ok !== false && item && (!status || ['NORMAL', 'UNLIST'].includes(status))) {
+          regionHits.push({ ...row, item_status: status || null });
+        } else if ((!resp.ok || json.ok === false) && !remoteMissing) {
+          inconclusive.push(json.error || json.message || `HTTP ${resp.status}`);
+        }
+      } catch (err) {
+        inconclusive.push(err?.message || String(err));
+      }
+    }
+    if (regionHits.length) {
+      return {
+        platform: 'shopee',
+        sku,
+        found: true,
+        notFound: false,
+        platformItemId: regionHits[0]?.shop_item_id || null,
+        regionHits,
+        raw: { source: 'item_info_fallback' },
+      };
+    }
+    if (inconclusive.length) {
+      return { platform: 'shopee', sku, found: false, notFound: false, error: inconclusive[0], raw: { source: 'item_info_fallback', errors: inconclusive } };
+    }
+    return null;
   }
 
   async function coverageAbsorbShopeePublishedHit(productId, hit) {
@@ -18540,7 +18578,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   async function coverageLookupPlatformBySku(platform, sku, productId) {
     if (platform === 'shopee') return coverageLookupShopeePublishedBySku(sku, productId);
     if (platform === 'joom' || platform === 'ebay') return coverageLookupViaPlatformPublish(platform, sku, productId);
-    if (platform === 'qoo10') return coverageLookupQoo10BySku(sku);
+    if (platform === 'qoo10') return coverageLookupQoo10BySku(sku, productId);
     return { platform, sku, found: false, unsupported: true, error: 'unsupported_platform', raw: {} };
   }
 
@@ -18556,6 +18594,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function coverageAbsorbLookupHit(productId, hit) {
+    if (hit?.syncedByPlatformPublish) return hit.platformListingId || hit.platformItemId || null;
     const body = {
       master_product_id: productId,
       platform: hit.platform,
@@ -18572,6 +18611,35 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       throw new Error(json.error_msg || json.message || json.error || `platform-publish sync failed (${resp.status})`);
     }
     return json.platform_listing_id || json.platform_item_id || hit.platformItemId || null;
+  }
+
+  async function coverageClearShopeePublishedMappings(productId, hit) {
+    const payload = {
+      status: 'not_listed',
+      shop_item_id: null,
+      shop_model_id: null,
+      last_error: hit?.error || 'Remote Shopee listing not found during SKU sync',
+      last_synced_at: new Date().toISOString(),
+      raw_payload: {
+        source: 'published_list_sku_sync',
+        not_found: true,
+        checked_at: new Date().toISOString(),
+        raw: hit?.raw || null,
+      },
+    };
+    const { data, error } = await db
+      .from('product_shopee_listings')
+      .update(payload)
+      .eq('product_id', productId)
+      .select('product_id,region');
+    if (error) throw error;
+    return Array.isArray(data) ? data.length : 0;
+  }
+
+  async function coverageClearPlatformMapping(productId, platform, hit) {
+    if (platform === 'shopee') return coverageClearShopeePublishedMappings(productId, hit);
+    if (hit?.syncedByPlatformPublish) return hit?.raw?.platform_listing_id ? 1 : 0;
+    return 0;
   }
 
   async function coverageCheckExistingPlatformsBySku() {
@@ -18611,8 +18679,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       for (const group of groups) {
         const sku = String(group.sku || '').trim();
         for (const platform of targetPlatforms) {
-          const currentStatus = group.platforms[platform]?.coverage_status || 'missing';
-          if (currentStatus === 'mapped') continue;
           if (!available[platform]) {
             unsupported += 1;
             continue;
@@ -18626,6 +18692,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             } else if (hit.unsupported) {
               unsupported += 1;
             } else if (hit.notFound) {
+              await coverageClearPlatformMapping(group.product_id, platform, hit);
               missing += 1;
             } else {
               errors += 1;
@@ -22317,6 +22384,24 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       });
     }
 
+    function mrJoomListingStatusFromResponse(json) {
+      const explicitStatus = String(json?.listing_status || json?.listingStatus || '').toLowerCase();
+      if (['not_listed', 'draft', 'pending', 'listed', 'error', 'rejected', 'paused', 'banned'].includes(explicitStatus)) return explicitStatus;
+      const state = String(json?.state || json?.joom_product_state || '').toLowerCase();
+      if (state === 'archived') return 'not_listed';
+      if (state === 'pending' || state === 'locked') return 'pending';
+      if (state === 'rejected' || state === 'banned') return 'rejected';
+      if (state === 'disabledbyjoom' || state === 'disabledbymerchant') return 'paused';
+      if (json?.hasActiveVersion === false) return 'pending';
+      if (state === 'active' || state === 'warning' || json?.hasActiveVersion === true) return 'listed';
+      return json?.joom_product_id ? 'pending' : 'not_listed';
+    }
+
+    function mrJoomMappingStatusFromResponse(json) {
+      const status = mrJoomListingStatusFromResponse(json);
+      return status === 'listed' ? 'mapped' : status;
+    }
+
     function mrJoomAssertOptionSkuLocked(row, idx, errors) {
       const optionSku = String(row?._sku || '').trim();
       const masterSku = mrJoomMasterSku(row);
@@ -22837,15 +22922,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           for (const row of activeRows) {
             const matched = (json.variants || []).find(v => v.sku === row._sku);
             if (!matched) continue;
+            const joomListingStatus = mrJoomListingStatusFromResponse(json);
+            const joomMappingStatus = mrJoomMappingStatusFromResponse(json);
             await db.from('products').update({
               joom_product_id: json.joom_product_id,
               joom_variant_id: matched.sku,
               joom_currency: 'USD',
-              joom_status: json.state || 'pending',
+              joom_status: json.state || joomListingStatus,
               joom_published_at: new Date().toISOString(),
               joom_last_synced_price: matched.price,
               joom_last_synced_at: new Date().toISOString(),
-              joom_mapping_status: 'mapped',
+              joom_mapping_status: joomMappingStatus,
               joom_mapping_error: null,
             }).eq('sku', row._sku);
           }
@@ -23019,15 +23106,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           for (const row of group.rows) {
             const matched = (json.variants || []).find(v => v.sku === row._sku);
             if (!matched) continue;
+            const joomListingStatus = mrJoomListingStatusFromResponse(json);
+            const joomMappingStatus = mrJoomMappingStatusFromResponse(json);
             await db.from('products').update({
               joom_product_id: json.joom_product_id,
               joom_variant_id: matched.sku,
               joom_currency: 'USD',
-              joom_status: json.state || 'pending',
+              joom_status: json.state || joomListingStatus,
               joom_published_at: new Date().toISOString(),
               joom_last_synced_price: matched.price,
               joom_last_synced_at: new Date().toISOString(),
-              joom_mapping_status: 'mapped',
+              joom_mapping_status: joomMappingStatus,
               joom_mapping_error: null,
             }).eq('sku', row._sku);
           }

@@ -143,6 +143,83 @@ function dispatchAlert(payload: Record<string, unknown>): void {
   })();
 }
 
+function shouldClearRemoteMissingMapping(capability: AdapterCapability, adapterResult: any): boolean {
+  return capability === 'sync'
+    && adapterResult?.listingStatus === 'not_listed'
+    && (adapterResult?.errorCode === 'PLATFORM_NOT_FOUND' || adapterResult?.ok === true);
+}
+
+async function clearRemoteMissingMapping(
+  svc: any,
+  args: {
+    masterProductId: string;
+    platform: string;
+    shopId?: string;
+    country?: string;
+    publishRequestId: string;
+    capability: AdapterCapability;
+    adapterResult: any;
+  },
+): Promise<string | null> {
+  const now = new Date().toISOString();
+  const errorMsg = args.adapterResult?.errorMsg || 'Remote listing was not found during platform sync';
+  const errorCode = args.adapterResult?.errorCode || 'PLATFORM_NOT_FOUND';
+  const payload = {
+    capability: args.capability,
+    remote_missing: true,
+    raw_response: args.adapterResult?.rawResponse || null,
+  };
+
+  const updatePayload: Record<string, unknown> = {
+    listing_status: 'not_listed',
+    mapping_status: 'unmatched',
+    last_publish_request_id: args.publishRequestId,
+    last_payload: payload,
+    last_sync_at: now,
+    last_seen_at: now,
+    error_msg: errorMsg,
+    error_code: errorCode,
+    deleted_at: now,
+    updated_at: now,
+  };
+
+  let q = svc
+    .from('platform_listings')
+    .update(updatePayload)
+    .eq('master_product_id', args.masterProductId)
+    .eq('platform', args.platform)
+    .is('deleted_at', null)
+    .select('id');
+  if (args.shopId) q = q.eq('shop_id', args.shopId);
+  else q = q.is('shop_id', null);
+  if (args.country) q = q.eq('country', args.country);
+  else q = q.is('country', null);
+
+  const { data, error } = await q;
+  if (error) {
+    audit('remote_missing_clear_failed', { platform: args.platform, error: error.message });
+  }
+
+  if (args.platform === 'joom') {
+    const { error: joomErr } = await svc
+      .from('products')
+      .update({
+        joom_product_id: null,
+        joom_variant_id: null,
+        joom_status: 'archived',
+        joom_mapping_status: null,
+        joom_mapping_error: errorMsg,
+        joom_published_at: null,
+        joom_last_synced_at: now,
+        joom_last_synced_price: null,
+      })
+      .eq('id', args.masterProductId);
+    if (joomErr) audit('joom_legacy_clear_failed', { error: joomErr.message });
+  }
+
+  return Array.isArray(data) && data[0]?.id ? String(data[0].id) : null;
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -717,7 +794,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
   let listingId: string | null = existingListing?.id as string ?? null;
 
   if (!dry_run) {
-    const shouldAbsorbLookup = adapterResult.ok && capability === 'sync' && ['joom', 'qoo10', 'ebay'].includes(platform);
+    const shouldClearMissing = shouldClearRemoteMissingMapping(capability, adapterResult);
+    const shouldAbsorbLookup = !shouldClearMissing && adapterResult.ok && capability === 'sync' && ['joom', 'qoo10', 'ebay'].includes(platform);
     const raw = adapterResult.rawResponse || {};
     let rpcName = 'upsert_platform_listing';
     let rpcArgs: Record<string, unknown> = {
@@ -748,13 +826,26 @@ Deno.serve(async (req: Request): Promise<Response> => {
         p_raw_payload: raw,
       };
     }
-    const { data: upsertedId, error: upsertErr } = await svc.rpc(rpcName, rpcArgs);
+    if (shouldClearMissing) {
+      const clearedId = await clearRemoteMissingMapping(svc, {
+        masterProductId: master_product_id,
+        platform,
+        shopId: shop_id,
+        country,
+        publishRequestId: publish_request_id,
+        capability,
+        adapterResult,
+      });
+      if (clearedId) listingId = clearedId;
+    } else {
+      const { data: upsertedId, error: upsertErr } = await svc.rpc(rpcName, rpcArgs);
 
-    if (upsertErr) {
-      audit('listing_upsert_failed', { error: upsertErr.message });
-      // Non-fatal: continue with audit + response.
-    } else if (upsertedId) {
-      listingId = upsertedId;
+      if (upsertErr) {
+        audit('listing_upsert_failed', { error: upsertErr.message });
+        // Non-fatal: continue with audit + response.
+      } else if (upsertedId) {
+        listingId = upsertedId;
+      }
     }
 
     // Qoo10 SetNewGoods creates one goods_no with option seller codes. Mirror

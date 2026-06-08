@@ -187,6 +187,17 @@ function buildDescription(opts: { artist?: string; album?: string; contents?: st
   ].join("\n");
 }
 
+function joomProductListingStatus(product: any): string {
+  const state = String(product?.state || "").toLowerCase();
+  if (state === "archived") return "not_listed";
+  if (state === "rejected" || state === "banned") return "rejected";
+  if (state === "disabledbyjoom" || state === "disabledbymerchant") return "paused";
+  if (state === "pending" || state === "locked") return "pending";
+  if (product?.hasActiveVersion === false) return "pending";
+  if (state === "active" || state === "warning" || product?.hasActiveVersion === true) return "listed";
+  return product?.id ? "pending" : "not_listed";
+}
+
 // ---------------------------------------------------------------------------
 // Cloudinary upload helper (for split image tiles)
 // ---------------------------------------------------------------------------
@@ -594,6 +605,9 @@ async function handleRequest(req: Request): Promise<Response> {
         joom_product_id: data.id,
         joom_sku: data.sku,
         state: data.state,
+        joom_product_state: data.state || null,
+        hasActiveVersion: data.hasActiveVersion ?? null,
+        listing_status: joomProductListingStatus(data),
         main_image_state: data.mainImage?.imageState,
         requested_category_id: categoryId,
         joom_category_id: joomCategoryId || null,
@@ -673,6 +687,10 @@ async function handleRequest(req: Request): Promise<Response> {
           joom_currency: String(matched.currency || ""),
           joom_price: matched.price != null ? String(matched.price) : null,
           joom_enabled: !!matched.enabled,
+          state: product?.state || null,
+          joom_product_state: product?.state || null,
+          hasActiveVersion: product?.hasActiveVersion ?? null,
+          listing_status: joomProductListingStatus(product),
           product_name: product?.name || "",
         });
       } catch (e: any) {

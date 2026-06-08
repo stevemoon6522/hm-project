@@ -116,6 +116,17 @@ function classifyBridgeError(status: number, json: any) {
   return 'PLATFORM_UNKNOWN';
 }
 
+function mapQoo10ListingStatus(rawStatus: unknown): AdapterResult['listingStatus'] {
+  const status = norm(rawStatus).toUpperCase();
+  if (!status || status === 'LISTED' || status === 'S2' || status === '2') return 'listed';
+  if (status === 'S0' || status === 'S1' || status === '0' || status === '1') return 'pending';
+  if (status === 'S3') return 'paused';
+  if (status === 'S4' || status === '3' || status === 'DELETED' || status === 'DISCONTINUED') return 'not_listed';
+  if (status === 'S5') return 'banned';
+  if (status === 'S8') return 'rejected';
+  return 'listed';
+}
+
 async function bridgeFetch(path: string, init: RequestInit = {}, userAuthToken = '') {
   if (!QOO10_BRIDGE_URL) return { ok: false, status: 500, json: { error: 'QOO10_BRIDGE_URL missing' } };
   const headers: Record<string, string> = { ...(init.headers as Record<string, string> || {}) };
@@ -161,7 +172,12 @@ async function executeSync(ctx: AdapterContext): Promise<AdapterResult> {
 
   const platformItemId = norm(result.json.goods_no || result.json.goodsNo || result.json.platform_item_id);
   if (!platformItemId) return { ok: false, listingStatus: 'not_listed', errorCode: 'PLATFORM_UNKNOWN', errorMsg: 'qoo10-bridge lookup succeeded but did not return goods_no', rawResponse: result.json };
-  return { ok: true, platformItemId, listingStatus: 'listed', rawResponse: { ...result.json, platform_item_id: platformItemId, variant_id: result.json.option_code || result.json.seller_code || sku } };
+  return {
+    ok: true,
+    platformItemId,
+    listingStatus: mapQoo10ListingStatus(result.json.status || result.json.item_status || result.json.ItemStatus),
+    rawResponse: { ...result.json, platform_item_id: platformItemId, variant_id: result.json.option_code || result.json.seller_code || sku },
+  };
 }
 
 async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {

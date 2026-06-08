@@ -15,10 +15,14 @@ for (const [label, source] of [['supabase', joomBridge], ['edge mirror', edgeJoo
 
 assert.match(platformPublish, /joom_product_id, joom_variant_id, joom_currency/, 'platform-publish must select stored Joom mapping fields for sync fallback');
 assert.match(joomAdapter, /id: s\(ctx\.masterProduct\.joom_product_id\)/, 'Joom platform adapter must send stored joom_product_id to lookup-sku');
-assert.match(joomAdapter, /trustedStoredMapping = fallbackStoredJoomMapping/, 'Joom platform adapter must trust stored Joom IDs before bridge lookup so grouped options do not emit false lookup failures');
-assert.match(joomAdapter, /fallbackStoredJoomMapping/, 'Joom platform adapter must fall back to stored Joom IDs when bridge lookup misses but product.joom_product_id is known');
-assert.match(joomAdapter, /joom_lookup_fallback: 'stored_joom_product_id'/, 'Joom stored-ID fallback must be auditable in absorbed raw payload');
-assert.match(joomAdapter, /platformItemId: storedProductId/, 'Joom stored-ID fallback must still populate platform_item_id for platform_listings');
-assert.match(joomAdapter, /joom_variant_id: storedVariantId/, 'Joom stored-ID fallback must preserve the stored variant id/SKU for platform_listings.external_variant_id');
+assert.doesNotMatch(joomAdapter, /trustedStoredMapping = fallbackStoredJoomMapping/, 'Joom adapter must not trust stored IDs before bridge lookup');
+assert.doesNotMatch(joomAdapter, /joom_lookup_fallback: 'stored_joom_product_id'/, 'stale stored Joom IDs must not be absorbed as listed without remote verification');
+assert.match(joomAdapter, /raw\?\.hasActiveVersion === false\) return 'pending'/, 'Joom adapter must not classify non-active products as listed');
+assert.match(joomAdapter, /state === 'archived' \|\| state === 'not_listed'/, 'Joom adapter must treat archived products as not listed');
+
+for (const [label, source] of [['supabase', joomBridge], ['edge mirror', edgeJoomBridge]]) {
+  assert.match(source, /hasActiveVersion: product\?\.hasActiveVersion \?\? null/, `${label} Joom lookup must expose hasActiveVersion`);
+  assert.match(source, /listing_status: joomProductListingStatus\(product\)/, `${label} Joom lookup must expose listing_status derived from remote state`);
+}
 
 console.log('Joom lookup id fallback checks passed');

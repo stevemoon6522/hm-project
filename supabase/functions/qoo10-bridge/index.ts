@@ -16,7 +16,7 @@ import { AUTH_CORS, requireAuthenticatedUser } from "../_shared/auth.ts";
 
 const QOO10_API_BASE = (Deno as any).env.get("QOO10_API_BASE") || "https://api.qoo10.jp/GMKT.INC.Front.QAPIService/ebayjapan.qapi";
 const QOO10_API_KEY = (Deno as any).env.get("QOO10_API_KEY") || (Deno as any).env.get("QOO10_CERT_KEY") || "";
-const QOO10_SCAN_STATUSES = String((Deno as any).env.get("QOO10_SCAN_STATUSES") || "S2,S1,S3,S0")
+const QOO10_SCAN_STATUSES = String((Deno as any).env.get("QOO10_SCAN_STATUSES") || "S2,S1,S3,S0,S4,S5,S8")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);

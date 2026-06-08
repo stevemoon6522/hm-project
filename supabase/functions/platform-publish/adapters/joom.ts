@@ -54,35 +54,23 @@ function mapBridgeError(status: number, raw: any): AdapterErrorCode {
 
 function mapJoomStatus(raw: any): AdapterResult['listingStatus'] {
   const state = s(raw?.state || raw?.joom_product_state || raw?.listingStatus).toLowerCase();
+  const explicitStatus = s(raw?.listing_status || raw?.listingStatus).toLowerCase();
   const infractions = Array.isArray(raw?.infractions) ? raw.infractions : [];
   if (infractions.some((row: any) => s(row?.kind || row?.code).toLowerCase().includes('reject'))) return 'rejected';
-  if (['active', 'approved', 'listed', 'enabled', 'published'].some((v) => state.includes(v))) return 'listed';
+  if (explicitStatus === 'not_listed') return 'not_listed';
+  if (explicitStatus === 'pending' || explicitStatus === 'draft') return 'pending';
+  if (explicitStatus === 'paused') return 'paused';
+  if (explicitStatus === 'rejected' || explicitStatus === 'banned') return explicitStatus as AdapterResult['listingStatus'];
+  if (explicitStatus === 'listed') return 'listed';
+  if (state === 'archived' || state === 'not_listed') return 'not_listed';
+  if (state === 'pending' || state === 'draft' || state === 'locked') return 'pending';
   if (['disabled', 'paused'].some((v) => state.includes(v))) return 'paused';
   if (['reject', 'banned'].some((v) => state.includes(v))) return 'rejected';
+  if (raw?.hasActiveVersion === false) return 'pending';
+  if (['active', 'approved', 'listed', 'enabled', 'published', 'warning'].some((v) => state.includes(v))) return 'listed';
   if (raw?.joom_product_id && raw?.joom_enabled !== false) return 'listed';
   if (raw?.joom_product_id) return 'pending';
   return 'not_listed';
-}
-
-function fallbackStoredJoomMapping(ctx: BridgeContext, raw: any): AdapterResult | null {
-  const storedProductId = s(ctx.masterProduct.joom_product_id).trim();
-  if (!storedProductId) return null;
-  const storedVariantId = s(ctx.masterProduct.joom_variant_id || ctx.masterProduct.sku).trim();
-  return {
-    ok: true,
-    platformItemId: storedProductId,
-    listingStatus: 'listed',
-    rawResponse: {
-      ok: true,
-      joom_lookup_fallback: 'stored_joom_product_id',
-      joom_product_id: storedProductId,
-      joom_variant_id: storedVariantId,
-      joom_currency: s(ctx.masterProduct.joom_currency || 'USD'),
-      sku: s(ctx.masterProduct.sku),
-      bridge_lookup_error: raw?.error || raw?.message || null,
-      bridge_lookup_detail: raw?.lookup_error_detail || null,
-    },
-  };
 }
 
 async function bridgePost(action: string, body: Record<string, unknown>, userToken: string): Promise<{ status: number; raw: any }> {
@@ -175,8 +163,6 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
 async function syncListing(ctx: BridgeContext): Promise<AdapterResult> {
   const userToken = s(ctx.userAuthToken);
   if (!userToken) return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_AUTH_FAILED', errorMsg: 'Authenticated user token is required for Joom sync' };
-  const trustedStoredMapping = fallbackStoredJoomMapping(ctx, { skipped_bridge_lookup: true });
-  if (trustedStoredMapping) return trustedStoredMapping;
   const params = {
     sku: s(ctx.masterProduct.sku),
     id: s(ctx.masterProduct.joom_product_id),
@@ -190,12 +176,11 @@ async function syncListing(ctx: BridgeContext): Promise<AdapterResult> {
       rawResponse: raw,
     };
   }
-  const storedFallback = fallbackStoredJoomMapping(ctx, raw);
-  if (storedFallback && mapBridgeError(status, raw) === 'PLATFORM_NOT_FOUND') return storedFallback;
+  const errorCode = mapBridgeError(status, raw);
   return {
     ok: false,
-    listingStatus: 'not_listed',
-    errorCode: mapBridgeError(status, raw),
+    listingStatus: errorCode === 'PLATFORM_NOT_FOUND' ? 'not_listed' : 'error',
+    errorCode,
     errorMsg: s(raw?.error || raw?.message || 'Joom SKU not found'),
     rawResponse: raw,
   };

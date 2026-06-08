@@ -11,6 +11,14 @@ function norm(value: unknown): string {
   return String(value || '').trim();
 }
 
+function normalizeQoo10PriceEnding90(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const whole = Math.ceil(n);
+  const sameHundred90 = Math.floor(whole / 100) * 100 + 90;
+  return whole <= sameHundred90 ? sameHundred90 : sameHundred90 + 100;
+}
+
 function sameSku(a: unknown, b: unknown): boolean {
   return norm(a) === norm(b);
 }
@@ -93,7 +101,7 @@ function normalizeOptions(ctx: AdapterContext, qoo10: Record<string, any>, baseP
     sku: norm(row.sku),
     option_name: norm(row.option_name || qoo10.option_name || 'Type') || 'Type',
     option_value: norm(row.option_value || row.value || row.label || row.option_name || 'Default') || 'Default',
-    price_jpy: Math.max(1, Math.round(Number(row.price_jpy || row.price || basePrice) || basePrice)),
+    price_jpy: normalizeQoo10PriceEnding90(row.price_jpy || row.price || basePrice),
     stock: Math.max(0, Math.floor(Number(row.stock ?? row.qty ?? 0) || 0)),
   })).filter((row: any) => row.sku);
 }
@@ -163,7 +171,7 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
   const shippingNo = shippingNoFrom(ctx, qoo10);
   const brandNo = brandNoFrom(ctx, qoo10);
   const sellerCode = norm(qoo10.seller_code || qoo10.parent_sku || ctx.masterProduct?.sku);
-  const basePrice = Math.max(1, Math.round(Number(qoo10.base_price_jpy || qoo10.item_price_jpy || qoo10.price_jpy || 0) || 0));
+  const basePrice = normalizeQoo10PriceEnding90(qoo10.base_price_jpy || qoo10.item_price_jpy || qoo10.price_jpy);
   const available = availableDateFrom(ctx, qoo10);
   const options = normalizeOptions(ctx, qoo10, basePrice);
   const userAuthToken = norm((ctx as any).userAuthToken);

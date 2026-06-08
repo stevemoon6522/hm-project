@@ -79,11 +79,18 @@ test('Qoo10 create listing contract includes official registration side fields',
   assert.match(adapter, /option_products/, 'Qoo10 create result should expose option products for platform_listings fan-out');
 });
 
-test('Qoo10 V2 modal defaults match album preorder listing policy', () => {
+test('Qoo10 V2 modal defaults match lifecycle-aware listing policy', () => {
   assert.match(html, /first\.qoo10_category_id \|\| '300002851'/, 'Qoo10 category should default to KPOP CD');
-  assert.match(html, /const isPreOrder = true;/, 'Qoo10 modal should default to release-date preorder shipping');
+  assert.match(html, /const isPreOrder = mrQoo10IsPreOrder\(rows\);/, 'Qoo10 modal should choose preorder only for pre_order lifecycle products');
+  assert.match(html, /qoo10_available_date_value:\s*availableType === '2' \? releaseDate : '3'/, 'Qoo10 ready-stock listings should use normal shipping within 3 business days');
   assert.match(html, /Overseas \/ South Korea \(KR\)/, 'Qoo10 modal should display the fixed origin policy');
-  assert.match(html, /mrQoo10BuildDescription\(descriptionTemplateHtml\)/, 'Qoo10 description should combine template HTML with detail images');
+  assert.match(html, /mrQoo10NormalizeHeaderHtml/, 'Qoo10 header should accept a raw image URL and normalize it to HTML');
+  assert.match(html, /QOO10_DEFAULT_HEADER_IMAGE_URL = 'https:\/\/res\.cloudinary\.com\/dybau67eb\/image\/upload\/v1780901679\//, 'Qoo10 header should default to the Cloudinary notice image');
+  assert.match(html, /QOO10_DEFAULT_DESCRIPTION_TEMPLATE = `<div>💿\{\{MASTER_PRODUCT_NAME\}\}/, 'Qoo10 description should default to the fixed Japanese template with master product name token');
+  assert.match(html, /mrQoo10ApplyDescriptionTemplate/, 'Qoo10 description should support title placeholders in the fixed template');
+  assert.match(html, /MASTER_PRODUCT_NAME\|MASTER_TITLE/, 'Qoo10 description template should replace master product name placeholders');
+  assert.ok(html.includes("replace(/\\{\\{\\s*(TITLE|PRODUCT_TITLE)\\s*\\}\\}/gi"), 'Qoo10 description template should replace TITLE placeholders');
+  assert.match(html, /mrQoo10BuildDescription\(descriptionTemplateHtml,\s*first\)/, 'Qoo10 description should combine template HTML with detail images');
   assert.match(html, /sdv2:qoo10:description_template_html/, 'Qoo10 description template should be persisted for reuse');
   assert.match(html, /mrQoo10LoadExistingItemCode/, 'Qoo10 modal should detect existing item codes before deciding create vs repair');
   assert.match(html, /mrQoo10RepairExistingListing/, 'Qoo10 modal should repair existing items instead of duplicate-registering them');
@@ -93,4 +100,11 @@ test('Qoo10 V2 modal defaults match album preorder listing policy', () => {
   assert.match(html, /\/update-goods/, 'Qoo10 existing repair should update BrandNo, origin, and release-date fields');
   assert.match(html, /\/edit-contents/, 'Qoo10 existing repair should update detail contents');
   assert.match(html, /\/edit-inventory/, 'Qoo10 existing repair should create/update option seller codes');
+});
+
+test('Qoo10 registration prices are normalized to 90-ending JPY values', () => {
+  assert.match(html, /normalizeQoo10PriceEnding90\(mrQoo10ReadNumber\('mr-qoo10-base-price', 0\)\)/, 'Qoo10 modal base price should normalize manual input to a 90-ending price');
+  assert.match(html, /price_jpy:\s*normalizeQoo10PriceEnding90\(mrQoo10ReadNumber\(`mr-qoo10-price-\$\{idx\}`,\s*basePrice\)\)/, 'Qoo10 modal option prices should normalize manual input to 90-ending prices');
+  assert.match(adapter, /function normalizeQoo10PriceEnding90/, 'platform-publish should defensively normalize Qoo10 prices');
+  assert.match(bridge, /function normalizeQoo10PriceEnding90/, 'qoo10-bridge should defensively normalize Qoo10 prices');
 });

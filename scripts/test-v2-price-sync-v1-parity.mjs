@@ -9,6 +9,7 @@ import {
   calculateV1Listing,
   getQoo10ShippingFeeJpy,
   getShippingFee,
+  normalizeQoo10PriceEnding90,
   normalizeShopeeOriginalPrice,
 } from '../v2/price-engine.js';
 
@@ -82,15 +83,18 @@ const qoo10 = calculateQoo10Price({
   costKrw: 10000,
   countrySettings: DEFAULT_COUNTRY_SETTINGS.Q10,
 });
-assert(qoo10.ok && qoo10.qoo10Price === 1278, 'Qoo10 price must use exchange 9.1 and total fee 14%');
+assert(qoo10.ok && qoo10.qoo10Price === 1290, 'Qoo10 price must use exchange 9.1, total fee 14%, and end in 90');
 assertNear(qoo10.totalFeePct, 14, 0.000001, 'Qoo10 total fee must combine category, preorder, and Megawari fees');
+assert(normalizeQoo10PriceEnding90(2288) === 2290, 'Qoo10 price 2288 must normalize to 2290');
+assert(normalizeQoo10PriceEnding90(2290) === 2290, 'Qoo10 price already ending in 90 must stay unchanged');
+assert(normalizeQoo10PriceEnding90(2291) === 2390, 'Qoo10 price above a 90 ending must move to the next 90 ending');
 
 const qoo10WithShipping = calculateQoo10Price({
   costKrw: 10000,
   weightG: 100,
   countrySettings: DEFAULT_COUNTRY_SETTINGS.Q10,
 });
-assert(qoo10WithShipping.ok && qoo10WithShipping.qoo10Price === 1802, 'Qoo10 price must include the inclusive 100g shipping fee');
+assert(qoo10WithShipping.ok && qoo10WithShipping.qoo10Price === 1890, 'Qoo10 price must include the inclusive 100g shipping fee and end in 90');
 assertNear(qoo10WithShipping.shippingFeeJpy, 450, 0.000001, 'Qoo10 100g shipping fee must be 450 JPY');
 assertNear(getQoo10ShippingFeeJpy(100), 450, 0.000001, 'Qoo10 shipping 0-100g must be 450 JPY');
 assertNear(getQoo10ShippingFeeJpy(101), 525, 0.000001, 'Qoo10 shipping over 100g must move to 250g bracket');

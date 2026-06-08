@@ -274,6 +274,14 @@ function clampString(value: unknown, max: number): string {
   return String(value || "").trim().slice(0, max);
 }
 
+function normalizeQoo10PriceEnding90(value: unknown): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const whole = Math.ceil(n);
+  const sameHundred90 = Math.floor(whole / 100) * 100 + 90;
+  return whole <= sameHundred90 ? sameHundred90 : sameHundred90 + 100;
+}
+
 function normalizeAvailableDate(type: unknown, value: unknown) {
   const t = String(type || "0").trim();
   if (t === "2") {
@@ -295,7 +303,7 @@ function buildItemType(options: any[], basePrice: number, forceOptions = false) 
     .map((option) => {
       const optionName = cleanOptionToken(option.option_name || option.name || "Type", "Type");
       const optionValue = cleanOptionToken(option.option_value || option.value || option.label || "Default", "Default");
-      const price = Math.max(1, Math.round(Number(option.price_jpy || option.price || basePrice) || basePrice));
+      const price = normalizeQoo10PriceEnding90(option.price_jpy || option.price || basePrice);
       const delta = Math.round(price - basePrice);
       const stock = Math.max(0, Math.floor(Number(option.stock ?? option.qty ?? 0) || 0));
       const sku = cleanOptionToken(option.sku || option.seller_code || "0", "0");
@@ -479,7 +487,7 @@ async function handleEditInventory(req: Request): Promise<Response> {
 
   const itemCode = clampString(body.item_code || body.ItemCode, 10);
   const sellerCode = clampString(body.seller_code || body.SellerCode, 100);
-  const basePrice = Math.max(1, Math.round(Number(body.base_price_jpy || body.item_price_jpy || body.ItemPrice) || 0));
+  const basePrice = normalizeQoo10PriceEnding90(body.base_price_jpy || body.item_price_jpy || body.ItemPrice);
   const itemTypeResult = buildItemType(Array.isArray(body.options) ? body.options : [], basePrice, true);
   if (!itemCode) return jsonResp({ ok: false, error: "ItemCode/item_code required" }, 400);
   if (!basePrice) return jsonResp({ ok: false, error: "base_price_jpy required to calculate Qoo10 option price deltas" }, 400);
@@ -525,7 +533,7 @@ async function handleCreateListing(req: Request): Promise<Response> {
   const shippingNo = clampString(body.shipping_no || body.ShippingNo, 10);
   const imageUrl = clampString(body.main_image || body.StandardImage, 200);
   const description = String(body.description || body.ItemDescription || "").trim();
-  const basePrice = Math.max(1, Math.round(Number(body.base_price_jpy || body.item_price_jpy || body.ItemPrice) || 0));
+  const basePrice = normalizeQoo10PriceEnding90(body.base_price_jpy || body.item_price_jpy || body.ItemPrice);
   const itemTypeResult = buildItemType(Array.isArray(body.options) ? body.options : [], basePrice, body.force_options === true);
   const optionStock = itemTypeResult.options.reduce((sum, option) => sum + option.stock, 0);
   const stock = Math.max(0, Math.floor(Number(body.stock ?? body.ItemQty ?? optionStock) || 0));

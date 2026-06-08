@@ -4214,7 +4214,7 @@ LEGACY END -->
     { code: 'TH', currency: 'THB', enabled: true },
     { code: 'MY', currency: 'MYR', enabled: true },
     { code: 'PH', currency: 'PHP', enabled: true },
-    { code: 'BR', currency: 'BRL', enabled: false, note: 'Excluded: legacy BR shop is banned' },
+    { code: 'BR', currency: 'BRL', enabled: true },
   ];
 
   const db = createClient(SUPABASE_URL, SUPABASE_ANON);
@@ -4383,9 +4383,8 @@ LEGACY END -->
     ebay: ['price', 'inventory'],
     alibaba: [],
   });
-  const SHOPEE_PLATFORM_ACTIVE_REGIONS = Object.freeze(['SG', 'TW', 'TH', 'MY', 'PH']);
+  const SHOPEE_PLATFORM_ACTIVE_REGIONS = Object.freeze(['SG', 'TW', 'TH', 'MY', 'PH', 'BR']);
   const SHOPEE_PLATFORM_EXCLUDED_REGIONS = Object.freeze([
-    { region: 'BR', reason: 'banned shop excluded' },
     { region: 'VN', reason: 'out of scope' },
     { region: 'MX', reason: 'out of scope' },
   ]);

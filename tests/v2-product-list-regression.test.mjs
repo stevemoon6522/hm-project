@@ -31,6 +31,7 @@ const masterRegisterImageTools = sliceBetween(html, 'function mrGetGroupOptionIm
 const openCreatedMasterEdit = sliceBetween(html, 'async function mrOpenCreatedMasterEdit(productId) {', 'function mrRenderPreviewCards() {');
 const masterRegisterRender = sliceBetween(html, 'function mrRenderPreviewCards() {', 'async function mrPromoteAll() {');
 const joomRegisterStatus = sliceBetween(html, 'function mrJoomListingStatusFromResponse(json) {', 'function mrJoomAssertOptionSkuLocked(row, idx, errors) {');
+const shopeePlatformRegions = sliceBetween(html, 'const SHOPEE_PLATFORM_ACTIVE_REGIONS', '/** Preselect state: set by openReadyStockWizard()');
 
 test('primary marketplace tabs render as a large left-side navigation rail', () => {
   assert.match(html, /\.app-layout[\s\S]*grid-template-columns: 276px minmax\(0, 1fr\)/, 'app shell should reserve a visible left rail for marketplace tabs');
@@ -39,6 +40,12 @@ test('primary marketplace tabs render as a large left-side navigation rail', () 
   assert.match(html, /\.nav-tab[\s\S]*min-height: 64px/, 'desktop nav tabs should be visibly larger than the old top strip');
   assert.match(nav, /<span class="nav-label">마스터 상품<\/span>[\s\S]*<span class="nav-meta">공통 상품 관리<\/span>/, 'master tab should include a visible label and purpose');
   assert.match(nav, /<span class="nav-label">Shopee<\/span>[\s\S]*<span class="nav-meta">등록 \/ 수정 \/ 재시도<\/span>/, 'Shopee tab should expose the main work type');
+});
+
+test('Shopee platform tab always includes BR as an active region', () => {
+  assert.match(shopeePlatformRegions, /SHOPEE_PLATFORM_ACTIVE_REGIONS = Object\.freeze\(\['SG', 'TW', 'TH', 'MY', 'PH', 'BR'\]\)/, 'Shopee platform active regions must include BR');
+  assert.doesNotMatch(shopeePlatformRegions, /\{ region: 'BR'/, 'BR must not be rendered as an excluded Shopee platform region');
+  assert.match(html, /\{ code: 'BR', currency: 'BRL', enabled: true \}/, 'BR must remain enabled in shared Shopee region metadata');
 });
 
 test('standalone products have master edit button and master tab stays platform-neutral', () => {

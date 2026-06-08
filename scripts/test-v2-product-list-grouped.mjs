@@ -19,7 +19,7 @@ const html = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
 
 const productView = sliceBetween(
   html,
-  '<div id="view-products" class="view">',
+  '<div id="view-products" class="view active">',
   '</div><!-- /view-products -->',
 );
 const productList = sliceBetween(
@@ -79,19 +79,15 @@ assert(
 assert(
   productList.includes("isVariantRow ? '<span class=\"muted\"")
     && !productList.includes('data-open="${text(p.id)}"')
-    && productList.includes('data-open-shopee-single="${text(p.id)}"'),
-  'variant option rows must not show the legacy Register button',
+    && !productList.includes('data-open-shopee-single="${text(p.id)}"'),
+  'variant option rows must not show legacy or platform Register buttons in the master table',
 );
 assert(
-  productList.includes('class="pl-shopee-cell"')
-    && productList.includes('class="pl-shopee-register"')
-    && productList.includes('aria-label="Shopee 등록"')
-    && productList.includes('>📤</button>')
-    && !productList.includes('<svg viewBox="0 0 24 24"')
-    && !productList.includes('class="primary pl-shopee-register"')
-    && !productList.includes('class="primary pl-shopee-register">Shopee 등록</button>')
-    && productList.includes('<td class="pl-platform-cell">'),
-  'Shopee group register button must be a neutral emoji-only button inside the Shopee platform cell',
+  html.includes('id="platform-shopee-root"')
+    && html.includes('function renderPlatformWorkbench(platform)')
+    && html.includes('data-platform-quick="register"')
+    && html.includes('openRegisterShopeeGroupModal(targetId)'),
+  'Shopee register actions must live in the separated platform workbench',
 );
 assert(
   productList.includes("const lifecycleFilter = String(els.plLifecycleFilter?.value || 'all')")
@@ -108,7 +104,7 @@ assert(
 assert(
   productList.includes("optionDisplay || '옵션'")
     && productList.includes("${isGroupChild ? '' : productLifecycleBadge(p)}")
-    && productList.includes("isVariantRow\r\n            ? ''"),
+    && /isVariantRow\s*\?\s*''/.test(productList),
   'grouped child option rows must display only the option name without repeated product/group metadata',
 );
 assert(

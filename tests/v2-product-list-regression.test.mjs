@@ -14,7 +14,7 @@ function sliceBetween(source, start, end) {
 }
 
 const nav = sliceBetween(html, '<div class="nav-tabs">', '</div>');
-const productsView = sliceBetween(html, '<div id="view-products" class="view">', '</div><!-- /view-products -->');
+const productsView = sliceBetween(html, '<div id="view-products" class="view active">', '</div><!-- /view-products -->');
 const productRender = sliceBetween(html, 'function renderProductOptionRow(p, groupKey, isGroupChild) {', 'function plGroupRowsById(productGroupId) {');
 const productGrouping = sliceBetween(html, 'function plIsGroupedVariant(product) {', 'function renderProductGroup(group) {');
 const nameHelpers = sliceBetween(html, 'function cleanProductName(value, fallback = \'\') {', 'function numberOrNull(value) {');
@@ -32,17 +32,19 @@ const openCreatedMasterEdit = sliceBetween(html, 'async function mrOpenCreatedMa
 const masterRegisterRender = sliceBetween(html, 'function mrRenderPreviewCards() {', 'async function mrPromoteAll() {');
 const joomRegisterStatus = sliceBetween(html, 'function mrJoomListingStatusFromResponse(json) {', 'function mrJoomAssertOptionSkuLocked(row, idx, errors) {');
 
-test('standalone products have master edit button and platform register button next to Shopee LED', () => {
+test('standalone products have master edit button and master tab stays platform-neutral', () => {
   assert.match(productRender, /data-edit-master="\$\{text\(plMasterEditTargetKey\(p\)\)\}"/, 'single row should expose master edit target');
   assert.match(productRender, /isVariantRow && optionDisplay[\s\S]*\$\{editButton\}/, 'option-like single rows should also expose the master edit button');
-  assert.match(productRender, /data-open-shopee-single="\$\{text\(p\.id\)\}"/, 'single row Shopee register should live in Shopee platform cell');
+  assert.doesNotMatch(productRender, /data-open-shopee-single="\$\{text\(p\.id\)\}"/, 'Shopee register button should move out of the master product table');
+  assert.doesNotMatch(productRender, /platformLedCell\(p\.id, 'shopee'\)/, 'platform LEDs should move out of the master product table');
   assert.doesNotMatch(productRender, /data-open="\$\{text\(p\.id\)\}"[^>]*>Register<\/button>/, 'legacy action-column Register button should be removed');
 });
 
 test('single-option master products use the same Shopee single registration form', () => {
   assert.match(productGrouping, /function plShouldRenderAsGrouped\(product, sourceRows = state\.products \|\| \[\]\)/, 'product list should distinguish true multi-option groups from single-option masters');
   assert.match(productGrouping, /plVariantGroupMemberCount\(product\?\.product_group_id, sourceRows\) > 1/, 'only groups with more than one variant row should render as grouped Shopee registrations');
-  assert.match(productRender, /!\s*isGroupChild[\s\S]*data-open-shopee-single="\$\{text\(p\.id\)\}"/, 'option-like standalone rows should still expose the single Shopee register button');
+  assert.match(html, /function platformOpenExistingModal\(platform, group\)/, 'platform tabs should route grouped/single quick actions through existing modals when needed');
+  assert.match(html, /platform === 'shopee'[\s\S]*openRegisterShopeeSingleModal\(group\.rows\[0\]\.id\)/, 'Shopee platform quick action should still reach the single Shopee form');
   assert.match(shopeeRegisterOpen, /function openRegisterShopeeSingleModal\(productId\)/, 'single Shopee button should route through a normalizing opener');
   assert.match(shopeeRegisterOpen, /allowVariant: true[\s\S]*mode: 'single'/, 'single-option variants should bypass the variant guard but keep the single form');
   assert.match(shopeeRegisterOpen, /if \(rows\.length === 1\)[\s\S]*openRegisterShopeeModal\(rows\[0\]\.id,[\s\S]*mode: 'single'/, 'group opener should downgrade one-row groups to the single Shopee form');

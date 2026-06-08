@@ -67,8 +67,20 @@ assert(
   'coverage view must expose mapped/missing status',
 );
 
-assert(html.includes("showView('view-coverage')"), 'V2 nav must expose platform coverage tab');
+for (const viewId of [
+  'view-products',
+  'view-platform-shopee',
+  'view-platform-joom',
+  'view-platform-qoo10',
+  'view-platform-ebay',
+  'view-platform-alibaba',
+  'view-fee-settings',
+]) {
+  assert(html.includes(`showView('${viewId}')`), `V2 nav must expose ${viewId}`);
+}
+assert(!html.includes('<button class="nav-tab" onclick="showView(\'view-coverage\')"'), 'V2 nav must not expose the legacy platform coverage tab');
 assert(html.includes('id="view-coverage"'), 'V2 must include platform coverage view');
+assert(html.includes('id="platform-shopee-root"') && html.includes('function renderPlatformWorkbench(platform)'), 'V2 must include separated platform workbench tabs');
 assert(html.includes('renderCoverageView(false)'), 'showView patch must render coverage on tab activation');
 assert(html.includes('async function coverageFetchFromView()'), 'coverage view must prefer DB coverage view');
 assert(html.includes('async function coverageFetchFallback()'), 'coverage view must fall back before DB migration is applied');

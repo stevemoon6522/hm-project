@@ -183,7 +183,7 @@
     }
     .pl-table {
       table-layout: fixed;
-      min-width: 1180px;
+      min-width: 860px;
       white-space: normal;
     }
     .pl-table th,
@@ -341,6 +341,213 @@
       flex-wrap: wrap;
       gap: 4px;
       font-size: 12px;
+    }
+    .master-page-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+    .master-page-head h2 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+    .master-page-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .master-action-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .master-register-panel {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+    .master-register-panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: #fff9fd;
+      font-size: 13px;
+    }
+    #master-register-host .register-page-title {
+      display: none;
+    }
+    #master-register-host .register-workbench {
+      margin: 0;
+    }
+    .platform-page-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      margin-bottom: 12px;
+    }
+    .platform-page-head h2 {
+      margin: 0;
+      font-size: 20px;
+      letter-spacing: 0;
+    }
+    .platform-page-head p {
+      margin: 4px 0 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .platform-summary {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .platform-toolbar {
+      display: grid;
+      grid-template-columns: minmax(260px, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+      margin-bottom: 10px;
+    }
+    .platform-filters,
+    .platform-actions,
+    .platform-region-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .platform-status-tabs {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #fff;
+    }
+    .platform-status-tab,
+    .platform-region-chip {
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-size: 11px;
+      line-height: 1.2;
+      border-color: transparent;
+      background: transparent;
+      box-shadow: none;
+      color: var(--muted);
+    }
+    .platform-status-tab.is-active,
+    .platform-region-chip.is-active {
+      background: var(--gradient-accent);
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 1px 6px rgba(255, 45, 143, .22);
+    }
+    .platform-region-chip.is-disabled {
+      opacity: .45;
+      text-decoration: line-through;
+      cursor: not-allowed;
+    }
+    .platform-preview {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      margin: 10px 0;
+      overflow: hidden;
+    }
+    .platform-preview-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: #fff9fd;
+    }
+    .platform-preview-body {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .platform-preview-list {
+      display: grid;
+      gap: 8px;
+    }
+    .platform-preview-item {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      overflow: hidden;
+    }
+    .platform-preview-item summary {
+      cursor: pointer;
+      padding: 9px 10px;
+      font-weight: 700;
+      color: #2f1646;
+    }
+    .platform-preview-item-body {
+      padding: 0 10px 10px;
+      display: grid;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .platform-table {
+      table-layout: fixed;
+      min-width: 980px;
+    }
+    .platform-table th,
+    .platform-table td {
+      overflow-wrap: anywhere;
+    }
+    .platform-master-row td {
+      background: #fff9fd;
+      border-top: 1px solid var(--border);
+    }
+    .platform-option-row td {
+      background: #fff;
+      font-size: 12px;
+    }
+    .platform-status-pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 7px;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    .platform-status-pill.listed { background: #dcfce7; color: #166534; }
+    .platform-status-pill.missing { background: #f1f5f9; color: #475569; }
+    .platform-status-pill.pending { background: #fef3c7; color: #92400e; }
+    .platform-status-pill.error { background: #fee2e2; color: #991b1b; }
+    .platform-result-ok { color: var(--green); font-weight: 700; }
+    .platform-result-err { color: var(--red); font-weight: 700; }
+    @media (max-width: 760px) {
+      .master-page-head,
+      .platform-page-head,
+      .platform-toolbar {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
+      .master-action-bar,
+      .platform-summary,
+      .platform-actions {
+        justify-content: flex-start;
+      }
     }
     .empty {
       padding: 36px 18px;
@@ -1530,17 +1737,15 @@
 
   <div id="app-shell" hidden>
 
-    <!-- ── Nav tabs (plan §5-1) ── -->
+    <!-- ── Nav tabs ── -->
     <div class="nav-tabs">
-      <button class="nav-tab" onclick="showView('view-register')">📦 상품 등록</button>
-      <button class="nav-tab" onclick="showView('view-products')">📋 상품 목록</button>
-      <button class="nav-tab" onclick="showView('view-price-sync')">💰 가격 동기화</button>
-      <button class="nav-tab" onclick="showView('view-coverage')">🧭 플랫폼 커버리지</button>
-      <button class="nav-tab" onclick="showView('view-daily-close')">🌙 일일 마감</button>
-      <button class="nav-tab" onclick="showView('view-probe')">🔬 Probe</button>
-      <button class="nav-tab" onclick="showView('view-ingest')">📥 수집 검토</button>
-      <button class="nav-tab" onclick="showView('view-history')">📜 변경 이력</button>
-      <button class="nav-tab" onclick="showView('view-fee-settings')">⚙ 수수료 설정</button>
+      <button class="nav-tab" onclick="showView('view-products')">마스터 상품</button>
+      <button class="nav-tab" onclick="showView('view-platform-shopee')">Shopee</button>
+      <button class="nav-tab" onclick="showView('view-platform-joom')">Joom</button>
+      <button class="nav-tab" onclick="showView('view-platform-qoo10')">Qoo10</button>
+      <button class="nav-tab" onclick="showView('view-platform-ebay')">eBay</button>
+      <button class="nav-tab" onclick="showView('view-platform-alibaba')">Alibaba</button>
+      <button class="nav-tab" onclick="showView('view-fee-settings')">수수료 설정</button>
       <button id="logout" type="button" class="nav-tab" style="margin-left:auto;">Sign out</button>
     </div>
 
@@ -1552,7 +1757,7 @@
          SKU, clicks 전체 등록 → products rows auto-created via
          promote_source_to_product RPC.
          ═══════════════════════════════════════════════ -->
-    <div id="view-register" class="view active">
+    <div id="view-register" class="view">
 
       <div class="register-page-title">
         <div>
@@ -2206,7 +2411,24 @@
     <!-- ═══════════════════════════════════════════════
          VIEW: 상품 목록 (existing product table)
          ═══════════════════════════════════════════════ -->
-    <div id="view-products" class="view">
+    <div id="view-products" class="view active">
+      <div class="master-page-head">
+        <div>
+          <h2>마스터 상품</h2>
+          <p>플랫폼별 등록 상태와 발행 작업은 각 플랫폼 탭에서 처리합니다.</p>
+        </div>
+        <div class="master-action-bar">
+          <button type="button" class="primary" data-master-register-open="global">신규 마스터 등록</button>
+          <button type="button" data-master-register-open="url">URL 일괄 등록</button>
+        </div>
+      </div>
+      <div id="master-register-panel" class="master-register-panel" hidden>
+        <div class="master-register-panel-head">
+          <strong id="master-register-panel-title">신규 마스터 등록</strong>
+          <button type="button" id="master-register-panel-close">접기</button>
+        </div>
+        <div id="master-register-host"></div>
+      </div>
       <div class="toolbar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <div class="pl-search-stack">
           <input id="search" type="search" placeholder="SKU or product name">
@@ -2218,7 +2440,6 @@
           </div>
         </div>
         <button id="refresh">Refresh</button>
-        <button id="pl-sync-platform-skus" type="button" style="font-size:12px;padding:6px 10px;" title="Shopee/Joom/Qoo10/eBay SKU 등록 여부를 다시 확인하고 플랫폼 신호등을 갱신">🔁 플랫폼 SKU 동기화</button>
         <button id="po-ready-stock-open" type="button" class="po-ready-stock-open" style="display:none;font-size:12px;padding:6px 10px;">READY STOCK 전환</button>
         <button id="pl-select-empty-sku" type="button" style="font-size:12px;padding:6px 10px;" title="SKU가 비어있는 모든 행을 선택">∅ 빈 SKU 선택</button>
         <span style="margin-left:auto;font-size:12px;color:var(--muted);" id="pl-selected-count">선택 0건</span>
@@ -2231,23 +2452,39 @@
               <th style="width:34px;"><input type="checkbox" id="pl-check-all"></th>
               <th style="width:240px;">SKU</th>
               <th style="width:330px;">Product</th>
+              <th style="width:104px;">Lifecycle</th>
               <th style="width:82px;">Cost</th>
               <th style="width:58px;">Wt g</th>
-              <th style="width:84px;text-align:center;" title="Shopee SG/TW/TH/MY/PH/BR">Shopee</th>
-              <th style="width:74px;text-align:center;">Joom</th>
-              <th style="width:74px;text-align:center;">Qoo10</th>
-              <th style="width:74px;text-align:center;">eBay</th>
-              <th style="width:74px;text-align:center;">Alibaba</th>
-              <th style="width:60px;"></th>
+              <th style="width:92px;"></th>
             </tr>
           </thead>
           <tbody id="product-body">
-            <tr><td colspan="11" class="empty">Loading products...</td></tr>
+            <tr><td colspan="7" class="empty">Loading products...</td></tr>
           </tbody>
         </table>
       </div>
       <div id="pl-ready-stock-panel-host"></div>
     </div><!-- /view-products -->
+
+    <div id="view-platform-shopee" class="view">
+      <div id="platform-shopee-root" class="platform-root" data-platform="shopee"></div>
+    </div>
+
+    <div id="view-platform-joom" class="view">
+      <div id="platform-joom-root" class="platform-root" data-platform="joom"></div>
+    </div>
+
+    <div id="view-platform-qoo10" class="view">
+      <div id="platform-qoo10-root" class="platform-root" data-platform="qoo10"></div>
+    </div>
+
+    <div id="view-platform-ebay" class="view">
+      <div id="platform-ebay-root" class="platform-root" data-platform="ebay"></div>
+    </div>
+
+    <div id="view-platform-alibaba" class="view">
+      <div id="platform-alibaba-root" class="platform-root" data-platform="alibaba"></div>
+    </div>
 
     <!-- ═══════════════════════════════════════════════
          VIEW: PRE ORDER 목록 (plan §5-1-A, Phase A1)
@@ -3807,7 +4044,7 @@ LEGACY END -->
     { code: 'TH', currency: 'THB', enabled: true },
     { code: 'MY', currency: 'MYR', enabled: true },
     { code: 'PH', currency: 'PHP', enabled: true },
-    { code: 'BR', currency: 'BRL', enabled: true, note: 'Always included in active Shopee operations' },
+    { code: 'BR', currency: 'BRL', enabled: false, note: 'Excluded: legacy BR shop is banned' },
   ];
 
   const db = createClient(SUPABASE_URL, SUPABASE_ANON);
@@ -3937,12 +4174,51 @@ LEGACY END -->
     rswRunId: null,           // run_id for this transition session
     productListCollapsedGroups: new Set(),
     productListSelectedIds: new Set(),
+    platformSelections: {},
+    platformExpandedGroups: new Set(),
+    platformFilters: {},
+    platformPreview: null,
+    platformLastResults: {},
     priceSyncCollapsedGroups: new Set(),
     shopeeGlobalSearchResults: [],
     sgSearchMemoryCache: new Map(),
     sgActiveBackgroundRefreshKey: '',
     shopeeGlobalPendingLifecycle: null,
   };
+
+  const PLATFORM_TABS = Object.freeze(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba']);
+  const PLATFORM_LABELS = Object.freeze({
+    shopee: 'Shopee',
+    joom: 'Joom',
+    qoo10: 'Qoo10',
+    ebay: 'eBay',
+    alibaba: 'Alibaba',
+  });
+  const PLATFORM_STATUS_LABELS = Object.freeze({
+    all: '전체',
+    listed: '등록됨',
+    missing: '미등록',
+    pending: '대기',
+    error: '실패',
+  });
+  const PLATFORM_ACTION_LABELS = Object.freeze({
+    register: '대량 등록',
+    edit: '대량 수정',
+    retry: '실패 재시도',
+  });
+  const PLATFORM_SAFE_EDIT_FIELDS = Object.freeze({
+    shopee: ['name_and_description', 'price', 'days_to_ship'],
+    joom: ['price'],
+    qoo10: ['price', 'stock'],
+    ebay: ['price', 'inventory'],
+    alibaba: [],
+  });
+  const SHOPEE_PLATFORM_ACTIVE_REGIONS = Object.freeze(['SG', 'TW', 'TH', 'MY', 'PH']);
+  const SHOPEE_PLATFORM_EXCLUDED_REGIONS = Object.freeze([
+    { region: 'BR', reason: 'banned shop excluded' },
+    { region: 'VN', reason: 'out of scope' },
+    { region: 'MX', reason: 'out of scope' },
+  ]);
 
   /** Preselect state: set by openReadyStockWizard() before renderReadyStockView() runs */
   let pendingPreselect = null;  // productId string | null
@@ -4902,7 +5178,7 @@ LEGACY END -->
 
   async function loadData() {
     showApp();
-    els.productBody.innerHTML = '<tr><td colspan="6" class="empty">Loading products...</td></tr>';
+    els.productBody.innerHTML = '<tr><td colspan="7" class="empty">Loading products...</td></tr>';
     // 2026-05-20 (operator msg #501): newest products at the top. Position
     // is still respected for legacy ordering, but created_at flips to DESC
     // so the bulk-register flow's latest rows always show up first.
@@ -4910,7 +5186,7 @@ LEGACY END -->
     // Fallback to no-variation select if schema cache misses on new columns.
     let [productsRes, listingsRes, rollupsRes] = await Promise.all([
       db.from('products')
-        .select('id, sku, product_name, option_name, cost_krw, weight_g, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at, main_image, extra_images, shopee_option_image_url, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, components_extracted_en, components_extracted_at, components_approved')
+        .select('id, sku, product_name, option_name, description, cost_krw, weight_g, inventory, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at, main_image, extra_images, shopee_option_image_url, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, components_extracted_en, components_extracted_at, components_approved, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_days_to_ship, joom_category_id, qoo10_category_id, ebay_category_id')
         .order('product_group_id', { ascending: true, nullsFirst: false })
         .order('variation_tier_index', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false }),
@@ -4944,6 +5220,7 @@ LEGACY END -->
       state.rollups = (rollupsRes && rollupsRes.data) || [];
     }
     renderProducts();
+    renderPlatformWorkbenches();
     renderPreOrderList();
     renderReadyTransition();
   }
@@ -5002,7 +5279,7 @@ LEGACY END -->
       const emptyLabel = lifecycleFilter === 'pre_order'
         ? 'PRE ORDER 상품이 없습니다.'
         : (lifecycleFilter === 'ready_stock' ? 'READY STOCK 상품이 없습니다.' : '마스터 상품이 없습니다.');
-      els.productBody.innerHTML = `<tr><td colspan="11" class="empty">${text(emptyLabel)}</td></tr>`;
+      els.productBody.innerHTML = `<tr><td colspan="7" class="empty">${text(emptyLabel)}</td></tr>`;
       updateBulkDeleteUi();
       return;
     }
@@ -5334,38 +5611,13 @@ LEGACY END -->
                 <span class="pl-master-title">${text(productName)}</span>
                 <button type="button" class="pl-master-edit" data-edit-master="${text(first.product_group_id || '')}" title="마스터 상품 데이터 수정">수정</button>
               </div>
-              <div class="pl-master-meta-row">${productLifecycleBadge(first)}</div>
               <div class="pl-option-summary">옵션 묶음 · ${text(rows.length)}개${shownOptions ? ` · ${shownOptions}${text(more)}` : ''}</div>
             </div>
           </div>
         </td>
+        <td>${productLifecycleBadge(first)}</td>
         <td class="mono">${plNumberRange(rows, 'cost_krw')}</td>
         <td class="mono">${plNumberRange(rows, 'weight_g')}</td>
-        <td class="pl-platform-cell">
-          <div class="pl-shopee-cell">
-            ${plGroupPlatformCell(rows, 'shopee')}
-            <button type="button" data-open-shopee-group="${text(first.product_group_id || '')}" class="pl-shopee-register" title="Shopee 등록" aria-label="Shopee 등록">📤</button>
-          </div>
-        </td>
-        <td class="pl-platform-cell">
-          <div class="pl-shopee-cell">
-            ${plGroupPlatformCell(rows, 'joom')}
-            <button type="button" data-open-joom-group="${text(first.product_group_id || '')}" class="pl-shopee-register" title="Joom 등록" aria-label="Joom 등록">🛒</button>
-          </div>
-        </td>
-        <td class="pl-platform-cell">
-          <div class="pl-shopee-cell">
-            ${plGroupPlatformCell(rows, 'qoo10')}
-            <button type="button" data-open-qoo10-group="${text(first.product_group_id || '')}" class="pl-shopee-register" title="Qoo10 등록" aria-label="Qoo10 등록">Q</button>
-          </div>
-        </td>
-        <td class="pl-platform-cell">
-          <div class="pl-shopee-cell">
-            ${plGroupPlatformCell(rows, 'ebay')}
-            <button type="button" data-open-ebay-group="${text(first.product_group_id || '')}" class="pl-shopee-register" title="eBay 등록" aria-label="eBay 등록">eB</button>
-          </div>
-        </td>
-        <td class="pl-platform-cell">${plGroupPlatformCell(rows, 'alibaba')}</td>
         <td style="white-space:nowrap;">
           <span class="muted" style="font-size:11px;">마스터</span>
         </td>
@@ -5401,39 +5653,592 @@ LEGACY END -->
             ? ''
             : `<div class="muted pl-edit" data-field="option_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;font-size:11px;">${text(p.option_name || '') || '<i style="color:#cbd5e1;">(no option)</i>'}</div>`}
         </td>
+        <td>${isGroupChild ? '<span class="muted" style="font-size:11px;">옵션</span>' : productLifecycleBadge(p)}</td>
         <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.cost_krw || 0).toLocaleString()}</td>
         <td class="mono pl-edit" data-field="weight_g" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.weight_g || 0).toLocaleString()}</td>
-        <td class="pl-platform-cell">
-          <div class="pl-shopee-cell">
-            ${platformLedCell(p.id, 'shopee')}
-            ${(!isGroupChild) ? `<button type="button" data-open-shopee-single="${text(p.id)}" class="pl-shopee-register" title="Shopee 등록" aria-label="Shopee 등록">📤</button>` : ''}
-          </div>
-        </td>
-        <td class="pl-platform-cell">
-          <div class="pl-shopee-cell">
-            ${platformLedCell(p.id, 'joom')}
-            ${(!isGroupChild) ? `<button type="button" data-open-joom-single="${text(p.id)}" class="pl-shopee-register" title="Joom 등록" aria-label="Joom 등록">🛒</button>` : ''}
-          </div>
-        </td>
-        <td class="pl-platform-cell">
-          <div class="pl-shopee-cell">
-            ${platformLedCell(p.id, 'qoo10')}
-            ${(!isGroupChild) ? `<button type="button" data-open-qoo10-single="${text(p.id)}" class="pl-shopee-register" title="Qoo10 등록" aria-label="Qoo10 등록">Q</button>` : ''}
-          </div>
-        </td>
-        <td class="pl-platform-cell">
-          <div class="pl-shopee-cell">
-            ${platformLedCell(p.id, 'ebay')}
-            ${(!isGroupChild) ? `<button type="button" data-open-ebay-single="${text(p.id)}" class="pl-shopee-register" title="eBay 등록" aria-label="eBay 등록">eB</button>` : ''}
-          </div>
-        </td>
-        <td style="text-align:center;">${platformLedCell(p.id, 'alibaba')}</td>
         <td style="white-space:nowrap;">
           ${isVariantRow ? '<span class="muted" style="font-size:11px;">옵션</span>' : '<span class="muted" style="font-size:11px;">단품</span>'}
           <button type="button" data-delete="${text(p.id)}" data-sku="${text(p.sku || '')}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">🗑</button>
         </td>
       </tr>
     `;
+  }
+
+  function mountMasterRegisterPanel() {
+    const host = document.getElementById('master-register-host');
+    const source = document.getElementById('view-register');
+    if (!host || !source || host.dataset.mounted === '1') return;
+    const title = source.querySelector('.register-page-title');
+    const workbench = source.querySelector('.register-workbench');
+    if (title) host.appendChild(title);
+    if (workbench) host.appendChild(workbench);
+    host.dataset.mounted = '1';
+  }
+
+  function openMasterRegisterPanel(target = 'global') {
+    mountMasterRegisterPanel();
+    const panel = document.getElementById('master-register-panel');
+    const title = document.getElementById('master-register-panel-title');
+    if (panel) panel.hidden = false;
+    if (title) title.textContent = target === 'url' ? 'URL 일괄 등록' : '신규 마스터 등록';
+    if (typeof window.sdRegisterWorkbenchActivate === 'function') {
+      window.sdRegisterWorkbenchActivate(target === 'url' ? 'url' : 'global');
+    }
+    panel?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+
+  function closeMasterRegisterPanel() {
+    const panel = document.getElementById('master-register-panel');
+    if (panel) panel.hidden = true;
+  }
+
+  function platformFilter(platform) {
+    if (!state.platformFilters[platform]) {
+      state.platformFilters[platform] = {
+        search: '',
+        status: 'all',
+        lifecycle: 'all',
+        regions: SHOPEE_PLATFORM_ACTIVE_REGIONS.slice(),
+      };
+    }
+    return state.platformFilters[platform];
+  }
+
+  function platformSelection(platform) {
+    if (!state.platformSelections[platform]) state.platformSelections[platform] = new Set();
+    return state.platformSelections[platform];
+  }
+
+  function platformMasterGroups() {
+    return plBuildProductGroups(state.products || []);
+  }
+
+  function platformGroupKey(group) {
+    const first = group?.rows?.[0] || {};
+    return group?.isGrouped ? `group:${first.product_group_id || group.key}` : `single:${first.id || group.key}`;
+  }
+
+  function platformTargetId(group) {
+    const first = group?.rows?.[0] || {};
+    return group?.isGrouped ? String(first.product_group_id || '') : String(first.id || '');
+  }
+
+  function platformGroupTitle(group) {
+    const first = group?.rows?.[0] || {};
+    return plProductName(first) || first.product_name || first.sku || '(no title)';
+  }
+
+  function platformGroupSku(group) {
+    return group?.isGrouped ? plParentSku(group.rows || []) : String(group?.rows?.[0]?.sku || '');
+  }
+
+  function platformStatusForGroup(group, platform) {
+    if (platform === 'alibaba') {
+      return { key: 'missing', label: '준비 중', detail: '1차에서는 탭만 제공됩니다.' };
+    }
+    let total = 0;
+    let listed = 0;
+    let pending = 0;
+    let errors = 0;
+    (group.rows || []).forEach((row) => {
+      const rollup = rollupFor(row.id, platform);
+      total += Number(rollup?.total_count || 0);
+      listed += rollupListedCountForLed(rollup, platform);
+      pending += Number(rollup?.pending_count || 0);
+      errors += Number(rollup?.error_count || 0);
+    });
+    if (errors > 0) return { key: 'error', label: `실패 ${errors}`, detail: `${errors} failed · ${listed}/${Math.max(total, listed)} listed` };
+    if (pending > 0) return { key: 'pending', label: `대기 ${pending}`, detail: `${pending} pending · ${listed}/${Math.max(total, listed)} listed` };
+    if (listed > 0) return { key: 'listed', label: total > listed ? `부분 등록 ${listed}/${total}` : '등록됨', detail: `${listed}/${Math.max(total, listed)} listed` };
+    return { key: 'missing', label: '미등록', detail: total ? `${total} inactive/not listed` : 'no mapping' };
+  }
+
+  function platformStatusPill(status) {
+    const key = status?.key || 'missing';
+    return `<span class="platform-status-pill ${text(key)}">${text(status?.label || PLATFORM_STATUS_LABELS[key] || key)}</span>`;
+  }
+
+  function platformSafeFieldsLabel(platform) {
+    const fields = PLATFORM_SAFE_EDIT_FIELDS[platform] || [];
+    if (!fields.length) return '대량 수정 필드 없음';
+    return fields.join(', ');
+  }
+
+  function platformVisibleGroups(platform) {
+    const filter = platformFilter(platform);
+    const q = String(filter.search || '').trim().toLowerCase();
+    const status = String(filter.status || 'all');
+    const lifecycle = String(filter.lifecycle || 'all');
+    return platformMasterGroups().filter((group) => {
+      const first = group.rows?.[0] || {};
+      if (lifecycle !== 'all' && productLifecycleFilterKey(first) !== lifecycle) return false;
+      const st = platformStatusForGroup(group, platform);
+      if (status !== 'all' && st.key !== status) return false;
+      if (!q) return true;
+      return (group.rows || []).some((row) => (
+        `${row.sku || ''} ${row.product_name || ''} ${plProductName(row)} ${row.option_name || ''} ${plOptionDisplay(row) || ''}`
+          .toLowerCase()
+          .includes(q)
+      ));
+    });
+  }
+
+  function platformCounts(platform) {
+    const groups = platformMasterGroups();
+    const counts = { all: groups.length, listed: 0, missing: 0, pending: 0, error: 0 };
+    groups.forEach((group) => {
+      const key = platformStatusForGroup(group, platform).key;
+      counts[key] = (counts[key] || 0) + 1;
+    });
+    return counts;
+  }
+
+  function platformRegionControls(platform) {
+    if (platform !== 'shopee') return '';
+    const filter = platformFilter(platform);
+    const selected = new Set(filter.regions || SHOPEE_PLATFORM_ACTIVE_REGIONS);
+    const active = SHOPEE_PLATFORM_ACTIVE_REGIONS.map((region) => (
+      `<button type="button" class="platform-region-chip${selected.has(region) ? ' is-active' : ''}" data-platform-region="${region}" aria-pressed="${selected.has(region) ? 'true' : 'false'}">${region}</button>`
+    )).join('');
+    const excluded = SHOPEE_PLATFORM_EXCLUDED_REGIONS.map((row) => (
+      `<span class="platform-region-chip is-disabled" title="${text(row.reason)}">${text(row.region)}</span>`
+    )).join('');
+    return `<div class="platform-region-row" aria-label="Shopee regions"><span class="muted" style="font-size:12px;">Region</span>${active}${excluded}</div>`;
+  }
+
+  function platformTableRows(platform) {
+    const groups = platformVisibleGroups(platform);
+    const selected = platformSelection(platform);
+    if (!groups.length) {
+      return '<tr><td colspan="7" class="empty">표시할 마스터 상품이 없습니다.</td></tr>';
+    }
+    return groups.map((group) => {
+      const key = platformGroupKey(group);
+      const first = group.rows?.[0] || {};
+      const expanded = state.platformExpandedGroups.has(`${platform}:${key}`);
+      const status = platformStatusForGroup(group, platform);
+      const optionSummary = group.isGrouped
+        ? `옵션 ${group.rows.length}개`
+        : (plOptionDisplay(first) ? `옵션: ${plOptionDisplay(first)}` : '단품');
+      const detailCell = group.isGrouped
+        ? plGroupPlatformCell(group.rows, platform)
+        : platformLedCell(first.id, platform);
+      const quickDisabled = platform === 'alibaba' ? ' disabled' : '';
+      const master = `
+        <tr class="platform-master-row" data-platform-master-key="${text(key)}">
+          <td><input type="checkbox" class="platform-master-check" data-platform-key="${text(key)}" ${selected.has(key) ? 'checked' : ''}></td>
+          <td>
+            <div class="pl-group-main">
+              <button type="button" class="pl-group-toggle" data-platform-toggle="${text(key)}" title="${expanded ? '옵션 접기' : '옵션 펼치기'}">${expanded ? '▾' : '▸'}</button>
+              <div class="pl-product-copy">
+                <div class="pl-master-title-row">
+                  <span class="pl-master-title">${text(platformGroupTitle(group))}</span>
+                  <button type="button" class="pl-master-edit" data-edit-master="${text(plMasterEditTargetKey(first))}" title="마스터 상품 데이터 수정">수정</button>
+                </div>
+                <div class="pl-option-summary">${text(platformGroupSku(group) || '(no sku)')} · ${text(optionSummary)}</div>
+              </div>
+            </div>
+          </td>
+          <td>${productLifecycleBadge(first)}</td>
+          <td>${platformStatusPill(status)}<div class="muted" style="font-size:11px;margin-top:4px;">${text(status.detail || '')}</div></td>
+          <td style="text-align:center;">${detailCell}</td>
+          <td class="muted" style="font-size:12px;">${text(optionSummary)}</td>
+          <td style="white-space:nowrap;">
+            <button type="button" data-platform-quick="register" data-platform-key="${text(key)}"${quickDisabled}>등록</button>
+            <button type="button" data-platform-quick="edit" data-platform-key="${text(key)}"${quickDisabled}>수정</button>
+            <button type="button" data-platform-quick="retry" data-platform-key="${text(key)}"${quickDisabled}>재시도</button>
+          </td>
+        </tr>`;
+      if (!expanded) return master;
+      const children = (group.rows || []).map((row) => {
+        const rowStatus = platformStatusForGroup({ rows: [row] }, platform);
+        return `
+          <tr class="platform-option-row">
+            <td></td>
+            <td class="pl-sku-cell">${text(row.sku || '')}</td>
+            <td>${text(plOptionDisplay(row) || row.option_name || '-')}</td>
+            <td>${platformStatusPill(rowStatus)}</td>
+            <td style="text-align:center;">${platformLedCell(row.id, platform)}</td>
+            <td class="mono">${Number(row.cost_krw || 0).toLocaleString()} / ${Number(row.weight_g || 0).toLocaleString()}g</td>
+            <td class="muted">SKU 행</td>
+          </tr>`;
+      }).join('');
+      return master + children;
+    }).join('');
+  }
+
+  function renderPlatformWorkbench(platform) {
+    const root = document.getElementById(`platform-${platform}-root`);
+    if (!root) return;
+    const label = PLATFORM_LABELS[platform] || platform;
+    const filter = platformFilter(platform);
+    const counts = platformCounts(platform);
+    const selectedCount = platformSelection(platform).size;
+    const isAlibaba = platform === 'alibaba';
+    const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
+      `<button type="button" class="platform-status-tab${filter.status === key ? ' is-active' : ''}" data-platform-status="${key}" aria-pressed="${filter.status === key ? 'true' : 'false'}">${PLATFORM_STATUS_LABELS[key]} ${counts[key] || 0}</button>`
+    )).join('');
+    const previewHtml = state.platformPreview?.platform === platform ? platformPreviewHtml() : '';
+    root.innerHTML = `
+      <div class="platform-page-head">
+        <div>
+          <h2>${text(label)}</h2>
+          <p>${isAlibaba ? '1차에서는 등록 준비 상태만 표시합니다.' : '전체 마스터 상품을 기준으로 등록 상태를 좁히고, 선택 항목을 미리보기 후 실행합니다.'}</p>
+        </div>
+        <div class="platform-summary">
+          <span class="pill">선택 ${selectedCount}개</span>
+          <span class="pill">수정 필드: ${text(platformSafeFieldsLabel(platform))}</span>
+        </div>
+      </div>
+      ${isAlibaba ? '<div class="notice" style="margin-bottom:10px;">Alibaba는 탭만 먼저 분리했습니다. B2B group-order 연동은 다음 단계에서 연결합니다.</div>' : ''}
+      <div class="platform-toolbar">
+        <div class="platform-filters">
+          <input type="search" data-platform-search value="${text(filter.search || '')}" placeholder="SKU / 상품명 / 옵션 검색">
+          <select data-platform-lifecycle>
+            <option value="all"${filter.lifecycle === 'all' ? ' selected' : ''}>전체 lifecycle</option>
+            <option value="pre_order"${filter.lifecycle === 'pre_order' ? ' selected' : ''}>PRE ORDER</option>
+            <option value="ready_stock"${filter.lifecycle === 'ready_stock' ? ' selected' : ''}>READY STOCK</option>
+          </select>
+          <div class="platform-status-tabs" role="group" aria-label="${text(label)} 등록 상태 필터">${statusTabs}</div>
+          ${platformRegionControls(platform)}
+        </div>
+        <div class="platform-actions">
+          <button type="button" data-platform-select-visible ${isAlibaba ? 'disabled' : ''}>표시 항목 선택</button>
+          <button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>
+          <button type="button" data-platform-preview="register" class="primary" ${selectedCount && !isAlibaba ? '' : 'disabled'}>등록 미리보기</button>
+          <button type="button" data-platform-preview="edit" ${selectedCount && !isAlibaba ? '' : 'disabled'}>수정 미리보기</button>
+          <button type="button" data-platform-preview="retry" ${selectedCount && !isAlibaba ? '' : 'disabled'}>실패 재시도</button>
+          <button type="button" data-platform-sync ${selectedCount && !isAlibaba ? '' : 'disabled'}>원격 SKU 확인</button>
+        </div>
+      </div>
+      ${previewHtml}
+      <div class="panel table-scroll">
+        <table class="platform-table">
+          <thead>
+            <tr>
+              <th style="width:34px;"></th>
+              <th style="width:340px;">마스터 상품</th>
+              <th style="width:104px;">Lifecycle</th>
+              <th style="width:150px;">등록 상태</th>
+              <th style="width:110px;text-align:center;">상세</th>
+              <th style="width:150px;">옵션/SKU</th>
+              <th style="width:210px;">작업</th>
+            </tr>
+          </thead>
+          <tbody>${platformTableRows(platform)}</tbody>
+        </table>
+      </div>
+    `;
+    bindPlatformWorkbench(root, platform);
+  }
+
+  function renderPlatformWorkbenches() {
+    PLATFORM_TABS.forEach(renderPlatformWorkbench);
+  }
+
+  function bindPlatformWorkbench(root, platform) {
+    root.querySelector('[data-platform-search]')?.addEventListener('input', (e) => {
+      platformFilter(platform).search = e.target.value || '';
+      renderPlatformWorkbench(platform);
+    });
+    root.querySelector('[data-platform-lifecycle]')?.addEventListener('change', (e) => {
+      platformFilter(platform).lifecycle = e.target.value || 'all';
+      renderPlatformWorkbench(platform);
+    });
+    root.querySelectorAll('[data-platform-status]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        platformFilter(platform).status = btn.dataset.platformStatus || 'all';
+        renderPlatformWorkbench(platform);
+      });
+    });
+    root.querySelectorAll('[data-platform-region]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const region = btn.dataset.platformRegion || '';
+        const filter = platformFilter(platform);
+        const selected = new Set(filter.regions || SHOPEE_PLATFORM_ACTIVE_REGIONS);
+        if (selected.has(region)) selected.delete(region);
+        else selected.add(region);
+        if (!selected.size) selected.add(region);
+        filter.regions = Array.from(selected).filter((r) => SHOPEE_PLATFORM_ACTIVE_REGIONS.includes(r));
+        renderPlatformWorkbench(platform);
+      });
+    });
+    root.querySelector('[data-platform-select-visible]')?.addEventListener('click', () => {
+      const sel = platformSelection(platform);
+      platformVisibleGroups(platform).forEach((group) => sel.add(platformGroupKey(group)));
+      renderPlatformWorkbench(platform);
+    });
+    root.querySelector('[data-platform-clear-selection]')?.addEventListener('click', () => {
+      platformSelection(platform).clear();
+      if (state.platformPreview?.platform === platform) state.platformPreview = null;
+      renderPlatformWorkbench(platform);
+    });
+    root.querySelectorAll('.platform-master-check').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const sel = platformSelection(platform);
+        const key = cb.dataset.platformKey || '';
+        if (cb.checked) sel.add(key);
+        else sel.delete(key);
+        renderPlatformWorkbench(platform);
+      });
+    });
+    root.querySelectorAll('[data-platform-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const key = `${platform}:${btn.dataset.platformToggle || ''}`;
+        if (state.platformExpandedGroups.has(key)) state.platformExpandedGroups.delete(key);
+        else state.platformExpandedGroups.add(key);
+        renderPlatformWorkbench(platform);
+      });
+    });
+    root.querySelectorAll('[data-platform-preview]').forEach((btn) => {
+      btn.addEventListener('click', () => platformOpenPreview(platform, btn.dataset.platformPreview || 'register'));
+    });
+    root.querySelectorAll('[data-platform-quick]').forEach((btn) => {
+      btn.addEventListener('click', () => platformOpenPreview(platform, btn.dataset.platformQuick || 'register', [btn.dataset.platformKey || '']));
+    });
+    root.querySelector('[data-platform-sync]')?.addEventListener('click', () => platformSyncSelected(platform));
+    root.querySelector('[data-platform-preview-close]')?.addEventListener('click', () => {
+      state.platformPreview = null;
+      renderPlatformWorkbench(platform);
+    });
+    root.querySelector('[data-platform-preview-execute]')?.addEventListener('click', () => platformExecutePreview());
+    root.querySelectorAll('[data-edit-master]').forEach((btn) => {
+      btn.addEventListener('click', () => openProductMasterEditModal(btn.dataset.editMaster));
+    });
+    root.querySelectorAll('.pl-led').forEach((btn) => {
+      btn.addEventListener('click', (e) => { e.stopPropagation(); showLedPopover(btn); });
+    });
+  }
+
+  function platformGroupsByKeys(keys) {
+    const wanted = new Set((keys || []).filter(Boolean));
+    return platformMasterGroups().filter((group) => wanted.has(platformGroupKey(group)));
+  }
+
+  function platformSelectedGroups(platform, explicitKeys = null) {
+    const keys = explicitKeys || Array.from(platformSelection(platform));
+    return platformGroupsByKeys(keys);
+  }
+
+  function platformOpenPreview(platform, action, explicitKeys = null) {
+    const groups = platformSelectedGroups(platform, explicitKeys);
+    if (!groups.length) {
+      showToast('선택된 마스터 상품이 없습니다.', 'err');
+      return;
+    }
+    state.platformPreview = {
+      platform,
+      action,
+      keys: groups.map(platformGroupKey),
+      createdAt: new Date().toISOString(),
+      running: false,
+    };
+    renderPlatformWorkbench(platform);
+    document.getElementById(`platform-${platform}-root`)?.querySelector('.platform-preview')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+
+  function platformGroupValidation(platform, action, group) {
+    const errors = [];
+    const warnings = [];
+    const rows = group.rows || [];
+    if (platform === 'alibaba') errors.push('Alibaba는 1차 준비 중입니다.');
+    if (!rows.length) errors.push('상품 행이 없습니다.');
+    rows.forEach((row) => {
+      if (!String(row.sku || '').trim()) errors.push(`${plProductName(row) || row.id}: SKU가 비어 있습니다.`);
+      if (/[^\x00-\x7F]/.test(String(row.sku || ''))) errors.push(`${row.sku}: SKU는 ASCII만 허용됩니다.`);
+    });
+    if (action === 'register' || action === 'retry') {
+      const first = rows[0] || {};
+      if (platform === 'shopee') {
+        if (!first.shopee_category_id) errors.push('Shopee category가 없습니다.');
+        if (first.shopee_brand_id == null) errors.push('Shopee brand가 없습니다.');
+        if (!first.shopee_image_id && !first.main_image) errors.push('Shopee image_id 또는 대표 이미지가 없습니다.');
+      }
+      if (platform === 'joom' && !first.joom_category_id) warnings.push('Joom category가 없으면 bridge 기본값으로 시도합니다.');
+      if (platform === 'qoo10' && !first.qoo10_category_id) errors.push('Qoo10 SecondSubCat category가 없습니다.');
+      if (platform === 'ebay' && !first.ebay_category_id) errors.push('eBay category ID가 없습니다.');
+      rows.forEach((row) => {
+        if (!Number(row.cost_krw || 0)) errors.push(`${row.sku || row.id}: cost_krw가 없습니다.`);
+        if (!Number(row.weight_g || 0)) errors.push(`${row.sku || row.id}: weight_g가 없습니다.`);
+      });
+      if (group.isGrouped) warnings.push('옵션 묶음은 기존 플랫폼 등록 모달의 세부 검증을 사용합니다.');
+    }
+    if (action === 'edit') {
+      const fields = PLATFORM_SAFE_EDIT_FIELDS[platform] || [];
+      if (!fields.length) errors.push(`${PLATFORM_LABELS[platform] || platform} 대량 수정 필드가 아직 없습니다.`);
+      else warnings.push(`노출 필드: ${fields.join(', ')}`);
+      warnings.push('1차 대량 수정은 안전 필드 미리보기 후 기존 가격 동기화/마스터 수정 흐름으로 연결합니다.');
+    }
+    return { errors, warnings };
+  }
+
+  function platformPreviewHtml() {
+    const preview = state.platformPreview;
+    if (!preview) return '';
+    const platform = preview.platform;
+    const action = preview.action;
+    const groups = platformSelectedGroups(platform, preview.keys);
+    const regions = platform === 'shopee' ? platformFilter(platform).regions || SHOPEE_PLATFORM_ACTIVE_REGIONS : [];
+    const items = groups.map((group, idx) => {
+      const validation = platformGroupValidation(platform, action, group);
+      const status = platformStatusForGroup(group, platform);
+      const rows = group.rows || [];
+      const canDirect = platformCanUseDispatcher(platform, action, group);
+      const result = state.platformLastResults[`${platform}:${platformGroupKey(group)}`];
+      const errorsHtml = validation.errors.length
+        ? `<div class="platform-result-err">${validation.errors.map(text).join('<br>')}</div>`
+        : '<div class="platform-result-ok">기본 검증 통과</div>';
+      const warningsHtml = validation.warnings.length
+        ? `<div>${validation.warnings.map(text).join('<br>')}</div>`
+        : '';
+      const resultHtml = result
+        ? `<div class="${result.ok ? 'platform-result-ok' : 'platform-result-err'}">결과: ${text(result.message || (result.ok ? '완료' : '실패'))}</div>`
+        : '';
+      return `
+        <details class="platform-preview-item" ${idx < 3 ? 'open' : ''}>
+          <summary>${text(platformGroupSku(group) || '(no sku)')} · ${text(platformGroupTitle(group))} · ${platformStatusPill(status)}</summary>
+          <div class="platform-preview-item-body">
+            <div>선택 단위: 마스터 상품 1개 · SKU/옵션 ${rows.length}개 · 실행 방식: ${canDirect ? 'dispatcher 직접 실행' : '기존 검증 모달 연결'}</div>
+            ${platform === 'shopee' ? `<div>대상 region: ${text(regions.join(', ') || '-')} · 제외: ${SHOPEE_PLATFORM_EXCLUDED_REGIONS.map((r) => `${r.region}(${r.reason})`).join(', ')}</div>` : ''}
+            <div>수정 가능 필드: ${text(platformSafeFieldsLabel(platform))}</div>
+            ${errorsHtml}
+            ${warningsHtml}
+            ${resultHtml}
+          </div>
+        </details>`;
+    }).join('');
+    const allErrors = groups.some((group) => platformGroupValidation(platform, action, group).errors.length);
+    const executeLabel = action === 'edit' ? '수정 흐름 열기' : '실행';
+    return `
+      <div class="platform-preview">
+        <div class="platform-preview-head">
+          <div>
+            <strong>${text(PLATFORM_LABELS[platform])} · ${text(PLATFORM_ACTION_LABELS[action] || action)} 미리보기</strong>
+            <div class="muted" style="font-size:12px;margin-top:3px;">상품별 펼침 확인 후 실행합니다.</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button type="button" data-platform-preview-close>닫기</button>
+            <button type="button" class="primary" data-platform-preview-execute ${preview.running || (allErrors && action !== 'edit') ? 'disabled' : ''}>${text(executeLabel)}</button>
+          </div>
+        </div>
+        <div class="platform-preview-body">
+          <div class="platform-preview-list">${items}</div>
+        </div>
+      </div>`;
+  }
+
+  function platformCanUseDispatcher(platform, action, group) {
+    if (action === 'edit') return false;
+    if (platform === 'alibaba') return false;
+    if (group.isGrouped) return false;
+    return ['shopee', 'joom', 'qoo10', 'ebay'].includes(platform);
+  }
+
+  async function platformExecutePreview() {
+    const preview = state.platformPreview;
+    if (!preview || preview.running) return;
+    const platform = preview.platform;
+    const action = preview.action;
+    const groups = platformSelectedGroups(platform, preview.keys);
+    if (!groups.length) return;
+    preview.running = true;
+    renderPlatformWorkbench(platform);
+    const results = [];
+    for (const group of groups) {
+      const key = platformGroupKey(group);
+      const validation = platformGroupValidation(platform, action, group);
+      try {
+        if (action !== 'edit' && validation.errors.length) {
+          throw new Error(validation.errors[0]);
+        }
+        if (action === 'edit') {
+          await platformOpenEditFlow(platform);
+          results.push({ key, ok: true, message: '수정 흐름을 열었습니다.' });
+        } else if (platformCanUseDispatcher(platform, action, group)) {
+          const row = group.rows[0];
+          const json = await platformPublishDirect(platform, row, action);
+          const ok = json?.ok !== false;
+          results.push({ key, ok, message: ok ? `${json.listing_status || 'submitted'} ${json.platform_item_id || ''}`.trim() : (json.error_msg || json.error || json.message || '실패') });
+        } else {
+          await platformOpenExistingModal(platform, group);
+          results.push({ key, ok: true, message: '기존 검증 모달을 열었습니다. 모달에서 최종 실행하세요.' });
+          break;
+        }
+      } catch (e) {
+        results.push({ key, ok: false, message: e?.message || String(e) });
+      }
+      state.platformLastResults[`${platform}:${key}`] = results[results.length - 1];
+      renderPlatformWorkbench(platform);
+    }
+    preview.running = false;
+    try { await refreshPlatformLedSources(); } catch (_) {}
+    renderPlatformWorkbench(platform);
+    renderProducts();
+  }
+
+  async function platformPublishDirect(platform, row, action) {
+    const session = (await db.auth.getSession()).data.session;
+    if (!session) throw new Error('로그인이 필요합니다.');
+    const capability = platform === 'shopee' ? 'create_listing_multi_region' : 'create_listing';
+    const body = {
+      platform,
+      capability,
+      master_product_id: row.id,
+      publish_request_id: crypto.randomUUID(),
+      dry_run: false,
+    };
+    if (platform === 'shopee') {
+      body.regions = platformFilter(platform).regions || SHOPEE_PLATFORM_ACTIVE_REGIONS;
+      body.lifecycle_state = productLifecycleFilterKey(row);
+    } else if (platform === 'joom') {
+      body.country = 'GLOBAL';
+    } else if (platform === 'ebay') {
+      body.country = 'EBAY_US';
+    } else if (platform === 'qoo10') {
+      body.country = 'JP';
+    }
+    const resp = await fetch(PLATFORM_PUBLISH, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const json = await resp.json().catch(() => ({ ok: false, error_msg: `HTTP ${resp.status}` }));
+    if (!resp.ok) throw new Error(json.error_msg || json.error || `HTTP ${resp.status}`);
+    if (json.ok === false) throw new Error(json.error_msg || json.message || json.error_code || 'platform-publish failed');
+    await loadData();
+    return json;
+  }
+
+  async function platformOpenExistingModal(platform, group) {
+    const targetId = platformTargetId(group);
+    if (!targetId) throw new Error('대상 마스터 상품 ID가 없습니다.');
+    if (platform === 'shopee') return group.isGrouped ? openRegisterShopeeGroupModal(targetId) : openRegisterShopeeSingleModal(group.rows[0].id);
+    if (platform === 'joom') return openRegisterJoomGroupModal(targetId);
+    if (platform === 'qoo10') return openRegisterQoo10GroupModal(targetId);
+    if (platform === 'ebay') return openRegisterEbayGroupModal(targetId);
+    throw new Error(`${PLATFORM_LABELS[platform] || platform} 실행 흐름이 아직 없습니다.`);
+  }
+
+  async function platformOpenEditFlow(platform) {
+    if (platform === 'shopee' || platform === 'joom' || platform === 'qoo10' || platform === 'ebay') {
+      showView('view-price-sync');
+      const btn = document.querySelector(`#cat-platform-tabs .cat-platform-tab[data-cat-platform="${platform}"]`);
+      if (btn) btn.click();
+      showToast(`${PLATFORM_LABELS[platform]} 대량 수정은 가격 동기화 화면에서 안전 필드만 실행하세요.`, 'ok');
+      return;
+    }
+    throw new Error('대량 수정 흐름이 아직 없습니다.');
+  }
+
+  async function platformSyncSelected(platform) {
+    const groups = platformSelectedGroups(platform);
+    const ids = groups.flatMap((group) => (group.rows || []).map((row) => row.id)).filter(Boolean);
+    if (!ids.length) {
+      showToast('원격 확인할 선택 상품이 없습니다.', 'err');
+      return;
+    }
+    await syncPlatformSkusForProductIds(ids);
+    renderPlatformWorkbenches();
   }
 
   function plGroupRowsById(productGroupId) {
@@ -8735,6 +9540,11 @@ LEGACY END -->
   }
 
   els.search.addEventListener('input', renderProducts);
+  mountMasterRegisterPanel();
+  document.querySelectorAll('[data-master-register-open]').forEach((btn) => {
+    btn.addEventListener('click', () => openMasterRegisterPanel(btn.dataset.masterRegisterOpen || 'global'));
+  });
+  document.getElementById('master-register-panel-close')?.addEventListener('click', closeMasterRegisterPanel);
   document.querySelectorAll('[data-pl-lifecycle]').forEach((btn) => {
     btn.addEventListener('click', () => {
       if (els.plLifecycleFilter) els.plLifecycleFilter.value = btn.dataset.plLifecycle || 'all';
@@ -8903,11 +9713,14 @@ LEGACY END -->
         t.classList.add('active');
       }
     });
+    if (String(viewId || '').startsWith('view-platform-')) {
+      renderPlatformWorkbenches();
+    }
   };
 
-  // activate register tab by default
+  // activate master product tab by default
   document.querySelectorAll('.nav-tab').forEach((t) => {
-    if (t.getAttribute('onclick') && t.getAttribute('onclick').includes("'view-register'")) {
+    if (t.getAttribute('onclick') && t.getAttribute('onclick').includes("'view-products'")) {
       t.classList.add('active');
     }
   });
@@ -10708,7 +11521,7 @@ LEGACY END -->
   // ════════════════════════════════════════════════════════════════
 
   // Operating regions for Shopee (VN/MX intentionally out of scope).
-  const RSH_REGIONS = PRICE_SYNC_REGIONS.slice();
+  const RSH_REGIONS = SHOPEE_PLATFORM_ACTIVE_REGIONS.slice();
   const RSH_SETTLEMENT_MULTIPLIER = 1.30;
 
   // Platform-publish base URL (same Supabase project as the dashboard).
@@ -14156,6 +14969,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const _origSV = window.showView;
     window.showView = function(viewId) {
       _origSV(viewId);
+      if (String(viewId || '').startsWith('view-platform-')) renderPlatformWorkbenches();
       if (viewId === 'view-pre-order') renderPreOrderView(false);
       if (viewId !== 'view-pre-order') setPoReadyStockPanelVisible(false);
     };
@@ -17342,6 +18156,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const _origSV2 = window.showView;
     window.showView = function(viewId) {
       _origSV2(viewId);
+      if (String(viewId || '').startsWith('view-platform-')) renderPlatformWorkbenches();
       if (viewId === 'view-price-sync') renderCatalogView(false);
       if (viewId === 'view-coverage') renderCoverageView(false);
       if (viewId === 'view-daily-close') renderDailyClose(false);
@@ -24462,6 +25277,7 @@ Contact
     let feeInitialized = false;
     window.showView = function(viewId) {
       _origShowView(viewId);
+      if (String(viewId || '').startsWith('view-platform-')) renderPlatformWorkbenches();
       if (viewId === 'view-fee-settings') {
         if (!feeInitialized) {
           feeInitialized = true;

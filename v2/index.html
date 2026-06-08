@@ -21945,7 +21945,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let _mrPendingJoomDryRunResult = null;
 
     const MR_JOOM_DEFAULT_CATEGORY_ID = 'music_albums';
-    const MR_JOOM_DEFAULT_CATEGORY_LABEL = 'Music';
+    const MR_JOOM_DEFAULT_CATEGORY_LABEL = 'Music Albums';
     const MR_JOOM_DEFAULT_STOCK = 5;
     const MR_JOOM_MAX_EXTRA_IMAGES = 20;
     const MR_JOOM_BRAND_CACHE_KEY = 'sdv2:joom:brand-options:v1';
@@ -22134,17 +22134,22 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return lifecycleProductNamePrefix(mrRowLifecycle(row));
     }
 
+    function mrJoomCanonicalTitle(row) {
+      return mrMasterProductName(row).replace(/\s+/g, ' ').trim();
+    }
+
     function mrJoomBuildTitle(row) {
       const artist = String(row?.artist || '').trim();
       const album = String(row?.album || '').trim();
-      const fallbackName = mrMasterProductName(row);
+      const masterName = mrJoomCanonicalTitle(row);
       const prefix = mrJoomNamePrefix(row);
+      if (masterName) return masterName.slice(0, 200);
       if (artist && album) return `${prefix} ${artist} - ${album}`.slice(0, 200);
-      return (fallbackName || `${prefix} K-POP Album`).slice(0, 200);
+      return `${prefix} K-POP Album`.slice(0, 200);
     }
 
     function mrJoomDescriptionTitle(row) {
-      return mrMasterProductName(row).replace(/\s+/g, ' ').trim().slice(0, 200);
+      return mrJoomCanonicalTitle(row).slice(0, 200);
     }
 
     function mrJoomDefaultDescription(group) {
@@ -22363,7 +22368,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         scrapedAssets: {
           name: mrMasterProductName(firstRow),
           mainImage: draft.mainImageUrl,
-          extraImages: draft.extraImages,
+          extraImages: [],
           detailImages,
         },
         variantsConfig: draft.variantsConfig,
@@ -22876,7 +22881,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         scrapedAssets: {
           name: mrMasterProductName(firstRow),
           mainImage: mainImageUrl,
-          extraImages: (firstRow._extra_images || []).filter(Boolean),
+          extraImages: [],
           detailImages,
         },
         variantsConfig,

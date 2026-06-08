@@ -16,6 +16,8 @@ function sliceBetween(source, start, end) {
 const root = process.cwd();
 const html = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
 const bridge = readFileSync(join(root, 'supabase', 'functions', 'joom-bridge', 'index.ts'), 'utf8');
+const edgeBridge = readFileSync(join(root, 'edge-functions', 'joom-bridge', 'index.ts'), 'utf8');
+const joomAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'joom.ts'), 'utf8');
 
 const masterRegister = sliceBetween(
   html,
@@ -49,6 +51,8 @@ assert(html.includes('_main_image: row.shopee_option_image_url || row.main_image
 assert(html.includes('id="mr-joom-modal-dryrun"'), 'Joom publish modal must expose a non-destructive dry-run button');
 assert(masterRegister.includes('const MR_JOOM_DEFAULT_STOCK = 5'), 'Joom draft must default option stock to the video-confirmed minimum stock value');
 assert(masterRegister.includes('const MR_JOOM_MAX_EXTRA_IMAGES = 20'), 'Joom extra images must honor the API max of 20 images');
+assert(masterRegister.includes("const MR_JOOM_DEFAULT_CATEGORY_LABEL = 'Music Albums'"), 'Joom default category label should be Music Albums');
+assert(masterRegister.includes("const MR_JOOM_DEFAULT_CATEGORY_ID = 'music_albums'"), 'Joom default category should use the Music Albums mapping by default');
 assert(masterRegister.includes('function mrLoadJoomBrandOptions'), 'Joom flow must load saved local brand candidates for selection');
 assert(masterRegister.includes('function mrPopulateJoomBrandSelect'), 'Joom flow must render a brand select, not only a free-text input');
 assert(masterRegister.includes('MR_JOOM_BRAND_CUSTOM_VALUE'), 'Joom brand select must keep a custom-entry fallback');
@@ -59,6 +63,8 @@ assert(masterRegister.includes('normalizeMasterProductNameForLifecycle(title, mr
 assert(masterRegister.includes('function mrJoomNamePrefix(row)'), 'Joom title prefix must be derived from the master product lifecycle');
 assert(masterRegister.includes('namePrefix: mrJoomNamePrefix(firstRow)'), 'Joom payload must send the lifecycle-specific namePrefix to the bridge');
 assert(!masterRegister.includes('const MR_JOOM_DEFAULT_NAME_PREFIX = \'[PRE ORDER]\''), 'Joom title prefix must not be hard-coded to PRE ORDER');
+assert(masterRegister.includes('function mrJoomCanonicalTitle(row)'), 'Joom title builder should keep the full master product name');
+assert(masterRegister.includes('const masterName = mrJoomCanonicalTitle(row);') && masterRegister.includes('if (masterName) return masterName.slice(0, 200);'), 'Joom build title should prefer the master product name before artist/album shorthand');
 assert(masterRegister.includes('function mrJoomDescriptionTitle(row)'), 'Joom fixed description template title must have an explicit master-name helper');
 assert(masterRegister.includes('const title = mrJoomDescriptionTitle(row) ||'), 'Joom fixed description template title must use the master product name before listing-title fallback');
 assert(masterRegister.includes('function mrMasterRepresentativeImage(group)'), 'Joom draft must derive the main image from the master representative image');
@@ -88,6 +94,7 @@ assert(masterRegister.includes('return mrPromoteJoomLocked(group);'), 'Joom live
 assert(masterRegister.includes('Cash on Delivery (COD) Policy'), 'Joom modal draft must preview the fixed video-derived COD policy section');
 assert(promoteJoom.includes('detailImages = await mrJoomLoadDetailImages(group)'), 'Joom payload must include detail images');
 assert(!promoteJoom.includes('detailImages: []'), 'Joom detailImages must not be hard-coded empty');
+assert(promoteJoom.includes('extraImages: [],') && promoteJoom.includes('detailImages,'), 'Joom payload should send source detail images once and let the bridge build extraImages');
 assert(masterRegister.includes('image: o.imageUrl'), 'Joom variants must include master option image URLs from the draft');
 assert(promoteJoom.includes('weight: weightG'), 'Joom variants must include per-option weight');
 assert(masterRegister.includes('if (allSkus.length === 1) return allSkus[0]'), 'Single-option Joom parent SKU must equal option SKU');
@@ -97,7 +104,7 @@ assert(buildPayload.includes('hasExplicitVariants'), 'Joom bridge must distingui
 assert(bridge.includes('Cash on Delivery (COD) Policy'), 'Joom bridge description must include the fixed video-derived COD policy section');
 assert(buildPayload.includes('single variant product sku must equal option sku'), 'Joom bridge must enforce single-option parent SKU parity');
 assert(buildPayload.includes('cfg.sku || (!hasExplicitVariants'), 'Joom bridge must not invent SKUs for explicit variants');
-assert(buildPayload.indexOf('...(scrapedAssets.detailImages || [])') < buildPayload.indexOf('...(scrapedAssets.extraImages || [])'), 'Joom extraImages must place detail images immediately after the main image');
+assert(bridge.includes('function uniqueExtraImageUrls') && buildPayload.includes('const rawExtras = uniqueExtraImageUrls(scrapedAssets);'), 'Joom bridge must de-duplicate detail/extra image sources before square conversion');
 assert(bridge.includes('import { AUTH_CORS, requireAuthenticatedUser } from "../_shared/auth.ts"'), 'Joom bridge must import the shared browser-session auth guard');
 assert(bridge.includes('async function requireBridgeTokenOrAuthenticatedUser'), 'Joom bridge must allow either server bridge token or signed-in browser session');
 assert(!bridge.includes('if ((action === "publish" || action === "dryrun") && req.method === "POST") {\n      const internalDenied = requireInternalBridge(req);'), 'Browser-originated Joom publish/dryrun must not require only the server internal bridge token');
@@ -110,9 +117,14 @@ assert(bridge.includes('product-images'), 'Joom storage tile fallback must use t
 assert(bridge.includes('const JOOM_MAX_EXTRA_IMAGES = 20'), 'Joom bridge must cap extraImages at the API max of 20');
 assert(buildPayload.includes('if (!brandName) throw new Error("brand required")'), 'Joom bridge must reject publish payloads without a selected brand');
 assert(!bridge.includes('return [imageUrl];'), 'Joom detail processing must not fall back to sending unsquared source URLs');
+assert(bridge.includes('const fallback = stripKorean(opts.fallbackName || "").trim();') && bridge.indexOf('if (fallback) return titleWithPrefix(prefix, fallback).slice(0, 200);') < bridge.indexOf('if (opts.artist && opts.album)'), 'Joom bridge title should prefer fallback master name before artist/album shorthand');
 assert(bridge.includes('Math.min(Math.ceil(img.height / tileSize), 9)'), 'Joom detail splitter must use up to 9 square tiles');
 assert(bridge.includes('tile.crop(0, y, img.width, h)'), 'Joom detail splitter must crop tiles explicitly');
+assert(bridge.includes('Math.min(Math.ceil(img.width / tileSize), 9)') && bridge.includes('tile.crop(x, 0, w, img.height)'), 'Joom detail splitter must also tile wide rectangular images');
+assert(bridge.includes('square.composite(img, x, y)'), 'Joom detail splitter must pad near-square rectangles without cropping away content');
 assert(bridge.includes('square.encodeJPEG(90)'), 'Joom detail splitter must encode tiles as JPEGs before Cloudinary upload');
 assert(buildPayload.includes('if (cfg.image) v.mainImage = cfg.image'), 'Joom bridge must send option images to each variant');
+assert(edgeBridge.includes('const JOOM_MAX_EXTRA_IMAGES = 20') && edgeBridge.includes('function uniqueExtraImageUrls') && !edgeBridge.includes('return [imageUrl];'), 'edge-functions Joom bridge mirror should square-convert and de-duplicate extra images');
+assert(joomAdapter.includes("|| 'music_albums'"), 'platform-publish Joom adapter should default to Music Albums, not Record CD');
 
 console.log('v2 Joom register image/SKU checks passed');

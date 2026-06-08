@@ -122,7 +122,7 @@ function buildCreateBody(ctx: BridgeContext): Record<string, unknown> | AdapterR
   const imgs = imagesFrom(master);
   const cost = n(master.cost_krw);
   const weight = n(master.weight_g);
-  const categoryId = s(master.joom_category_id || (master as any).categoryId || 'music_albums_cd').trim();
+  const categoryId = s(master.joom_category_id || (master as any).categoryId || 'music_albums').trim();
   if (!sku || !cost || cost <= 0 || !weight || weight <= 0 || imgs.length === 0 || !categoryId) {
     return {
       ok: false,
@@ -138,7 +138,7 @@ function buildCreateBody(ctx: BridgeContext): Record<string, unknown> | AdapterR
       mainImage: imgs[0],
       name: lifecycleProductName(master.product_name, lifecycleOf(master), sku),
       detailImages: imgs.slice(1),
-      extraImages: imgs.slice(1),
+      extraImages: [],
     },
     variantsConfig: [{ name: 'DEFAULT', sku, inventory, enabled: true, weight, image: imgs[0] }],
     categoryId,

@@ -138,21 +138,32 @@ function stripKorean(s: string): string {
   return (s || "").replace(/[ㄱ-ㅎㅏ-ㅣ가-힣ᄀ-ᇿ]/g, "").replace(/\(\s*\)/g, "").replace(/\s+/g, " ").trim();
 }
 
+function hasLifecyclePrefix(value: string): boolean {
+  return /^\s*\[(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\]/i.test(value || "");
+}
+
+function titleWithPrefix(prefix: string, title: string): string {
+  const clean = (title || "").replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  const p = (prefix || "").replace(/\s+/g, " ").trim();
+  if (!p || clean.toLowerCase().startsWith(p.toLowerCase()) || hasLifecyclePrefix(clean)) return clean;
+  return `${p} ${clean}`.replace(/\s+/g, " ").trim();
+}
+
 function buildTitle(opts: { namePrefix: string; artist?: string; album?: string; fallbackName?: string }): string {
   const prefix = (opts.namePrefix || "").trim();
-  const space = prefix ? prefix + " " : "";
-  if (opts.artist && opts.album) return `${space}${opts.artist.trim()} - ${opts.album.trim()}`.slice(0, 200);
-  return `${space}${stripKorean(opts.fallbackName || "")}`.slice(0, 200);
+  const fallback = stripKorean(opts.fallbackName || "").trim();
+  if (fallback) return titleWithPrefix(prefix, fallback).slice(0, 200);
+  if (opts.artist && opts.album) return titleWithPrefix(prefix, `${opts.artist.trim()} - ${opts.album.trim()}`).slice(0, 200);
+  return titleWithPrefix(prefix, "K-POP Album").slice(0, 200);
 }
 
 function buildDescription(opts: { artist?: string; album?: string; contents?: string; fallbackName?: string }): string {
-  const headLine = (opts.artist && opts.album)
-    ? `🟣 ${opts.artist.trim()} - ${opts.album.trim()}`
-    : `🟣 ${stripKorean(opts.fallbackName || "K-POP Album")}`;
+  const productTitle = buildTitle({ namePrefix: "", artist: opts.artist, album: opts.album, fallbackName: opts.fallbackName }) || "K-POP Album";
   const defaultContents = `- PACKAGE\n- CD\n- PHOTOCARD\n- POSTER (varies by version)`;
   const contents = (opts.contents || "").trim() || defaultContents;
   return [
-    headLine, "",
+    productTitle, "",
     "💿 100% Official & Authentic K-POP Album",
     "- Brand new, sealed, and sourced directly from the official distributor", "",
     "📊 Chart Certified",
@@ -234,6 +245,31 @@ async function uploadTileToCloudinary(imageData: Uint8Array): Promise<string | n
 // ---------------------------------------------------------------------------
 
 type ImageDimensions = { width: number; height: number };
+const JOOM_MAX_EXTRA_IMAGES = 20;
+
+function imageUrlKey(value: unknown): string {
+  return String(value || "").trim();
+}
+
+function uniqueExtraImageUrls(scrapedAssets: any): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const mainKey = imageUrlKey(scrapedAssets?.mainImage);
+  if (mainKey) seen.add(mainKey);
+
+  const candidates = [
+    ...(Array.isArray(scrapedAssets?.detailImages) ? scrapedAssets.detailImages : []),
+    ...(Array.isArray(scrapedAssets?.extraImages) ? scrapedAssets.extraImages : []),
+  ];
+  for (const value of candidates) {
+    const key = imageUrlKey(value);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+    if (out.length >= JOOM_MAX_EXTRA_IMAGES) break;
+  }
+  return out;
+}
 
 function parseJpegSize(bytes: Uint8Array): ImageDimensions | null {
   let i = 2;
@@ -270,13 +306,27 @@ async function buildCloudinaryFetchTiles(imageUrl: string, img: ImageDimensions)
   // @ts-ignore
   const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
   if (!cloudName) return [];
-  const tileSize = img.width;
-  const numTiles = Math.min(Math.ceil(img.height / tileSize), 9);
-  return Array.from({ length: numTiles }, (_, i) => {
-    const y = i * tileSize;
-    const h = Math.min(tileSize, img.height - y);
-    return `https://res.cloudinary.com/${cloudName}/image/fetch/c_crop,w_${img.width},h_${h},x_0,y_${y},c_pad,b_white,w_${tileSize},h_${tileSize},f_jpg,q_90/${encodeURIComponent(imageUrl)}`;
-  });
+  if (img.height > img.width * 1.5) {
+    const tileSize = img.width;
+    const numTiles = Math.min(Math.ceil(img.height / tileSize), 9);
+    return Array.from({ length: numTiles }, (_, i) => {
+      const y = i * tileSize;
+      const h = Math.min(tileSize, img.height - y);
+      return `https://res.cloudinary.com/${cloudName}/image/fetch/c_crop,w_${img.width},h_${h},x_0,y_${y},c_pad,b_white,w_${tileSize},h_${tileSize},f_jpg,q_90/${encodeURIComponent(imageUrl)}`;
+    });
+  }
+  if (img.width > img.height * 1.5) {
+    const tileSize = img.height;
+    const numTiles = Math.min(Math.ceil(img.width / tileSize), 9);
+    return Array.from({ length: numTiles }, (_, i) => {
+      const x = i * tileSize;
+      const w = Math.min(tileSize, img.width - x);
+      return `https://res.cloudinary.com/${cloudName}/image/fetch/c_crop,w_${w},h_${img.height},x_${x},y_0,c_pad,b_white,w_${tileSize},h_${tileSize},f_jpg,q_90/${encodeURIComponent(imageUrl)}`;
+    });
+  }
+
+  const tileSize = Math.max(img.width, img.height);
+  return [`https://res.cloudinary.com/${cloudName}/image/fetch/c_pad,b_white,w_${tileSize},h_${tileSize},f_jpg,q_90/${encodeURIComponent(imageUrl)}`];
 }
 
 async function uploadTileToProductStorage(imageData: Uint8Array, sourceUrl: string, index: number): Promise<string | null> {
@@ -295,49 +345,84 @@ async function uploadTileToProductStorage(imageData: Uint8Array, sourceUrl: stri
 async function processDetailImage(imageUrl: string): Promise<string[]> {
   try {
     const dims = await readImageDimensions(imageUrl);
-    if (!dims || dims.height <= dims.width * 1.5) return [imageUrl];
-
-    const cloudinaryTiles = await buildCloudinaryFetchTiles(imageUrl, dims);
-    if (cloudinaryTiles.length) return cloudinaryTiles;
+    if (dims) {
+      const cloudinaryTiles = await buildCloudinaryFetchTiles(imageUrl, dims);
+      if (cloudinaryTiles.length) return cloudinaryTiles;
+    }
 
     const resp = await fetch(imageUrl, {
       headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://www.staronemall.com/" },
       signal: AbortSignal.timeout(15000),
     });
-    if (!resp.ok) return [imageUrl];
+    if (!resp.ok) throw new Error(`image fetch failed: HTTP ${resp.status}`);
     const buf = new Uint8Array(await resp.arrayBuffer());
 
     // @ts-ignore
     const { Image } = await import("https://deno.land/x/imagescript@1.3.0/mod.ts");
     const img = await Image.decode(buf);
-    const tileSize = img.width;
-    const numTiles = Math.min(Math.ceil(img.height / tileSize), 9);
     const tiles: string[] = [];
 
-    for (let i = 0; i < numTiles; i++) {
-      const y = i * tileSize;
-      const h = Math.min(tileSize, img.height - y);
-      const tile = img.clone();
-      tile.crop(0, y, img.width, h);
+    if (img.height > img.width * 1.5) {
+      const tileSize = img.width;
+      const numTiles = Math.min(Math.ceil(img.height / tileSize), 9);
+      for (let i = 0; i < numTiles; i++) {
+        const y = i * tileSize;
+        const h = Math.min(tileSize, img.height - y);
+        const tile = img.clone();
+        tile.crop(0, y, img.width, h);
 
-      let square;
-      if (h < tileSize) {
-        square = new Image(tileSize, tileSize);
-        square.fill(0xFFFFFFFF);
-        square.composite(tile, 0, 0);
-      } else {
-        square = tile;
+        let square;
+        if (h < tileSize) {
+          square = new Image(tileSize, tileSize);
+          square.fill(0xFFFFFFFF);
+          square.composite(tile, 0, 0);
+        } else {
+          square = tile;
+        }
+
+        const encoded: Uint8Array = await square.encodeJPEG(90);
+        const url = await uploadTileToCloudinary(encoded) || await uploadTileToProductStorage(encoded, imageUrl, i);
+        if (url) tiles.push(url);
       }
+    } else if (img.width > img.height * 1.5) {
+      const tileSize = img.height;
+      const numTiles = Math.min(Math.ceil(img.width / tileSize), 9);
+      for (let i = 0; i < numTiles; i++) {
+        const x = i * tileSize;
+        const w = Math.min(tileSize, img.width - x);
+        const tile = img.clone();
+        tile.crop(x, 0, w, img.height);
 
+        let square;
+        if (w < tileSize) {
+          square = new Image(tileSize, tileSize);
+          square.fill(0xFFFFFFFF);
+          square.composite(tile, 0, 0);
+        } else {
+          square = tile;
+        }
+
+        const encoded: Uint8Array = await square.encodeJPEG(90);
+        const url = await uploadTileToCloudinary(encoded) || await uploadTileToProductStorage(encoded, imageUrl, i);
+        if (url) tiles.push(url);
+      }
+    } else {
+      const tileSize = Math.max(img.width, img.height);
+      const square = new Image(tileSize, tileSize);
+      square.fill(0xFFFFFFFF);
+      const x = Math.max(0, Math.floor((tileSize - img.width) / 2));
+      const y = Math.max(0, Math.floor((tileSize - img.height) / 2));
+      square.composite(img, x, y);
       const encoded: Uint8Array = await square.encodeJPEG(90);
-      const url = await uploadTileToCloudinary(encoded) || await uploadTileToProductStorage(encoded, imageUrl, i);
+      const url = await uploadTileToCloudinary(encoded) || await uploadTileToProductStorage(encoded, imageUrl, 0);
       if (url) tiles.push(url);
     }
 
-    return tiles.length > 0 ? tiles : [imageUrl];
+    if (tiles.length > 0) return tiles;
+    throw new Error("square image upload failed");
   } catch (e) {
     console.error("[joom-bridge] processDetailImage failed:", imageUrl, e);
-    return [imageUrl];
+    throw new Error(`Joom detail image square processing failed: ${imageUrl}`);
   }
 }
 
@@ -389,17 +474,14 @@ async function buildPayload(opts: any): Promise<any> {
   const description = buildDescription({ artist, album, contents, fallbackName: scrapedAssets.name });
 
   // Process detail images: split tall portraits into square tiles
-  const rawExtras: string[] = [
-    ...(scrapedAssets.detailImages || []),
-    ...(scrapedAssets.extraImages || []),
-  ].slice(0, 9);
+  const rawExtras = uniqueExtraImageUrls(scrapedAssets);
 
   const processedExtras: string[] = [];
   for (const url of rawExtras) {
-    if (processedExtras.length >= 9) break;
+    if (processedExtras.length >= JOOM_MAX_EXTRA_IMAGES) break;
     const tiles = await processDetailImage(url);
     for (const t of tiles) {
-      if (processedExtras.length < 9) processedExtras.push(t);
+      if (processedExtras.length < JOOM_MAX_EXTRA_IMAGES) processedExtras.push(t);
     }
   }
 

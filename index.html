@@ -2184,10 +2184,48 @@ async function _joomScrapeAssets(url) {
   return resp.data;
 }
 
+const JOOM_MUSIC_ALBUMS_CATEGORY_ID = '1567805338802406105-13-2-26202-1432821636';
+
+function _joomHasLifecyclePrefix(value) {
+  return /^\s*\[(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\]/i.test(String(value || ''));
+}
+
+function _joomLifecyclePrefix(row) {
+  const state = String(row?.lifecycleState || '').toLowerCase();
+  if (state.includes('pre')) return '[PRE ORDER]';
+  return '[READY STOCK]';
+}
+
+function _joomCanonicalProductName(row, artist = '', album = '') {
+  const prefix = _joomLifecyclePrefix(row);
+  const storedName = String(row?.productName || row?.name || '').replace(/\s+/g, ' ').trim();
+  if (storedName) {
+    return (_joomHasLifecyclePrefix(storedName) ? storedName : `${prefix} ${storedName}`).slice(0, 200);
+  }
+  const a = String(artist || '').trim();
+  const b = String(album || '').trim();
+  if (a && b) return `${prefix} ${a} - ${b}`.slice(0, 200);
+  return `${prefix} K-POP Album`.slice(0, 200);
+}
+
+function _joomDetailImageSources(scrapedAssets) {
+  const raw = [
+    ...(Array.isArray(scrapedAssets?.detailImages) ? scrapedAssets.detailImages : []),
+    ...(Array.isArray(scrapedAssets?.extraImages) ? scrapedAssets.extraImages : []),
+  ];
+  const main = String(scrapedAssets?.mainImage || '').trim();
+  const seen = new Set(main ? [main] : []);
+  return raw.map(v => String(v || '').trim()).filter(url => {
+    if (!url || seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  });
+}
+
 function openJoomModal(row) {
   _joomCurrentRow = row;
   const modal = document.getElementById('joom-modal');
-  document.getElementById('jm-prefix').value = '[READY STOCK] ';
+  document.getElementById('jm-prefix').value = _joomLifecyclePrefix(row) + ' ';
   document.getElementById('jm-artist').value = '';
   document.getElementById('jm-album').value = '';
   document.getElementById('jm-brand').value = '';
@@ -2197,9 +2235,9 @@ function openJoomModal(row) {
   document.getElementById('jm-status').style.display = 'none';
 
   // 카테고리 검색형 picker 초기화
-  document.getElementById('jm-category-search').value = '';
-  document.getElementById('jm-category').value = '';
-  document.getElementById('jm-category-selected').textContent = '';
+  document.getElementById('jm-category-search').value = 'Music Albums';
+  document.getElementById('jm-category').value = JOOM_MUSIC_ALBUMS_CATEGORY_ID;
+  document.getElementById('jm-category-selected').textContent = 'Music Albums (' + JOOM_MUSIC_ALBUMS_CATEGORY_ID + ')';
   document.getElementById('jm-category-dropdown').style.display = 'none';
   _joomFetchCategories().then(cats => {
     _joomCategoriesCache = cats || [];
@@ -2339,6 +2377,15 @@ async function _joomSubmit({ dryRun }) {
     return;
   }
 
+  const masterName = _joomCanonicalProductName(row, artist, album);
+  const detailImages = _joomDetailImageSources(scrapedAssets);
+  const normalizedScrapedAssets = {
+    ...scrapedAssets,
+    name: masterName,
+    extraImages: [],
+    detailImages,
+  };
+
   const body = {
     row: {
       staronemallUrl: row.staronemallUrl,
@@ -2346,7 +2393,7 @@ async function _joomSubmit({ dryRun }) {
       cost: row.cost,
       weight: row.weight,  // product-level fallback weight
     },
-    scrapedAssets,
+    scrapedAssets: normalizedScrapedAssets,
     variantsConfig: variants,
     categoryId,
     enabled: document.getElementById('jm-enabled').checked,

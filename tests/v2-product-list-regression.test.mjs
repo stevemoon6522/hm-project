@@ -32,6 +32,15 @@ const openCreatedMasterEdit = sliceBetween(html, 'async function mrOpenCreatedMa
 const masterRegisterRender = sliceBetween(html, 'function mrRenderPreviewCards() {', 'async function mrPromoteAll() {');
 const joomRegisterStatus = sliceBetween(html, 'function mrJoomListingStatusFromResponse(json) {', 'function mrJoomAssertOptionSkuLocked(row, idx, errors) {');
 
+test('primary marketplace tabs render as a large left-side navigation rail', () => {
+  assert.match(html, /\.app-layout[\s\S]*grid-template-columns: 276px minmax\(0, 1fr\)/, 'app shell should reserve a visible left rail for marketplace tabs');
+  assert.match(html, /<aside class="app-sidebar" aria-label="Primary dashboard navigation">/, 'tabs should live in a dedicated left sidebar');
+  assert.match(html, /<section class="app-content" aria-label="Dashboard content">/, 'views should render in the right content area');
+  assert.match(html, /\.nav-tab[\s\S]*min-height: 64px/, 'desktop nav tabs should be visibly larger than the old top strip');
+  assert.match(nav, /<span class="nav-label">마스터 상품<\/span>[\s\S]*<span class="nav-meta">공통 상품 관리<\/span>/, 'master tab should include a visible label and purpose');
+  assert.match(nav, /<span class="nav-label">Shopee<\/span>[\s\S]*<span class="nav-meta">등록 \/ 수정 \/ 재시도<\/span>/, 'Shopee tab should expose the main work type');
+});
+
 test('standalone products have master edit button and master tab stays platform-neutral', () => {
   assert.match(productRender, /data-edit-master="\$\{text\(plMasterEditTargetKey\(p\)\)\}"/, 'single row should expose master edit target');
   assert.match(productRender, /isVariantRow && optionDisplay[\s\S]*\$\{editButton\}/, 'option-like single rows should also expose the master edit button');

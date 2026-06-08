@@ -834,18 +834,119 @@
     }
 
     /* ── Nav tabs (plan §5-1) ── */
+    .app-layout {
+      display: grid;
+      grid-template-columns: 276px minmax(0, 1fr);
+      align-items: start;
+      gap: 0;
+      min-height: calc(100vh - 92px);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, .52);
+      overflow: hidden;
+      box-shadow: 0 2px 10px rgba(102, 16, 212, .06);
+    }
+    .app-sidebar {
+      position: sticky;
+      top: 65px;
+      height: calc(100vh - 92px);
+      min-height: 620px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 18px;
+      border-right: 1px solid var(--border);
+      background: #fff;
+      z-index: 5;
+    }
+    .app-sidebar-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .app-sidebar-title .pill {
+      margin: 0;
+      font-size: 10px;
+      padding: 2px 6px;
+    }
+    .app-content {
+      min-width: 0;
+      padding: 18px;
+    }
     .nav-tabs {
-      display: flex; gap: 0; border-bottom: 1px solid var(--border);
-      margin-bottom: 18px; overflow-x: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-height: 0;
+      flex: 1;
     }
     .nav-tab {
-      padding: 9px 16px; background: transparent; border: none; border-bottom: 2px solid transparent;
-      cursor: pointer; font: inherit; font-size: 13px; color: var(--muted);
-      font-weight: 600;
-      white-space: nowrap; margin-bottom: -1px; transition: color .14s, border-color .14s, background-color .14s;
+      position: relative;
+      width: 100%;
+      min-height: 64px;
+      padding: 11px 14px 11px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 3px;
+      background: #fff;
+      border: 1px solid #ead8e8;
+      border-left: 5px solid #f1ddea;
+      border-radius: 8px;
+      cursor: pointer;
+      font: inherit;
+      color: var(--muted);
+      font-weight: 700;
+      text-align: left;
+      white-space: normal;
+      box-shadow: none;
+      transition: background-color .14s, border-color .14s, color .14s, box-shadow .14s, transform .14s;
     }
-    .nav-tab:hover { color: var(--text); background: #fff2f9; }
-    .nav-tab.active { color: #5c24b0; border-bottom-color: var(--accent); background: #f8ecff; }
+    .nav-tab:hover {
+      color: var(--text);
+      background: #fff6fc;
+      border-color: #d9bbd1;
+      border-left-color: #ff8fc4;
+      transform: translateX(1px);
+    }
+    .nav-tab.active {
+      color: #3c1d57;
+      border-color: #e02480;
+      border-left-color: var(--accent);
+      background: #fff1fa;
+      box-shadow: 0 2px 10px rgba(255, 45, 143, .14);
+    }
+    .nav-label {
+      font-size: 15px;
+      line-height: 1.2;
+      font-weight: 800;
+      letter-spacing: 0;
+    }
+    .nav-meta {
+      color: #7a5c80;
+      font-size: 11px;
+      line-height: 1.25;
+      font-weight: 600;
+    }
+    .nav-tab.active .nav-meta { color: #5b4365; }
+    #logout.nav-tab {
+      min-height: 44px;
+      margin-top: auto;
+      padding-top: 9px;
+      padding-bottom: 9px;
+      border-left-width: 1px;
+      background: #faf5fb;
+    }
+    #logout.nav-tab .nav-label {
+      font-size: 13px;
+      font-weight: 700;
+    }
     .badge-krsc {
       display: inline-block; padding: 1px 6px; border-radius: 4px;
       background: #f8ecff; color: #5c24b0; font-size: 10px;
@@ -892,6 +993,41 @@
     .step-pill.done { background: #f0fdf4; color: var(--green); }
     .step-pill .sn { font-weight: 700; margin-right: 5px; }
     @media (max-width: 860px) {
+      .app-layout {
+        display: block;
+        min-height: 0;
+      }
+      .app-sidebar {
+        position: sticky;
+        top: 0;
+        height: auto;
+        min-height: 0;
+        padding: 12px;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+      .app-sidebar-title { display: none; }
+      .app-content { padding: 12px; }
+      .nav-tabs {
+        flex-direction: row;
+        gap: 8px;
+        overflow-x: auto;
+        flex: none;
+        padding-bottom: 2px;
+      }
+      .nav-tab {
+        width: auto;
+        min-width: 156px;
+        min-height: 54px;
+        padding: 9px 12px 9px 15px;
+        flex: 0 0 auto;
+      }
+      .nav-label { font-size: 14px; }
+      .nav-meta { display: none; }
+      #logout.nav-tab {
+        min-height: 54px;
+        margin-top: 0;
+      }
       .wizard-steps { grid-template-columns: 1fr; }
       .step-pill { border-right: none; border-bottom: 1px solid var(--border); }
       .step-pill:last-child { border-bottom: none; }
@@ -1736,18 +1872,50 @@
   </div>
 
   <div id="app-shell" hidden>
+    <div class="app-layout">
+      <aside class="app-sidebar" aria-label="Primary dashboard navigation">
+        <div class="app-sidebar-title">
+          <span>작업 영역</span>
+          <span class="pill">V2</span>
+        </div>
 
     <!-- ── Nav tabs ── -->
     <div class="nav-tabs">
-      <button class="nav-tab" onclick="showView('view-products')">마스터 상품</button>
-      <button class="nav-tab" onclick="showView('view-platform-shopee')">Shopee</button>
-      <button class="nav-tab" onclick="showView('view-platform-joom')">Joom</button>
-      <button class="nav-tab" onclick="showView('view-platform-qoo10')">Qoo10</button>
-      <button class="nav-tab" onclick="showView('view-platform-ebay')">eBay</button>
-      <button class="nav-tab" onclick="showView('view-platform-alibaba')">Alibaba</button>
-      <button class="nav-tab" onclick="showView('view-fee-settings')">수수료 설정</button>
-      <button id="logout" type="button" class="nav-tab" style="margin-left:auto;">Sign out</button>
+      <button class="nav-tab" onclick="showView('view-products')">
+        <span class="nav-label">마스터 상품</span>
+        <span class="nav-meta">공통 상품 관리</span>
+      </button>
+      <button class="nav-tab" onclick="showView('view-platform-shopee')">
+        <span class="nav-label">Shopee</span>
+        <span class="nav-meta">등록 / 수정 / 재시도</span>
+      </button>
+      <button class="nav-tab" onclick="showView('view-platform-joom')">
+        <span class="nav-label">Joom</span>
+        <span class="nav-meta">플랫폼 상태 관리</span>
+      </button>
+      <button class="nav-tab" onclick="showView('view-platform-qoo10')">
+        <span class="nav-label">Qoo10</span>
+        <span class="nav-meta">플랫폼 상태 관리</span>
+      </button>
+      <button class="nav-tab" onclick="showView('view-platform-ebay')">
+        <span class="nav-label">eBay</span>
+        <span class="nav-meta">플랫폼 상태 관리</span>
+      </button>
+      <button class="nav-tab" onclick="showView('view-platform-alibaba')">
+        <span class="nav-label">Alibaba</span>
+        <span class="nav-meta">준비 중</span>
+      </button>
+      <button class="nav-tab" onclick="showView('view-fee-settings')">
+        <span class="nav-label">수수료 설정</span>
+        <span class="nav-meta">정산 기준</span>
+      </button>
+      <button id="logout" type="button" class="nav-tab">
+        <span class="nav-label">Sign out</span>
+      </button>
     </div>
+
+      </aside>
+      <section class="app-content" aria-label="Dashboard content">
 
     <!-- ═══════════════════════════════════════════════
          VIEW: 상품 등록 — 2-stage bulk URL+weight master register
@@ -3300,6 +3468,8 @@
       </div>
     </div><!-- /view-fee-settings -->
 
+      </section>
+    </div><!-- /app-layout -->
   </div><!-- /app-shell -->
 </main>
 

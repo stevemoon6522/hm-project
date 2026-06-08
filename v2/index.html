@@ -6042,6 +6042,7 @@ LEGACY END -->
     const label = PLATFORM_LABELS[platform] || platform;
     const filter = platformFilter(platform);
     const counts = platformCounts(platform);
+    platformAdoptProductListSelection(platform);
     const selectedCount = platformSelection(platform).size;
     const isAlibaba = platform === 'alibaba';
     const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
@@ -6184,6 +6185,20 @@ LEGACY END -->
     return platformMasterGroups().filter((group) => wanted.has(platformGroupKey(group)));
   }
 
+  function platformGroupKeysFromProductIds(productIds) {
+    const wanted = new Set(Array.from(productIds || []).map((id) => String(id)));
+    if (!wanted.size) return [];
+    return platformMasterGroups()
+      .filter((group) => (group.rows || []).some((row) => wanted.has(String(row.id))))
+      .map(platformGroupKey);
+  }
+
+  function platformAdoptProductListSelection(platform) {
+    const sel = platformSelection(platform);
+    if (sel.size || !state.productListSelectedIds?.size) return;
+    platformGroupKeysFromProductIds(state.productListSelectedIds).forEach((key) => sel.add(key));
+  }
+
   function platformSelectedGroups(platform, explicitKeys = null) {
     const keys = explicitKeys || Array.from(platformSelection(platform));
     return platformGroupsByKeys(keys);
@@ -6297,10 +6312,10 @@ LEGACY END -->
   }
 
   function platformCanUseDispatcher(platform, action, group) {
-    if (action === 'edit') return false;
-    if (platform === 'alibaba') return false;
-    if (group.isGrouped) return false;
-    return ['shopee', 'joom', 'qoo10', 'ebay'].includes(platform);
+    // Registration execution stays on the proven pre-tab modals. Those modals
+    // contain the platform-specific dry-run and validation controls operators
+    // need before a real listing is submitted.
+    return false;
   }
 
   async function platformExecutePreview() {

@@ -32,6 +32,9 @@ const openCreatedMasterEdit = sliceBetween(html, 'async function mrOpenCreatedMa
 const masterRegisterRender = sliceBetween(html, 'function mrRenderPreviewCards() {', 'async function mrPromoteAll() {');
 const joomRegisterStatus = sliceBetween(html, 'function mrJoomListingStatusFromResponse(json) {', 'function mrJoomAssertOptionSkuLocked(row, idx, errors) {');
 const shopeePlatformRegions = sliceBetween(html, 'const SHOPEE_PLATFORM_ACTIVE_REGIONS', '/** Preselect state: set by openReadyStockWizard()');
+const platformSelectionFlow = sliceBetween(html, 'function platformGroupsByKeys(keys) {', 'function platformOpenPreview(platform, action, explicitKeys = null) {');
+const platformPreviewExecution = sliceBetween(html, 'function platformCanUseDispatcher(platform, action, group) {', 'async function platformPublishDirect(platform, row, action) {');
+const platformBinding = sliceBetween(html, 'function bindPlatformWorkbench(root, platform) {', 'function platformGroupsByKeys(keys) {');
 
 test('primary marketplace tabs render as a large left-side navigation rail', () => {
   assert.match(html, /\.app-layout[\s\S]*grid-template-columns: 276px minmax\(0, 1fr\)/, 'app shell should reserve a visible left rail for marketplace tabs');
@@ -46,6 +49,20 @@ test('Shopee platform tab always includes BR as an active region', () => {
   assert.match(shopeePlatformRegions, /SHOPEE_PLATFORM_ACTIVE_REGIONS = Object\.freeze\(\['SG', 'TW', 'TH', 'MY', 'PH', 'BR'\]\)/, 'Shopee platform active regions must include BR');
   assert.doesNotMatch(shopeePlatformRegions, /\{ region: 'BR'/, 'BR must not be rendered as an excluded Shopee platform region');
   assert.match(html, /\{ code: 'BR', currency: 'BRL', enabled: true \}/, 'BR must remain enabled in shared Shopee region metadata');
+});
+
+test('platform tab buttons keep selection and route registration through the proven modals', () => {
+  assert.match(platformSelectionFlow, /function platformGroupKeysFromProductIds\(productIds\)/, 'platform tabs should be able to map master-list selections to platform groups');
+  assert.match(platformSelectionFlow, /state\.productListSelectedIds/, 'platform tabs should adopt master product selections when opened');
+  assert.match(html, /platformAdoptProductListSelection\(platform\);[\s\S]*const selectedCount = platformSelection\(platform\)\.size/, 'platform render should adopt selections before enabling action buttons');
+  assert.match(platformBinding, /data-platform-preview[\s\S]*platformOpenPreview\(platform, btn\.dataset\.platformPreview \|\| 'register'\)/, 'bulk preview buttons must open the unified preview');
+  assert.match(platformBinding, /platform-master-check[\s\S]*sel\.add\(key\)[\s\S]*renderPlatformWorkbench\(platform\)/, 'row selection must enable preview actions after rerender');
+  assert.match(platformPreviewExecution, /return false;/, 'platform tabs must not bypass registration modals through direct dispatcher execution');
+  assert.match(platformPreviewExecution, /platformOpenExistingModal\(platform, group\)/, 'preview execution must open the existing platform registration modal');
+  assert.match(html, /if \(platform === 'shopee'\)[\s\S]*openRegisterShopeeSingleModal\(group\.rows\[0\]\.id\)/, 'Shopee single registration must use the existing single modal');
+  assert.match(html, /if \(platform === 'joom'\) return openRegisterJoomGroupModal\(targetId\)/, 'Joom registration must use the existing Joom modal');
+  assert.match(html, /if \(platform === 'qoo10'\) return openRegisterQoo10GroupModal\(targetId\)/, 'Qoo10 registration must use the existing Qoo10 modal');
+  assert.match(html, /if \(platform === 'ebay'\) return openRegisterEbayGroupModal\(targetId\)/, 'eBay registration must use the existing eBay modal');
 });
 
 test('standalone products have master edit button and master tab stays platform-neutral', () => {

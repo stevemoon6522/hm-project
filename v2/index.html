@@ -11884,6 +11884,37 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return [mrQoo10ApplyDescriptionTemplate(templateHtml, row).trim(), imageBlock].filter(Boolean).join('\n');
   }
 
+  function mrQoo10MainImageSource(rows) {
+    const first = (rows || [])[0] || {};
+    const masterMain = typeof rshMasterMainImageUrl === 'function'
+      ? rshMasterMainImageUrl(first)
+      : rshNormalizeImageUrl(first.main_image || '', first.staronemall_url || window.location.href);
+    const fallback = rshNormalizeImageUrl(
+      first.main_image || first._main_image || first.shopee_option_image_url || '',
+      first.staronemall_url || window.location.href,
+    );
+    return String(masterMain || fallback || '').trim();
+  }
+
+  async function mrQoo10DataUrlToFile(dataUrl, fileName = 'qoo10-layered-cover.png') {
+    const value = String(dataUrl || '').trim();
+    if (!value) throw new Error('Qoo10 layered image conversion failed: empty data URL');
+    const resp = await fetch(value);
+    if (!resp.ok) throw new Error(`Qoo10 layered image conversion failed: HTTP ${resp.status}`);
+    const blob = await resp.blob();
+    return new File([blob], fileName, { type: blob.type || 'image/png' });
+  }
+
+  async function mrQoo10BuildLayeredMainImageUrl(rows) {
+    const sortedRows = rows || [];
+    const first = sortedRows[0] || {};
+    const mainImageUrl = mrQoo10MainImageSource(sortedRows);
+    if (!mainImageUrl) throw new Error('Qoo10 representative image is required before registration.');
+    const dataUrl = await rshBuildLayeredCoverDataUrl(mainImageUrl);
+    const file = await mrQoo10DataUrlToFile(dataUrl);
+    return await sdUploadProductImageFile(file, first, { kind: 'qoo10-layered-cover', prefix: 'v2-qoo10' });
+  }
+
   function mrQoo10ExistingItemCode(rows) {
     for (const row of rows || []) {
       const detail = rollupFor(row.id, 'qoo10')?.per_shop_detail || {};
@@ -12160,7 +12191,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         header_html: headerHtml,
         description_template_html: descriptionTemplateHtml,
         lifecycle_state: availableType === '2' ? 'pre_order' : 'ready_stock',
-        main_image: first.main_image || '',
+        main_image: mrQoo10MainImageSource(rows),
         description: mrQoo10BuildDescription(descriptionTemplateHtml, first) || first.description || first.components_extracted_en || '',
         options,
       },
@@ -12236,8 +12267,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (payload.publish.available_date_type === '2' && !payload.publish.release_date) throw new Error('예약발송은 출시일이 필요합니다.');
       if (!payload.publish.brand_no) throw new Error('Qoo10 BrandNo is required. Search and select the registered brand.');
       if (!payload.publish.header_html.trim()) throw new Error('Qoo10 Header HTML is required. Paste the fixed header template once.');
+      if (!_mrQoo10.existingItemCode && !payload.publish.main_image) throw new Error('Qoo10 representative image is required before registration.');
       _mrQoo10.publishInFlight = true;
       if (confirmBtn) confirmBtn.disabled = true;
+      if (!_mrQoo10.existingItemCode) {
+        mrQoo10Status('Building Qoo10 layered representative image...');
+        payload.publish.main_image = await mrQoo10BuildLayeredMainImageUrl(_mrQoo10.rows || []);
+      }
       mrQoo10Status('상품 설정 저장 중...');
       await mrQoo10PersistProductFields(payload);
       mrQoo10Status('Qoo10 등록 요청 중...');

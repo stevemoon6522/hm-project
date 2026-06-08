@@ -92,6 +92,14 @@ test('Qoo10 V2 modal defaults match lifecycle-aware listing policy', () => {
   assert.ok(html.includes("replace(/\\{\\{\\s*(TITLE|PRODUCT_TITLE)\\s*\\}\\}/gi"), 'Qoo10 description template should replace TITLE placeholders');
   assert.match(html, /mrQoo10BuildDescription\(descriptionTemplateHtml,\s*first\)/, 'Qoo10 description should combine template HTML with detail images');
   assert.match(html, /sdv2:qoo10:description_template_html/, 'Qoo10 description template should be persisted for reuse');
+  assert.match(html, /function\s+mrQoo10MainImageSource\s*\(/, 'Qoo10 modal should derive the representative image source before registration');
+  assert.match(html, /main_image:\s*mrQoo10MainImageSource\(rows\)/, 'Qoo10 create payload should start from the master representative image');
+  assert.match(html, /function\s+mrQoo10BuildLayeredMainImageUrl\s*\(/, 'Qoo10 modal should build a layered representative image URL');
+  assert.match(html, /rshBuildLayeredCoverDataUrl\(mainImageUrl\)/, 'Qoo10 representative image should reuse the Shopee layered-cover composition logic');
+  assert.match(html, /mrQoo10DataUrlToFile\(dataUrl\)/, 'Qoo10 layered representative image should be converted from data URL before upload');
+  assert.match(html, /sdUploadProductImageFile\(file,\s*first,\s*\{\s*kind:\s*'qoo10-layered-cover',\s*prefix:\s*'v2-qoo10'\s*\}\)/, 'Qoo10 layered representative image should be uploaded as a public product image URL');
+  assert.match(html, /payload\.publish\.main_image\s*=\s*await mrQoo10BuildLayeredMainImageUrl\(_mrQoo10\.rows \|\| \[\]\)/, 'Qoo10 create request should send the uploaded layered representative image URL');
+  assert.match(html, /!_mrQoo10\.existingItemCode && !payload\.publish\.main_image/, 'Qoo10 new registrations should require a representative image');
   assert.match(html, /mrQoo10LoadExistingItemCode/, 'Qoo10 modal should detect existing item codes before deciding create vs repair');
   assert.match(html, /mrQoo10RepairExistingListing/, 'Qoo10 modal should repair existing items instead of duplicate-registering them');
   assert.match(html, /mrQoo10LoadCountrySettings/, 'Qoo10 modal should load the Q10 fee settings row before rendering prices');

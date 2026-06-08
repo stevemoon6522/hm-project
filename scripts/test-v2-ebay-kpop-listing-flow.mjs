@@ -73,8 +73,8 @@ for (const token of [
   'data-open-ebay-single',
   'window.sdOpenRegisterEbayGroupModal',
   'function openRegisterEbayGroupModal',
-  'function sdHandleProductListEbayClick',
-  "document.addEventListener('click', sdHandleProductListEbayClick, true)",
+  'openRegisterEbayGroupModal(btn.dataset.openEbayGroup)',
+  'openRegisterEbayGroupModal(btn.dataset.openEbaySingle)',
   'mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows))',
   "'Country of Origin': ['Korea, South']",
 ]) {

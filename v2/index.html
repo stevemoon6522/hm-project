@@ -20204,6 +20204,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       {
         const crossSkuMap = new Map(); // sku → source_record_id of its card
         for (const g of groups) {
+          // A promotable card the operator deselected is NOT being registered,
+          // so its SKUs must not block other (selected) cards. Done/other cards
+          // stay in the map so already-taken SKUs are still detected.
+          const gPromotable = g.source_record_id && g.rows.some(r => r.status === 'preview' || r.status === 'failed');
+          if (gPromotable && !mrGroupSelected(g)) continue;
           for (const row of g.rows) {
             const sku = (row._sku || '').trim();
             if (!sku) continue;
@@ -20901,7 +20906,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           gst:          0,
           fspCcb:       0,
           importDuty:   0,
-          fixedServiceFee: Number(data.fixed_service_fee) || 0,
+          fixedServiceFee: Number(data.fixed_service_fee ?? 0.40) || 0,
           purchaseVat:  Number(data.purchase_vat)  || 0,
         };
         return _v2EbayExCountryCache;

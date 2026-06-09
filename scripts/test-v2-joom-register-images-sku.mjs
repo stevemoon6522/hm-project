@@ -18,6 +18,7 @@ const html = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
 const bridge = readFileSync(join(root, 'supabase', 'functions', 'joom-bridge', 'index.ts'), 'utf8');
 const edgeBridge = readFileSync(join(root, 'edge-functions', 'joom-bridge', 'index.ts'), 'utf8');
 const joomAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'joom.ts'), 'utf8');
+const decorativeEmojiMarkers = ['\u{1F4BF}', '\u{1F4CA}', '\u{1F4E6}', '\u{1F4CC}', '\u{26A0}\u{FE0F}'];
 
 const masterRegister = sliceBetween(
   html,
@@ -27,7 +28,7 @@ const masterRegister = sliceBetween(
 const promoteJoom = sliceBetween(
   masterRegister,
   'async function mrPromoteJoom(group)',
-  '// ── eBay registration modal + publish flow',
+  'eBay registration modal + publish flow',
 );
 const buildPayload = sliceBetween(
   bridge,
@@ -118,12 +119,16 @@ assert(!bridge.includes('if (action === "lookup-sku" && req.method === "GET") {\
 assert(bridge.includes('function readImageDimensions'), 'Joom detail splitter must read remote image dimensions without full decode');
 assert(bridge.includes('async function buildCloudinaryFetchTiles'), 'Joom detail splitter must support Cloudinary fetch transformations');
 assert(bridge.includes('/image/fetch/'), 'Joom detail splitter must produce Cloudinary fetch URLs');
+assert(bridge.includes('const tileSize = Math.max(img.width, img.height);') && bridge.includes('c_pad,b_white,w_${tileSize},h_${tileSize}'), 'Joom detail splitter must square-pad 1000x1500 boundary images instead of sending the raw rectangular URL');
+assert(bridge.includes('function joomPlainText') && bridge.includes('replace(/<[^>]+>/g, " ")') && bridge.includes('replace(/[^\\x09\\x0A\\x0D\\x20-\\x7E]/g, "")'), 'Joom bridge descriptions must be plain ASCII text without HTML tags');
+assert(decorativeEmojiMarkers.every((marker) => !bridge.includes(`"${marker}`)), 'Joom bridge description template must not send decorative emoji/non-ASCII markers');
+assert(bridge.includes('async function createOrUpdateJoomProduct') && bridge.includes('/products/update?sku=') && bridge.includes('recovered_existing_product_id'), 'Joom bridge publish must update an existing rejected SKU instead of blindly creating duplicates');
 assert(bridge.includes('async function uploadTileToProductStorage'), 'Joom detail splitter must fall back to Supabase Storage tile hosting');
 assert(bridge.includes('product-images'), 'Joom storage tile fallback must use the public product-images bucket');
 assert(bridge.includes('const JOOM_MAX_EXTRA_IMAGES = 20'), 'Joom bridge must cap extraImages at the API max of 20');
 assert(buildPayload.includes('if (!brandName) throw new Error("brand required")'), 'Joom bridge must reject publish payloads without a selected brand');
 assert(!bridge.includes('return [imageUrl];'), 'Joom detail processing must not fall back to sending unsquared source URLs');
-assert(bridge.includes('const fallback = stripKorean(opts.fallbackName || "").trim();') && bridge.indexOf('if (fallback) return titleWithPrefix(prefix, fallback).slice(0, 200);') < bridge.indexOf('if (opts.artist && opts.album)'), 'Joom bridge title should prefer fallback master name before artist/album shorthand');
+assert(bridge.includes('const fallback = joomPlainText(opts.fallbackName || "");') && bridge.indexOf('if (fallback) return titleWithPrefix(prefix, fallback).slice(0, 200);') < bridge.indexOf('if (artist && album)'), 'Joom bridge title should prefer sanitized fallback master name before artist/album shorthand');
 assert(bridge.includes('Math.min(Math.ceil(img.height / tileSize), 9)'), 'Joom detail splitter must use up to 9 square tiles');
 assert(bridge.includes('tile.crop(0, y, img.width, h)'), 'Joom detail splitter must crop tiles explicitly');
 assert(bridge.includes('Math.min(Math.ceil(img.width / tileSize), 9)') && bridge.includes('tile.crop(x, 0, w, img.height)'), 'Joom detail splitter must also tile wide rectangular images');
@@ -131,6 +136,10 @@ assert(bridge.includes('square.composite(img, x, y)'), 'Joom detail splitter mus
 assert(bridge.includes('square.encodeJPEG(90)'), 'Joom detail splitter must encode tiles as JPEGs before Cloudinary upload');
 assert(buildPayload.includes('if (cfg.image) v.mainImage = cfg.image'), 'Joom bridge must send option images to each variant');
 assert(edgeBridge.includes('const JOOM_MAX_EXTRA_IMAGES = 20') && edgeBridge.includes('function uniqueExtraImageUrls') && !edgeBridge.includes('return [imageUrl];'), 'edge-functions Joom bridge mirror should square-convert and de-duplicate extra images');
+assert(edgeBridge.includes('if (!brandName) throw new Error("brand required")'), 'edge-functions Joom bridge mirror should enforce selected brand parity');
+assert(edgeBridge.includes('function joomPlainText') && edgeBridge.includes('async function createOrUpdateJoomProduct'), 'edge-functions Joom bridge mirror should sanitize descriptions and recover existing rejected SKUs');
 assert(joomAdapter.includes("|| 'music_albums'"), 'platform-publish Joom adapter should default to Music Albums, not Record CD');
+assert(joomAdapter.includes('function brandFrom') && joomAdapter.includes('master.shopee_brand_name') && joomAdapter.includes('master.qoo10_brand_name'), 'platform-publish Joom adapter must reuse registered marketplace brand columns');
+assert(joomAdapter.includes('categoryId and brand'), 'platform-publish Joom adapter validation must block brandless Joom creates before hitting the bridge');
 
 console.log('v2 Joom register image/SKU checks passed');

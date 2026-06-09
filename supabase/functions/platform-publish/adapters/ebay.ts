@@ -9,6 +9,7 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const PLATFORM_BRIDGE_INTERNAL_TOKEN = (Deno as any)['env']['get']('PLATFORM_BRIDGE_INTERNAL_TOKEN') || '';
+const EBAY_DEFAULT_CATEGORY_ID = '176984'; // Music > CDs
 
 type BridgeContext = AdapterContext & { userAuthToken?: string };
 
@@ -139,16 +140,16 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   const master = ctx.masterProduct as Record<string, unknown>;
   const sku = s(master.sku).trim();
   const images = imagesFrom(master);
-  const categoryId = s(master.ebay_category_id).trim();
+  const categoryId = s(master.ebay_category_id, EBAY_DEFAULT_CATEGORY_ID).trim() || EBAY_DEFAULT_CATEGORY_ID;
   const description = s(master.description || master.shopee_description).trim();
   const priceUsd = await ebayPriceUsd(master);
   const weightG = n(master.weight_g, 0);
-  if (!sku || sku.length > 50 || !categoryId || !description || images.length === 0 || !priceUsd || weightG <= 0) {
+  if (!sku || sku.length > 50 || !description || images.length === 0 || !priceUsd || weightG <= 0) {
     return {
       ok: false,
       listingStatus: 'not_listed',
       errorCode: 'PLATFORM_VALIDATION_ERROR',
-      errorMsg: 'eBay create_listing requires sku<=50, ebay_category_id, description, image, price/cost and weight_g',
+      errorMsg: 'eBay create_listing requires sku<=50, description, image, price/cost and weight_g',
     };
   }
   const body = {

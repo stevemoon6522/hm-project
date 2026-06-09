@@ -43,6 +43,25 @@ function imagesFrom(master: Record<string, unknown>): string[] {
   return [...new Set(images)];
 }
 
+function cleanBrand(value: unknown): string {
+  return s(value).replace(/\s+/g, ' ').trim();
+}
+
+function usableBrand(value: unknown): string {
+  const brand = cleanBrand(value);
+  return brand && !/^no brand$/i.test(brand) ? brand : '';
+}
+
+function brandFrom(master: Record<string, unknown>): string {
+  return [
+    master.brand,
+    master.joom_brand_name,
+    master.shopee_brand_name,
+    master.qoo10_brand_name,
+    master.artist,
+  ].map(usableBrand).find(Boolean) || '';
+}
+
 function mapBridgeError(status: number, raw: any): AdapterErrorCode {
   const text = s(raw?.error || raw?.message || raw?.detail).toLowerCase();
   if (status === 401 || status === 403 || text.includes('auth') || text.includes('token')) return 'PLATFORM_AUTH_FAILED';
@@ -111,12 +130,13 @@ function buildCreateBody(ctx: BridgeContext): Record<string, unknown> | AdapterR
   const cost = n(master.cost_krw);
   const weight = n(master.weight_g);
   const categoryId = s(master.joom_category_id || (master as any).categoryId || 'music_albums').trim();
-  if (!sku || !cost || cost <= 0 || !weight || weight <= 0 || imgs.length === 0 || !categoryId) {
+  const brand = brandFrom(master);
+  if (!sku || !cost || cost <= 0 || !weight || weight <= 0 || imgs.length === 0 || !categoryId || !brand) {
     return {
       ok: false,
       listingStatus: 'not_listed',
       errorCode: 'PLATFORM_VALIDATION_ERROR',
-      errorMsg: 'Joom create_listing requires sku, cost_krw, weight_g, main_image and categoryId',
+      errorMsg: 'Joom create_listing requires sku, cost_krw, weight_g, main_image, categoryId and brand',
     };
   }
   const inventory = Math.max(0, Math.floor(n(master.inventory, 0)));
@@ -133,7 +153,7 @@ function buildCreateBody(ctx: BridgeContext): Record<string, unknown> | AdapterR
     enabled: true,
     namePrefix: '',
     contents: s(master.description),
-    brand: s(master.brand || master.artist || ''),
+    brand,
   };
 }
 

@@ -138,6 +138,25 @@ function stripKorean(s: string): string {
   return (s || "").replace(/[ㄱ-ㅎㅏ-ㅣ가-힣ᄀ-ᇿ]/g, "").replace(/\(\s*\)/g, "").replace(/\s+/g, " ").trim();
 }
 
+function joomPlainText(value: string): string {
+  return stripKorean(value || "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
 function hasLifecyclePrefix(value: string): boolean {
   return /^\s*\[(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\]/i.test(value || "");
 }
@@ -152,30 +171,32 @@ function titleWithPrefix(prefix: string, title: string): string {
 
 function buildTitle(opts: { namePrefix: string; artist?: string; album?: string; fallbackName?: string }): string {
   const prefix = (opts.namePrefix || "").trim();
-  const fallback = stripKorean(opts.fallbackName || "").trim();
+  const fallback = joomPlainText(opts.fallbackName || "");
   if (fallback) return titleWithPrefix(prefix, fallback).slice(0, 200);
-  if (opts.artist && opts.album) return titleWithPrefix(prefix, `${opts.artist.trim()} - ${opts.album.trim()}`).slice(0, 200);
+  const artist = joomPlainText(opts.artist || "");
+  const album = joomPlainText(opts.album || "");
+  if (artist && album) return titleWithPrefix(prefix, `${artist} - ${album}`).slice(0, 200);
   return titleWithPrefix(prefix, "K-POP Album").slice(0, 200);
 }
 
 function buildDescription(opts: { artist?: string; album?: string; contents?: string; fallbackName?: string }): string {
   const productTitle = buildTitle({ namePrefix: "", artist: opts.artist, album: opts.album, fallbackName: opts.fallbackName }) || "K-POP Album";
   const defaultContents = `- PACKAGE\n- CD\n- PHOTOCARD\n- POSTER (varies by version)`;
-  const contents = (opts.contents || "").trim() || defaultContents;
+  const contents = joomPlainText(opts.contents || "") || defaultContents;
   return [
     productTitle, "",
-    "💿 100% Official & Authentic K-POP Album",
+    "100% Official & Authentic K-POP Album",
     "- Brand new, sealed, and sourced directly from the official distributor", "",
-    "📊 Chart Certified",
+    "Chart Certified",
     "- This album counts toward Hanteo and Circle (Gaon) charts",
     "- Your purchase directly supports the artist's chart performance", "",
-    "📦 Fast & Secure Shipping",
+    "Fast & Secure Shipping",
     "- Ships from Korea with tracking",
     "- Safely packed with bubble wrap and a sturdy box",
     "- Items labeled [READY STOCK], [ON HAND], or [FAST DELIVERY] are dispatched within 1 business day", "",
-    "📌 Contents", "",
+    "Contents", "",
     contents, "",
-    "⚠️ Important Notice",
+    "Important Notice",
     "- The outer box is for protection and may have minor dents, scratches, or creases.",
     "- The outer vinyl wrap may have slight tears or marks due to shipping.",
     "- These are not considered defects and are not grounds for return or refund.",
@@ -196,6 +217,47 @@ function joomProductListingStatus(product: any): string {
   if (product?.hasActiveVersion === false) return "pending";
   if (state === "active" || state === "warning" || product?.hasActiveVersion === true) return "listed";
   return product?.id ? "pending" : "not_listed";
+}
+
+function isJoomLookupMiss(e: any): boolean {
+  const detail = String(e?.message || e || "");
+  const lower = detail.toLowerCase();
+  return lower.includes("not found")
+    || lower.includes("not_found")
+    || lower.includes("code=404")
+    || lower.includes("code=100");
+}
+
+async function lookupJoomProductBySku(sku: string): Promise<any | null> {
+  const productSku = String(sku || "").trim();
+  if (!productSku) return null;
+  try {
+    const product = await joomFetch(`/products?sku=${encodeURIComponent(productSku)}`);
+    return product?.id ? product : null;
+  } catch (e) {
+    if (isJoomLookupMiss(e)) return null;
+    throw e;
+  }
+}
+
+async function createOrUpdateJoomProduct(payload: any): Promise<{ data: any; operation: "create" | "update"; existingProductId?: string | null }> {
+  const productSku = String(payload?.sku || "").trim();
+  const existing = await lookupJoomProductBySku(productSku);
+  if (existing?.id && String(existing.state || "").toLowerCase() !== "archived") {
+    const { sku: _sku, ...updatePayload } = payload;
+    const data = await joomFetch(`/products/update?sku=${encodeURIComponent(productSku)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updatePayload),
+    });
+    return { data, operation: "update", existingProductId: existing.id || null };
+  }
+  const data = await joomFetch("/products/create", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return { data, operation: "create", existingProductId: existing?.id || null };
 }
 
 // ---------------------------------------------------------------------------
@@ -597,14 +659,12 @@ async function handleRequest(req: Request): Promise<Response> {
         });
       }
 
-      const data = await joomFetch("/products/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
+      const { data, operation, existingProductId } = await createOrUpdateJoomProduct(payload);
       const joomCategoryId = String(data.categoryId || data.category?.id || data.categoryByJoom?.id || "");
       return jsonResp({
         ok: true,
+        operation,
+        recovered_existing_product_id: existingProductId || null,
         joom_product_id: data.id,
         joom_sku: data.sku,
         state: data.state,
@@ -621,7 +681,8 @@ async function handleRequest(req: Request): Promise<Response> {
           enabled: v.enabled, size: v.size, shippingWeight: v.shippingWeight,
         })),
         infractions: ((data.review || {}).infractions || []).map((i: any) => ({
-          code: i.code, kind: i.kind, note: i.note, regions: i.regions,
+          code: i.code, kind: i.kind, note: i.note, description: i.description,
+          where: i.where, isPermanent: i.isPermanent, regions: i.regions,
         })),
         computed_listing_usd,
       });
@@ -638,14 +699,6 @@ async function handleRequest(req: Request): Promise<Response> {
       const id = (url.searchParams.get("id") || "").trim();
       if (!sku && !id) return jsonResp({ ok: false, error: "sku or id query param required" }, 400);
 
-      const isLookupMiss = (e: any) => {
-        const detail = String(e?.message || e || '');
-        const lower = detail.toLowerCase();
-        return lower.includes('not found')
-          || lower.includes('not_found')
-          || lower.includes('code=404')
-          || lower.includes('code=100');
-      };
       const lookupJoomProductBySkuOrId = async () => {
         let skuError: any = null;
         if (sku) {
@@ -653,7 +706,7 @@ async function handleRequest(req: Request): Promise<Response> {
             return await joomFetch(`/products?sku=${encodeURIComponent(sku)}`);
           } catch (e) {
             skuError = e;
-            if (!id || !isLookupMiss(e)) throw e;
+            if (!id || !isJoomLookupMiss(e)) throw e;
           }
         }
         if (id) return await joomFetch(`/products?id=${encodeURIComponent(id)}`);
@@ -699,7 +752,7 @@ async function handleRequest(req: Request): Promise<Response> {
       } catch (e: any) {
         console.error("[joom-bridge] lookup-sku failed", e);
         const detail = String(e?.message || e || '');
-        const miss = isLookupMiss(e);
+        const miss = isJoomLookupMiss(e);
         return jsonResp({
           ok: false,
           error: miss ? "joom_product_lookup_failed" : "upstream_joom_lookup_failed",

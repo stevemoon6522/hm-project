@@ -42,6 +42,11 @@ assert.deepEqual(
   'READY STOCK prefix must not become the eBay Release Title',
 );
 assert.deepEqual(
+  deriveFromTitle('[READY STOCK] (JENNIE) The 1st Studio Album [Ruby] (CD Digipack)'),
+  { artist: 'JENNIE', album: 'Ruby', version: 'CD Digipack', member: '' },
+  'JENNIE Ruby Digipack must derive eBay Artist/Release Title/Version from the actual listing title',
+);
+assert.deepEqual(
   deriveFromTitle('CORTIS (코르티스) The 2nd EP [GREENGREEN] (CORTIS Ball ver.)'),
   { artist: 'CORTIS', album: 'GREENGREEN', version: 'CORTIS Ball', member: '' },
   'existing CORTIS bracket-title derivation must keep working',
@@ -150,10 +155,11 @@ for (const token of [
   'data-open-ebay-group',
   'data-open-ebay-single',
   'window.sdOpenRegisterEbayGroupModal',
+  'function plBuildEbayPublishGroupFromProducts',
   'function openRegisterEbayGroupModal',
   "els.productBody.querySelectorAll('[data-open-ebay-group]')",
   "btn.addEventListener('click', () => openRegisterEbayGroupModal",
-  'mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows))',
+  'mrOpenEbayModal(plBuildEbayPublishGroupFromProducts(rows))',
   "'Country of Origin': ['Korea, South']",
 ]) {
   assert(html.includes(token), `V2 eBay K-pop UI missing token: ${token}`);

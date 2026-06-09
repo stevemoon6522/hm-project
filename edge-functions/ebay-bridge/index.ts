@@ -352,6 +352,7 @@ function validateAspects(aspects: Record<string, string[]>): void {
 const EBAY_KPOP_CD_CATEGORY_ID = "176984";
 const EBAY_KPOP_REQUIRED_ASPECTS = ["Artist", "Release Title"];
 const EBAY_HEADLESS_CONFIRM_PHRASE = "PUBLISH_EBAY_LISTING";
+const EBAY_HEADLESS_WITHDRAW_CONFIRM_PHRASE = "WITHDRAW_EBAY_LISTING";
 const EBAY_US_DIRECT_SHIPPING_RATES_KRW: Record<number, number> = {
   100: 7200,
   200: 8900,
@@ -1822,6 +1823,172 @@ async function handleRegisterProduct(body: any): Promise<Response> {
 }
 
 // ---------------------------------------------------------------------------
+// /withdraw-product handler -- headless published offer withdrawal + DB cleanup
+// ---------------------------------------------------------------------------
+
+async function loadHeadlessEbayMappedProduct(body: any): Promise<any> {
+  const product = await loadHeadlessProduct(body || {});
+  const sku = s(body?.sku || body?.ebay_sku || product.ebay_sku || product.sku).trim();
+  if (!sku) throw new Error("sku or ebay_sku is required");
+  return { product, sku };
+}
+
+function pickPublishedSingleOffer(offers: any[], preferredOfferId = ""): any | null {
+  const publishedFixedPrice = (offers || []).filter((offer: any) =>
+    String(offer?.status || "").toUpperCase() === "PUBLISHED"
+      && String(offer?.format || "").toUpperCase() === "FIXED_PRICE"
+  );
+  if (preferredOfferId) {
+    return publishedFixedPrice.find((offer: any) => String(offer?.offerId || "") === preferredOfferId) || null;
+  }
+  return publishedFixedPrice.length === 1 ? publishedFixedPrice[0] : null;
+}
+
+async function persistHeadlessEbayWithdrawResult(product: any, sku: string, reason = "operator_test_cleanup"): Promise<any> {
+  const now = new Date().toISOString();
+  const update = {
+    ebay_sku: sku,
+    ebay_item_id: null,
+    ebay_offer_id: null,
+    ebay_status: "WITHDRAWN",
+    ebay_last_synced_price: null,
+    ebay_last_synced_at: now,
+    ebay_mapping_status: null,
+    ebay_mapping_error: reason,
+    ebay_inventory_group_key: null,
+    ebay_listing_mode: null,
+    ebay_variation_axis: null,
+    ebay_variation_value: null,
+    ebay_variation_image_url: null,
+  };
+
+  let query = supabase.from("products").update(update);
+  if (product?.id) query = query.eq("id", product.id);
+  else query = query.eq("sku", sku);
+  const { error } = await query;
+  if (error) throw new Error(`product ebay mapping reset failed: ${error.message || String(error)}`);
+  return update;
+}
+
+async function handleWithdrawProduct(body: any): Promise<Response> {
+  const dryRun = body?.dry_run !== false && body?.dryRun !== false;
+  const resetLocal = body?.reset_local !== false && body?.resetLocal !== false;
+  const marketplaceId = s(body?.marketplaceId || body?.marketplace_id || "EBAY_US", "EBAY_US").trim() || "EBAY_US";
+  const { product, sku } = await loadHeadlessEbayMappedProduct(body || {});
+  const preferredOfferId = s(body?.offerId || body?.offer_id || product.ebay_offer_id).trim();
+
+  const offersRes = await ebayFetch(
+    `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`
+  );
+  if (offersRes.status !== 200 && offersRes.status !== 404) {
+    const passthroughStatus = (offersRes.status === 401 || offersRes.status === 403 || offersRes.status === 429)
+      ? offersRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_offer_lookup_failed",
+      upstream_status: offersRes.status,
+      upstream: formatEbayErrorBody(offersRes.body),
+    }, passthroughStatus);
+  }
+
+  const offers = offersRes.status === 200 ? (offersRes.body?.offers || []) : [];
+  const targetOffer = pickPublishedSingleOffer(offers, preferredOfferId);
+  const publishedOfferIds = offers
+    .filter((offer: any) => String(offer?.status || "").toUpperCase() === "PUBLISHED")
+    .map((offer: any) => String(offer?.offerId || ""))
+    .filter(Boolean);
+
+  if (dryRun) {
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      product_id: product.id || null,
+      sku,
+      marketplace_id: marketplaceId,
+      target_offer_id: targetOffer?.offerId || null,
+      target_listing_id: targetOffer?.listing?.listingId || targetOffer?.listingId || product.ebay_item_id || null,
+      published_offer_ids: publishedOfferIds,
+      reset_local: resetLocal,
+      can_withdraw: !!targetOffer,
+    });
+  }
+
+  const confirmed = body?.confirm === EBAY_HEADLESS_WITHDRAW_CONFIRM_PHRASE || body?.confirm_withdraw === true;
+  if (!confirmed) {
+    return jsonResp({
+      ok: false,
+      error: "confirm_required",
+      message: `Set dry_run=false and confirm="${EBAY_HEADLESS_WITHDRAW_CONFIRM_PHRASE}" to withdraw.`,
+      product_id: product.id || null,
+      sku,
+      marketplace_id: marketplaceId,
+    }, 400);
+  }
+
+  if (!targetOffer) {
+    if (!resetLocal) {
+      return jsonResp({
+        ok: false,
+        error: publishedOfferIds.length > 1 ? "ambiguous_published_offers" : "published_offer_not_found",
+        product_id: product.id || null,
+        sku,
+        marketplace_id: marketplaceId,
+        published_offer_ids: publishedOfferIds,
+      }, 409);
+    }
+    const persisted = await persistHeadlessEbayWithdrawResult(product, sku, "no_published_offer_found_local_reset");
+    return jsonResp({
+      ok: true,
+      dry_run: false,
+      product_id: product.id || null,
+      sku,
+      marketplace_id: marketplaceId,
+      remote_withdraw_skipped: true,
+      reason: "no_published_offer_found",
+      persisted,
+    });
+  }
+
+  const offerId = String(targetOffer.offerId);
+  // Official local doc: C:\dev\api-refs\marketplaces\ebay\sell\inventory.yaml
+  // POST /sell/inventory/v1/offer/{offerId}/withdraw ends a single-variation listing.
+  const withdrawRes = await ebayFetch(
+    `/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/withdraw`,
+    { method: "POST" }
+  );
+  if (withdrawRes.status !== 200) {
+    const passthroughStatus = (withdrawRes.status === 401 || withdrawRes.status === 403 || withdrawRes.status === 429)
+      ? withdrawRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_withdraw_failed",
+      upstream_status: withdrawRes.status,
+      upstream: formatEbayErrorBody(withdrawRes.body),
+      product_id: product.id || null,
+      sku,
+      ebay_offer_id: offerId,
+    }, passthroughStatus);
+  }
+
+  const persisted = resetLocal
+    ? await persistHeadlessEbayWithdrawResult(product, sku, "operator_test_cleanup")
+    : null;
+
+  return jsonResp({
+    ok: true,
+    dry_run: false,
+    product_id: product.id || null,
+    sku,
+    marketplace_id: marketplaceId,
+    ebay_offer_id: offerId,
+    ebay_item_id: targetOffer?.listing?.listingId || targetOffer?.listingId || product.ebay_item_id || null,
+    withdrawn: true,
+    persisted,
+    raw: withdrawRes.body || null,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // /healthz handler
 // ---------------------------------------------------------------------------
 
@@ -1874,6 +2041,15 @@ async function handleRequest(req: Request): Promise<Response> {
       if (internal) return internal;
       const body = await req.json().catch(() => ({}));
       return await handleRegisterProduct(body);
+    }
+
+    if (action === "withdraw-product" && req.method === "POST") {
+      // Headless cleanup path for repeatable test listings. It is intentionally
+      // server-only because it can end a live eBay listing.
+      const internal = requireInternalBridge(req);
+      if (internal) return internal;
+      const body = await req.json().catch(() => ({}));
+      return await handleWithdrawProduct(body);
     }
 
     const authResult = await requireAuthenticatedUser(req);

@@ -12,10 +12,11 @@ import { AUTH_CORS, requireAuthenticatedUser } from "../_shared/auth.ts";
 // Normalized doc path note: the Qoo10 docs live under
 // C:\dev\api-refs\marketplaces\qoo10\api-pages\*\*.md. This bridge uses
 // SetNewGoods, GetSellerDeliveryGroupInfo, SearchBrand, EditGoodsHeaderFooter,
-// UpdateGoods, EditGoodsContents, and EditGoodsInventory.
+// UpdateGoods, EditGoodsContents, EditGoodsInventory, and EditGoodsStatus.
 
 const QOO10_API_BASE = (Deno as any).env.get("QOO10_API_BASE") || "https://api.qoo10.jp/GMKT.INC.Front.QAPIService/ebayjapan.qapi";
 const QOO10_API_KEY = (Deno as any).env.get("QOO10_API_KEY") || (Deno as any).env.get("QOO10_CERT_KEY") || "";
+const QOO10_DELETE_CONFIRM_PHRASE = "DELETE_QOO10_LISTING";
 const QOO10_SCAN_STATUSES = String((Deno as any).env.get("QOO10_SCAN_STATUSES") || "S2,S1,S3,S0,S4,S5,S8")
   .split(",")
   .map((s) => s.trim())
@@ -26,6 +27,23 @@ const CORS: Record<string, string> = { ...AUTH_CORS, "Access-Control-Max-Age": "
 
 function jsonResp(body: any, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...CORS } });
+}
+
+function requireInternalBridge(req: Request): Response | null {
+  const expected = (Deno as any).env.get("PLATFORM_BRIDGE_INTERNAL_TOKEN") || "";
+  const actual = req.headers.get("x-platform-bridge-token") || "";
+  if (!expected || actual !== expected) {
+    return jsonResp({ ok: false, error: "internal_bridge_required" }, 403);
+  }
+  return null;
+}
+
+async function requireBridgeTokenOrAuthenticatedUser(req: Request): Promise<Response | null> {
+  const expected = (Deno as any).env.get("PLATFORM_BRIDGE_INTERNAL_TOKEN") || "";
+  const actual = req.headers.get("x-platform-bridge-token") || "";
+  if (expected && actual === expected) return null;
+  const authResult = await requireAuthenticatedUser(req);
+  return authResult.response || null;
 }
 
 function firstNonEmpty(...values: unknown[]): string {
@@ -521,6 +539,60 @@ async function handleEditInventory(req: Request): Promise<Response> {
   }, missingSkus.length === 0 ? 200 : 502);
 }
 
+async function handleDeleteListing(req: Request): Promise<Response> {
+  if (!QOO10_API_KEY) return jsonResp({ ok: false, error: "QOO10_API_KEY missing" }, 500);
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object") return jsonResp({ ok: false, error: "JSON body required" }, 400);
+
+  const dryRun = body.dry_run !== false && body.dryRun !== false;
+  const itemCode = clampString(body.item_code || body.ItemCode || body.goods_no || body.platform_item_id, 10);
+  const sellerCode = clampString(body.seller_code || body.SellerCode || body.sku, 100);
+  const status = clampString(body.status || body.Status || "3", 3);
+  if (!itemCode) return jsonResp({ ok: false, error: "ItemCode/item_code required" }, 400);
+  if (!["1", "2", "3"].includes(status)) return jsonResp({ ok: false, error: "Status must be 1, 2, or 3" }, 400);
+
+  if (dryRun) {
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      item_code: itemCode,
+      seller_code: sellerCode || null,
+      status,
+      command: "ItemsBasic.EditGoodsStatus",
+      effect: status === "3" ? "deleted" : "status_update",
+    });
+  }
+
+  const confirmed = body.confirm === QOO10_DELETE_CONFIRM_PHRASE || body.confirm_delete === true;
+  if (!confirmed) {
+    return jsonResp({
+      ok: false,
+      error: "confirm_required",
+      message: `Set dry_run=false and confirm="${QOO10_DELETE_CONFIRM_PHRASE}" to change Qoo10 listing status.`,
+      item_code: itemCode,
+      status,
+    }, 400);
+  }
+
+  // Official local doc: C:\dev\api-refs\marketplaces\qoo10\api-pages\상품-수정\10013-EditGoodsStatus.md
+  // Status=3 means Deleted/Discontinued.
+  const params: Record<string, string> = { ItemCode: itemCode, Status: status };
+  if (sellerCode) params.SellerCode = sellerCode;
+  const res = await qoo10Fetch("ItemsBasic.EditGoodsStatus", params);
+  if (res.status < 200 || res.status >= 300) return jsonResp({ ok: false, error: `qoo10_http_${res.status}`, raw: res.raw }, 502);
+  if (!qoo10Success(res.raw)) return jsonResp(failureFromRaw(res.raw, "qoo10_edit_goods_status_failed"), 502);
+
+  return jsonResp({
+    ok: true,
+    dry_run: false,
+    item_code: itemCode,
+    seller_code: sellerCode || null,
+    status,
+    deleted: status === "3",
+    raw: res.raw,
+  });
+}
+
 async function handleCreateListing(req: Request): Promise<Response> {
   if (!QOO10_API_KEY) return jsonResp({ ok: false, error: "QOO10_API_KEY missing" }, 500);
   const body = await req.json().catch(() => null);
@@ -593,8 +665,8 @@ async function handleRequest(req: Request): Promise<Response> {
 
   const url = new URL(req.url);
   const action = url.pathname.split("/").filter(Boolean).pop() || "";
-  const authResult = await requireAuthenticatedUser(req);
-  if (authResult.response) return authResult.response;
+  const authResponse = await requireBridgeTokenOrAuthenticatedUser(req);
+  if (authResponse) return authResponse;
 
   try {
     if (action === "healthz" && req.method === "GET") return await handleHealthz();
@@ -607,6 +679,7 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === "edit-contents" && req.method === "POST") return await handleEditContents(req);
     if (action === "edit-inventory" && req.method === "POST") return await handleEditInventory(req);
     if (action === "header-footer" && req.method === "POST") return await handleHeaderFooter(req);
+    if (action === "delete" && req.method === "POST") return await handleDeleteListing(req);
     return jsonResp({ ok: false, error: `unknown action: ${action} (${req.method})` }, 404);
   } catch (e: any) {
     console.error("[qoo10-bridge] error", e);

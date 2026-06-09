@@ -80,6 +80,7 @@ const OPERATING_REGION_SET = new Set(OPERATING_REGIONS);
 const DEFAULT_REFRESH_THRESHOLD_SEC = 7200;
 const DEFAULT_REFRESH_ATTEMPTS = 3;
 const DEFAULT_RETRY_BASE_MS = 1000;
+const SHOPEE_HEADLESS_DELETE_CONFIRM_PHRASE = 'DELETE_SHOPEE_GLOBAL_ITEM';
 const PROXY_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
 const UPLOAD_IMAGE_MIN_DIMENSION = 300;
@@ -1978,11 +1979,131 @@ async function listItemsForRegion(region: string, item_status = 'NORMAL', max_it
 
 function jsonResp(b: any, s = 200) { return new Response(JSON.stringify(b, null, 2), { status: s, headers: { 'Content-Type': 'application/json', ...CORS } }); }
 
+function requireInternalBridge(req: Request): Response | null {
+  const expected = Deno.env.get('PLATFORM_BRIDGE_INTERNAL_TOKEN') || '';
+  const actual = req.headers.get('x-platform-bridge-token') || '';
+  if (!expected || actual !== expected) {
+    return jsonResp({ ok: false, error: 'internal_bridge_required' }, 403);
+  }
+  return null;
+}
+
+async function resolveHeadlessGlobalItemId(body: any): Promise<{ ok: true; global_item_id: number; source: string; rows?: any[] } | { ok: false; status: number; error: string; rows?: any[] }> {
+  const explicit = Number(body.global_item_id || body.globalItemId || 0);
+  if (Number.isFinite(explicit) && explicit > 0) {
+    return { ok: true, global_item_id: Math.floor(explicit), source: 'body.global_item_id' };
+  }
+
+  const productId = String(body.product_id || body.productId || '').trim();
+  if (!productId) return { ok: false, status: 400, error: 'global_item_id or product_id required' };
+
+  const { data, error } = await supabase
+    .from('product_shopee_listings')
+    .select('product_id,region,global_item_id,shop_id,shop_item_id,status')
+    .eq('product_id', productId)
+    .not('global_item_id', 'is', null);
+  if (error) return { ok: false, status: 500, error: `product_shopee_listings lookup failed: ${error.message}` };
+
+  const rows = Array.isArray(data) ? data : [];
+  const ids = [...new Set(rows.map((row: any) => Number(row.global_item_id)).filter((id) => Number.isFinite(id) && id > 0))];
+  if (!ids.length) return { ok: false, status: 404, error: 'global_item_id mapping not found', rows };
+  if (ids.length > 1) return { ok: false, status: 409, error: 'ambiguous_global_item_id_mapping', rows };
+  return { ok: true, global_item_id: ids[0], source: 'product_shopee_listings', rows };
+}
+
+async function markShopeeGlobalItemDeleted(globalItemId: number, body: any, raw: any) {
+  if (body.reset_local === false || body.resetLocal === false) return null;
+  const now = new Date().toISOString();
+  const update: Record<string, unknown> = {
+    status: 'deleted',
+    last_error: null,
+    last_synced_at: now,
+    updated_at: now,
+  };
+  let query = supabase
+    .from('product_shopee_listings')
+    .update(update)
+    .eq('global_item_id', globalItemId)
+    .select('product_id,region,global_item_id,shop_id,shop_item_id,status');
+  const productId = String(body.product_id || body.productId || '').trim();
+  if (productId) query = query.eq('product_id', productId);
+  const { data, error } = await query;
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, rows: data || [], raw };
+}
+
+async function handleHeadlessDeleteGlobalItem(req: Request, url: URL): Promise<Response> {
+  const internal = requireInternalBridge(req);
+  if (internal) return internal;
+  const body = await req.json().catch(() => ({}));
+  const dryRun = body.dry_run !== false && body.dryRun !== false;
+  const region = String(body.region || url.searchParams.get('region') || 'SG').toUpperCase();
+  const resolved = await resolveHeadlessGlobalItemId(body);
+  if (!resolved.ok) return jsonResp({ ok: false, error: resolved.error, rows: resolved.rows || [] }, resolved.status);
+
+  if (dryRun) {
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      region,
+      global_item_id: resolved.global_item_id,
+      source: resolved.source,
+      mapped_rows: resolved.rows || [],
+      reset_local: body.reset_local !== false && body.resetLocal !== false,
+      command: '/api/v2/global_product/delete_global_item',
+    });
+  }
+
+  const confirmed = body.confirm === SHOPEE_HEADLESS_DELETE_CONFIRM_PHRASE || body.confirm_delete === true;
+  if (!confirmed) {
+    return jsonResp({
+      ok: false,
+      error: 'confirm_required',
+      message: `Set dry_run=false and confirm="${SHOPEE_HEADLESS_DELETE_CONFIRM_PHRASE}" to delete the Shopee global item.`,
+      region,
+      global_item_id: resolved.global_item_id,
+    }, 400);
+  }
+
+  // Official local doc: C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\global_product\v2.global_product.delete_global_item.json
+  const result = await merchantApiCall(region, '/api/v2/global_product/delete_global_item', {
+    method: 'POST',
+    body: { global_item_id: resolved.global_item_id },
+  });
+  const failureList = Array.isArray(result?.response?.failure_delete_item) ? result.response.failure_delete_item : [];
+  if (result.error || failureList.length) {
+    return jsonResp({
+      ok: false,
+      region,
+      global_item_id: resolved.global_item_id,
+      error: result.error || 'partial_delete_failure',
+      message: result.message || '',
+      failure_delete_item: failureList,
+      raw: result,
+    }, 502);
+  }
+
+  const persisted = await markShopeeGlobalItemDeleted(resolved.global_item_id, body, result);
+  return jsonResp({
+    ok: true,
+    dry_run: false,
+    region,
+    global_item_id: resolved.global_item_id,
+    deleted: true,
+    persisted,
+    raw: result,
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
   const url = new URL(req.url);
   const action = url.pathname.split('/').filter(Boolean).pop() || '';
   const region = url.searchParams.get('region') || 'SG';
+
+  if (action === 'delete_global_item_headless' && req.method === 'POST') {
+    return await handleHeadlessDeleteGlobalItem(req, url);
+  }
 
   // Step 0 auth gate (plan v2.2): every mutating route requires a real signed-in
   // user. Read-only PUBLIC_ACTIONS skip the check so dashboards/probes that have

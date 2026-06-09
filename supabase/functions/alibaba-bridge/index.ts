@@ -52,17 +52,7 @@ async function signTop(apiPath: string, params: Record<string, string>, excludeK
     .filter((k) => k !== 'sign' && !excludeKeys.has(k) && params[k] != null && params[k] !== '')
     .sort();
   const concat = keys.map((k) => `${k}${params[k]}`).join('');
-  const message = `${apiPath}${concat}`;
-  const sign = await hmacSha256HexUpper(ALIBABA_APP_SECRET, message);
-  // TEMP DEBUG (remove once auth works): never logs the secret value (only its
-  // length + an HMAC fingerprint), and REDACTS access_token from the base string
-  // so no live per-seller token is ever written to logs.
-  try {
-    const fp = (await hmacSha256HexUpper(ALIBABA_APP_SECRET, 'fingerprint')).slice(0, 12);
-    const safeMessage = `${apiPath}` + keys.map((k) => `${k}${k === 'access_token' ? '<redacted>' : params[k]}`).join('');
-    console.log(JSON.stringify({ dbg: 'alibaba_sign', apiPath, keys, base_redacted: safeMessage, sign, secret_len: ALIBABA_APP_SECRET.length, secret_fp: fp }));
-  } catch (_) { /* ignore debug errors */ }
-  return sign;
+  return hmacSha256HexUpper(ALIBABA_APP_SECRET, `${apiPath}${concat}`);
 }
 
 function notReady(): Response | null {
@@ -161,20 +151,13 @@ function buildProductInfo(b: Record<string, any>) {
 // Route handlers
 // ---------------------------------------------------------------------------
 async function handleHealthz(): Promise<Response> {
-  // TEMP DEBUG: secret_len + HMAC fingerprint (never the secret value) so the
-  // stored App Secret can be verified without an OAuth code.
-  let secret_fp = '';
-  try { if (ALIBABA_APP_SECRET) secret_fp = (await hmacSha256HexUpper(ALIBABA_APP_SECRET, 'fingerprint')).slice(0, 12); } catch { /* ignore */ }
   return jsonResp({
     ok: true,
     service: 'alibaba-bridge',
-    version: 4,
+    version: 5,
     bridge_enabled: ALIBABA_BRIDGE_ENABLED,
-    app_key: ALIBABA_APP_KEY,
-    app_key_len: ALIBABA_APP_KEY.length,
+    app_key_configured: Boolean(ALIBABA_APP_KEY),
     secret_configured: Boolean(ALIBABA_APP_SECRET),
-    secret_len: ALIBABA_APP_SECRET.length,
-    secret_fp,
     access_token_configured: Boolean(ALIBABA_ACCESS_TOKEN),
     gateway: ALIBABA_GATEWAY_URL,
   });
@@ -190,12 +173,7 @@ async function handleAuthToken(req: Request): Promise<Response> {
   if (!code) return jsonResp({ ok: false, error: 'code required (OAuth authorization code)' }, 400);
   const { status, raw } = await topRequest('/auth/token/create', { code }, { needsToken: false });
   const token = norm(raw?.access_token);
-  if (!token) {
-    // TEMP DEBUG: return secret fingerprint (NOT the secret) so we can confirm
-    // the stored ALIBABA_APP_SECRET is intact when diagnosing signature errors.
-    const fp = (await hmacSha256HexUpper(ALIBABA_APP_SECRET, 'fingerprint')).slice(0, 12);
-    return jsonResp({ ok: false, error: 'auth_token_failed', status, raw, _debug: { app_key: ALIBABA_APP_KEY, secret_len: ALIBABA_APP_SECRET.length, secret_fp: fp } }, 502);
-  }
+  if (!token) return jsonResp({ ok: false, error: 'auth_token_failed', status, raw }, 502);
   return jsonResp({ ok: true, access_token: token, refresh_token: raw?.refresh_token || null, expires_in: raw?.expires_in || null, account_id: raw?.account_id || null, country: raw?.country || null, raw });
 }
 

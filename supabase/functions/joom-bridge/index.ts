@@ -15,6 +15,7 @@ const JOOM_V3 = "https://api-merchant.joom.com/api/v3";
 
 const EXCHANGE_RATE = 1380;
 const SALES_FEE = 0.15;
+const JOOM_DELETE_CONFIRM_PHRASE = "DELETE_JOOM_PRODUCT";
 
 // Fallback hardcoded categories (used if Joom /categories API fails)
 const FALLBACK_CATEGORIES: Record<string, string> = {
@@ -799,16 +800,37 @@ async function handleRequest(req: Request): Promise<Response> {
       const denied = await requireBridgeTokenOrAuthenticatedUser(req);
       if (denied) return denied;
       const body = await req.json();
-      const productId = body.productId;
+      const dryRun = body?.dry_run !== false && body?.dryRun !== false;
+      const productId = body.productId || body.product_id || body.sku;
       if (!productId) return jsonResp({ ok: false, error: "productId 필요" }, 400);
       const isHexId = /^[a-f0-9]{24}$/.test(productId);
       const param = isHexId ? `id=${encodeURIComponent(productId)}` : `sku=${encodeURIComponent(productId)}`;
+      if (dryRun) {
+        return jsonResp({
+          ok: true,
+          dry_run: true,
+          productId,
+          remove_param: param,
+          command: "/products/remove",
+        });
+      }
+      const confirmed = body.confirm === JOOM_DELETE_CONFIRM_PHRASE || body.confirm_delete === true;
+      if (!confirmed) {
+        return jsonResp({
+          ok: false,
+          error: "confirm_required",
+          message: `Set dry_run=false and confirm="${JOOM_DELETE_CONFIRM_PHRASE}" to remove the Joom product.`,
+          productId,
+        }, 400);
+      }
+      // Official local doc: C:\dev\api-refs\marketplaces\joom\openapi.yaml
+      // POST /products/remove archives/removes the product and all variants.
       await joomFetch(`/products/remove?${param}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
       });
-      return jsonResp({ ok: true, deleted: productId });
+      return jsonResp({ ok: true, dry_run: false, deleted: productId });
     }
 
     return jsonResp({ ok: false, error: `unknown action: ${action} (${req.method})` }, 404);

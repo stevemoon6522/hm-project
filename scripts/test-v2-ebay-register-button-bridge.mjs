@@ -56,8 +56,17 @@ assert(
 // The publish call inside openRegisterEbayGroupModal must go through the window
 // bridge, never a bare `mrOpenEbayModal(...)` reference that ReferenceErrors.
 assert(
-  html.includes('window.mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows))'),
-  'Product-list eBay button must open the modal through window.mrOpenEbayModal',
+  html.includes('function plBuildEbayPublishGroupFromProducts'),
+  'Product-list eBay button must build an eBay-specific publish group before opening the modal',
+);
+assert(
+  !html.includes('window.mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows))')
+    && html.includes('await window.mrOpenEbayModal(plBuildEbayPublishGroupFromProducts(rows))'),
+  'Product-list eBay button must open the modal with the eBay publish-group adapter, not the Joom adapter',
+);
+assert(
+  html.includes('function mrOpenEbayModal(group) {\n      return mrOpenEbayModalDraft(group);\n    }'),
+  'mrOpenEbayModal must return its modal-opening promise so product-list openers can catch failures',
 );
 
 // And it must guard against the bridge being uninitialized, like Joom does.
@@ -128,6 +137,49 @@ assert(
     && !ebayAdapter.includes('requires sku<=50, ebay_category_id'),
   'platform-publish eBay adapter validation must not block products that rely on the default eBay category',
 );
+
+const ebayPublishGroupBuilderFn = new Function(
+  'rshSortedProducts',
+  'plIsGroupedVariant',
+  'plOptionDisplay',
+  'plParentSku',
+  'crypto',
+  'window',
+  `const PLATFORM_EBAY_DEFAULT_CATEGORY_ID = '176984'; ${extractFunctionBlock(html, 'plBuildEbayPublishGroupFromProducts')}; return plBuildEbayPublishGroupFromProducts;`,
+)(
+  (rows) => rows,
+  () => false,
+  (row) => row.option_name || '',
+  (rows) => rows[0]?.sku || '',
+  { randomUUID: () => 'fixed-ebay-idempotency-token' },
+  { mrDeriveFromTitle: () => ({ artist: 'JENNIE', album: 'Ruby', version: 'CD Digipack' }) },
+);
+
+{
+  const group = ebayPublishGroupBuilderFn([{
+    id: 'jennie-ruby-digipack',
+    sku: 'F4-JEN-RUBY-DIG-',
+    product_name: '[READY STOCK] (JENNIE) The 1st Studio Album [Ruby] (CD Digipack)',
+    option_name: 'CD Digipack',
+    cost_krw: 13127,
+    weight_g: 150,
+    inventory: 5,
+    main_image: 'https://cdn.example.com/jennie-ruby-main.jpg',
+    extra_images: ['https://cdn.example.com/jennie-ruby-detail.jpg'],
+    ebay_category_id: null,
+  }]);
+  assert.equal(group.source_record_id, 'jennie-ruby-digipack', 'eBay publish group must preserve the single product id');
+  assert.equal(group.idempotency_token, 'fixed-ebay-idempotency-token', 'eBay publish group must carry an idempotency token');
+  assert.equal(group._platform, 'ebay', 'eBay publish group must be marked for the eBay modal');
+  assert.equal(group.rows[0]._sku, 'F4-JEN-RUBY-DIG-', 'eBay publish row must expose the SKU used by Inventory API');
+  assert.equal(group.rows[0]._cost_krw, 13127, 'eBay publish row must expose source cost for USD price calculation');
+  assert.equal(group.rows[0]._weight_g, 150, 'eBay publish row must expose package weight for Inventory API packageWeightAndSize');
+  assert.equal(group.rows[0]._main_image, 'https://cdn.example.com/jennie-ruby-main.jpg', 'eBay publish row must expose a main image');
+  assert.equal(group.rows[0]._ebayCategory, '176984', 'eBay publish row must default K-pop CD listings to Music > CDs');
+  assert.equal(group.rows[0].artist, 'JENNIE', 'eBay publish row must derive Artist for item specifics');
+  assert.equal(group.rows[0].album, 'Ruby', 'eBay publish row must derive Release Title for item specifics');
+}
+
 assert(
   platformRender.includes('const visibleGroups = platformVisibleGroups(platform);')
     && platformRender.includes('const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;')

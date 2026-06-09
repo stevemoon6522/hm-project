@@ -155,10 +155,11 @@ for (const token of [
   'data-open-ebay-group',
   'data-open-ebay-single',
   'window.sdOpenRegisterEbayGroupModal',
+  'function plBuildEbayPublishGroupFromProducts',
   'function openRegisterEbayGroupModal',
   "els.productBody.querySelectorAll('[data-open-ebay-group]')",
   "btn.addEventListener('click', () => openRegisterEbayGroupModal",
-  'mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows))',
+  'mrOpenEbayModal(plBuildEbayPublishGroupFromProducts(rows))',
   "'Country of Origin': ['Korea, South']",
 ]) {
   assert(html.includes(token), `V2 eBay K-pop UI missing token: ${token}`);

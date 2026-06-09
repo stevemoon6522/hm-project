@@ -12846,6 +12846,70 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     };
   }
 
+  function plBuildEbayPublishGroupFromProducts(rows) {
+    const allRows = rshSortedProducts(rows || []);
+    const variantRows = allRows.filter(plIsGroupedVariant);
+    const sortedRows = variantRows.length ? variantRows : allRows;
+    const first = sortedRows[0] || {};
+    const tierNames = Array.isArray(first.variation_tier_names) && first.variation_tier_names.length
+      ? first.variation_tier_names
+      : ['Version'];
+    const twoAxis = tierNames.length > 1 || sortedRows.some((row) => Array.isArray(row.variation_option_names) && row.variation_option_names.length > 1);
+    const parentSku = plParentSku(sortedRows);
+    const adaptedRows = sortedRows.map((row, idx) => {
+      const optionNames = Array.isArray(row.variation_option_names) && row.variation_option_names.length
+        ? row.variation_option_names
+        : [plOptionDisplay(row) || row.option_name || 'CD Digipack'];
+      const derived = typeof window.mrDeriveFromTitle === 'function'
+        ? window.mrDeriveFromTitle(row.product_name || '')
+        : { artist: '', album: '', version: '' };
+      const artist = row.artist || derived.artist || '';
+      const album = row.album || derived.album || '';
+      const version = row.ebay_variation_value || derived.version || optionNames[0] || `Option ${idx + 1}`;
+      const mainImage = row.shopee_option_image_url || row.main_image || '';
+      const quantity = Number(row.inventory || row.stock || row.quantity || 0);
+      return Object.assign({}, row, {
+        status: row.status || 'ready',
+        url: row.staronemall_url || '',
+        observed: {
+          title: row.product_name || '',
+          main_image_urls: row.main_image ? [row.main_image] : [],
+          detail_image_urls: Array.isArray(row.extra_images) ? row.extra_images : [],
+        },
+        artist,
+        album,
+        _sku: row.ebay_sku || row.sku || '',
+        _opt0: version || optionNames[0] || row.option_name || 'CD Digipack',
+        _opt1: optionNames[1] || '',
+        _cost_krw: Number(row.cost_krw || row.sourcing_price || 0),
+        _weight_g: Number(row.weight_g || 0),
+        _main_image: mainImage,
+        _extra_images: Array.isArray(row.extra_images) ? row.extra_images : [],
+        _components_en: row.components_extracted_en || '',
+        _tierNames: tierNames,
+        _twoAxis: twoAxis,
+        _ebayCategory: String(row.ebay_category_id || PLATFORM_EBAY_DEFAULT_CATEGORY_ID),
+        _ebayInventoryGroupKey: row.ebay_inventory_group_key || '',
+        _ebayVariationAxis: row.ebay_variation_axis || 'Version',
+        _ebayVariationValue: row.ebay_variation_value || version || '',
+        _ebayOptionImageUrl: row.ebay_variation_image_url || row.shopee_option_image_url || row.main_image || '',
+        _ebayMainImage: row.main_image || mainImage,
+        _ebayPriceUsd: Number(row.ebay_last_synced_price || 0),
+        _ebayQuantity: Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 3,
+        _ebayRecordLabel: row.record_label || artist,
+      });
+    });
+    return {
+      source_record_id: first.product_group_id || first.id || null,
+      idempotency_token: crypto.randomUUID(),
+      tierNames,
+      twoAxis,
+      rows: adaptedRows,
+      _platform: 'ebay',
+      _cachedParentSku: parentSku,
+    };
+  }
+
   let _mrQoo10 = {
     rows: [],
     shippingGroups: [],
@@ -13456,7 +13520,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       showToast('eBay 등록할 상품이 없습니다.', 'err');
       return;
     }
-    window.mrOpenEbayModal(plBuildJoomPublishGroupFromProducts(rows));
+    try {
+      await window.mrOpenEbayModal(plBuildEbayPublishGroupFromProducts(rows));
+    } catch (e) {
+      console.error('[openRegisterEbayGroupModal] failed to open eBay modal:', e);
+      showToast(`eBay 등록 모달 열기 실패: ${e.message || e}`, 'err');
+    }
   }
   window.sdOpenRegisterEbayGroupModal = openRegisterEbayGroupModal;
 
@@ -24833,7 +24902,7 @@ Contact
     }
 
     function mrOpenEbayModal(group) {
-      void mrOpenEbayModalDraft(group);
+      return mrOpenEbayModalDraft(group);
     }
 
     function mrEbayBridgeError(status, raw) {

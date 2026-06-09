@@ -378,6 +378,7 @@ const EBAY_KPOP_CD_CATEGORY_ID = "176984";
 const EBAY_KPOP_REQUIRED_ASPECTS = ["Artist", "Release Title"];
 const EBAY_HEADLESS_CONFIRM_PHRASE = "PUBLISH_EBAY_LISTING";
 const EBAY_HEADLESS_WITHDRAW_CONFIRM_PHRASE = "WITHDRAW_EBAY_LISTING";
+const EBAY_HEADLESS_POLICY_CONFIRM_PHRASE = "UPDATE_EBAY_FULFILLMENT_POLICY";
 const EBAY_US_DIRECT_SHIPPING_RATES_KRW: Record<number, number> = {
   100: 7200,
   200: 8900,
@@ -1900,6 +1901,260 @@ function pickPublishedSingleOffer(offers: any[], preferredOfferId = ""): any | n
   return publishedFixedPrice.length === 1 ? publishedFixedPrice[0] : null;
 }
 
+function compactDefinedObject(input: Record<string, unknown>): Record<string, unknown> {
+  const output: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input || {})) {
+    if (value === undefined || value === null) continue;
+    output[key] = value;
+  }
+  return output;
+}
+
+function listingIdFromOffer(offer: any, fallback = ""): string | null {
+  const listingId = s(offer?.listing?.listingId || offer?.listingId || fallback).trim();
+  return listingId || null;
+}
+
+function ebayPolicyTargetForBody(body: any, lifecycleState: unknown): {
+  lifecycleState: "pre_order" | "ready_stock";
+  fulfillmentPolicyId: string;
+  fulfillmentPolicyName: string;
+} {
+  const requestedPolicyId = s(body?.fulfillmentPolicyId || body?.fulfillment_policy_id).trim();
+  if (!requestedPolicyId) return ebayFulfillmentPolicyForLifecycle(lifecycleState);
+
+  const normalizedLifecycle = normalizeEbayLifecycleState(lifecycleState);
+  const fallbackLifecycle: "pre_order" | "ready_stock" =
+    requestedPolicyId === EBAY_READY_STOCK_FULFILLMENT_POLICY_ID ? "ready_stock" : "pre_order";
+  const lifecycle = normalizedLifecycle || fallbackLifecycle;
+  const policyName =
+    s(body?.fulfillmentPolicyName || body?.fulfillment_policy_name).trim()
+    || (requestedPolicyId === EBAY_READY_STOCK_FULFILLMENT_POLICY_ID ? EBAY_READY_STOCK_FULFILLMENT_POLICY_NAME : "")
+    || (requestedPolicyId === EBAY_PRE_ORDER_FULFILLMENT_POLICY_ID ? EBAY_PRE_ORDER_FULFILLMENT_POLICY_NAME : "")
+    || "CUSTOM";
+
+  return {
+    lifecycleState: lifecycle,
+    fulfillmentPolicyId: requestedPolicyId,
+    fulfillmentPolicyName: policyName,
+  };
+}
+
+function buildOfferPolicyUpdatePayload(offer: any, listingPolicies: any, product: any, body: any): Record<string, unknown> {
+  const allowedOfferFields = [
+    "availableQuantity",
+    "categoryId",
+    "charity",
+    "extendedProducerResponsibility",
+    "hideBuyerDetails",
+    "includeCatalogProductDetails",
+    "listingDescription",
+    "listingDuration",
+    "listingStartDate",
+    "lotSize",
+    "merchantLocationKey",
+    "pricingSummary",
+    "quantityLimitPerBuyer",
+    "regulatory",
+    "secondaryCategoryId",
+    "storeCategoryNames",
+    "tax",
+  ];
+  const payload: Record<string, unknown> = {};
+  for (const field of allowedOfferFields) {
+    if (offer?.[field] !== undefined && offer?.[field] !== null) payload[field] = offer[field];
+  }
+
+  const fallbackQuantity = Math.floor(n(body?.quantity ?? product?.inventory, 0));
+  if (!payload.availableQuantity && fallbackQuantity > 0) payload.availableQuantity = fallbackQuantity;
+  if (!payload.categoryId && product?.ebay_category_id) payload.categoryId = String(product.ebay_category_id);
+  if (!payload.includeCatalogProductDetails) payload.includeCatalogProductDetails = false;
+  if (!payload.listingDescription) {
+    const description = s(product?.description || product?.product_name || product?.title).trim();
+    if (description) payload.listingDescription = description;
+  }
+  if (!payload.listingDuration) payload.listingDuration = LISTING_DURATION;
+  if (!payload.merchantLocationKey) payload.merchantLocationKey = MERCHANT_LOCATION_KEY;
+  if (!payload.pricingSummary && n(product?.ebay_last_synced_price, 0) > 0) {
+    payload.pricingSummary = {
+      price: {
+        value: n(product.ebay_last_synced_price, 0).toFixed(2),
+        currency: "USD",
+      },
+    };
+  }
+  payload.listingPolicies = compactDefinedObject(listingPolicies || {});
+
+  return compactDefinedObject(payload);
+}
+
+function missingPublishedOfferUpdateFields(payload: Record<string, unknown>): string[] {
+  const listingPolicies: any = payload.listingPolicies || {};
+  const pricingSummary: any = payload.pricingSummary || {};
+  const missing: string[] = [];
+  if (!payload.categoryId) missing.push("categoryId");
+  if (!payload.listingDescription) missing.push("listingDescription");
+  if (!payload.listingDuration) missing.push("listingDuration");
+  if (!payload.merchantLocationKey) missing.push("merchantLocationKey");
+  if (!payload.pricingSummary || !pricingSummary.price?.value || !pricingSummary.price?.currency) missing.push("pricingSummary.price");
+  if (!payload.listingPolicies) missing.push("listingPolicies");
+  if (!listingPolicies.fulfillmentPolicyId) missing.push("listingPolicies.fulfillmentPolicyId");
+  if (!listingPolicies.paymentPolicyId) missing.push("listingPolicies.paymentPolicyId");
+  if (!listingPolicies.returnPolicyId) missing.push("listingPolicies.returnPolicyId");
+  return missing;
+}
+
+async function handleEnsureFulfillmentPolicy(body: any): Promise<Response> {
+  const dryRun = body?.dry_run !== false && body?.dryRun !== false;
+  const marketplaceId = s(body?.marketplaceId || body?.marketplace_id || "EBAY_US", "EBAY_US").trim() || "EBAY_US";
+  const { product, sku } = await loadHeadlessEbayMappedProduct(body || {});
+  const preferredOfferId = s(body?.offerId || body?.offer_id || product.ebay_offer_id).trim();
+  const lifecycleInput = body?.lifecycleState || body?.lifecycle_state || product.lifecycle_state;
+  const policyTarget = ebayPolicyTargetForBody(body || {}, lifecycleInput);
+
+  const offersRes = await ebayFetch(
+    `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`
+  );
+  if (offersRes.status !== 200 && offersRes.status !== 404) {
+    const passthroughStatus = (offersRes.status === 401 || offersRes.status === 403 || offersRes.status === 429)
+      ? offersRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_offer_lookup_failed",
+      upstream_status: offersRes.status,
+      upstream: formatEbayErrorBody(offersRes.body),
+      product_id: product.id || null,
+      sku,
+      marketplace_id: marketplaceId,
+    }, passthroughStatus);
+  }
+
+  const offers = offersRes.status === 200 ? (offersRes.body?.offers || []) : [];
+  const targetOffer = pickPublishedSingleOffer(offers, preferredOfferId);
+  const publishedOfferIds = offers
+    .filter((offer: any) => String(offer?.status || "").toUpperCase() === "PUBLISHED")
+    .map((offer: any) => String(offer?.offerId || ""))
+    .filter(Boolean);
+
+  if (!targetOffer) {
+    return jsonResp({
+      ok: false,
+      dry_run: dryRun,
+      error: publishedOfferIds.length > 1 && !preferredOfferId ? "ambiguous_published_offers" : "published_offer_not_found",
+      product_id: product.id || null,
+      sku,
+      marketplace_id: marketplaceId,
+      preferred_offer_id: preferredOfferId || null,
+      published_offer_ids: publishedOfferIds,
+      desired_fulfillment_policy_id: policyTarget.fulfillmentPolicyId,
+    }, 409);
+  }
+
+  const offerId = String(targetOffer.offerId);
+  const offerRes = await ebayFetch(`/sell/inventory/v1/offer/${encodeURIComponent(offerId)}`);
+  if (offerRes.status !== 200) {
+    const passthroughStatus = (offerRes.status === 401 || offerRes.status === 403 || offerRes.status === 429)
+      ? offerRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_get_offer_failed",
+      upstream_status: offerRes.status,
+      upstream: formatEbayErrorBody(offerRes.body),
+      product_id: product.id || null,
+      sku,
+      marketplace_id: marketplaceId,
+      ebay_offer_id: offerId,
+    }, passthroughStatus);
+  }
+
+  const currentOffer = offerRes.body || {};
+  const currentPolicies = currentOffer.listingPolicies || {};
+  const currentFulfillmentPolicyId = s(currentPolicies.fulfillmentPolicyId).trim();
+  const policyIds = await ensurePolicies(marketplaceId, policyTarget.lifecycleState);
+  const nextListingPolicies = {
+    ...currentPolicies,
+    fulfillmentPolicyId: policyTarget.fulfillmentPolicyId,
+    paymentPolicyId: currentPolicies.paymentPolicyId || policyIds.paymentPolicyId,
+    returnPolicyId: currentPolicies.returnPolicyId || policyIds.returnPolicyId,
+  };
+  const changed = currentFulfillmentPolicyId !== policyTarget.fulfillmentPolicyId;
+  const updatePayload = buildOfferPolicyUpdatePayload(currentOffer, nextListingPolicies, product, body || {});
+  const missingFields = missingPublishedOfferUpdateFields(updatePayload);
+  const baseResult = {
+    product_id: product.id || null,
+    sku,
+    marketplace_id: marketplaceId,
+    ebay_offer_id: offerId,
+    ebay_item_id: listingIdFromOffer(currentOffer, product.ebay_item_id || "") || listingIdFromOffer(targetOffer, product.ebay_item_id || ""),
+    lifecycle_state: policyTarget.lifecycleState,
+    current_fulfillment_policy_id: currentFulfillmentPolicyId || null,
+    desired_fulfillment_policy_id: policyTarget.fulfillmentPolicyId,
+    desired_fulfillment_policy_name: policyTarget.fulfillmentPolicyName,
+    changed,
+    missing_update_fields: missingFields,
+  };
+
+  if (dryRun || !changed) {
+    return jsonResp({
+      ok: true,
+      dry_run: dryRun,
+      updated: false,
+      can_update: changed && missingFields.length === 0,
+      ...baseResult,
+    });
+  }
+
+  const confirmed = body?.confirm === EBAY_HEADLESS_POLICY_CONFIRM_PHRASE || body?.confirm_policy_update === true;
+  if (!confirmed) {
+    return jsonResp({
+      ok: false,
+      error: "confirm_required",
+      message: `Set dry_run=false and confirm="${EBAY_HEADLESS_POLICY_CONFIRM_PHRASE}" to update fulfillment policy.`,
+      ...baseResult,
+    }, 400);
+  }
+
+  if (missingFields.length > 0) {
+    return jsonResp({
+      ok: false,
+      error: "offer_update_payload_incomplete",
+      ...baseResult,
+    }, 409);
+  }
+
+  const updateRes = await ebayFetch(
+    `/sell/inventory/v1/offer/${encodeURIComponent(offerId)}`,
+    { method: "PUT", body: JSON.stringify(updatePayload) }
+  );
+  if (updateRes.status !== 200 && updateRes.status !== 204) {
+    const passthroughStatus = (updateRes.status === 401 || updateRes.status === 403 || updateRes.status === 429)
+      ? updateRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_update_offer_failed",
+      upstream_status: updateRes.status,
+      upstream: formatEbayErrorBody(updateRes.body),
+      ...baseResult,
+    }, passthroughStatus);
+  }
+
+  const verifyRes = await ebayFetch(`/sell/inventory/v1/offer/${encodeURIComponent(offerId)}`);
+  const verifiedPolicyId = verifyRes.status === 200
+    ? s(verifyRes.body?.listingPolicies?.fulfillmentPolicyId).trim()
+    : "";
+  const verificationOk = verifiedPolicyId === policyTarget.fulfillmentPolicyId;
+
+  return jsonResp({
+    ok: verificationOk,
+    dry_run: false,
+    updated: true,
+    ...baseResult,
+    verified_fulfillment_policy_id: verifiedPolicyId || null,
+    verification_ok: verificationOk,
+    verify_upstream_status: verifyRes.status,
+  }, verificationOk ? 200 : 502);
+}
+
 async function persistHeadlessEbayWithdrawResult(product: any, sku: string, reason = "operator_test_cleanup"): Promise<any> {
   const now = new Date().toISOString();
   const update = {
@@ -2106,6 +2361,15 @@ async function handleRequest(req: Request): Promise<Response> {
       if (internal) return internal;
       const body = await req.json().catch(() => ({}));
       return await handleWithdrawProduct(body);
+    }
+
+    if (action === "ensure-fulfillment-policy" && req.method === "POST") {
+      // Server-only repair path for an existing live offer. The eBay updateOffer
+      // call revises the active listing, so browser-originated calls are blocked.
+      const internal = requireInternalBridge(req);
+      if (internal) return internal;
+      const body = await req.json().catch(() => ({}));
+      return await handleEnsureFulfillmentPolicy(body);
     }
 
     const authResult = await requireAuthenticatedUser(req);

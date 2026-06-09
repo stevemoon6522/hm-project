@@ -18,19 +18,26 @@ assert.equal(hash(edge), hash(edgeMirror), 'supabase and edge-functions ebay-bri
 
 const handleStart = edge.indexOf('async function handleRequest');
 const registerRoute = edge.indexOf('action === "register-product" && req.method === "POST"', handleStart);
+const policyRoute = edge.indexOf('action === "ensure-fulfillment-policy" && req.method === "POST"', handleStart);
 const authGate = edge.indexOf('const authResult = await requireAuthenticatedUser(req);', handleStart);
 assert(handleStart >= 0, 'handleRequest must exist');
 assert(registerRoute > handleStart, 'register-product route must exist in handleRequest');
 assert(authGate > registerRoute, 'headless register-product must run before browser-session auth gate');
 assert(edge.slice(registerRoute, authGate).includes('requireInternalBridge(req)'), 'register-product route must require internal bridge token');
 assert(!edge.slice(registerRoute, authGate).includes('requireAuthenticatedUser(req)'), 'register-product route must not require a Supabase browser session');
+assert(policyRoute > registerRoute && policyRoute < authGate, 'ensure-fulfillment-policy route must exist before browser-session auth gate');
+assert(edge.slice(policyRoute, authGate).includes('requireInternalBridge(req)'), 'ensure-fulfillment-policy must require internal bridge token');
 
 for (const token of [
   'const EBAY_HEADLESS_CONFIRM_PHRASE = "PUBLISH_EBAY_LISTING"',
+  'const EBAY_HEADLESS_POLICY_CONFIRM_PHRASE = "UPDATE_EBAY_FULFILLMENT_POLICY"',
   'const EBAY_READY_STOCK_FULFILLMENT_POLICY_ID = "233825118025"',
   'function ebayFulfillmentPolicyForLifecycle',
+  'async function handleEnsureFulfillmentPolicy',
+  'buildOfferPolicyUpdatePayload',
   'const dryRun = body?.dry_run !== false && body?.dryRun !== false',
   'body?.confirm === EBAY_HEADLESS_CONFIRM_PHRASE || body?.confirm_publish === true',
+  'body?.confirm === EBAY_HEADLESS_POLICY_CONFIRM_PHRASE || body?.confirm_policy_update === true',
   'async function buildHeadlessEbayProductPayload',
   'normalizeEbayLifecycleState(body.lifecycleState || body.lifecycle_state || product.lifecycle_state) || "pre_order"',
   'async function handleRegisterProduct',

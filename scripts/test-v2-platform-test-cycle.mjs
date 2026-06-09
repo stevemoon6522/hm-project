@@ -29,6 +29,10 @@ assert.equal(hash(joomBridge), hash(joomMirror), 'Joom bridge mirror must match 
 assert.equal(hash(shopeeBridge), hash(shopeeMirror), 'Shopee bridge mirror must match supabase function source');
 
 for (const token of [
+  'const EBAY_HEADLESS_POLICY_CONFIRM_PHRASE = "UPDATE_EBAY_FULFILLMENT_POLICY"',
+  'async function handleEnsureFulfillmentPolicy',
+  'action === "ensure-fulfillment-policy" && req.method === "POST"',
+  'body?.confirm === EBAY_HEADLESS_POLICY_CONFIRM_PHRASE || body?.confirm_policy_update === true',
   'const EBAY_HEADLESS_WITHDRAW_CONFIRM_PHRASE = "WITHDRAW_EBAY_LISTING"',
   'async function handleWithdrawProduct',
   'action === "withdraw-product" && req.method === "POST"',
@@ -73,6 +77,8 @@ for (const token of [
 for (const token of [
   'ensure-product',
   'async function ensureProduct',
+  'ebay-policy',
+  "confirm: live ? CONFIRM.ebayPolicy : undefined",
   'dry-run-all',
   'cleanup-all',
   'PLATFORM_BRIDGE_INTERNAL_TOKEN is required',

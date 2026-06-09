@@ -8,6 +8,7 @@ const targetPath = join(__dirname, 'platform-test-target.json');
 const indexPath = join(root, 'v2', 'index.html');
 
 const CONFIRM = {
+  ebayPolicy: 'UPDATE_EBAY_FULFILLMENT_POLICY',
   ebayWithdraw: 'WITHDRAW_EBAY_LISTING',
   joomDelete: 'DELETE_JOOM_PRODUCT',
   qoo10Delete: 'DELETE_QOO10_LISTING',
@@ -286,6 +287,18 @@ async function ebayWithdraw(env, product, args, internalToken) {
   }, internalToken);
 }
 
+async function ebayPolicy(env, product, args, internalToken) {
+  const live = args.live === true;
+  return edgePost(env, 'ebay-bridge', 'ensure-fulfillment-policy', {
+    product_id: product.id,
+    dry_run: !live,
+    fulfillment_policy_id: args.fulfillmentPolicyId || '233825118025',
+    fulfillment_policy_name: args.fulfillmentPolicyName || 'READY STOCK',
+    lifecycle_state: args.lifecycleState || product.lifecycle_state || 'ready_stock',
+    confirm: live ? CONFIRM.ebayPolicy : undefined,
+  }, internalToken);
+}
+
 async function joomDelete(env, product, args, internalToken, serviceKey) {
   const live = args.live === true;
   const productId = String(args.joomProductId || product.joom_product_id || product.sku || '').trim();
@@ -383,6 +396,7 @@ async function run() {
 
   const commands = {
     'ebay-register-dry-run': () => ebayRegisterDryRun(env, product, internalToken),
+    'ebay-policy': () => ebayPolicy(env, product, args, internalToken),
     'ebay-withdraw': () => ebayWithdraw(env, product, args, internalToken),
     'joom-delete': () => joomDelete(env, product, args, internalToken, serviceKey),
     'qoo10-delete': () => qoo10Delete(env, product, args, internalToken, platformListings, serviceKey),
@@ -391,6 +405,7 @@ async function run() {
       ok: true,
       live: false,
       ebay_register: await ebayRegisterDryRun(env, product, internalToken),
+      ebay_policy: await ebayPolicy(env, product, { ...args, live: false }, internalToken),
       ebay_withdraw: await ebayWithdraw(env, product, { ...args, live: false }, internalToken),
       joom_delete: await joomDelete(env, product, { ...args, live: false }, internalToken, serviceKey),
       qoo10_delete: await qoo10Delete(env, product, { ...args, live: false }, internalToken, platformListings, serviceKey),
@@ -410,7 +425,7 @@ async function run() {
   };
 
   if (!commands[command]) {
-    throw new Error(`Unknown command '${command}'. Use inspect, ensure-product, dry-run-all, ebay-register-dry-run, ebay-withdraw, joom-delete, qoo10-delete, shopee-delete, cleanup-all.`);
+    throw new Error(`Unknown command '${command}'. Use inspect, ensure-product, dry-run-all, ebay-register-dry-run, ebay-policy, ebay-withdraw, joom-delete, qoo10-delete, shopee-delete, cleanup-all.`);
   }
 
   const result = await commands[command]();

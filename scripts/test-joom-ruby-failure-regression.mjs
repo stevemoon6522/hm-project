@@ -26,12 +26,20 @@ assert.match(bridge, /async function createOrUpdateJoomProduct/, 'Joom bridge mu
 assert.match(bridge, /const existing = await lookupJoomProductBySku\(productSku\)/, 'Joom bridge must look up existing merchant SKU before create');
 assert.match(bridge, /String\(existing\.state \|\| ""\)\.toLowerCase\(\) !== "archived"[\s\S]*\/products\/update\?sku=/, 'Existing non-archived Joom products, including rejected Ruby, must be updated instead of duplicated');
 assert.match(bridge, /recovered_existing_product_id/, 'Joom publish response must expose recovered existing product id for operator/debug visibility');
+assert.match(bridge, /function imageBundleSummary/, 'Joom bridge lookup must expose a protected image audit summary for operational verification');
+assert.match(bridge, /image_audit:[\s\S]*extraImages:[\s\S]*imageBundleSummary/, 'Joom lookup must include extraImages dimensions for square-image verification');
+assert.match(bridge, /action === "update-images"[\s\S]*\/products\/update\?sku=/, 'Joom bridge must provide a protected extraImages-only recovery path for rejected products');
+assert.match(bridge, /body: JSON\.stringify\(\{ extraImages: processedExtras \}\)/, 'Joom image recovery must update only extraImages and avoid price/inventory mutation');
+assert.match(bridge, /function decodeBase64Image/, 'Joom image recovery must support client-provided square image bytes when source CDN blocks Edge fetch');
+assert.match(bridge, /imageDataRows[\s\S]*uploadTileToCloudinary\(bytes\)[\s\S]*uploadTileToProductStorage\(bytes/, 'Joom image recovery must upload provided image bytes before updating extraImages');
 
 const goesToNearSquarePadding = !(rubyFixture.detail.height > rubyFixture.detail.width * 1.5)
   && !(rubyFixture.detail.width > rubyFixture.detail.height * 1.5);
 assert.equal(goesToNearSquarePadding, true, 'Ruby 1000x1500 detail image sits exactly on the old tall-image threshold boundary');
 assert.match(bridge, /const tileSize = Math\.max\(img\.width, img\.height\)/, 'Ruby threshold detail image must enter the near-square padding branch');
 assert.match(bridge, /c_pad,b_white,w_\$\{tileSize\},h_\$\{tileSize\}/, 'Ruby detail image output must be square padded through Cloudinary fetch');
+assert.match(bridge, /async function buildCloudinaryUnknownSquare/, 'Joom bridge must have a Cloudinary square fallback when Edge cannot read source image dimensions');
+assert.match(bridge, /readImageDimensions failed[\s\S]*buildCloudinaryUnknownSquare/, 'Joom detail processing must continue through Cloudinary when source dimension fetch is blocked');
 assert.doesNotMatch(bridge, /return \[imageUrl\];/, 'Joom bridge must never fall back to raw rectangular detail images');
 
 assert.match(bridge, /function joomPlainText/, 'Joom bridge must sanitize descriptions centrally');
@@ -49,6 +57,9 @@ assert.equal(rubyFixture.brand, 'BLACKPINK', 'Ruby fixture brand should be the r
 for (const source of [bridge, edgeBridge]) {
   assert.match(source, /async function createOrUpdateJoomProduct/, 'Supabase and edge Joom bridge mirrors must both recover existing SKUs');
   assert.match(source, /function joomPlainText/, 'Supabase and edge Joom bridge mirrors must both sanitize descriptions');
+  assert.match(source, /function imageBundleSummary/, 'Supabase and edge Joom bridge mirrors must both expose image audit summaries');
+  assert.match(source, /action === "update-images"/, 'Supabase and edge Joom bridge mirrors must both support extraImages-only recovery');
+  assert.match(source, /function decodeBase64Image/, 'Supabase and edge Joom bridge mirrors must both support inline square image recovery');
   assert.doesNotMatch(source, /return \[imageUrl\];/, 'Supabase and edge Joom bridge mirrors must both avoid raw detail image fallback');
 }
 

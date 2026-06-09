@@ -220,6 +220,21 @@ function joomProductListingStatus(product: any): string {
   return product?.id ? "pending" : "not_listed";
 }
 
+function imageBundleSummary(bundle: any): any {
+  if (!bundle) return null;
+  const processed = Array.isArray(bundle.processed) ? bundle.processed : [];
+  return {
+    imageState: bundle.imageState || null,
+    origUrl: bundle.origUrl || null,
+    processed: processed.slice(0, 5).map((img: any) => ({
+      url: img?.url || null,
+      width: img?.width ?? null,
+      height: img?.height ?? null,
+      isSquare: !!img?.width && img.width === img.height,
+    })),
+  };
+}
+
 function isJoomLookupMiss(e: any): boolean {
   const detail = String(e?.message || e || "");
   const lower = detail.toLowerCase();
@@ -404,6 +419,13 @@ async function buildCloudinaryFetchTiles(imageUrl: string, img: ImageDimensions)
   return [`https://res.cloudinary.com/${cloudName}/image/fetch/c_pad,b_white,w_${tileSize},h_${tileSize},f_jpg,q_90/${encodeURIComponent(imageUrl)}`];
 }
 
+async function buildCloudinaryUnknownSquare(imageUrl: string): Promise<string[]> {
+  // @ts-ignore
+  const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
+  if (!cloudName) return [];
+  return [`https://res.cloudinary.com/${cloudName}/image/fetch/c_pad,b_white,w_1500,h_1500,f_jpg,q_90/${encodeURIComponent(imageUrl)}`];
+}
+
 async function uploadTileToProductStorage(imageData: Uint8Array, sourceUrl: string, index: number): Promise<string | null> {
   const path = `joom-tiles/${Date.now()}-${index}.jpg`;
   const { error } = await supabase.storage
@@ -417,12 +439,29 @@ async function uploadTileToProductStorage(imageData: Uint8Array, sourceUrl: stri
   return data?.publicUrl || null;
 }
 
+function decodeBase64Image(value: string): Uint8Array {
+  const clean = String(value || "").replace(/^data:[^;]+;base64,/i, "").replace(/\s+/g, "");
+  if (!clean) throw new Error("empty base64 image");
+  const binary = atob(clean);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
 async function processDetailImage(imageUrl: string): Promise<string[]> {
   try {
-    const dims = await readImageDimensions(imageUrl);
+    let dims: ImageDimensions | null = null;
+    try {
+      dims = await readImageDimensions(imageUrl);
+    } catch (dimensionError) {
+      console.warn("[joom-bridge] readImageDimensions failed, trying Cloudinary unknown-square fallback:", imageUrl, dimensionError);
+    }
     if (dims) {
       const cloudinaryTiles = await buildCloudinaryFetchTiles(imageUrl, dims);
       if (cloudinaryTiles.length) return cloudinaryTiles;
+    } else {
+      const cloudinarySquare = await buildCloudinaryUnknownSquare(imageUrl);
+      if (cloudinarySquare.length) return cloudinarySquare;
     }
 
     const resp = await fetch(imageUrl, {
@@ -497,7 +536,7 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
     throw new Error("square image upload failed");
   } catch (e) {
     console.error("[joom-bridge] processDetailImage failed:", imageUrl, e);
-    throw new Error(`Joom detail image square processing failed: ${imageUrl}`);
+    throw new Error(`Joom detail image square processing failed: ${imageUrl}: ${String((e as any)?.message || e)}`);
   }
 }
 
@@ -749,6 +788,11 @@ async function handleRequest(req: Request): Promise<Response> {
           hasActiveVersion: product?.hasActiveVersion ?? null,
           listing_status: joomProductListingStatus(product),
           product_name: product?.name || "",
+          image_audit: {
+            mainImage: imageBundleSummary(product?.mainImage),
+            extraImages: (Array.isArray(product?.extraImages) ? product.extraImages : []).map(imageBundleSummary),
+            matchedVariantMainImage: imageBundleSummary(matched?.mainImage),
+          },
         });
       } catch (e: any) {
         console.error("[joom-bridge] lookup-sku failed", e);
@@ -760,6 +804,59 @@ async function handleRequest(req: Request): Promise<Response> {
           lookup_error_detail: detail.slice(0, 500),
         }, miss ? 404 : 502);
       }
+    }
+
+    if (action === "update-images" && req.method === "POST") {
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
+      const body = await req.json();
+      const sku = String(body.sku || "").trim();
+      if (!sku) return jsonResp({ ok: false, error: "sku required" }, 400);
+
+      const processedExtras: string[] = [];
+      const imageDataRows = Array.isArray(body.imageData) ? body.imageData : [];
+      for (let i = 0; i < imageDataRows.length; i += 1) {
+        if (processedExtras.length >= JOOM_MAX_EXTRA_IMAGES) break;
+        const row = imageDataRows[i] || {};
+        const bytes = decodeBase64Image(row.base64 || row.data || "");
+        const sourceUrl = String(row.sourceUrl || row.url || `inline-${i}`);
+        const uploaded = await uploadTileToCloudinary(bytes) || await uploadTileToProductStorage(bytes, sourceUrl, i);
+        if (uploaded) processedExtras.push(uploaded);
+      }
+
+      const rawExtras = uniqueExtraImageUrls({
+        mainImage: body.mainImage || body.mainImageUrl || "",
+        detailImages: Array.isArray(body.detailImages) ? body.detailImages : [],
+        extraImages: Array.isArray(body.extraImages) ? body.extraImages : [],
+      });
+      if (!rawExtras.length && !processedExtras.length) return jsonResp({ ok: false, error: "detailImages, extraImages or imageData required" }, 400);
+
+      for (const imageUrl of rawExtras) {
+        if (processedExtras.length >= JOOM_MAX_EXTRA_IMAGES) break;
+        const tiles = await processDetailImage(imageUrl);
+        for (const tileUrl of tiles) {
+          if (processedExtras.length < JOOM_MAX_EXTRA_IMAGES) processedExtras.push(tileUrl);
+        }
+      }
+      if (!processedExtras.length) return jsonResp({ ok: false, error: "no processed extraImages" }, 400);
+
+      const data = await joomFetch(`/products/update?sku=${encodeURIComponent(sku)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ extraImages: processedExtras }),
+      });
+      return jsonResp({
+        ok: true,
+        operation: "update-images",
+        joom_product_id: data?.id || null,
+        state: data?.state || null,
+        hasActiveVersion: data?.hasActiveVersion ?? null,
+        requested_extra_images: rawExtras,
+        updated_extra_images: processedExtras,
+        image_audit: {
+          extraImages: (Array.isArray(data?.extraImages) ? data.extraImages : []).map(imageBundleSummary),
+        },
+      });
     }
 
     if (action === "update-price" && req.method === "POST") {

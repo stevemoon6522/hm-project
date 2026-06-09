@@ -161,13 +161,20 @@ function buildProductInfo(b: Record<string, any>) {
 // Route handlers
 // ---------------------------------------------------------------------------
 async function handleHealthz(): Promise<Response> {
+  // TEMP DEBUG: secret_len + HMAC fingerprint (never the secret value) so the
+  // stored App Secret can be verified without an OAuth code.
+  let secret_fp = '';
+  try { if (ALIBABA_APP_SECRET) secret_fp = (await hmacSha256HexUpper(ALIBABA_APP_SECRET, 'fingerprint')).slice(0, 12); } catch { /* ignore */ }
   return jsonResp({
     ok: true,
     service: 'alibaba-bridge',
-    version: 3,
+    version: 4,
     bridge_enabled: ALIBABA_BRIDGE_ENABLED,
-    app_key_configured: Boolean(ALIBABA_APP_KEY),
+    app_key: ALIBABA_APP_KEY,
+    app_key_len: ALIBABA_APP_KEY.length,
     secret_configured: Boolean(ALIBABA_APP_SECRET),
+    secret_len: ALIBABA_APP_SECRET.length,
+    secret_fp,
     access_token_configured: Boolean(ALIBABA_ACCESS_TOKEN),
     gateway: ALIBABA_GATEWAY_URL,
   });

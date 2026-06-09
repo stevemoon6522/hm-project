@@ -183,7 +183,12 @@ async function handleAuthToken(req: Request): Promise<Response> {
   if (!code) return jsonResp({ ok: false, error: 'code required (OAuth authorization code)' }, 400);
   const { status, raw } = await topRequest('/auth/token/create', { code }, { needsToken: false });
   const token = norm(raw?.access_token);
-  if (!token) return jsonResp({ ok: false, error: 'auth_token_failed', status, raw }, 502);
+  if (!token) {
+    // TEMP DEBUG: return secret fingerprint (NOT the secret) so we can confirm
+    // the stored ALIBABA_APP_SECRET is intact when diagnosing signature errors.
+    const fp = (await hmacSha256HexUpper(ALIBABA_APP_SECRET, 'fingerprint')).slice(0, 12);
+    return jsonResp({ ok: false, error: 'auth_token_failed', status, raw, _debug: { app_key: ALIBABA_APP_KEY, secret_len: ALIBABA_APP_SECRET.length, secret_fp: fp } }, 502);
+  }
   return jsonResp({ ok: true, access_token: token, refresh_token: raw?.refresh_token || null, expires_in: raw?.expires_in || null, account_id: raw?.account_id || null, country: raw?.country || null, raw });
 }
 

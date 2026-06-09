@@ -6049,6 +6049,7 @@ LEGACY END -->
     const visibleGroups = platformVisibleGroups(platform);
     const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;
     const canRunSelectionAction = !isAlibaba && (selectedCount > 0 || canUseVisibleSingle);
+    const registerActionLabel = platform === 'ebay' ? '등록' : '등록 미리보기';
     const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
       `<button type="button" class="platform-status-tab${filter.status === key ? ' is-active' : ''}" data-platform-status="${key}" aria-pressed="${filter.status === key ? 'true' : 'false'}">${PLATFORM_STATUS_LABELS[key]} ${counts[key] || 0}</button>`
     )).join('');
@@ -6079,7 +6080,7 @@ LEGACY END -->
         <div class="platform-actions">
           <button type="button" data-platform-select-visible ${isAlibaba ? 'disabled' : ''}>표시 항목 선택</button>
           <button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>
-          <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>등록 미리보기</button>
+          <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(registerActionLabel)}</button>
           <button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>수정 미리보기</button>
           <button type="button" data-platform-preview="retry" ${canRunSelectionAction ? '' : 'disabled'}>실패 재시도</button>
           <button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>원격 SKU 확인</button>
@@ -6165,10 +6166,10 @@ LEGACY END -->
       });
     });
     root.querySelectorAll('[data-platform-preview]').forEach((btn) => {
-      btn.addEventListener('click', () => platformOpenPreview(platform, btn.dataset.platformPreview || 'register'));
+      btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformPreview || 'register'));
     });
     root.querySelectorAll('[data-platform-quick]').forEach((btn) => {
-      btn.addEventListener('click', () => platformOpenPreview(platform, btn.dataset.platformQuick || 'register', [btn.dataset.platformKey || '']));
+      btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformQuick || 'register', [btn.dataset.platformKey || '']));
     });
     root.querySelector('[data-platform-sync]')?.addEventListener('click', () => platformSyncSelected(platform));
     root.querySelector('[data-platform-preview-close]')?.addEventListener('click', () => {
@@ -6227,6 +6228,35 @@ LEGACY END -->
     };
     renderPlatformWorkbench(platform);
     document.getElementById(`platform-${platform}-root`)?.querySelector('.platform-preview')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+
+  async function platformOpenAction(platform, action, explicitKeys = null) {
+    if (platform === 'ebay' && (action === 'register' || action === 'retry')) {
+      let groups = platformSelectedGroups(platform, explicitKeys);
+      if (!groups.length && !explicitKeys) {
+        const visibleGroups = platformVisibleGroups(platform);
+        if (visibleGroups.length === 1) groups = visibleGroups;
+      }
+      if (!groups.length) {
+        showToast('선택한 마스터 상품이 없습니다.', 'err');
+        return;
+      }
+      if (groups.length > 1) {
+        platformOpenPreview(platform, action, explicitKeys);
+        showToast('eBay 등록은 모달에서 1개씩 확인합니다. 미리보기에서 실행할 상품을 확인하세요.', 'ok');
+        return;
+      }
+      try {
+        state.platformPreview = null;
+        renderPlatformWorkbench(platform);
+        await platformOpenExistingModal(platform, groups[0]);
+      } catch (e) {
+        console.error('[platformOpenAction] eBay modal open failed:', e);
+        showToast(`eBay 등록 모달 열기 실패: ${e.message || e}`, 'err');
+      }
+      return;
+    }
+    platformOpenPreview(platform, action, explicitKeys);
   }
 
   function platformGroupValidation(platform, action, group) {

@@ -55,10 +55,11 @@ test('platform tab buttons keep selection and route registration through the pro
   assert.match(platformSelectionFlow, /function platformGroupKeysFromProductIds\(productIds\)/, 'platform tabs should be able to map master-list selections to platform groups');
   assert.match(platformSelectionFlow, /state\.productListSelectedIds/, 'platform tabs should adopt master product selections when opened');
   assert.match(html, /platformAdoptProductListSelection\(platform\);[\s\S]*const selectedCount = platformSelection\(platform\)\.size/, 'platform render should adopt selections before enabling action buttons');
-  assert.match(platformBinding, /data-platform-preview[\s\S]*platformOpenPreview\(platform, btn\.dataset\.platformPreview \|\| 'register'\)/, 'bulk preview buttons must open the unified preview');
+  assert.match(platformBinding, /data-platform-preview[\s\S]*platformOpenAction\(platform, btn\.dataset\.platformPreview \|\| 'register'\)/, 'bulk preview buttons must route through the platform action handler');
   assert.match(platformBinding, /platform-master-check[\s\S]*sel\.add\(key\)[\s\S]*renderPlatformWorkbench\(platform\)/, 'row selection must enable preview actions after rerender');
   assert.match(platformPreviewExecution, /return false;/, 'platform tabs must not bypass registration modals through direct dispatcher execution');
   assert.match(platformPreviewExecution, /platformOpenExistingModal\(platform, group\)/, 'preview execution must open the existing platform registration modal');
+  assert.match(html, /async function platformOpenAction\(platform, action, explicitKeys = null\)[\s\S]*platform === 'ebay'[\s\S]*await platformOpenExistingModal\(platform, groups\[0\]\)/, 'eBay register action should open the existing eBay modal directly for a single selected product');
   assert.match(html, /if \(platform === 'shopee'\)[\s\S]*openRegisterShopeeSingleModal\(group\.rows\[0\]\.id\)/, 'Shopee single registration must use the existing single modal');
   assert.match(html, /if \(platform === 'joom'\) return openRegisterJoomGroupModal\(targetId\)/, 'Joom registration must use the existing Joom modal');
   assert.match(html, /if \(platform === 'qoo10'\) return openRegisterQoo10GroupModal\(targetId\)/, 'Qoo10 registration must use the existing Qoo10 modal');

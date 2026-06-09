@@ -719,7 +719,7 @@ function buildEbayAspectsFromProduct(product: any, title: string): Record<string
   const derived = deriveEbayKpopFromTitle(title || product.product_name || product.sku);
   const storedArtist = normalizeDerivedTitleToken(product.artist || product.brand || product.shopee_brand_name || "");
   const storedAlbum = normalizeDerivedTitleToken(product.album || product.release_title || "");
-  const artist = String((isListingStatusTag(storedArtist) ? "" : storedArtist) || derived.artist || "").trim().slice(0, 50);
+  const artist = String(derived.artist || (isListingStatusTag(storedArtist) ? "" : storedArtist) || "").trim().slice(0, 50);
   const releaseTitle = String((isListingStatusTag(storedAlbum) ? "" : storedAlbum) || derived.album || stripLifecycleTags(product.product_name) || product.sku || "").trim().slice(0, 50);
   const releaseTypeSource = `${product.product_name || ""} ${storedAlbum || ""}`.toLowerCase();
   const aspects: Record<string, string[]> = {

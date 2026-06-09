@@ -52,7 +52,17 @@ async function signTop(apiPath: string, params: Record<string, string>, excludeK
     .filter((k) => k !== 'sign' && !excludeKeys.has(k) && params[k] != null && params[k] !== '')
     .sort();
   const concat = keys.map((k) => `${k}${params[k]}`).join('');
-  return hmacSha256HexUpper(ALIBABA_APP_SECRET, `${apiPath}${concat}`);
+  const message = `${apiPath}${concat}`;
+  const sign = await hmacSha256HexUpper(ALIBABA_APP_SECRET, message);
+  // TEMP DEBUG (remove once auth works): never logs the secret value (only its
+  // length + an HMAC fingerprint), and REDACTS access_token from the base string
+  // so no live per-seller token is ever written to logs.
+  try {
+    const fp = (await hmacSha256HexUpper(ALIBABA_APP_SECRET, 'fingerprint')).slice(0, 12);
+    const safeMessage = `${apiPath}` + keys.map((k) => `${k}${k === 'access_token' ? '<redacted>' : params[k]}`).join('');
+    console.log(JSON.stringify({ dbg: 'alibaba_sign', apiPath, keys, base_redacted: safeMessage, sign, secret_len: ALIBABA_APP_SECRET.length, secret_fp: fp }));
+  } catch (_) { /* ignore debug errors */ }
+  return sign;
 }
 
 function notReady(): Response | null {

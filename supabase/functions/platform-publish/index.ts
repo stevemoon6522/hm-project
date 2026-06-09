@@ -11,7 +11,8 @@
 //
 // Current invariants:
 //   - Shopee/Joom/eBay route to concrete adapters; Qoo10 is explicitly blocked
-//     until auth smoke passes; Alibaba remains stubbed/outside SKU-dispatch.
+//     until auth smoke passes; Alibaba routes to its adapter but is likewise
+//     gated by auth_verified=false until the ICBU auth smoke passes.
 //   - docs_ready gate (gate 3) runs BEFORE banned-shop + preflight gates.
 //   - Qoo10 auth_verified gate (gate 4) enforced.
 //   - Idempotency uses existing platform_listings rows plus atomic upsert RPC.
@@ -26,6 +27,7 @@ import { shopeeAdapter } from './adapters/shopee.ts';
 import { joomAdapter } from './adapters/joom.ts';
 import { ebayAdapter } from './adapters/ebay.ts';
 import { qoo10Adapter } from './adapters/qoo10.ts';
+import { alibabaAdapter } from './adapters/alibaba.ts';
 
 // ---------------------------------------------------------------------------
 // Adapter registry
@@ -35,7 +37,7 @@ const ADAPTERS: Record<string, PlatformAdapter> = {
   joom: joomAdapter,
   ebay: ebayAdapter,
   qoo10: qoo10Adapter,
-  // alibaba remains stubbed in the Shopee Global SKU-dispatch flow.
+  alibaba: alibabaAdapter,
 };
 function pickAdapter(platform: string): PlatformAdapter {
   return ADAPTERS[platform] ?? stubAdapter;
@@ -363,10 +365,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
   }
 
   // =========================================================================
-  // GATE 4: Qoo10 auth_verified check (plan §A.2 step 4, Codex P2 #5)
+  // GATE 4: auth_verified check (plan §A.2 step 4, Codex P2 #5)
+  // Qoo10 and Alibaba both stay auth_verified=false until an operator runs a
+  // platform auth smoke test and flips the flag (plans/alibaba-deep-lemon.md §5).
   // =========================================================================
-  if (platform === 'qoo10' && !capRow.auth_verified) {
-    audit('qoo10_auth_not_verified', { platform, capability });
+  const AUTH_VERIFIED_GATED = new Set(['qoo10', 'alibaba']);
+  if (AUTH_VERIFIED_GATED.has(platform) && !capRow.auth_verified) {
+    audit('auth_not_verified', { platform, capability });
     await writeAuditLog(svc, {
       entity_uuid: master_product_id,
       actor: actorLabel,
@@ -374,6 +379,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
       after_json: { platform, capability, listing_status: 'not_listed', error_code: 'AUTH_NOT_VERIFIED' },
       batch_id: publish_request_id,
     });
+    const smokeHint = platform === 'qoo10'
+      ? 'run GetCatagoryListAll smoke test to flip the flag'
+      : 'run an ICBU auth smoke call (e.g. product.status.get.v2) to flip the flag';
     return jsonResp(200, {
       ok: false,
       publish_request_id,
@@ -381,7 +389,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       platform_item_id: null,
       listing_status: 'not_listed',
       error_code: 'AUTH_NOT_VERIFIED',
-      error_msg: 'Qoo10 auth_verified=false; run GetCatagoryListAll smoke test to flip the flag',
+      error_msg: `${platform} auth_verified=false; ${smokeHint}`,
     });
   }
 
@@ -516,7 +524,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // =========================================================================
   const { data: product, error: productErr } = await svc
     .from('products')
-    .select('id, sku, product_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, joom_category_id, ebay_category_id, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_extra_attributes, shopee_days_to_ship')
+    .select('id, sku, product_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, joom_category_id, ebay_category_id, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_extra_attributes, shopee_days_to_ship, alibaba_category_id, alibaba_attributes, alibaba_group_id, alibaba_freight_template_id, alibaba_moq, alibaba_unit, alibaba_price_usd')
     .eq('id', master_product_id)
     .maybeSingle();
 
@@ -723,13 +731,63 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
   }
 
-  // D4/D5 gates (Alibaba attrs/shipping + eBay aspects) — stubbed to pass in D0.
-  // They are populated by real adapter data in D4/D5.
+  // Alibaba create_listing preflight (plans/alibaba-deep-lemon.md §3).
+  // Emits the reserved ALIBABA_* error codes before the adapter is invoked, so
+  // missing master data is reported in the same structured format as the
+  // Shopee/Qoo10/eBay gates. The adapter re-checks as defense-in-depth.
+  if (platform === 'alibaba' && capability === 'create_listing') {
+    const aliInput = (body as any).alibaba || {};
+    const aliCategory = aliInput.category_id || product.alibaba_category_id;
+    const aliAttrs = (aliInput.attributes && typeof aliInput.attributes === 'object')
+      ? aliInput.attributes
+      : product.alibaba_attributes;
+    const aliFreight = aliInput.freight_template_id || product.alibaba_freight_template_id;
+    if (!aliCategory || !aliAttrs || (typeof aliAttrs === 'object' && Object.keys(aliAttrs).length === 0)) {
+      audit('alibaba_required_attrs_missing', { sku: product.sku });
+      await writeAuditLog(svc, {
+        entity_uuid: master_product_id,
+        actor: actorLabel,
+        action: 'publish',
+        after_json: { platform, capability, listing_status: 'not_listed', error_code: 'ALIBABA_REQUIRED_ATTRS_MISSING' },
+        batch_id: publish_request_id,
+      });
+      return jsonResp(200, {
+        ok: false,
+        publish_request_id,
+        platform_listing_id: existingListing?.id ?? null,
+        platform_item_id: null,
+        listing_status: 'not_listed',
+        error_code: 'ALIBABA_REQUIRED_ATTRS_MISSING',
+        error_msg: 'alibaba_category_id와 필수 카테고리 속성(alibaba_attributes)을 먼저 설정해 주세요.',
+      });
+    }
+    if (!aliFreight) {
+      audit('alibaba_shipping_template_missing', { sku: product.sku });
+      await writeAuditLog(svc, {
+        entity_uuid: master_product_id,
+        actor: actorLabel,
+        action: 'publish',
+        after_json: { platform, capability, listing_status: 'not_listed', error_code: 'ALIBABA_SHIPPING_TEMPLATE_MISSING' },
+        batch_id: publish_request_id,
+      });
+      return jsonResp(200, {
+        ok: false,
+        publish_request_id,
+        platform_listing_id: existingListing?.id ?? null,
+        platform_item_id: null,
+        listing_status: 'not_listed',
+        error_code: 'ALIBABA_SHIPPING_TEMPLATE_MISSING',
+        error_msg: 'alibaba_freight_template_id(운임 템플릿)를 먼저 설정해 주세요.',
+      });
+    }
+  }
+
+  // D5 gate (eBay aspects) — stubbed to pass in D0; populated by adapter in D5.
 
   // =========================================================================
   // GATE 8: Adapter dispatch
-  // Shopee/Joom/eBay route to concrete adapters, Qoo10 returns AUTH_NOT_VERIFIED
-  // before adapter dispatch until auth smoke is verified, Alibaba stays stubbed.
+  // Shopee/Joom/eBay/Alibaba route to concrete adapters; Qoo10/Alibaba return
+  // AUTH_NOT_VERIFIED before dispatch until their auth smoke flips the flag.
   // =========================================================================
   const adapter = pickAdapter(platform);
 
@@ -775,6 +833,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
         stock_override: (body as any).stock_override,
         // Qoo10 create_listing extras supplied by the V2 registration modal.
         qoo10: (body as any).qoo10 || {},
+        // Alibaba create_listing extras supplied by the V2 registration modal.
+        alibaba: (body as any).alibaba || {},
       } as any);
     } catch (e) {
       adapterResult = {

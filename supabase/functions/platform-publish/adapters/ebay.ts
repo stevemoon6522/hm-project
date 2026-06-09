@@ -144,6 +144,7 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   const description = s(master.description || master.shopee_description).trim();
   const priceUsd = await ebayPriceUsd(master);
   const weightG = n(master.weight_g, 0);
+  const lifecycleState = lifecycleOf(master);
   if (!sku || sku.length > 50 || !description || images.length === 0 || !priceUsd || weightG <= 0) {
     return {
       ok: false,
@@ -154,7 +155,8 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   }
   const body = {
     sku,
-    title: lifecycleProductName(master.product_name, lifecycleOf(master), sku).slice(0, 80),
+    title: lifecycleProductName(master.product_name, lifecycleState, sku).slice(0, 80),
+    lifecycleState,
     description: description.slice(0, 4000),
     imageUrls: images,
     aspects: aspectsFrom(master),

@@ -27,10 +27,14 @@ assert(!edge.slice(registerRoute, authGate).includes('requireAuthenticatedUser(r
 
 for (const token of [
   'const EBAY_HEADLESS_CONFIRM_PHRASE = "PUBLISH_EBAY_LISTING"',
+  'const EBAY_READY_STOCK_FULFILLMENT_POLICY_ID = "233825118025"',
+  'function ebayFulfillmentPolicyForLifecycle',
   'const dryRun = body?.dry_run !== false && body?.dryRun !== false',
   'body?.confirm === EBAY_HEADLESS_CONFIRM_PHRASE || body?.confirm_publish === true',
   'async function buildHeadlessEbayProductPayload',
+  'normalizeEbayLifecycleState(body.lifecycleState || body.lifecycle_state || product.lifecycle_state) || "pre_order"',
   'async function handleRegisterProduct',
+  'fulfillmentPolicyPreview',
   'await handlePublish(payload)',
   'await handleLookupItem(payload.sku, payload.marketplaceId || "EBAY_US")',
   'async function persistHeadlessEbayPublishResult',

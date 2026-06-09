@@ -24629,6 +24629,7 @@ Contact
 
       const exCountry = await _v2LoadEbayExCountry();
       const sourceRow = selectedRow || firstRow;
+      const lifecycleState = mrRowLifecycle(sourceRow) || mrRowLifecycle(firstRow);
       const sku = mrEbayRowSku(sourceRow);
       const costKrw = Number(sourceRow?._cost_krw || sourceRow?.cost_krw || firstRow._cost_krw || firstRow.cost_krw || 0);
       const weightG = Number(sourceRow?._weight_g || sourceRow?.weight_g || firstRow._weight_g || firstRow.weight_g || 0);
@@ -24641,6 +24642,7 @@ Contact
         sourceRow,
         activeRows,
         mode,
+        lifecycleState,
         sku,
         title: String(firstRow._ebayTitle || mrEbayBuildTitle(firstRow)).trim().slice(0, 80),
         categoryId: String(firstRow._ebayCategory || firstRow.ebay_category_id || MR_EBAY_DEFAULT_CATEGORY_ID).trim(),
@@ -24667,6 +24669,7 @@ Contact
     function mrEbayDraftSignature(draft) {
       return JSON.stringify({
         mode: draft.mode,
+        lifecycleState: draft.lifecycleState,
         sku: draft.sku,
         inventoryGroupKey: draft.inventoryGroupKey,
         title: draft.title,
@@ -24706,6 +24709,7 @@ Contact
           imageUrls: draft.imageUrls.slice(0, 24),
           aspects: draft.aspects,
           condition: 'NEW',
+          lifecycleState: draft.lifecycleState,
           categoryId: String(draft.categoryId),
           storeCategoryNames: draft.storeCategoryNames,
           variationAxis: draft.variationAxis,
@@ -24737,6 +24741,7 @@ Contact
         imageUrls: draft.imageUrls.slice(0, 24),
         aspects: draft.aspects,
         condition: 'NEW',
+        lifecycleState: draft.lifecycleState,
         priceUsd: Number(draft.priceUsd || 0).toFixed(2),
         quantity: draft.quantity,
         categoryId: String(draft.categoryId),

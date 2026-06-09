@@ -19,7 +19,7 @@ const platformPublish = readFileSync(join(root, 'supabase', 'functions', 'platfo
 const ebayAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'ebay.ts'), 'utf8');
 
 function extractFunctionBlock(source, functionName) {
-  let start = source.indexOf(`function ${functionName}`);
+  let start = source.indexOf(`function ${functionName}(`);
   assert(start >= 0, `${functionName} must exist`);
   const asyncStart = start - 'async '.length;
   if (asyncStart >= 0 && source.slice(asyncStart, start) === 'async ') start = asyncStart;
@@ -65,7 +65,7 @@ assert(
   'Product-list eBay button must open the modal with the eBay publish-group adapter, not the Joom adapter',
 );
 assert(
-  html.includes('function mrOpenEbayModal(group) {\n      return mrOpenEbayModalDraft(group);\n    }'),
+  /function mrOpenEbayModal\(group\)\s*\{\s*return mrOpenEbayModalDraft\(group\);\s*\}/.test(extractFunctionBlock(html, 'mrOpenEbayModal')),
   'mrOpenEbayModal must return its modal-opening promise so product-list openers can catch failures',
 );
 

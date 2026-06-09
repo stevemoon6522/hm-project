@@ -43,9 +43,15 @@ const EBAY_SCOPES = [
 // Codex review §d WARNING: listingDuration must be GTC
 const LISTING_DURATION = "GTC";
 
-// Steve's default eBay shipping business policy for K-pop album listings.
-const EBAY_DEFAULT_FULFILLMENT_POLICY_ID = "253030471025";
-const EBAY_DEFAULT_FULFILLMENT_POLICY_NAME = "ALBUM PRE-ORDER";
+// Steve's eBay shipping business policies for K-pop album listings.
+// READY STOCK must use the ready-stock shipping policy; PRE-ORDER and
+// unknown legacy calls keep the existing pre-order default.
+const EBAY_PRE_ORDER_FULFILLMENT_POLICY_ID = "253030471025";
+const EBAY_PRE_ORDER_FULFILLMENT_POLICY_NAME = "ALBUM PRE-ORDER";
+const EBAY_READY_STOCK_FULFILLMENT_POLICY_ID = "233825118025";
+const EBAY_READY_STOCK_FULFILLMENT_POLICY_NAME = "READY STOCK";
+const EBAY_DEFAULT_FULFILLMENT_POLICY_ID = EBAY_PRE_ORDER_FULFILLMENT_POLICY_ID;
+const EBAY_DEFAULT_FULFILLMENT_POLICY_NAME = EBAY_PRE_ORDER_FULFILLMENT_POLICY_NAME;
 const EBAY_PRICE_GUARD_MIN_USD = 1.00;
 const EBAY_PRICE_GUARD_TOLERANCE_USD = 0.02;
 const EBAY_PRICE_GUARD_MAX_DELTA_RATIO = 0.50;
@@ -225,12 +231,44 @@ async function ensureMerchantLocation(): Promise<void> {
 // Operator Decision #3: policies already active on seller account
 // ---------------------------------------------------------------------------
 
-async function ensurePolicies(marketplaceId: string): Promise<{
+type EbayLifecycleState = "pre_order" | "ready_stock" | "";
+
+function normalizeEbayLifecycleState(value: unknown): EbayLifecycleState {
+  const normalized = s(value).trim().toLowerCase().replace(/[\s-]+/g, "_");
+  if (normalized === "ready_stock" || normalized === "ready" || normalized === "in_stock" || normalized === "on_hand") return "ready_stock";
+  if (normalized === "pre_order" || normalized === "preorder") return "pre_order";
+  return "";
+}
+
+function ebayFulfillmentPolicyForLifecycle(value: unknown): {
+  lifecycleState: "pre_order" | "ready_stock";
+  fulfillmentPolicyId: string;
+  fulfillmentPolicyName: string;
+} {
+  const lifecycleState = normalizeEbayLifecycleState(value);
+  if (lifecycleState === "ready_stock") {
+    return {
+      lifecycleState: "ready_stock",
+      fulfillmentPolicyId: EBAY_READY_STOCK_FULFILLMENT_POLICY_ID,
+      fulfillmentPolicyName: EBAY_READY_STOCK_FULFILLMENT_POLICY_NAME,
+    };
+  }
+  return {
+    lifecycleState: "pre_order",
+    fulfillmentPolicyId: EBAY_DEFAULT_FULFILLMENT_POLICY_ID,
+    fulfillmentPolicyName: EBAY_DEFAULT_FULFILLMENT_POLICY_NAME,
+  };
+}
+
+async function ensurePolicies(marketplaceId: string, lifecycleState?: unknown): Promise<{
   fulfillmentPolicyId: string;
   fulfillmentPolicyName: string;
   returnPolicyId: string;
   paymentPolicyId: string;
+  lifecycleState: "pre_order" | "ready_stock";
 }> {
+  const fulfillmentPolicy = ebayFulfillmentPolicyForLifecycle(lifecycleState);
+
   // Check persistent store first
   const { data: stored } = await supabase
     .from("ebay_policy_ids")
@@ -239,20 +277,8 @@ async function ensurePolicies(marketplaceId: string): Promise<{
     .single();
 
   if (stored?.return_policy_id && stored?.payment_policy_id) {
-    if (stored.fulfillment_policy_id !== EBAY_DEFAULT_FULFILLMENT_POLICY_ID) {
-      await supabase.from("ebay_policy_ids").upsert({
-        marketplace_id: marketplaceId,
-        fulfillment_policy_id: EBAY_DEFAULT_FULFILLMENT_POLICY_ID,
-        return_policy_id: stored.return_policy_id,
-        payment_policy_id: stored.payment_policy_id,
-        merchant_location_key: MERCHANT_LOCATION_KEY,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "marketplace_id" });
-    }
-
     return {
-      fulfillmentPolicyId: EBAY_DEFAULT_FULFILLMENT_POLICY_ID,
-      fulfillmentPolicyName: EBAY_DEFAULT_FULFILLMENT_POLICY_NAME,
+      ...fulfillmentPolicy,
       returnPolicyId: stored.return_policy_id,
       paymentPolicyId: stored.payment_policy_id,
     };
@@ -276,7 +302,7 @@ async function ensurePolicies(marketplaceId: string): Promise<{
     return active.fulfillmentPolicyId || active.returnPolicyId || active.paymentPolicyId || active.id;
   }
 
-  const fulfillmentPolicyId = EBAY_DEFAULT_FULFILLMENT_POLICY_ID;
+  const fulfillmentPolicyId = fulfillmentPolicy.fulfillmentPolicyId;
   const returnPolicyId      = firstId(rpRes, "returnPolicies");
   const paymentPolicyId     = firstId(ppRes, "paymentPolicies");
 
@@ -291,8 +317,7 @@ async function ensurePolicies(marketplaceId: string): Promise<{
   }, { onConflict: "marketplace_id" });
 
   return {
-    fulfillmentPolicyId,
-    fulfillmentPolicyName: EBAY_DEFAULT_FULFILLMENT_POLICY_NAME,
+    ...fulfillmentPolicy,
     returnPolicyId,
     paymentPolicyId,
   };
@@ -770,6 +795,7 @@ async function buildHeadlessEbayProductPayload(product: any, body: any = {}): Pr
   const priceUsd = overridePrice > 0 ? overridePrice : n(pricing.priceUsd, 0);
   const qRaw = Number(body.quantity ?? body.inventory ?? product.inventory ?? product.stock ?? 0);
   const quantity = Number.isFinite(qRaw) && qRaw > 0 ? Math.max(1, Math.floor(qRaw)) : 3;
+  const lifecycleState = normalizeEbayLifecycleState(body.lifecycleState || body.lifecycle_state || product.lifecycle_state) || "pre_order";
   const imageUrls = buildEbayImageUrlsFromProduct(product, body);
   const aspects = mergeAspects(buildEbayAspectsFromProduct(product, title), body.aspects);
   const descriptionText = s(body.description || body.ebay_description || "").trim()
@@ -790,6 +816,7 @@ async function buildHeadlessEbayProductPayload(product: any, body: any = {}): Pr
       priceUsd: Number(priceUsd).toFixed(2),
       quantity,
       categoryId,
+      lifecycleState,
       storeCategoryNames: normalizeStoreCategoryNames(body.storeCategoryNames || body.store_category_names || ["/K-pop"]),
       weightG,
       weightBucketG: pricing.weightBucketG,
@@ -962,6 +989,8 @@ async function handlePublishSingle(body: any): Promise<Response> {
     storeCategoryNames,
     shippingSurchargePolicy = "delta_vs_us_baseline",
     shippingSurchargesUsd = [],
+    lifecycleState,
+    lifecycle_state,
     marketplaceId = "EBAY_US",
   } = body;
 
@@ -989,7 +1018,13 @@ async function handlePublishSingle(body: any): Promise<Response> {
   await ensureMerchantLocation();
 
   // Step 1: Get policy IDs (from cache or Account API)
-  const { fulfillmentPolicyId, returnPolicyId, paymentPolicyId } = await ensurePolicies(marketplaceId);
+  const {
+    fulfillmentPolicyId,
+    fulfillmentPolicyName,
+    returnPolicyId,
+    paymentPolicyId,
+    lifecycleState: policyLifecycleState,
+  } = await ensurePolicies(marketplaceId, lifecycleState || lifecycle_state);
 
   // Step 2: PUT /sell/inventory/v1/inventory_item/{sku}
   // Citation: sell/inventory.yaml — createOrReplaceInventoryItem
@@ -1076,6 +1111,9 @@ async function handlePublishSingle(body: any): Promise<Response> {
     ebay_item_id: listingId,
     ebay_offer_id: offerId,
     marketplace_id: marketplaceId,
+    lifecycle_state: policyLifecycleState,
+    fulfillment_policy_id: fulfillmentPolicyId,
+    fulfillment_policy_name: fulfillmentPolicyName,
     shipping_surcharge_policy: shippingSurchargePolicy,
     shipping_surcharges_usd: safeShippingSurcharges,
     listingStatus: "PUBLISHED",
@@ -1262,6 +1300,8 @@ async function handlePublishVariationCore(body: any): Promise<Response> {
     variations = [],
     shippingSurchargePolicy = "delta_vs_us_baseline",
     shippingSurchargesUsd = [],
+    lifecycleState,
+    lifecycle_state,
     marketplaceId = "EBAY_US",
   } = body;
 
@@ -1305,7 +1345,13 @@ async function handlePublishVariationCore(body: any): Promise<Response> {
   validateAspects({ [axis]: values });
 
   await ensureMerchantLocation();
-  const { fulfillmentPolicyId, returnPolicyId, paymentPolicyId } = await ensurePolicies(marketplaceId);
+  const {
+    fulfillmentPolicyId,
+    fulfillmentPolicyName,
+    returnPolicyId,
+    paymentPolicyId,
+    lifecycleState: policyLifecycleState,
+  } = await ensurePolicies(marketplaceId, lifecycleState || lifecycle_state);
 
   const offersBySku: Record<string, { offerId: string; variationValue: string }> = {};
 
@@ -1406,6 +1452,9 @@ async function handlePublishVariationCore(body: any): Promise<Response> {
     ebay_inventory_group_key: inventoryGroupKey,
     offers_by_sku: offersBySku,
     marketplace_id: marketplaceId,
+    lifecycle_state: policyLifecycleState,
+    fulfillment_policy_id: fulfillmentPolicyId,
+    fulfillment_policy_name: fulfillmentPolicyName,
     variation_axis: axis,
     shipping_surcharge_policy: shippingSurchargePolicy,
     shipping_surcharges_usd: safeShippingSurcharges,
@@ -1715,6 +1764,7 @@ async function handleRegisterProduct(body: any): Promise<Response> {
   const product = await loadHeadlessProduct(body || {});
   const { payload, pricing, derived } = await buildHeadlessEbayProductPayload(product, body || {});
   const validation = validateHeadlessSinglePayload(payload);
+  const fulfillmentPolicyPreview = ebayFulfillmentPolicyForLifecycle(payload.lifecycleState);
 
   if (!validation.ok) {
     return jsonResp({
@@ -1724,6 +1774,7 @@ async function handleRegisterProduct(body: any): Promise<Response> {
       validation,
       product_id: product.id || null,
       sku: payload.sku,
+      fulfillmentPolicyPreview,
       payload,
     }, 400);
   }
@@ -1736,6 +1787,7 @@ async function handleRegisterProduct(body: any): Promise<Response> {
       sku: payload.sku,
       derived,
       validation,
+      fulfillmentPolicyPreview,
       pricing: {
         priceUsd: pricing.priceUsd,
         weightBucketG: pricing.weightBucketG,
@@ -1755,6 +1807,7 @@ async function handleRegisterProduct(body: any): Promise<Response> {
       message: `Set dry_run=false and confirm="${EBAY_HEADLESS_CONFIRM_PHRASE}" to publish.`,
       product_id: product.id || null,
       sku: payload.sku,
+      fulfillmentPolicyPreview,
       payload,
     }, 400);
   }
@@ -1814,6 +1867,9 @@ async function handleRegisterProduct(body: any): Promise<Response> {
     ebay_item_id: publishJson.ebay_item_id,
     ebay_offer_id: publishJson.ebay_offer_id,
     marketplace_id: publishJson.marketplace_id || payload.marketplaceId || "EBAY_US",
+    lifecycle_state: publishJson.lifecycle_state || payload.lifecycleState || null,
+    fulfillment_policy_id: publishJson.fulfillment_policy_id || fulfillmentPolicyPreview.fulfillmentPolicyId,
+    fulfillment_policy_name: publishJson.fulfillment_policy_name || fulfillmentPolicyPreview.fulfillmentPolicyName,
     verification: lookupJson?.verification || null,
     lookup_ok: lookupResp.ok && lookupJson?.verification?.published_verification_passed === true,
     persisted,

@@ -15,6 +15,8 @@ import { join } from 'node:path';
 
 const root = process.cwd();
 const html = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
+const platformPublish = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'index.ts'), 'utf8');
+const ebayAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'ebay.ts'), 'utf8');
 
 function extractFunctionBlock(source, functionName) {
   let start = source.indexOf(`function ${functionName}`);
@@ -110,6 +112,21 @@ assert(
 assert(
   !platformValidation.includes("errors.push('eBay category ID가 없습니다.')"),
   'eBay registration preview must not block missing ebay_category_id because the modal defaults to Music > CDs',
+);
+assert(
+  !platformPublish.includes("error_code: 'EBAY_CATEGORY_ID_MISSING'")
+    && !platformPublish.includes('ebay_category_missing'),
+  'platform-publish dispatcher must not stop eBay create_listing before the adapter can apply the default Music > CDs category',
+);
+assert(
+  ebayAdapter.includes("const EBAY_DEFAULT_CATEGORY_ID = '176984'")
+    && ebayAdapter.includes('s(master.ebay_category_id, EBAY_DEFAULT_CATEGORY_ID).trim() || EBAY_DEFAULT_CATEGORY_ID'),
+  'platform-publish eBay adapter must default missing ebay_category_id to Music > CDs',
+);
+assert(
+  !ebayAdapter.includes('!categoryId || !description')
+    && !ebayAdapter.includes('requires sku<=50, ebay_category_id'),
+  'platform-publish eBay adapter validation must not block products that rely on the default eBay category',
 );
 assert(
   platformRender.includes('const visibleGroups = platformVisibleGroups(platform);')

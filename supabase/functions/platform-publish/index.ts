@@ -586,27 +586,6 @@ Deno.serve(async (req: Request): Promise<Response> => {
     });
   }
 
-  // EBAY_CATEGORY_ID_MISSING — eBay only, for create_listing.
-  if (platform === 'ebay' && capability === 'create_listing' && !product.ebay_category_id) {
-    audit('ebay_category_missing', { sku: product.sku });
-    await writeAuditLog(svc, {
-      entity_uuid: master_product_id,
-      actor: actorLabel,
-      action: 'publish',
-      after_json: { platform, capability, listing_status: 'not_listed', error_code: 'EBAY_CATEGORY_ID_MISSING' },
-      batch_id: publish_request_id,
-    });
-    return jsonResp(200, {
-      ok: false,
-      publish_request_id,
-      platform_listing_id: existingListing?.id ?? null,
-      platform_item_id: null,
-      listing_status: 'not_listed',
-      error_code: 'EBAY_CATEGORY_ID_MISSING',
-      error_msg: 'products.ebay_category_id is null; set an eBay Taxonomy category ID first',
-    });
-  }
-
   // OFFER_PUBLISH_OUT_OF_SCOPE — eBay activate_listing is explicitly refused.
   if (platform === 'ebay' && capability === 'activate_listing') {
     audit('ebay_offer_publish_oos', { sku: product.sku });

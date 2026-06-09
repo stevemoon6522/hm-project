@@ -16180,7 +16180,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let offset = 0;
     while (true) {
       const url = SUPABASE_URL + '/rest/v1/products'
-        + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
+        + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
         + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
       const res = await fetch(url, {
         headers: Object.assign({}, AUTH_HEADERS, {
@@ -16196,7 +16196,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           // Fallback query without cost_updated_at
           const res2 = await fetch(
             SUPABASE_URL + '/rest/v1/products'
-              + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
+              + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
               + '&order=lifecycle_state.asc,created_at.asc',
             {
               headers: Object.assign({}, AUTH_HEADERS, {
@@ -18173,7 +18173,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }
 
         const persisted = await catPersistProductCost(product.id, newCost, now);
-        if (!persisted.ok) errors.push(sku + ': cost update ' + persisted.error);
+        let localSaveOk = true;
+        if (!persisted.ok) {
+          errors.push(sku + ': cost update ' + persisted.error);
+          localSaveOk = false;
+        }
 
         const { error: productErr } = await db.from('products').update({
           joom_product_id: lookup.joom_product_id,
@@ -18198,7 +18202,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           joom_last_synced_price: calc.joomPrice,
           joom_last_synced_at: now,
         });
-        priceOk++;
+        if (localSaveOk) priceOk++;
       }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = oldText; }
@@ -18240,6 +18244,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           continue;
         }
 
+        const ebayStatus = String(product.ebay_status || '').toUpperCase();
+        if (ebayStatus !== 'PUBLISHED' || !product.ebay_offer_id) {
+          errors.push(sku + ': eBay PUBLISHED offer mapping missing');
+          continue;
+        }
+
         const newCost = catEffectiveCost(product);
         const weightG = catEffectiveWeight(product);
         const priceUsd = catComputeEbayPrice(newCost, weightG);
@@ -18257,6 +18267,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             body: JSON.stringify({
               sku: sku,
               priceUsd: priceUsd,
+              productId: product.id,
               offerId: product.ebay_offer_id || undefined,
             }),
           });
@@ -18272,7 +18283,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }
 
         const persisted = await catPersistProductCost(product.id, newCost, now);
-        if (!persisted.ok) errors.push(sku + ': cost update ' + persisted.error);
+        let localSaveOk = true;
+        if (!persisted.ok) {
+          errors.push(sku + ': cost update ' + persisted.error);
+          localSaveOk = false;
+        }
 
         const { error: productErr } = await db.from('products').update({
           ebay_last_synced_price: priceUsd,
@@ -18287,7 +18302,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           ebay_last_synced_price: priceUsd,
           ebay_last_synced_at: now,
         });
-        okCount++;
+        if (localSaveOk) okCount++;
       }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = oldText; }
@@ -22291,12 +22306,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
 
       // ── Cross-card SKU collision check (P1 #2) ────────────────────
-      // Collect all SKUs that belong to ANY card with active/committed intent.
+      // Collect SKUs only from selected cards with active/committed intent.
       // Inactive states (rejected, skipped, crawling) are excluded.
       // CROSS_SKU_INACTIVE is declared in the outer scope (shared with mrRenderPreviewCards).
       {
         const crossSkuMap = new Map(); // sku → source_record_id of its card
-        for (const g of groups) {
+        for (const g of activeGroups) {
           for (const row of g.rows) {
             const sku = (row._sku || '').trim();
             if (!sku) continue;
@@ -22984,19 +22999,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       _v2EbayExCountryPromise = (async () => {
         const { data, error } = await db.from('country_settings').select('*').eq('country_code', 'EX').single();
         if (error || !data) throw new Error('country_settings EX row 없음 (eBay virtual row): ' + (error?.message || 'no row'));
-        _v2EbayExCountryCache = {
-          exchangeRate: Number(data.exchange_rate),
-          pgFee:        Number(data.pg_fee ?? 1.45)        || 0,
-          salesFee:     Number(data.sales_fee ?? 15.3)     || 0,
-          fspFee:       0,
-          otherFee:     0,
-          settlementFee: 0,
-          gst:          0,
-          fspCcb:       0,
-          importDuty:   0,
-          fixedServiceFee: Number(data.fixed_service_fee) || 0,
-          purchaseVat:  Number(data.purchase_vat)  || 0,
-        };
+        _v2EbayExCountryCache = normalizeCountrySettings(data, 'EX');
         return _v2EbayExCountryCache;
       })();
       return _v2EbayExCountryPromise;

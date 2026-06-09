@@ -3,12 +3,14 @@ import { join } from 'node:path';
 import {
   DEFAULT_COUNTRY_SETTINGS,
   PRICE_SYNC_REGIONS,
+  calculateEbayPrice,
   calculateJoomPrice,
   calculateQoo10Price,
   calculateShopeePrice,
   calculateV1Listing,
   getQoo10ShippingFeeJpy,
   getShippingFee,
+  normalizeCountrySettings,
   normalizeQoo10PriceEnding90,
   normalizeShopeeOriginalPrice,
 } from '../v2/price-engine.js';
@@ -79,6 +81,29 @@ const joom = calculateJoomPrice({
 });
 assertNear(joom.joomPrice, 7.75, 0.000001, 'Joom price must follow V1 JM fee row');
 
+const ebayExPartial = normalizeCountrySettings({
+  country_code: 'EX',
+  exchange_rate: 1380,
+  sales_fee: 15.3,
+  pg_fee: 1.45,
+}, 'EX');
+assertNear(ebayExPartial.gst, 0, 0.000001, 'eBay EX must not inherit SG GST when EX fields are partial');
+assertNear(ebayExPartial.settlementFee, 0, 0.000001, 'eBay EX must not inherit SG settlement fee when EX fields are partial');
+assertNear(ebayExPartial.otherFee, 0, 0.000001, 'eBay EX must not inherit SG other fee when EX fields are partial');
+assertNear(ebayExPartial.fixedServiceFee, 0.40, 0.000001, 'eBay EX missing fixed fee must fall back to the tab default');
+const ebayPartial = calculateEbayPrice({
+  costKrw: 13127,
+  weightG: 150,
+  countrySettings: ebayExPartial,
+});
+const ebayDefault = calculateEbayPrice({
+  costKrw: 13127,
+  weightG: 150,
+  countrySettings: DEFAULT_COUNTRY_SETTINGS.EX,
+});
+assert(ebayPartial.ok && ebayDefault.ok, 'eBay EX price must calculate from partial and default settings');
+assertNear(ebayPartial.ebayPrice, ebayDefault.ebayPrice, 0.000001, 'eBay EX partial settings must use the shared EX defaults');
+
 const qoo10 = calculateQoo10Price({
   costKrw: 10000,
   countrySettings: DEFAULT_COUNTRY_SETTINGS.Q10,
@@ -117,6 +142,10 @@ assert(v2.includes('const newPrice = catComputeQoo10Price(effectiveCost, catEffe
 assert(v2.includes("const joomSettings = catCountrySettings('JM')"), 'V2 Joom bulk sync must load JM country_settings fee row');
 assert(v2.includes("JOOM_BRIDGE + '/lookup-sku?sku='"), 'V2 Joom sync must resolve SKU before update-price');
 assert(v2.includes("JOOM_BRIDGE + '/update-price'"), 'V2 Joom sync must call update-price');
+assert(v2.includes("countrySettings: catCountrySettings('EX')"), 'V2 eBay price preview must use the EX country_settings fee row');
+assert(v2.includes("_v2EbayExCountryCache = normalizeCountrySettings(data, 'EX')"), 'V2 eBay publish must normalize the EX row through the shared price engine');
+assert(v2.includes("ebayStatus !== 'PUBLISHED' || !product.ebay_offer_id"), 'V2 eBay sync must require a published offer mapping before live update');
+assert(v2.includes('productId: product.id'), 'V2 eBay sync must send productId so the bridge can run server-side price guards');
 assert(v2.includes('function _v2LoadJoomCountry()'), 'V2 Joom publish must load the JM country_settings fee row');
 assert(v2.includes('const listing = _v2JoomCalcListing(costKrw, weightG, joomCountry);'), 'V2 Joom publish variants must use the JM fee formula');
 assert(v2.includes("'JM'") && v2.includes("Joom (Global)"), 'V2 fee settings must expose the Joom global fee row');

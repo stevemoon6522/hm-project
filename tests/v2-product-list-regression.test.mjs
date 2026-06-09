@@ -30,6 +30,7 @@ const coverageLookup = sliceBetween(html, 'async function coverageLookupViaPlatf
 const masterRegisterImageTools = sliceBetween(html, 'function mrGetGroupOptionImages(group, firstRow) {', 'function mrMasterPatchForGroup(group) {');
 const openCreatedMasterEdit = sliceBetween(html, 'async function mrOpenCreatedMasterEdit(productId) {', 'function mrRenderPreviewCards() {');
 const masterRegisterRender = sliceBetween(html, 'function mrRenderPreviewCards() {', 'async function mrPromoteAll() {');
+const masterRegisterPromote = sliceBetween(html, 'async function mrPromoteAll() {', 'let _v2EbayExCountryCache = null;');
 const joomRegisterStatus = sliceBetween(html, 'function mrJoomListingStatusFromResponse(json) {', 'function mrJoomAssertOptionSkuLocked(row, idx, errors) {');
 const shopeePlatformRegions = sliceBetween(html, 'const SHOPEE_PLATFORM_ACTIVE_REGIONS', '/** Preselect state: set by openReadyStockWizard()');
 const platformSelectionFlow = sliceBetween(html, 'function platformGroupsByKeys(keys) {', 'function platformOpenPreview(platform, action, explicitKeys = null) {');
@@ -102,6 +103,12 @@ test('master register cards expose master edit action whenever any master row wa
   assert.doesNotMatch(masterRegisterRender, /cardStatus === 'done' && doneProductId/, 'edit action must not be limited to fully completed cards');
   assert.match(masterRegisterRender, /data-open-created-master-edit/, 'registered cards should expose a master edit button target');
   assert.match(masterRegisterRender, /mrOpenCreatedMasterEdit\(createdProductIds\[0\]\)/, 'registered cards should open the master edit modal from the created master row');
+});
+
+test('selected master register avoids SKU collision checks against unchecked cards', () => {
+  assert.match(masterRegisterPromote, /const activeGroups = promotableGroups\.filter\(mrGroupSelected\)/, 'master register should build an explicit selected-card set');
+  assert.match(masterRegisterPromote, /const crossSkuMap = new Map\(\)[\s\S]*for \(const g of activeGroups\)/, 'cross-card SKU map must only include selected cards');
+  assert.doesNotMatch(masterRegisterPromote, /const crossSkuMap = new Map\(\)[\s\S]{0,400}for \(const g of groups\)/, 'unchecked cards must not block selected-card registration');
 });
 
 test('created master edit action still opens when product list refresh fails', () => {

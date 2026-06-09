@@ -39,6 +39,12 @@ for (const token of [
   'shippingSurchargePolicy: "delta_vs_us_baseline"',
   'loadEbayShippingSurchargeRows',
   'ebay_shipping_country_rates',
+  'async function guardEbayUpdatePrice',
+  'price_guard_failed',
+  'price_delta_guard_failed',
+  'serverPriceUsd: priceGuard.serverPriceUsd',
+  'product_mapping_required',
+  'EBAY_PRICE_GUARD_MAX_DELTA_RATIO',
   'const artist = String(derived.artist || (isListingStatusTag(storedArtist) ? "" : storedArtist) || "").trim().slice(0, 50)',
 ]) {
   assert(edge.includes(token), `headless eBay register path missing token: ${token}`);

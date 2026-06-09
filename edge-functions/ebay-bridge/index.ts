@@ -46,6 +46,9 @@ const LISTING_DURATION = "GTC";
 // Steve's default eBay shipping business policy for K-pop album listings.
 const EBAY_DEFAULT_FULFILLMENT_POLICY_ID = "253030471025";
 const EBAY_DEFAULT_FULFILLMENT_POLICY_NAME = "ALBUM PRE-ORDER";
+const EBAY_PRICE_GUARD_MIN_USD = 1.00;
+const EBAY_PRICE_GUARD_TOLERANCE_USD = 0.02;
+const EBAY_PRICE_GUARD_MAX_DELTA_RATIO = 0.50;
 
 const CORS: Record<string, string> = {
   ...AUTH_CORS,
@@ -562,33 +565,37 @@ function ebayGetUsShippingRateKrw(weightG: unknown): number {
 async function loadEbayExCountrySettings(): Promise<Record<string, number>> {
   const fallback = {
     exchangeRate: 1380,
-    pgFee: 2.7,
-    salesFee: 13,
+    pgFee: 1.45,
+    salesFee: 15.3,
     fspFee: 0,
     otherFee: 0,
     settlementFee: 0,
     gst: 0,
     fspCcb: 0,
-    fixedServiceFee: 0,
+    importDuty: 0,
+    fixedServiceFee: 0.40,
     purchaseVat: 0,
   };
   const { data, error } = await supabase
     .from("country_settings")
-    .select("exchange_rate,pg_fee,sales_fee,fsp_fee,other_fee,settlement_fee,gst,fsp_ccb,fixed_service_fee,purchase_vat")
+    .select("exchange_rate,pg_fee,sales_fee,fsp_fee,other_fee,settlement_fee,gst,fsp_ccb,import_duty,fixed_service_fee,purchase_vat")
     .eq("country_code", "EX")
     .maybeSingle();
   if (error || !data) return fallback;
+  const nf = (value: unknown, defaultValue: number) =>
+    value === null || value === undefined || value === "" ? defaultValue : n(value, defaultValue);
   return {
-    exchangeRate: n(data.exchange_rate, fallback.exchangeRate),
-    pgFee: n(data.pg_fee, fallback.pgFee),
-    salesFee: n(data.sales_fee, fallback.salesFee),
-    fspFee: n(data.fsp_fee, fallback.fspFee),
-    otherFee: n(data.other_fee, fallback.otherFee),
-    settlementFee: n(data.settlement_fee, fallback.settlementFee),
-    gst: n(data.gst, fallback.gst),
-    fspCcb: n(data.fsp_ccb, fallback.fspCcb),
-    fixedServiceFee: n(data.fixed_service_fee, fallback.fixedServiceFee),
-    purchaseVat: n(data.purchase_vat, fallback.purchaseVat),
+    exchangeRate: nf(data.exchange_rate, fallback.exchangeRate),
+    pgFee: nf(data.pg_fee, fallback.pgFee),
+    salesFee: nf(data.sales_fee, fallback.salesFee),
+    fspFee: nf(data.fsp_fee, fallback.fspFee),
+    otherFee: nf(data.other_fee, fallback.otherFee),
+    settlementFee: nf(data.settlement_fee, fallback.settlementFee),
+    gst: nf(data.gst, fallback.gst),
+    fspCcb: nf(data.fsp_ccb, fallback.fspCcb),
+    importDuty: nf(data.import_duty, fallback.importDuty),
+    fixedServiceFee: nf(data.fixed_service_fee, fallback.fixedServiceFee),
+    purchaseVat: nf(data.purchase_vat, fallback.purchaseVat),
   };
 }
 
@@ -610,6 +617,7 @@ function calcEbayUsdListing(costKrw: number, weightG: number, c: Record<string, 
   const settlePct = (c.settlementFee || 0) / 100;
   const fixedFee = c.fixedServiceFee || 0;
   const sf = salesPg + salesFsp + salesOther + salesCcb;
+  if (settlePct >= 1) return 0;
   const incomeTarget = settlementLocal / (1 - settlePct);
   const denom = (1 + vr) * (1 - sf) - (cr + vr);
   const raw = denom > 0 ? (incomeTarget + shipping + fixedFee) / denom : 0;
@@ -1089,6 +1097,8 @@ async function handlePublish(body: any): Promise<Response> {
 
 async function handleUpdatePrice(body: any): Promise<Response> {
   const { sku, priceUsd, offerId: callerOfferId, marketplaceId = "EBAY_US" } = body || {};
+  let resolvedMarketplaceId = String(marketplaceId || "EBAY_US");
+  let resolvedCallerOfferId = callerOfferId;
 
   // §RC5: sku is required; no fallback
   try { validateSku(sku); } catch (e: any) {
@@ -1101,10 +1111,18 @@ async function handleUpdatePrice(body: any): Promise<Response> {
     return jsonResp({ ok: false, error: "invalid_price" }, 400);
   }
 
+  const priceGuard = await guardEbayUpdatePrice(body, String(sku), priceNum, resolvedMarketplaceId, callerOfferId);
+  if (!priceGuard.ok) {
+    const { status = 409, ...guardBody } = priceGuard;
+    return jsonResp({ ok: false, ...guardBody }, status);
+  }
+  resolvedMarketplaceId = priceGuard.marketplaceId || resolvedMarketplaceId;
+  resolvedCallerOfferId = priceGuard.offerId || resolvedCallerOfferId;
+
   // Step 1: getOffers for this SKU on this marketplace
   // Citation: sell/inventory.yaml getOffers :3787
   const offersRes = await ebayFetch(
-    `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`
+    `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${resolvedMarketplaceId}`
   );
 
   // Mirror 401/403/429 passthrough — matches handleLookupItem :854-858
@@ -1131,9 +1149,9 @@ async function handleUpdatePrice(body: any): Promise<Response> {
   );
 
   let targetOffer: any;
-  if (callerOfferId) {
+  if (resolvedCallerOfferId) {
     // Caller passed an explicit offerId — it MUST be in the candidate set
-    targetOffer = candidates.find((o: any) => String(o.offerId) === String(callerOfferId));
+    targetOffer = candidates.find((o: any) => String(o.offerId) === String(resolvedCallerOfferId));
     if (!targetOffer) {
       return jsonResp({ ok: false, error: "offer_id_not_published_fixed_price" });
     }
@@ -1215,7 +1233,7 @@ async function handleUpdatePrice(body: any): Promise<Response> {
     });
   }
 
-  return jsonResp({ ok: true, offerId: resolvedOfferId, price: priceNum });
+  return jsonResp({ ok: true, offerId: resolvedOfferId, price: priceNum, serverPriceUsd: priceGuard.serverPriceUsd });
 }
 
 function validateInventoryGroupKey(value: string): void {
@@ -1514,6 +1532,126 @@ async function handleLookupGroup(inventoryGroupKey: string, marketplaceId: strin
       listingId: offer?.listing?.listingId || offer?.listingId || null,
     })),
   });
+}
+
+async function loadEbayProductForPriceGuard(sku: string, productId: unknown) {
+  const select = [
+    "id",
+    "sku",
+    "cost_krw",
+    "weight_g",
+    "ebay_sku",
+    "ebay_offer_id",
+    "ebay_item_id",
+    "ebay_status",
+    "ebay_last_synced_price",
+    "ebay_marketplace_id",
+  ].join(",");
+
+  let query = supabase.from("products").select(select);
+  if (productId) {
+    query = query.eq("id", String(productId)).limit(1);
+  } else {
+    query = query.eq("ebay_sku", sku).limit(2);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    return { ok: false, status: 500, error: "product_lookup_failed", detail: error.message };
+  }
+
+  const rows = Array.isArray(data) ? data : (data ? [data] : []);
+  if (!rows.length) {
+    return { ok: false, status: 409, error: "product_mapping_required" };
+  }
+  if (!productId && rows.length > 1) {
+    return { ok: false, status: 409, error: "ambiguous_product_mapping" };
+  }
+
+  return { ok: true, product: rows[0] };
+}
+
+async function guardEbayUpdatePrice(body: any, sku: string, priceNum: number, marketplaceId: string, callerOfferId: unknown) {
+  if (priceNum < EBAY_PRICE_GUARD_MIN_USD) {
+    return { ok: false, status: 400, error: "min_price_guard_failed", minPriceUsd: EBAY_PRICE_GUARD_MIN_USD };
+  }
+
+  const productId = body?.productId || body?.product_id || null;
+  const lookup = await loadEbayProductForPriceGuard(sku, productId);
+  if (!lookup.ok) return lookup;
+
+  const product = lookup.product;
+  const productSku = s(product.ebay_sku).trim();
+  if (productSku !== sku) {
+    return { ok: false, status: 409, error: "sku_mapping_mismatch" };
+  }
+
+  const productStatus = s(product.ebay_status).toUpperCase();
+  if (productStatus !== "PUBLISHED") {
+    return { ok: false, status: 409, error: "product_not_published", productStatus: productStatus || null };
+  }
+
+  const productOfferId = s(product.ebay_offer_id).trim();
+  if (!productOfferId) {
+    return { ok: false, status: 409, error: "product_offer_mapping_required" };
+  }
+  if (callerOfferId && productOfferId !== String(callerOfferId)) {
+    return { ok: false, status: 409, error: "offer_id_mismatch", productOfferId };
+  }
+
+  const resolvedMarketplaceId = s(product.ebay_marketplace_id || marketplaceId || "EBAY_US", "EBAY_US").trim() || "EBAY_US";
+  if (product.ebay_marketplace_id && marketplaceId && resolvedMarketplaceId !== marketplaceId) {
+    return { ok: false, status: 409, error: "marketplace_mismatch", productMarketplaceId: resolvedMarketplaceId };
+  }
+
+  const costKrw = n(product.cost_krw, 0);
+  const weightG = n(product.weight_g, 0);
+  if (costKrw <= 0 || weightG <= 0) {
+    return { ok: false, status: 409, error: "product_cost_or_weight_required" };
+  }
+
+  const exCountry = await loadEbayExCountrySettings();
+  const serverPriceUsd = calcEbayUsdListing(costKrw, weightG, exCountry);
+  if (!Number.isFinite(serverPriceUsd) || serverPriceUsd <= 0) {
+    return { ok: false, status: 409, error: "server_price_unavailable" };
+  }
+
+  const diff = Math.abs(priceNum - serverPriceUsd);
+  if (diff > EBAY_PRICE_GUARD_TOLERANCE_USD) {
+    return {
+      ok: false,
+      status: 409,
+      error: "price_guard_failed",
+      clientPriceUsd: Number(priceNum.toFixed(2)),
+      serverPriceUsd,
+      toleranceUsd: EBAY_PRICE_GUARD_TOLERANCE_USD,
+    };
+  }
+
+  const previousPriceUsd = n(product.ebay_last_synced_price, 0);
+  const allowLargePriceDelta =
+    s(body?.confirmLargePriceDelta || body?.confirm_large_price_delta) === "ALLOW_EBAY_PRICE_DELTA";
+  if (previousPriceUsd > 0 && !allowLargePriceDelta) {
+    const deltaRatio = Math.abs(priceNum - previousPriceUsd) / previousPriceUsd;
+    if (deltaRatio > EBAY_PRICE_GUARD_MAX_DELTA_RATIO) {
+      return {
+        ok: false,
+        status: 409,
+        error: "price_delta_guard_failed",
+        previousPriceUsd: Number(previousPriceUsd.toFixed(2)),
+        serverPriceUsd,
+        maxDeltaRatio: EBAY_PRICE_GUARD_MAX_DELTA_RATIO,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    product,
+    offerId: productOfferId,
+    marketplaceId: resolvedMarketplaceId,
+    serverPriceUsd,
+  };
 }
 
 // ---------------------------------------------------------------------------

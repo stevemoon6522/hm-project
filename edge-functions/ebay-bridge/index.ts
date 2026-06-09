@@ -348,6 +348,28 @@ function validateAspects(aspects: Record<string, string[]>): void {
 // description max 4000자 — sell/inventory.yaml L10843 (grill-with-docs Revision §6)
 const EBAY_KPOP_CD_CATEGORY_ID = "176984";
 const EBAY_KPOP_REQUIRED_ASPECTS = ["Artist", "Release Title"];
+const EBAY_HEADLESS_CONFIRM_PHRASE = "PUBLISH_EBAY_LISTING";
+const EBAY_US_DIRECT_SHIPPING_RATES_KRW: Record<number, number> = {
+  100: 7200,
+  200: 8900,
+  300: 10500,
+  400: 12300,
+  500: 14400,
+  600: 15800,
+  700: 17200,
+  800: 18500,
+  900: 19900,
+  1000: 20700,
+};
+
+function s(value: unknown, fallback = ""): string {
+  return value == null ? fallback : String(value);
+}
+
+function n(value: unknown, fallback = 0): number {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
 
 function hasAspectValue(aspects: Record<string, string[]>, name: string): boolean {
   const values = Array.isArray(aspects?.[name]) ? aspects[name] : [];
@@ -409,6 +431,390 @@ function normalizeImageUrls(value: any, max = 24): string[] {
     .map((v) => String(v || "").trim())
     .filter((v) => /^https:\/\//i.test(v) && !seen.has(v) && seen.add(v))
     .slice(0, max);
+}
+
+function parseLooseStringArray(value: any): string[] {
+  if (Array.isArray(value)) return value.map((v) => String(v || ""));
+  const text = String(value || "").trim();
+  if (!text) return [];
+  if (text.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) return parsed.map((v) => String(v || ""));
+    } catch {
+      // Fall through to delimiter parsing.
+    }
+  }
+  return text.split(/[\n,;]+/).map((v) => v.trim()).filter(Boolean);
+}
+
+function stripLifecycleTags(value: unknown): string {
+  return s(value)
+    .replace(/\s*\[(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\]\s*/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isListingStatusTag(value: unknown): boolean {
+  return /^(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)$/i.test(s(value).trim());
+}
+
+function normalizeDerivedTitleToken(value: unknown): string {
+  return s(value)
+    .replace(/[^\x00-\x7F]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[\s"'`]+|[\s"'`]+$/g, "");
+}
+
+function stripListingStatusPrefix(value: unknown): string {
+  let out = s(value).trim();
+  for (let i = 0; i < 5; i++) {
+    const next = out
+      .replace(/^\s*\[(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\]\s*/i, "")
+      .replace(/^\s*(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\s*[-:]\s*/i, "")
+      .trim();
+    if (next === out) break;
+    out = next;
+  }
+  return normalizeDerivedTitleToken(out);
+}
+
+function firstMeaningfulBracketValue(title: string): string {
+  const re = /\[([^\]]+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(title))) {
+    const value = normalizeDerivedTitleToken(m[1]);
+    if (value && !isListingStatusTag(value)) return value;
+  }
+  return "";
+}
+
+function fallbackAlbumFromDashRemainder(value: string): string {
+  return normalizeDerivedTitleToken(value)
+    .replace(/\([^)]*\)/g, " ")
+    .replace(/\b(?:\d+(?:st|nd|rd|th)?\s+)?(?:EP|ALBUM|MINI|FULL|SINGLE)\b.*$/i, " ")
+    .replace(/\b(?:WEVERSE|PLATFORM|PHOTOBOOK|DIGIPACK|JEWEL|STANDARD)\s+VER\.?.*$/i, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function leadingUppercaseTokenBlock(value: string): string {
+  const tokens = String(value || "").trim().split(/\s+/);
+  const artistTokens: string[] = [];
+  for (const token of tokens) {
+    const cleaned = token.replace(/^[^A-Za-z0-9&]+|[^A-Za-z0-9&]+$/g, "");
+    if (!cleaned) continue;
+    if (!/^[A-Z0-9&]+$/.test(cleaned) || !/[A-Z]/.test(cleaned)) break;
+    artistTokens.push(cleaned);
+  }
+  return artistTokens.join(" ");
+}
+
+function deriveEbayKpopFromTitle(title: unknown): { artist: string; album: string; version: string; member: string } {
+  const out = { artist: "", album: "", version: "", member: "" };
+  const eng = stripListingStatusPrefix(title);
+  if (!eng) return out;
+
+  const dashM = eng.match(/^(.+?)\s+-\s+(.+)$/);
+  let remainder = eng;
+  if (dashM) {
+    const artist = normalizeDerivedTitleToken(dashM[1].replace(/\([^)]*\)\s*$/, ""));
+    if (artist) out.artist = artist;
+    remainder = stripListingStatusPrefix(dashM[2]);
+  } else {
+    out.artist = leadingUppercaseTokenBlock(eng);
+  }
+
+  const album = firstMeaningfulBracketValue(remainder) || firstMeaningfulBracketValue(eng);
+  if (album) out.album = album;
+  else if (dashM) out.album = fallbackAlbumFromDashRemainder(remainder);
+
+  const verM = eng.match(/\(([^)]+?)\s+[Vv][Ee][Rr]\.?\s*\)/);
+  if (verM) out.version = verM[1].trim();
+  if (!out.version) {
+    const parenRe = /\(([^)]+)\)/g;
+    const parenCandidates: string[] = [];
+    let parenM: RegExpExecArray | null;
+    while ((parenM = parenRe.exec(eng))) {
+      const value = normalizeDerivedTitleToken(parenM[1]);
+      if (!value || isListingStatusTag(value)) continue;
+      if (out.artist && value.toUpperCase() === out.artist.toUpperCase()) continue;
+      parenCandidates.push(value.replace(/\s+[Vv][Ee][Rr]\.?$/i, "").trim());
+    }
+    out.version = parenCandidates.filter(Boolean).pop() || "";
+  }
+  return out;
+}
+
+function ebayShippingWeightBucketG(weightG: unknown): number {
+  const w = Number(weightG) || 0;
+  if (w <= 0) return 0;
+  if (w <= 1000) return Math.ceil(w / 100) * 100;
+  return 1000;
+}
+
+function ebayGetUsShippingRateKrw(weightG: unknown): number {
+  const bucket = ebayShippingWeightBucketG(weightG);
+  return bucket ? EBAY_US_DIRECT_SHIPPING_RATES_KRW[bucket] || 0 : 0;
+}
+
+async function loadEbayExCountrySettings(): Promise<Record<string, number>> {
+  const fallback = {
+    exchangeRate: 1380,
+    pgFee: 2.7,
+    salesFee: 13,
+    fspFee: 0,
+    otherFee: 0,
+    settlementFee: 0,
+    gst: 0,
+    fspCcb: 0,
+    fixedServiceFee: 0,
+    purchaseVat: 0,
+  };
+  const { data, error } = await supabase
+    .from("country_settings")
+    .select("exchange_rate,pg_fee,sales_fee,fsp_fee,other_fee,settlement_fee,gst,fsp_ccb,fixed_service_fee,purchase_vat")
+    .eq("country_code", "EX")
+    .maybeSingle();
+  if (error || !data) return fallback;
+  return {
+    exchangeRate: n(data.exchange_rate, fallback.exchangeRate),
+    pgFee: n(data.pg_fee, fallback.pgFee),
+    salesFee: n(data.sales_fee, fallback.salesFee),
+    fspFee: n(data.fsp_fee, fallback.fspFee),
+    otherFee: n(data.other_fee, fallback.otherFee),
+    settlementFee: n(data.settlement_fee, fallback.settlementFee),
+    gst: n(data.gst, fallback.gst),
+    fspCcb: n(data.fsp_ccb, fallback.fspCcb),
+    fixedServiceFee: n(data.fixed_service_fee, fallback.fixedServiceFee),
+    purchaseVat: n(data.purchase_vat, fallback.purchaseVat),
+  };
+}
+
+function calcEbayUsdListing(costKrw: number, weightG: number, c: Record<string, number>): number {
+  if (!costKrw || costKrw <= 0) return 0;
+  const exchangeRate = Number(c.exchangeRate || 0);
+  if (!exchangeRate || exchangeRate <= 0) return 0;
+  const usShippingKrw = ebayGetUsShippingRateKrw(weightG);
+  if (!usShippingKrw) return 0;
+  const shipping = usShippingKrw / exchangeRate;
+  const effectiveCost = costKrw * (1 - (c.purchaseVat || 0) / 100);
+  const settlementLocal = effectiveCost / exchangeRate;
+  const cr = (c.salesFee || 0) / 100;
+  const vr = (c.gst || 0) / 100;
+  const salesPg = (c.pgFee || 0) / 100;
+  const salesFsp = (c.fspFee || 0) / 100;
+  const salesOther = (c.otherFee || 0) / 100;
+  const salesCcb = (c.fspCcb || 0) / 100;
+  const settlePct = (c.settlementFee || 0) / 100;
+  const fixedFee = c.fixedServiceFee || 0;
+  const sf = salesPg + salesFsp + salesOther + salesCcb;
+  const incomeTarget = settlementLocal / (1 - settlePct);
+  const denom = (1 + vr) * (1 - sf) - (cr + vr);
+  const raw = denom > 0 ? (incomeTarget + shipping + fixedFee) / denom : 0;
+  return Math.round(raw * 100) / 100;
+}
+
+async function loadEbayShippingSurchargeRows(weightG: number, exchangeRate: number): Promise<any[]> {
+  const bucket = ebayShippingWeightBucketG(weightG);
+  if (!bucket || !exchangeRate || exchangeRate <= 0) return [];
+  const { data, error } = await supabase
+    .from("ebay_shipping_country_rates")
+    .select("country_code,country_name,weight_g,baseline_krw,standard_krw,delta_krw,surcharge_usd")
+    .eq("weight_g", bucket)
+    .gt("delta_krw", 0)
+    .order("country_code", { ascending: true });
+  if (error || !Array.isArray(data)) return [];
+  return data
+    .map((row: any) => {
+      const deltaKrw = n(row.delta_krw, 0);
+      const extraUsd = deltaKrw > 0 ? Math.ceil((deltaKrw / exchangeRate) * 100) / 100 : n(row.surcharge_usd, 0);
+      return extraUsd > 0 ? {
+        countryCode: s(row.country_code).toUpperCase(),
+        countryName: s(row.country_name),
+        weightBucketG: bucket,
+        baselineKrw: n(row.baseline_krw, 0),
+        standardKrw: n(row.standard_krw, 0),
+        deltaKrw,
+        extraShippingUsd: Number(extraUsd.toFixed(2)),
+      } : null;
+    })
+    .filter(Boolean)
+    .slice(0, 80);
+}
+
+async function buildEbayPricingContext(costKrw: number, weightG: number): Promise<any> {
+  const exCountry = await loadEbayExCountrySettings();
+  const exchangeRate = n(exCountry.exchangeRate, 0);
+  const weightBucketG = ebayShippingWeightBucketG(weightG);
+  const usShippingKrw = ebayGetUsShippingRateKrw(weightG);
+  const usShippingUsd = exchangeRate > 0 ? usShippingKrw / exchangeRate : 0;
+  const shippingSurchargesUsd = await loadEbayShippingSurchargeRows(weightG, exchangeRate);
+  const priceUsd = calcEbayUsdListing(costKrw, weightG, exCountry);
+  return { exCountry, priceUsd, weightBucketG, usShippingKrw, usShippingUsd, shippingSurchargesUsd };
+}
+
+function buildEbayImageUrlsFromProduct(product: any, body: any = {}): string[] {
+  const raw = [
+    s(body.mainImage || body.main_image || product.main_image),
+    ...parseLooseStringArray(body.extraImages || body.extra_images || product.extra_images),
+    ...parseLooseStringArray(body.imageUrls || body.image_urls),
+  ];
+  return normalizeImageUrls(raw, 24);
+}
+
+function ebayDescriptionForPayload(value: unknown): string {
+  return s(value)
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .trim()
+    .replace(/\n/g, "<br>\n")
+    .slice(0, 4000);
+}
+
+function buildEbayDescriptionText(product: any, title: string): string {
+  const components = s(product.components_extracted_en).trim() || "- EACH OPTION INCLUDE 1 ALBUM";
+  return `${title}
+
+100% Official & Authentic K-POP Album
+- Brand new, sealed, and sourced directly from the official distributor
+
+Chart Certified
+- This album counts toward Hanteo and Circle (Gaon) charts
+- Your purchase directly supports the artist's chart performance
+
+Fast & Secure Shipping
+- Ships from Korea with tracking
+- Safely packed with bubble wrap and a sturdy box
+- Items labeled [READY STOCK], [ON HAND], or [FAST DELIVERY] are dispatched within 1 business day
+
+Contents
+${components}
+
+Important Notice
+- The outer box is for protection and may have minor dents, scratches, or creases.
+- The outer vinyl wrap may have slight tears or marks due to shipping.
+- These are not considered defects and are not grounds for return or refund.
+- Please purchase only if you agree to the above conditions.
+
+Shipping
+- All orders will be sent to the buyer's eBay shipping address.
+- We use K-packet Air-mail or standard shipping.
+- Orders include tracking information.
+- Items will be shipped in 2-3 business days after payment is received.
+- Import duties, taxes, VAT, brokerage, and handling fees are the buyer's responsibility.
+
+Return
+- Please contact us first if you want to return an item.
+- Return shipping cost is the buyer's responsibility unless the item has a seller-side issue.
+
+Contact
+- Feel free to contact us about our items.
+- If you are looking for another K-pop item, contact us and we will try to find it.
+- For multiple-item purchases, contact us in advance for a possible discount.`.slice(0, 4000);
+}
+
+function buildEbayAspectsFromProduct(product: any, title: string): Record<string, string[]> {
+  const derived = deriveEbayKpopFromTitle(title || product.product_name || product.sku);
+  const storedArtist = normalizeDerivedTitleToken(product.artist || product.brand || product.shopee_brand_name || "");
+  const storedAlbum = normalizeDerivedTitleToken(product.album || product.release_title || "");
+  const artist = String((isListingStatusTag(storedArtist) ? "" : storedArtist) || derived.artist || "").trim().slice(0, 50);
+  const releaseTitle = String((isListingStatusTag(storedAlbum) ? "" : storedAlbum) || derived.album || stripLifecycleTags(product.product_name) || product.sku || "").trim().slice(0, 50);
+  const releaseTypeSource = `${product.product_name || ""} ${storedAlbum || ""}`.toLowerCase();
+  const aspects: Record<string, string[]> = {
+    Type: [releaseTypeSource.includes("mini") || releaseTypeSource.includes("ep") ? "Mini Album" : "Album"],
+    Format: ["CD"],
+    Genre: ["K-Pop"],
+    Style: ["K-Pop"],
+    "Country of Origin": ["Korea, South"],
+  };
+  if (artist) {
+    aspects.Artist = [artist];
+    aspects["Record Label"] = [s(product.record_label || artist).slice(0, 50)];
+  }
+  if (releaseTitle) aspects["Release Title"] = [releaseTitle];
+  const year = s(product.release_year || product.year).trim();
+  if (/^(19|20)\d{2}$/.test(year)) aspects["Release Year"] = [year];
+  return aspects;
+}
+
+function mergeAspects(base: Record<string, string[]>, override: any): Record<string, string[]> {
+  if (!override || typeof override !== "object" || Array.isArray(override)) return base;
+  const out: Record<string, string[]> = { ...base };
+  for (const [key, value] of Object.entries(override)) {
+    const values = Array.isArray(value) ? value : [value];
+    const clean = values.map((v) => s(v).trim()).filter(Boolean).slice(0, 10);
+    if (key && clean.length) out[key] = clean;
+  }
+  return out;
+}
+
+async function buildHeadlessEbayProductPayload(product: any, body: any = {}): Promise<{ payload: any; pricing: any; derived: any }> {
+  const sku = s(body.sku || body.ebay_sku || product.ebay_sku || product.sku).trim();
+  const title = s(body.title || product.product_name || sku).replace(/\s+/g, " ").trim().slice(0, 80);
+  const categoryId = s(body.categoryId || body.category_id || product.ebay_category_id || EBAY_KPOP_CD_CATEGORY_ID).trim() || EBAY_KPOP_CD_CATEGORY_ID;
+  const costKrw = n(body.costKrw || body.cost_krw || product.cost_krw, 0);
+  const weightG = n(body.weightG || body.weight_g || product.weight_g, 0);
+  const pricing = await buildEbayPricingContext(costKrw, weightG);
+  const overridePrice = n(body.priceUsd || body.price_usd || product.ebay_price_usd || product.ebay_last_synced_price, 0);
+  const priceUsd = overridePrice > 0 ? overridePrice : n(pricing.priceUsd, 0);
+  const qRaw = Number(body.quantity ?? body.inventory ?? product.inventory ?? product.stock ?? 0);
+  const quantity = Number.isFinite(qRaw) && qRaw > 0 ? Math.max(1, Math.floor(qRaw)) : 3;
+  const imageUrls = buildEbayImageUrlsFromProduct(product, body);
+  const aspects = mergeAspects(buildEbayAspectsFromProduct(product, title), body.aspects);
+  const descriptionText = s(body.description || body.ebay_description || "").trim()
+    || buildEbayDescriptionText(product, title);
+  const derived = deriveEbayKpopFromTitle(title);
+
+  return {
+    payload: {
+      listingMode: "single",
+      productId: product.id || body.product_id || null,
+      productGroupId: product.product_group_id || body.product_group_id || "",
+      sku,
+      title,
+      description: ebayDescriptionForPayload(descriptionText),
+      imageUrls,
+      aspects,
+      condition: "NEW",
+      priceUsd: Number(priceUsd).toFixed(2),
+      quantity,
+      categoryId,
+      storeCategoryNames: normalizeStoreCategoryNames(body.storeCategoryNames || body.store_category_names || ["/K-pop"]),
+      weightG,
+      weightBucketG: pricing.weightBucketG,
+      usShippingKrw: pricing.usShippingKrw,
+      usShippingUsd: Number(n(pricing.usShippingUsd, 0).toFixed(2)),
+      shippingSurchargePolicy: "delta_vs_us_baseline",
+      shippingSurchargesUsd: pricing.shippingSurchargesUsd,
+      marketplaceId: s(body.marketplaceId || body.marketplace_id || product.ebay_marketplace_id || "EBAY_US"),
+    },
+    pricing,
+    derived,
+  };
+}
+
+function validateHeadlessSinglePayload(payload: any): { ok: boolean; errors: string[]; warnings: string[] } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  try { validateSku(payload.sku); } catch (e: any) { errors.push(String(e?.message || e)); }
+  if (!payload.title) errors.push("title is required");
+  if (payload.title && payload.title.length > 80) errors.push(`title max length exceeded: ${payload.title.length}`);
+  if (!payload.categoryId || !/^\d+$/.test(String(payload.categoryId))) errors.push("numeric categoryId is required");
+  try { validateDescription(payload.description || ""); } catch (e: any) { errors.push(String(e?.message || e)); }
+  const images = normalizeImageUrls(payload.imageUrls, 24);
+  if (!images.length) errors.push("at least one HTTPS image URL is required");
+  if (images.length === 1) warnings.push("Only one image URL is present; eBay can publish it, but extra detail images are recommended.");
+  const price = Number(payload.priceUsd || 0);
+  if (!Number.isFinite(price) || price < 1) errors.push("priceUsd must be at least 1.00");
+  const quantity = Number(payload.quantity || 0);
+  if (!Number.isFinite(quantity) || quantity < 1) errors.push("quantity must be at least 1");
+  const weightG = Number(payload.weightG || 0);
+  if (!Number.isFinite(weightG) || weightG <= 0) errors.push("weightG must be greater than 0");
+  try { validateAspects(payload.aspects || {}); } catch (e: any) { errors.push(String(e?.message || e)); }
+  try { validateRequiredMusicAspects(String(payload.categoryId), payload.aspects || {}); } catch (e: any) { errors.push(String(e?.message || e)); }
+  return { ok: errors.length === 0, errors, warnings };
 }
 
 function withPackageWeightAndSize(target: any, weightG: any, packageDimensions?: any): void {
@@ -1111,6 +1517,173 @@ async function handleLookupGroup(inventoryGroupKey: string, marketplaceId: strin
 }
 
 // ---------------------------------------------------------------------------
+// /register-product handler -- headless DB product -> single-SKU publish path
+// ---------------------------------------------------------------------------
+
+async function loadHeadlessProduct(body: any): Promise<any> {
+  const productId = s(body?.product_id || body?.productId).trim();
+  const sku = s(body?.sku || body?.ebay_sku).trim();
+  if (!productId && !sku) throw new Error("product_id or sku is required");
+
+  let query = supabase.from("products").select("*").limit(1);
+  query = productId ? query.eq("id", productId) : query.eq("sku", sku);
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(`product lookup failed: ${error.message || String(error)}`);
+  if (!data) throw new Error("product_not_found");
+  return data;
+}
+
+function isProductAlreadyMapped(product: any): boolean {
+  return !!(
+    product?.ebay_item_id
+    || product?.ebay_offer_id
+    || String(product?.ebay_status || "").toUpperCase() === "PUBLISHED"
+  );
+}
+
+async function persistHeadlessEbayPublishResult(product: any, payload: any, publishJson: any): Promise<any> {
+  const now = new Date().toISOString();
+  const update = {
+    ebay_sku: payload.sku,
+    ebay_item_id: publishJson.ebay_item_id,
+    ebay_offer_id: publishJson.ebay_offer_id,
+    ebay_status: "PUBLISHED",
+    ebay_published_at: now,
+    ebay_last_synced_price: Number(Number(payload.priceUsd || 0).toFixed(2)),
+    ebay_last_synced_at: now,
+    ebay_marketplace_id: payload.marketplaceId || "EBAY_US",
+    ebay_mapping_status: "mapped",
+    ebay_mapping_error: null,
+    ebay_category_id: String(payload.categoryId),
+    ebay_listing_mode: "single",
+    ebay_inventory_group_key: null,
+    ebay_variation_axis: null,
+    ebay_variation_value: null,
+    ebay_variation_image_url: null,
+  };
+
+  let query = supabase.from("products").update(update);
+  if (product?.id) query = query.eq("id", product.id);
+  else query = query.eq("sku", payload.sku);
+  const { error } = await query;
+  if (error) throw new Error(`product ebay mapping update failed: ${error.message || String(error)}`);
+  return update;
+}
+
+async function handleRegisterProduct(body: any): Promise<Response> {
+  const dryRun = body?.dry_run !== false && body?.dryRun !== false;
+  const force = body?.force === true;
+  const product = await loadHeadlessProduct(body || {});
+  const { payload, pricing, derived } = await buildHeadlessEbayProductPayload(product, body || {});
+  const validation = validateHeadlessSinglePayload(payload);
+
+  if (!validation.ok) {
+    return jsonResp({
+      ok: false,
+      dry_run: dryRun,
+      error: "validation_failed",
+      validation,
+      product_id: product.id || null,
+      sku: payload.sku,
+      payload,
+    }, 400);
+  }
+
+  if (dryRun) {
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      product_id: product.id || null,
+      sku: payload.sku,
+      derived,
+      validation,
+      pricing: {
+        priceUsd: pricing.priceUsd,
+        weightBucketG: pricing.weightBucketG,
+        usShippingKrw: pricing.usShippingKrw,
+        usShippingUsd: Number(n(pricing.usShippingUsd, 0).toFixed(2)),
+        shippingSurchargeCount: Array.isArray(pricing.shippingSurchargesUsd) ? pricing.shippingSurchargesUsd.length : 0,
+      },
+      payload,
+    });
+  }
+
+  const confirmed = body?.confirm === EBAY_HEADLESS_CONFIRM_PHRASE || body?.confirm_publish === true;
+  if (!confirmed) {
+    return jsonResp({
+      ok: false,
+      error: "confirm_required",
+      message: `Set dry_run=false and confirm="${EBAY_HEADLESS_CONFIRM_PHRASE}" to publish.`,
+      product_id: product.id || null,
+      sku: payload.sku,
+      payload,
+    }, 400);
+  }
+
+  if (!force && isProductAlreadyMapped(product)) {
+    return jsonResp({
+      ok: false,
+      error: "already_mapped",
+      message: "Product already has eBay mapping columns. Pass force=true only after operator review.",
+      product_id: product.id || null,
+      sku: payload.sku,
+      existing: {
+        ebay_sku: product.ebay_sku || null,
+        ebay_item_id: product.ebay_item_id || null,
+        ebay_offer_id: product.ebay_offer_id || null,
+        ebay_status: product.ebay_status || null,
+      },
+    }, 409);
+  }
+
+  if (!force) {
+    const preLookupResp = await handleLookupItem(payload.sku, payload.marketplaceId || "EBAY_US");
+    const preLookup = await jsonFromResponse(preLookupResp);
+    if (preLookup?.verification?.published_verification_passed) {
+      return jsonResp({
+        ok: false,
+        error: "already_published",
+        message: "eBay already has a published listing for this SKU. Pass force=true only after operator review.",
+        product_id: product.id || null,
+        sku: payload.sku,
+        lookup: preLookup,
+      }, 409);
+    }
+  }
+
+  const publishResp = await handlePublish(payload);
+  const publishJson = await jsonFromResponse(publishResp);
+  if (!publishResp.ok || !publishJson?.ok || !publishJson?.ebay_item_id) {
+    return jsonResp({
+      ok: false,
+      error: "publish_failed",
+      product_id: product.id || null,
+      sku: payload.sku,
+      publish: publishJson,
+    }, publishResp.status >= 400 ? publishResp.status : 502);
+  }
+
+  const lookupResp = await handleLookupItem(payload.sku, payload.marketplaceId || "EBAY_US");
+  const lookupJson = await jsonFromResponse(lookupResp);
+  const persisted = await persistHeadlessEbayPublishResult(product, payload, publishJson);
+
+  return jsonResp({
+    ok: true,
+    dry_run: false,
+    product_id: product.id || null,
+    sku: payload.sku,
+    ebay_item_id: publishJson.ebay_item_id,
+    ebay_offer_id: publishJson.ebay_offer_id,
+    marketplace_id: publishJson.marketplace_id || payload.marketplaceId || "EBAY_US",
+    verification: lookupJson?.verification || null,
+    lookup_ok: lookupResp.ok && lookupJson?.verification?.published_verification_passed === true,
+    persisted,
+    publish: publishJson,
+    lookup: lookupJson,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // /healthz handler
 // ---------------------------------------------------------------------------
 
@@ -1154,10 +1727,20 @@ async function handleRequest(req: Request): Promise<Response> {
 
   const url = new URL(req.url);
   const action = url.pathname.split("/").filter(Boolean).pop() || "";
-  const authResult = await requireAuthenticatedUser(req);
-  if (authResult.response) return authResult.response;
 
   try {
+    if (action === "register-product" && req.method === "POST") {
+      // Headless publish path: Supabase gateway still verifies the public anon JWT,
+      // then this route requires the server-only bridge token instead of a browser session.
+      const internal = requireInternalBridge(req);
+      if (internal) return internal;
+      const body = await req.json().catch(() => ({}));
+      return await handleRegisterProduct(body);
+    }
+
+    const authResult = await requireAuthenticatedUser(req);
+    if (authResult.response) return authResult.response;
+
     if (action === "healthz" && req.method === "GET") {
       return await handleHealthz();
     }

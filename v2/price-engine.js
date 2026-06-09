@@ -10,6 +10,7 @@ export const PRICE_SYNC_CURRENCY = {
   MY: 'MYR',
   PH: 'PHP',
   BR: 'BRL',
+  EX: 'USD',
 };
 
 export const DEFAULT_COUNTRY_SETTINGS = {
@@ -21,6 +22,7 @@ export const DEFAULT_COUNTRY_SETTINGS = {
   BR: { country_code: 'BR', name: 'Brazil', currency: 'BRL', exchange_rate: 240, pg_fee: 2.00, sales_fee: 13.35, fsp_fee: 0.00, other_fee: 0.00, settlement_fee: 0.90, gst: 0.00, fsp_ccb: 0.00, import_duty: 0.00, fixed_service_fee: 0.00, purchase_vat: 0.00 },
   JM: { country_code: 'JM', name: 'Joom (Global)', currency: 'USD', exchange_rate: 1380, pg_fee: 0.00, sales_fee: 15.00, fsp_fee: 0.00, other_fee: 0.00, settlement_fee: 0.00, gst: 0.00, fsp_ccb: 0.00, import_duty: 0.00, fixed_service_fee: 0.00, purchase_vat: 9.10 },
   Q10: { country_code: 'Q10', name: 'Qoo10 Japan', currency: 'JPY', exchange_rate: 9.1, pg_fee: 0.00, sales_fee: 11.00, fsp_fee: 2.00, other_fee: 1.00, settlement_fee: 0.00, gst: 0.00, fsp_ccb: 0.00, import_duty: 0.00, fixed_service_fee: 0.00, purchase_vat: 0.00 },
+  EX: { country_code: 'EX', name: 'eBay US', currency: 'USD', exchange_rate: 1380, pg_fee: 1.45, sales_fee: 15.30, fsp_fee: 0.00, other_fee: 0.00, settlement_fee: 0.00, gst: 0.00, fsp_ccb: 0.00, import_duty: 0.00, fixed_service_fee: 0.40, purchase_vat: 0.00 },
 };
 
 export const QOO10_SHIPPING_FEE_TABLE_JPY = Object.freeze([
@@ -253,7 +255,7 @@ const EBAY_US_SHIPPING_KRW = {
  * Returns { ok: boolean, ebayPrice: number }.
  */
 export function calculateEbayPrice({ costKrw, weightG, countrySettings } = {}) {
-  const c = countrySettings || {};
+  const c = normalizeCountrySettings(countrySettings || DEFAULT_COUNTRY_SETTINGS.EX, 'EX');
   if (!costKrw || costKrw <= 0) return { ok: false, ebayPrice: 0 };
   const exchangeRate = Number(c.exchangeRate || 0);
   if (!exchangeRate || exchangeRate <= 0) return { ok: false, ebayPrice: 0 };
@@ -273,6 +275,7 @@ export function calculateEbayPrice({ costKrw, weightG, countrySettings } = {}) {
   const settle_pct  = (c.settlementFee || 0) / 100;
   const fixedFee    = c.fixedServiceFee || 0;
   const sf = sales_pg + sales_fsp + sales_other + sales_ccb;
+  if (settle_pct >= 1) return { ok: false, ebayPrice: 0 };
   const incomeTarget = settlementLocal / (1 - settle_pct);
   const denom = (1 + vr) * (1 - sf) - (cr + vr);
   const raw = denom > 0 ? (incomeTarget + shipping + fixedFee) / denom : 0;

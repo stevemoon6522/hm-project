@@ -105,6 +105,10 @@ const platformPreviewStart = html.indexOf('function platformOpenPreview');
 const platformPreviewEnd = html.indexOf('function platformGroupValidation', platformPreviewStart);
 assert(platformPreviewStart >= 0 && platformPreviewEnd > platformPreviewStart, 'platformOpenPreview must exist');
 const platformPreview = html.slice(platformPreviewStart, platformPreviewEnd);
+const platformActionStart = html.indexOf('async function platformOpenAction');
+const platformActionEnd = html.indexOf('function platformGroupValidation', platformActionStart);
+assert(platformActionStart >= 0 && platformActionEnd > platformActionStart, 'platformOpenAction must exist');
+const platformAction = html.slice(platformActionStart, platformActionEnd);
 const platformSyncStart = html.indexOf('async function platformSyncSelected');
 const platformSyncEnd = html.indexOf('function plGroupRowsById', platformSyncStart);
 assert(platformSyncStart >= 0 && platformSyncEnd > platformSyncStart, 'platformSyncSelected must exist');
@@ -183,8 +187,14 @@ const ebayPublishGroupBuilderFn = new Function(
 assert(
   platformRender.includes('const visibleGroups = platformVisibleGroups(platform);')
     && platformRender.includes('const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;')
-    && platformRender.includes("${canRunSelectionAction ? '' : 'disabled'}>등록 미리보기"),
+    && platformRender.includes("const registerActionLabel = platform === 'ebay' ? '등록' : '등록 미리보기';")
+    && platformRender.includes('${text(registerActionLabel)}'),
   'Platform registration preview must be enabled when search/filter leaves one visible product even without a checkbox selection',
+);
+assert(
+  platformAction.includes("platform === 'ebay' && (action === 'register' || action === 'retry')")
+    && platformAction.includes('await platformOpenExistingModal(platform, groups[0]);'),
+  'eBay register action must open the existing eBay registration modal directly for one selected product',
 );
 assert(
   platformPreview.includes('if (!groups.length && !explicitKeys)')
@@ -206,6 +216,17 @@ const platformOpenPreviewFn = new Function(
   'renderPlatformWorkbench',
   'document',
   `${extractFunctionBlock(html, 'platformOpenPreview')}; return platformOpenPreview;`,
+);
+
+const platformOpenActionFn = new Function(
+  'state',
+  'platformSelectedGroups',
+  'platformVisibleGroups',
+  'platformOpenPreview',
+  'platformOpenExistingModal',
+  'showToast',
+  'renderPlatformWorkbench',
+  `${extractFunctionBlock(html, 'platformOpenAction')}; return platformOpenAction;`,
 );
 
 {
@@ -237,6 +258,48 @@ const platformOpenPreviewFn = new Function(
   assert.equal(calls.toasts.length, 0, 'single visible product preview must not show a no-selection toast');
   assert.deepEqual(calls.renders, ['ebay'], 'single visible product preview must rerender the eBay workbench');
   assert.equal(calls.scrolled, true, 'single visible product preview must scroll the preview into view');
+}
+
+{
+  const state = { platformPreview: { platform: 'ebay' } };
+  const calls = { modals: [], previews: [], toasts: [], renders: [] };
+  const openAction = platformOpenActionFn(
+    state,
+    () => [{ key: 'single:jennie-ruby', rows: [{ id: 'jennie-ruby' }] }],
+    () => [],
+    (...args) => calls.previews.push(args),
+    async (platform, group) => { calls.modals.push({ platform, group }); },
+    (message, kind) => calls.toasts.push({ message, kind }),
+    (platform) => calls.renders.push(platform),
+  );
+  await openAction('ebay', 'register');
+  assert.equal(state.platformPreview, null, 'eBay direct register action must clear stale platform preview state');
+  assert.deepEqual(calls.renders, ['ebay'], 'eBay direct register action must rerender before opening the modal');
+  assert.equal(calls.modals.length, 1, 'eBay direct register action must open the registration modal for one selected product');
+  assert.equal(calls.modals[0].platform, 'ebay', 'eBay direct register action must call the eBay modal opener');
+  assert.equal(calls.previews.length, 0, 'eBay direct register action must not stop at the preview for one selected product');
+  assert.equal(calls.toasts.length, 0, 'eBay direct register action must not show a no-op toast for one selected product');
+}
+
+{
+  const state = { platformPreview: null };
+  const calls = { modals: [], previews: [], toasts: [] };
+  const openAction = platformOpenActionFn(
+    state,
+    () => [
+      { key: 'single:jennie-ruby-a', rows: [{ id: 'a' }] },
+      { key: 'single:jennie-ruby-b', rows: [{ id: 'b' }] },
+    ],
+    () => [],
+    (...args) => calls.previews.push(args),
+    async (platform, group) => { calls.modals.push({ platform, group }); },
+    (message, kind) => calls.toasts.push({ message, kind }),
+    () => {},
+  );
+  await openAction('ebay', 'register');
+  assert.equal(calls.modals.length, 0, 'multi-selected eBay register action must not open multiple modals at once');
+  assert.equal(calls.previews.length, 1, 'multi-selected eBay register action should still show a preview');
+  assert.equal(calls.toasts.length, 1, 'multi-selected eBay register action should explain that the operator must choose one modal flow');
 }
 
 {

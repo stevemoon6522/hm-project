@@ -30,6 +30,7 @@ const coverageLookup = sliceBetween(html, 'async function coverageLookupViaPlatf
 const masterRegisterImageTools = sliceBetween(html, 'function mrGetGroupOptionImages(group, firstRow) {', 'function mrMasterPatchForGroup(group) {');
 const openCreatedMasterEdit = sliceBetween(html, 'async function mrOpenCreatedMasterEdit(productId) {', 'function mrRenderPreviewCards() {');
 const masterRegisterRender = sliceBetween(html, 'function mrRenderPreviewCards() {', 'async function mrPromoteAll() {');
+const masterRegisterPromote = sliceBetween(html, 'async function mrPromoteAll() {', 'let _v2EbayExCountryCache = null;');
 const joomRegisterStatus = sliceBetween(html, 'function mrJoomListingStatusFromResponse(json) {', 'function mrJoomAssertOptionSkuLocked(row, idx, errors) {');
 const shopeePlatformRegions = sliceBetween(html, 'const SHOPEE_PLATFORM_ACTIVE_REGIONS', '/** Preselect state: set by openReadyStockWizard()');
 const platformSelectionFlow = sliceBetween(html, 'function platformGroupsByKeys(keys) {', 'function platformOpenPreview(platform, action, explicitKeys = null) {');
@@ -55,10 +56,11 @@ test('platform tab buttons keep selection and route registration through the pro
   assert.match(platformSelectionFlow, /function platformGroupKeysFromProductIds\(productIds\)/, 'platform tabs should be able to map master-list selections to platform groups');
   assert.match(platformSelectionFlow, /state\.productListSelectedIds/, 'platform tabs should adopt master product selections when opened');
   assert.match(html, /platformAdoptProductListSelection\(platform\);[\s\S]*const selectedCount = platformSelection\(platform\)\.size/, 'platform render should adopt selections before enabling action buttons');
-  assert.match(platformBinding, /data-platform-preview[\s\S]*platformOpenPreview\(platform, btn\.dataset\.platformPreview \|\| 'register'\)/, 'bulk preview buttons must open the unified preview');
+  assert.match(platformBinding, /data-platform-preview[\s\S]*platformOpenAction\(platform, btn\.dataset\.platformPreview \|\| 'register'\)/, 'bulk preview buttons must route through the platform action handler');
   assert.match(platformBinding, /platform-master-check[\s\S]*sel\.add\(key\)[\s\S]*renderPlatformWorkbench\(platform\)/, 'row selection must enable preview actions after rerender');
   assert.match(platformPreviewExecution, /return false;/, 'platform tabs must not bypass registration modals through direct dispatcher execution');
   assert.match(platformPreviewExecution, /platformOpenExistingModal\(platform, group\)/, 'preview execution must open the existing platform registration modal');
+  assert.match(html, /async function platformOpenAction\(platform, action, explicitKeys = null\)[\s\S]*platform === 'ebay'[\s\S]*await platformOpenExistingModal\(platform, groups\[0\]\)/, 'eBay register action should open the existing eBay modal directly for a single selected product');
   assert.match(html, /if \(platform === 'shopee'\)[\s\S]*openRegisterShopeeSingleModal\(group\.rows\[0\]\.id\)/, 'Shopee single registration must use the existing single modal');
   assert.match(html, /if \(platform === 'joom'\) return openRegisterJoomGroupModal\(targetId\)/, 'Joom registration must use the existing Joom modal');
   assert.match(html, /if \(platform === 'qoo10'\) return openRegisterQoo10GroupModal\(targetId\)/, 'Qoo10 registration must use the existing Qoo10 modal');
@@ -101,6 +103,12 @@ test('master register cards expose master edit action whenever any master row wa
   assert.doesNotMatch(masterRegisterRender, /cardStatus === 'done' && doneProductId/, 'edit action must not be limited to fully completed cards');
   assert.match(masterRegisterRender, /data-open-created-master-edit/, 'registered cards should expose a master edit button target');
   assert.match(masterRegisterRender, /mrOpenCreatedMasterEdit\(createdProductIds\[0\]\)/, 'registered cards should open the master edit modal from the created master row');
+});
+
+test('selected master register avoids SKU collision checks against unchecked cards', () => {
+  assert.match(masterRegisterPromote, /const activeGroups = promotableGroups\.filter\(mrGroupSelected\)/, 'master register should build an explicit selected-card set');
+  assert.match(masterRegisterPromote, /const crossSkuMap = new Map\(\)[\s\S]*for \(const g of activeGroups\)/, 'cross-card SKU map must only include selected cards');
+  assert.doesNotMatch(masterRegisterPromote, /const crossSkuMap = new Map\(\)[\s\S]{0,400}for \(const g of groups\)/, 'unchecked cards must not block selected-card registration');
 });
 
 test('created master edit action still opens when product list refresh fails', () => {

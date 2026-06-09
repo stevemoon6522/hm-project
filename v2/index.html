@@ -6049,6 +6049,7 @@ LEGACY END -->
     const visibleGroups = platformVisibleGroups(platform);
     const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;
     const canRunSelectionAction = !isAlibaba && (selectedCount > 0 || canUseVisibleSingle);
+    const registerActionLabel = platform === 'ebay' ? '등록' : '등록 미리보기';
     const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
       `<button type="button" class="platform-status-tab${filter.status === key ? ' is-active' : ''}" data-platform-status="${key}" aria-pressed="${filter.status === key ? 'true' : 'false'}">${PLATFORM_STATUS_LABELS[key]} ${counts[key] || 0}</button>`
     )).join('');
@@ -6079,7 +6080,7 @@ LEGACY END -->
         <div class="platform-actions">
           <button type="button" data-platform-select-visible ${isAlibaba ? 'disabled' : ''}>표시 항목 선택</button>
           <button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>
-          <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>등록 미리보기</button>
+          <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(registerActionLabel)}</button>
           <button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>수정 미리보기</button>
           <button type="button" data-platform-preview="retry" ${canRunSelectionAction ? '' : 'disabled'}>실패 재시도</button>
           <button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>원격 SKU 확인</button>
@@ -6165,10 +6166,10 @@ LEGACY END -->
       });
     });
     root.querySelectorAll('[data-platform-preview]').forEach((btn) => {
-      btn.addEventListener('click', () => platformOpenPreview(platform, btn.dataset.platformPreview || 'register'));
+      btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformPreview || 'register'));
     });
     root.querySelectorAll('[data-platform-quick]').forEach((btn) => {
-      btn.addEventListener('click', () => platformOpenPreview(platform, btn.dataset.platformQuick || 'register', [btn.dataset.platformKey || '']));
+      btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformQuick || 'register', [btn.dataset.platformKey || '']));
     });
     root.querySelector('[data-platform-sync]')?.addEventListener('click', () => platformSyncSelected(platform));
     root.querySelector('[data-platform-preview-close]')?.addEventListener('click', () => {
@@ -6227,6 +6228,35 @@ LEGACY END -->
     };
     renderPlatformWorkbench(platform);
     document.getElementById(`platform-${platform}-root`)?.querySelector('.platform-preview')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+
+  async function platformOpenAction(platform, action, explicitKeys = null) {
+    if (platform === 'ebay' && (action === 'register' || action === 'retry')) {
+      let groups = platformSelectedGroups(platform, explicitKeys);
+      if (!groups.length && !explicitKeys) {
+        const visibleGroups = platformVisibleGroups(platform);
+        if (visibleGroups.length === 1) groups = visibleGroups;
+      }
+      if (!groups.length) {
+        showToast('선택한 마스터 상품이 없습니다.', 'err');
+        return;
+      }
+      if (groups.length > 1) {
+        platformOpenPreview(platform, action, explicitKeys);
+        showToast('eBay 등록은 모달에서 1개씩 확인합니다. 미리보기에서 실행할 상품을 확인하세요.', 'ok');
+        return;
+      }
+      try {
+        state.platformPreview = null;
+        renderPlatformWorkbench(platform);
+        await platformOpenExistingModal(platform, groups[0]);
+      } catch (e) {
+        console.error('[platformOpenAction] eBay modal open failed:', e);
+        showToast(`eBay 등록 모달 열기 실패: ${e.message || e}`, 'err');
+      }
+      return;
+    }
+    platformOpenPreview(platform, action, explicitKeys);
   }
 
   function platformGroupValidation(platform, action, group) {
@@ -16150,7 +16180,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let offset = 0;
     while (true) {
       const url = SUPABASE_URL + '/rest/v1/products'
-        + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
+        + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
         + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
       const res = await fetch(url, {
         headers: Object.assign({}, AUTH_HEADERS, {
@@ -16166,7 +16196,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           // Fallback query without cost_updated_at
           const res2 = await fetch(
             SUPABASE_URL + '/rest/v1/products'
-              + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
+              + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
               + '&order=lifecycle_state.asc,created_at.asc',
             {
               headers: Object.assign({}, AUTH_HEADERS, {
@@ -18143,7 +18173,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }
 
         const persisted = await catPersistProductCost(product.id, newCost, now);
-        if (!persisted.ok) errors.push(sku + ': cost update ' + persisted.error);
+        let localSaveOk = true;
+        if (!persisted.ok) {
+          errors.push(sku + ': cost update ' + persisted.error);
+          localSaveOk = false;
+        }
 
         const { error: productErr } = await db.from('products').update({
           joom_product_id: lookup.joom_product_id,
@@ -18168,7 +18202,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           joom_last_synced_price: calc.joomPrice,
           joom_last_synced_at: now,
         });
-        priceOk++;
+        if (localSaveOk) priceOk++;
       }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = oldText; }
@@ -18210,6 +18244,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           continue;
         }
 
+        const ebayStatus = String(product.ebay_status || '').toUpperCase();
+        if (ebayStatus !== 'PUBLISHED' || !product.ebay_offer_id) {
+          errors.push(sku + ': eBay PUBLISHED offer mapping missing');
+          continue;
+        }
+
         const newCost = catEffectiveCost(product);
         const weightG = catEffectiveWeight(product);
         const priceUsd = catComputeEbayPrice(newCost, weightG);
@@ -18227,6 +18267,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             body: JSON.stringify({
               sku: sku,
               priceUsd: priceUsd,
+              productId: product.id,
               offerId: product.ebay_offer_id || undefined,
             }),
           });
@@ -18242,7 +18283,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }
 
         const persisted = await catPersistProductCost(product.id, newCost, now);
-        if (!persisted.ok) errors.push(sku + ': cost update ' + persisted.error);
+        let localSaveOk = true;
+        if (!persisted.ok) {
+          errors.push(sku + ': cost update ' + persisted.error);
+          localSaveOk = false;
+        }
 
         const { error: productErr } = await db.from('products').update({
           ebay_last_synced_price: priceUsd,
@@ -18257,7 +18302,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           ebay_last_synced_price: priceUsd,
           ebay_last_synced_at: now,
         });
-        okCount++;
+        if (localSaveOk) okCount++;
       }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = oldText; }
@@ -22261,12 +22306,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
 
       // ── Cross-card SKU collision check (P1 #2) ────────────────────
-      // Collect all SKUs that belong to ANY card with active/committed intent.
+      // Collect SKUs only from selected cards with active/committed intent.
       // Inactive states (rejected, skipped, crawling) are excluded.
       // CROSS_SKU_INACTIVE is declared in the outer scope (shared with mrRenderPreviewCards).
       {
         const crossSkuMap = new Map(); // sku → source_record_id of its card
-        for (const g of groups) {
+        for (const g of activeGroups) {
           for (const row of g.rows) {
             const sku = (row._sku || '').trim();
             if (!sku) continue;
@@ -22954,19 +22999,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       _v2EbayExCountryPromise = (async () => {
         const { data, error } = await db.from('country_settings').select('*').eq('country_code', 'EX').single();
         if (error || !data) throw new Error('country_settings EX row 없음 (eBay virtual row): ' + (error?.message || 'no row'));
-        _v2EbayExCountryCache = {
-          exchangeRate: Number(data.exchange_rate),
-          pgFee:        Number(data.pg_fee ?? 1.45)        || 0,
-          salesFee:     Number(data.sales_fee ?? 15.3)     || 0,
-          fspFee:       0,
-          otherFee:     0,
-          settlementFee: 0,
-          gst:          0,
-          fspCcb:       0,
-          importDuty:   0,
-          fixedServiceFee: Number(data.fixed_service_fee) || 0,
-          purchaseVat:  Number(data.purchase_vat)  || 0,
-        };
+        _v2EbayExCountryCache = normalizeCountrySettings(data, 'EX');
         return _v2EbayExCountryCache;
       })();
       return _v2EbayExCountryPromise;

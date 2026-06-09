@@ -720,56 +720,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
     }
   }
 
-  // Alibaba create_listing preflight (plans/alibaba-deep-lemon.md §3).
-  // Emits the reserved ALIBABA_* error codes before the adapter is invoked, so
-  // missing master data is reported in the same structured format as the
-  // Shopee/Qoo10/eBay gates. The adapter re-checks as defense-in-depth.
-  if (platform === 'alibaba' && capability === 'create_listing') {
-    const aliInput = (body as any).alibaba || {};
-    const aliCategory = aliInput.category_id || product.alibaba_category_id;
-    const aliAttrs = (aliInput.attributes && typeof aliInput.attributes === 'object')
-      ? aliInput.attributes
-      : product.alibaba_attributes;
-    const aliFreight = aliInput.freight_template_id || product.alibaba_freight_template_id;
-    if (!aliCategory || !aliAttrs || (typeof aliAttrs === 'object' && Object.keys(aliAttrs).length === 0)) {
-      audit('alibaba_required_attrs_missing', { sku: product.sku });
-      await writeAuditLog(svc, {
-        entity_uuid: master_product_id,
-        actor: actorLabel,
-        action: 'publish',
-        after_json: { platform, capability, listing_status: 'not_listed', error_code: 'ALIBABA_REQUIRED_ATTRS_MISSING' },
-        batch_id: publish_request_id,
-      });
-      return jsonResp(200, {
-        ok: false,
-        publish_request_id,
-        platform_listing_id: existingListing?.id ?? null,
-        platform_item_id: null,
-        listing_status: 'not_listed',
-        error_code: 'ALIBABA_REQUIRED_ATTRS_MISSING',
-        error_msg: 'alibaba_category_id와 필수 카테고리 속성(alibaba_attributes)을 먼저 설정해 주세요.',
-      });
-    }
-    if (!aliFreight) {
-      audit('alibaba_shipping_template_missing', { sku: product.sku });
-      await writeAuditLog(svc, {
-        entity_uuid: master_product_id,
-        actor: actorLabel,
-        action: 'publish',
-        after_json: { platform, capability, listing_status: 'not_listed', error_code: 'ALIBABA_SHIPPING_TEMPLATE_MISSING' },
-        batch_id: publish_request_id,
-      });
-      return jsonResp(200, {
-        ok: false,
-        publish_request_id,
-        platform_listing_id: existingListing?.id ?? null,
-        platform_item_id: null,
-        listing_status: 'not_listed',
-        error_code: 'ALIBABA_SHIPPING_TEMPLATE_MISSING',
-        error_msg: 'alibaba_freight_template_id(운임 템플릿)를 먼저 설정해 주세요.',
-      });
-    }
-  }
+  // Alibaba create_listing: the ICBU docs make category / attributes / shipping
+  // template OPTIONAL (category is AI-predicted when omitted; shipping template
+  // is only required for RTS products). The minimum (title + image + price) is
+  // validated inside adapters/alibaba.ts, which returns PLATFORM_VALIDATION_ERROR
+  // with field-specific messages. No dispatcher-level hard gate here.
 
   // D5 gate (eBay aspects) — stubbed to pass in D0; populated by adapter in D5.
 

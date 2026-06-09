@@ -118,6 +118,12 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
     dimension: ali.dimension,
   };
 
+  // dry-run: validate + preview the payload without creating a real listing.
+  // (Alibaba's listing.v2 has no dry-run mode, so we stop before the bridge.)
+  if (ctx.dryRun) {
+    return { ok: true, listingStatus: 'draft', rawResponse: { dry_run: true, product_preview: body } };
+  }
+
   const result = await bridgeFetch('/create-listing', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

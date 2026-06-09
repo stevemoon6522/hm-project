@@ -3096,6 +3096,17 @@
       </div>
     </div>
 
+    <!-- Alibaba (ICBU) publish modal -->
+    <div id="mr-alibaba-modal-overlay" class="modal-overlay">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mr-alibaba-modal-title" style="width:min(880px,100%);">
+        <div class="modal-header">
+          <h2 id="mr-alibaba-modal-title">Alibaba(ICBU) 상품 등록</h2>
+          <button type="button" id="mr-alibaba-modal-close">닫기</button>
+        </div>
+        <div class="modal-body" id="mr-alibaba-modal-body"></div>
+      </div>
+    </div>
+
     <!-- eBay publish confirmation modal -->
     <div id="mr-ebay-modal-overlay" class="modal-overlay">
       <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mr-ebay-modal-title" style="width:min(980px,100%);">
@@ -4120,6 +4131,7 @@ LEGACY END -->
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ncWx3Z25td2VnenNqZWxicmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDkzNDMsImV4cCI6MjA5NDg4NTM0M30.mJtqXO7WJMBUYBYVOS1FrD5qmFX6yZxGwfiGw3HUyJE';
   const SHOPEE_BRIDGE = `${SUPABASE_URL}/functions/v1/shopee-bridge`;
   const QOO10_BRIDGE = `${SUPABASE_URL}/functions/v1/qoo10-bridge`;
+  const ALIBABA_BRIDGE = `${SUPABASE_URL}/functions/v1/alibaba-bridge`;
   const PLATFORM_PUBLISH = `${SUPABASE_URL}/functions/v1/platform-publish`;
   const STARONEMALL_VISION_URL = `${SUPABASE_URL}/functions/v1/staronemall-vision`;
   const STARONE_CRAWL_URL = `${SUPABASE_URL}/functions/v1/starone-crawl`;
@@ -6047,8 +6059,8 @@ LEGACY END -->
     const selectedCount = platformSelection(platform).size;
     const isAlibaba = platform === 'alibaba';
     const visibleGroups = platformVisibleGroups(platform);
-    const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;
-    const canRunSelectionAction = !isAlibaba && (selectedCount > 0 || canUseVisibleSingle);
+    const canUseVisibleSingle = selectedCount === 0 && visibleGroups.length === 1;
+    const canRunSelectionAction = selectedCount > 0 || canUseVisibleSingle;
     const registerActionLabel = platform === 'ebay' ? '등록' : '등록 미리보기';
     const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
       `<button type="button" class="platform-status-tab${filter.status === key ? ' is-active' : ''}" data-platform-status="${key}" aria-pressed="${filter.status === key ? 'true' : 'false'}">${PLATFORM_STATUS_LABELS[key]} ${counts[key] || 0}</button>`
@@ -6058,14 +6070,14 @@ LEGACY END -->
       <div class="platform-page-head">
         <div>
           <h2>${text(label)}</h2>
-          <p>${isAlibaba ? '백엔드 어댑터(create_listing/sync)는 연결됨. ICBU API 문서 확보 + 인증 스모크 통과 후 등록 UI가 활성화됩니다.' : '전체 마스터 상품을 기준으로 등록 상태를 좁히고, 선택 항목을 미리보기 후 실행합니다.'}</p>
+          <p>${isAlibaba ? 'Alibaba(ICBU) B2B 등록 — FOB 단가(USD)/MOQ 기준. 등록 미리보기 → 실행 시 ICBU 등록 모달이 열립니다.' : '전체 마스터 상품을 기준으로 등록 상태를 좁히고, 선택 항목을 미리보기 후 실행합니다.'}</p>
         </div>
         <div class="platform-summary">
           <span class="pill">선택 ${selectedCount}개</span>
           <span class="pill">수정 필드: ${text(platformSafeFieldsLabel(platform))}</span>
         </div>
       </div>
-      ${isAlibaba ? '<div class="notice" style="margin-bottom:10px;">Alibaba(ICBU) 등록 어댑터는 연결되었습니다. 실제 등록은 ① api-refs에 ICBU 문서 커밋 → ② alibaba-bridge 시크릿/매핑 채움 → ③ auth_verified 플립 이후 활성화됩니다. (1차: create_listing + sync)</div>' : ''}
+      ${isAlibaba ? '<div class="notice" style="margin-bottom:10px;">Alibaba(ICBU) 등록은 운영자 설정이 끝나야 실제 동작합니다: alibaba-bridge 시크릿(App Key/Secret/access_token) + ALIBABA_BRIDGE_ENABLED=true + auth_verified 플립. (1차: create_listing + sync, 카테고리/속성/운임은 선택)</div>' : ''}
       <div class="platform-toolbar">
         <div class="platform-filters">
           <input type="search" data-platform-search value="${text(filter.search || '')}" placeholder="SKU / 상품명 / 옵션 검색">
@@ -6078,7 +6090,7 @@ LEGACY END -->
           ${platformRegionControls(platform)}
         </div>
         <div class="platform-actions">
-          <button type="button" data-platform-select-visible ${isAlibaba ? 'disabled' : ''}>표시 항목 선택</button>
+          <button type="button" data-platform-select-visible>표시 항목 선택</button>
           <button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>
           <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(registerActionLabel)}</button>
           <button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>수정 미리보기</button>
@@ -6263,7 +6275,6 @@ LEGACY END -->
     const errors = [];
     const warnings = [];
     const rows = group.rows || [];
-    if (platform === 'alibaba') errors.push('Alibaba(ICBU) 등록은 API 문서 연동 + 인증 스모크 통과 후 활성화됩니다. (어댑터는 연결됨)');
     if (!rows.length) errors.push('상품 행이 없습니다.');
     rows.forEach((row) => {
       if (!String(row.sku || '').trim()) errors.push(`${plProductName(row) || row.id}: SKU가 비어 있습니다.`);
@@ -6278,13 +6289,20 @@ LEGACY END -->
       }
       if (platform === 'joom' && !first.joom_category_id) warnings.push('Joom category가 없으면 bridge 기본값으로 시도합니다.');
       if (platform === 'qoo10' && !first.qoo10_category_id) errors.push('Qoo10 SecondSubCat category가 없습니다.');
+      if (platform === 'alibaba') {
+        if (!first.main_image && !(Array.isArray(first.extra_images) && first.extra_images.length)) errors.push('Alibaba: 공개 https 대표 이미지가 필요합니다.');
+        if (!Number(first.alibaba_price_usd || 0)) warnings.push('Alibaba FOB 단가(USD)가 비어 있습니다 — 등록 모달에서 입력하세요.');
+        if (!first.alibaba_category_id) warnings.push('Alibaba 카테고리 미지정 — AI 자동 분류됩니다.');
+      }
       if (platform === 'ebay' && !first.ebay_category_id) {
         warnings.push(`eBay category ID가 없어서 기본 Music > CDs (${PLATFORM_EBAY_DEFAULT_CATEGORY_ID})로 등록합니다.`);
       }
-      rows.forEach((row) => {
-        if (!Number(row.cost_krw || 0)) errors.push(`${row.sku || row.id}: cost_krw가 없습니다.`);
-        if (!Number(row.weight_g || 0)) errors.push(`${row.sku || row.id}: weight_g가 없습니다.`);
-      });
+      if (platform !== 'alibaba') {
+        rows.forEach((row) => {
+          if (!Number(row.cost_krw || 0)) errors.push(`${row.sku || row.id}: cost_krw가 없습니다.`);
+          if (!Number(row.weight_g || 0)) errors.push(`${row.sku || row.id}: weight_g가 없습니다.`);
+        });
+      }
       if (group.isGrouped) warnings.push('옵션 묶음은 기존 플랫폼 등록 모달의 세부 검증을 사용합니다.');
     }
     if (action === 'edit') {
@@ -6440,6 +6458,7 @@ LEGACY END -->
     if (platform === 'joom') return openRegisterJoomGroupModal(targetId);
     if (platform === 'qoo10') return openRegisterQoo10GroupModal(targetId);
     if (platform === 'ebay') return openRegisterEbayGroupModal(targetId);
+    if (platform === 'alibaba') return openRegisterAlibabaGroupModal(targetId);
     throw new Error(`${PLATFORM_LABELS[platform] || platform} 실행 흐름이 아직 없습니다.`);
   }
 
@@ -13508,6 +13527,192 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (body) body.innerHTML = '<div class="muted">Loading Qoo10 templates and StarOneMall detail images...</div>';
     await Promise.all([mrQoo10LoadDetailImages(rows), mrQoo10LoadCountrySettings()]);
     mrQoo10RenderModal(rows);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Alibaba (ICBU) registration modal. Collects the create_listing fields and
+  // posts to platform-publish (capability=create_listing, body.alibaba).
+  // ---------------------------------------------------------------------------
+  let _mrAlibaba = { rows: [], targetId: null, inFlight: false };
+  const MR_ALIBABA_UNITS = ['Piece', 'Pair', 'Set', 'Box', 'Bag', 'Carton', 'Kilogram', 'Unit', 'Pack'];
+
+  function mrAlibabaOverlay() { return document.getElementById('mr-alibaba-modal-overlay'); }
+  function mrAlibabaClose() { const o = mrAlibabaOverlay(); if (o) o.classList.remove('show'); }
+  function mrAlibabaStatus(message, kind = '') {
+    const el = document.getElementById('mr-alibaba-status');
+    if (!el) return;
+    el.textContent = message || '';
+    el.style.color = kind === 'err' ? '#dc2626' : kind === 'ok' ? '#16a34a' : '#64748b';
+  }
+  function mrAlibabaImages(row) {
+    return [row?.main_image, ...(Array.isArray(row?.extra_images) ? row.extra_images : [])]
+      .map((s) => String(s || '').trim()).filter((s) => /^https?:\/\//i.test(s)).slice(0, 6);
+  }
+
+  async function openRegisterAlibabaGroupModal(productGroupId) {
+    const targetId = String(productGroupId || '').trim();
+    if (!targetId) { showToast('Alibaba 등록 대상 ID가 없습니다.', 'err'); return; }
+    let { data, error } = await db.from('products').select(RSH_PRODUCT_SELECT).eq('product_group_id', targetId);
+    if (!error && (!data || data.length === 0)) {
+      const single = await db.from('products').select(RSH_PRODUCT_SELECT).eq('id', targetId);
+      data = single.data; error = single.error;
+    }
+    if (error) { showToast(`Alibaba 등록 상품 로드 실패: ${error.message || error}`, 'err'); return; }
+    const allRows = rshSortedProducts(data || []);
+    const variantRows = allRows.filter(plIsGroupedVariant);
+    const rows = variantRows.length ? variantRows : allRows;
+    if (!rows.length) { showToast('Alibaba 등록할 상품이 없습니다.', 'err'); return; }
+    _mrAlibaba = { rows, targetId, inFlight: false };
+    const overlay = mrAlibabaOverlay();
+    if (overlay) overlay.classList.add('show');
+    document.getElementById('mr-alibaba-modal-close')?.addEventListener('click', mrAlibabaClose);
+    mrAlibabaRenderModal(rows);
+  }
+
+  function mrAlibabaRenderModal(rows) {
+    const body = document.getElementById('mr-alibaba-modal-body');
+    if (!body) return;
+    const first = rows[0] || {};
+    const title = String(first.product_name || first.sku || '').trim();
+    const desc = String(first.description || '').trim();
+    const images = mrAlibabaImages(first);
+    const unit = String(first.alibaba_unit || 'Piece');
+    const weightKg = first.weight_g ? (Number(first.weight_g) / 1000).toFixed(3) : '';
+    body.innerHTML = `
+      <div style="display:grid;gap:12px;">
+        <div class="muted" style="font-size:12px;">대상 SKU: ${text(first.sku || '')} · 옵션 ${rows.length}개 · 통화 USD(FOB)</div>
+        <label>상품명 (title)<input id="mr-ali-title" type="text" maxlength="128" value="${text(title)}"></label>
+        <label>설명 (description)<textarea id="mr-ali-desc" rows="3">${text(desc)}</textarea></label>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+          <label>FOB 단가 USD<input id="mr-ali-price" type="number" step="0.01" min="0" value="${text(first.alibaba_price_usd ?? '')}"></label>
+          <label>MOQ<input id="mr-ali-moq" type="number" min="1" value="${text(first.alibaba_moq ?? 1)}"></label>
+          <label>단위<select id="mr-ali-unit">${MR_ALIBABA_UNITS.map((u) => `<option ${u === unit ? 'selected' : ''}>${u}</option>`).join('')}</select></label>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:end;">
+          <label>카테고리 ID <span class="muted" style="font-size:11px;">(선택 — 비우면 AI 자동분류)</span><input id="mr-ali-category" type="text" placeholder="leaf category id" value="${text(first.alibaba_category_id || '')}"></label>
+          <button type="button" id="mr-ali-load-attrs">필수 속성 불러오기</button>
+        </div>
+        <div id="mr-ali-attrs"></div>
+        <details>
+          <summary style="cursor:pointer;font-size:13px;">RTS(즉시배송) 옵션 — 운임 템플릿 (선택)</summary>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;">
+            <label>운임 템플릿 ID<input id="mr-ali-freight" type="text" value="${text(first.alibaba_freight_template_id || '')}"></label>
+            <label>무게 kg<input id="mr-ali-weight" type="number" step="0.001" min="0" value="${text(weightKg)}"></label>
+          </div>
+        </details>
+        <div>이미지 ${images.length}/6 <span class="muted" style="font-size:11px;">(공개 https URL은 ICBU가 자동 업로드)</span>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">${images.map((u) => `<img src="${text(u)}" style="width:54px;height:54px;object-fit:cover;border-radius:6px;border:1px solid #e2e8f0;">`).join('') || '<span class="muted" style="font-size:12px;">대표 이미지가 없습니다 — 마스터에 먼저 등록하세요.</span>'}</div>
+        </div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;"><input id="mr-ali-dryrun" type="checkbox" checked> dry-run (실제 등록 없이 payload 검증만)</label>
+      </div>
+      <div class="modal-footer" style="margin-top:14px;display:flex;gap:8px;align-items:center;">
+        <span id="mr-alibaba-status" class="muted" style="font-size:12px;margin-right:auto;"></span>
+        <button type="button" id="mr-alibaba-modal-cancel">취소</button>
+        <button type="button" id="mr-alibaba-modal-confirm" class="primary">Alibaba 등록 실행</button>
+      </div>`;
+    body.querySelector('#mr-ali-load-attrs')?.addEventListener('click', mrAlibabaLoadAttributes);
+    body.querySelector('#mr-alibaba-modal-cancel')?.addEventListener('click', mrAlibabaClose);
+    body.querySelector('#mr-alibaba-modal-confirm')?.addEventListener('click', mrAlibabaSubmit);
+  }
+
+  async function mrAlibabaLoadAttributes() {
+    const categoryId = String(document.getElementById('mr-ali-category')?.value || '').trim();
+    if (!categoryId) { mrAlibabaStatus('카테고리 ID를 먼저 입력하세요.', 'err'); return; }
+    mrAlibabaStatus('필수 속성 불러오는 중...');
+    try {
+      const session = (await db.auth.getSession()).data.session;
+      const resp = await fetch(`${ALIBABA_BRIDGE}/category-attributes?category_id=${encodeURIComponent(categoryId)}`, {
+        headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON },
+      });
+      const json = await resp.json().catch(() => ({}));
+      if (!resp.ok || json.ok === false) throw new Error(json.error || json.message || `HTTP ${resp.status}`);
+      const all = [...(json.category_attributes || []), ...(json.sale_attributes || [])];
+      const required = all.filter((a) => String(a.required) === 'true');
+      const wrap = document.getElementById('mr-ali-attrs');
+      if (!wrap) return;
+      if (!required.length) {
+        wrap.innerHTML = '<div class="muted" style="font-size:12px;">이 카테고리에 필수 속성이 없습니다.</div>';
+        mrAlibabaStatus('필수 속성 없음', 'ok');
+        return;
+      }
+      wrap.innerHTML = `<div style="display:grid;gap:8px;border:1px solid #e2e8f0;border-radius:8px;padding:10px;">
+        <strong style="font-size:12px;">필수 속성 (${required.length})</strong>
+        ${required.map((a) => {
+          const vals = Array.isArray(a.attribute_value_list) ? a.attribute_value_list : [];
+          const field = vals.length
+            ? `<select data-ali-attr="${text(a.attribute_name)}"><option value=""></option>${vals.map((v) => `<option>${text(v.attribute_value_name)}</option>`).join('')}</select>`
+            : `<input type="text" data-ali-attr="${text(a.attribute_name)}">`;
+          return `<label style="font-size:12px;display:grid;gap:3px;">${text(a.attribute_name)}${field}</label>`;
+        }).join('')}
+      </div>`;
+      mrAlibabaStatus(`필수 속성 ${required.length}개 — 값을 채워주세요.`, 'ok');
+    } catch (e) {
+      mrAlibabaStatus(`속성 불러오기 실패: ${e.message || e}`, 'err');
+    }
+  }
+
+  async function mrAlibabaSubmit() {
+    if (_mrAlibaba.inFlight) return;
+    const first = _mrAlibaba.rows[0] || {};
+    const val = (id) => String(document.getElementById(id)?.value || '').trim();
+    const title = val('mr-ali-title');
+    const priceUsd = Number(val('mr-ali-price'));
+    const images = mrAlibabaImages(first);
+    const attributes = [...document.querySelectorAll('[data-ali-attr]')]
+      .map((el) => ({ attribute_name: el.getAttribute('data-ali-attr'), attribute_value: String(el.value || '').trim() }))
+      .filter((a) => a.attribute_value);
+    const dryRun = !!document.getElementById('mr-ali-dryrun')?.checked;
+    const weight = val('mr-ali-weight');
+
+    if (!title) { mrAlibabaStatus('상품명을 입력하세요.', 'err'); return; }
+    if (!images.length) { mrAlibabaStatus('공개 https 이미지가 1장 이상 필요합니다.', 'err'); return; }
+    if (!(priceUsd > 0)) { mrAlibabaStatus('FOB 단가(USD)를 0보다 크게 입력하세요.', 'err'); return; }
+
+    _mrAlibaba.inFlight = true;
+    mrAlibabaStatus(dryRun ? 'dry-run 검증 중...' : '등록 요청 중... (Alibaba 처리 20~60초)');
+    try {
+      const session = (await db.auth.getSession()).data.session;
+      if (!session) throw new Error('로그인이 필요합니다.');
+      const body = {
+        platform: 'alibaba',
+        capability: 'create_listing',
+        master_product_id: first.id,
+        publish_request_id: crypto.randomUUID(),
+        country: 'GLOBAL',
+        dry_run: dryRun,
+        alibaba: {
+          title,
+          description: val('mr-ali-desc'),
+          images,
+          price_usd: priceUsd,
+          moq: Math.max(1, Math.floor(Number(val('mr-ali-moq')) || 1)),
+          unit: val('mr-ali-unit') || 'Piece',
+          category_id: val('mr-ali-category'),
+          attributes,
+          freight_template_id: val('mr-ali-freight'),
+          weight: weight ? Number(weight) : undefined,
+        },
+      };
+      const resp = await fetch(PLATFORM_PUBLISH, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const json = await resp.json().catch(() => ({ ok: false, error_msg: `HTTP ${resp.status}` }));
+      if (!resp.ok || json.ok === false) {
+        mrAlibabaStatus(`실패: ${json.error_msg || json.error || json.error_code || `HTTP ${resp.status}`}`, 'err');
+      } else {
+        mrAlibabaStatus(`성공: ${json.listing_status || 'submitted'} ${json.platform_item_id || ''} ${dryRun ? '(dry-run)' : ''}`.trim(), 'ok');
+        if (!dryRun) {
+          await loadData();
+          setTimeout(() => { mrAlibabaClose(); renderPlatformWorkbenches(); }, 1300);
+        }
+      }
+    } catch (e) {
+      mrAlibabaStatus(`오류: ${e.message || e}`, 'err');
+    } finally {
+      _mrAlibaba.inFlight = false;
+    }
   }
 
   async function openRegisterEbayGroupModal(productGroupId) {

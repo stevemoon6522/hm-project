@@ -149,6 +149,16 @@ function shouldClearRemoteMissingMapping(capability: AdapterCapability, adapterR
     && (adapterResult?.errorCode === 'PLATFORM_NOT_FOUND' || adapterResult?.ok === true);
 }
 
+function platformListingMappingStatus(adapterResult: any): 'mapped' | 'needs_review' | 'unmatched' | 'mapping_failed' {
+  const status = String(adapterResult?.listingStatus || '').toLowerCase();
+  if (!adapterResult?.ok) return 'mapping_failed';
+  if (status === 'listed' || status === 'paused') return 'mapped';
+  if (status === 'pending' || status === 'draft') return 'needs_review';
+  if (status === 'not_listed') return 'unmatched';
+  if (status === 'rejected' || status === 'error' || status === 'banned') return 'mapping_failed';
+  return 'needs_review';
+}
+
 async function clearRemoteMissingMapping(
   svc: any,
   args: {
@@ -845,6 +855,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // Non-fatal: continue with audit + response.
       } else if (upsertedId) {
         listingId = upsertedId;
+        const nextMappingStatus = platformListingMappingStatus(adapterResult);
+        const { error: mappingErr } = await svc
+          .from('platform_listings')
+          .update({ mapping_status: nextMappingStatus, updated_at: new Date().toISOString() })
+          .eq('id', upsertedId);
+        if (mappingErr) audit('listing_mapping_status_update_failed', { error: mappingErr.message, mapping_status: nextMappingStatus });
       }
     }
 

@@ -4376,6 +4376,7 @@ LEGACY END -->
     edit: '대량 수정',
     retry: '실패 재시도',
   });
+  const PLATFORM_EBAY_DEFAULT_CATEGORY_ID = '176984'; // Music > CDs
   const PLATFORM_SAFE_EDIT_FIELDS = Object.freeze({
     shopee: ['name_and_description', 'price', 'days_to_ship'],
     joom: ['price'],
@@ -6045,6 +6046,9 @@ LEGACY END -->
     platformAdoptProductListSelection(platform);
     const selectedCount = platformSelection(platform).size;
     const isAlibaba = platform === 'alibaba';
+    const visibleGroups = platformVisibleGroups(platform);
+    const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;
+    const canRunSelectionAction = !isAlibaba && (selectedCount > 0 || canUseVisibleSingle);
     const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
       `<button type="button" class="platform-status-tab${filter.status === key ? ' is-active' : ''}" data-platform-status="${key}" aria-pressed="${filter.status === key ? 'true' : 'false'}">${PLATFORM_STATUS_LABELS[key]} ${counts[key] || 0}</button>`
     )).join('');
@@ -6075,10 +6079,10 @@ LEGACY END -->
         <div class="platform-actions">
           <button type="button" data-platform-select-visible ${isAlibaba ? 'disabled' : ''}>표시 항목 선택</button>
           <button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>
-          <button type="button" data-platform-preview="register" class="primary" ${selectedCount && !isAlibaba ? '' : 'disabled'}>등록 미리보기</button>
-          <button type="button" data-platform-preview="edit" ${selectedCount && !isAlibaba ? '' : 'disabled'}>수정 미리보기</button>
-          <button type="button" data-platform-preview="retry" ${selectedCount && !isAlibaba ? '' : 'disabled'}>실패 재시도</button>
-          <button type="button" data-platform-sync ${selectedCount && !isAlibaba ? '' : 'disabled'}>원격 SKU 확인</button>
+          <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>등록 미리보기</button>
+          <button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>수정 미리보기</button>
+          <button type="button" data-platform-preview="retry" ${canRunSelectionAction ? '' : 'disabled'}>실패 재시도</button>
+          <button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>원격 SKU 확인</button>
         </div>
       </div>
       ${previewHtml}
@@ -6205,7 +6209,11 @@ LEGACY END -->
   }
 
   function platformOpenPreview(platform, action, explicitKeys = null) {
-    const groups = platformSelectedGroups(platform, explicitKeys);
+    let groups = platformSelectedGroups(platform, explicitKeys);
+    if (!groups.length && !explicitKeys) {
+      const visibleGroups = platformVisibleGroups(platform);
+      if (visibleGroups.length === 1) groups = visibleGroups;
+    }
     if (!groups.length) {
       showToast('선택된 마스터 상품이 없습니다.', 'err');
       return;
@@ -6240,7 +6248,9 @@ LEGACY END -->
       }
       if (platform === 'joom' && !first.joom_category_id) warnings.push('Joom category가 없으면 bridge 기본값으로 시도합니다.');
       if (platform === 'qoo10' && !first.qoo10_category_id) errors.push('Qoo10 SecondSubCat category가 없습니다.');
-      if (platform === 'ebay' && !first.ebay_category_id) errors.push('eBay category ID가 없습니다.');
+      if (platform === 'ebay' && !first.ebay_category_id) {
+        warnings.push(`eBay category ID가 없어서 기본 Music > CDs (${PLATFORM_EBAY_DEFAULT_CATEGORY_ID})로 등록합니다.`);
+      }
       rows.forEach((row) => {
         if (!Number(row.cost_krw || 0)) errors.push(`${row.sku || row.id}: cost_krw가 없습니다.`);
         if (!Number(row.weight_g || 0)) errors.push(`${row.sku || row.id}: weight_g가 없습니다.`);
@@ -6415,7 +6425,11 @@ LEGACY END -->
   }
 
   async function platformSyncSelected(platform) {
-    const groups = platformSelectedGroups(platform);
+    let groups = platformSelectedGroups(platform);
+    if (!groups.length) {
+      const visibleGroups = platformVisibleGroups(platform);
+      if (visibleGroups.length === 1) groups = visibleGroups;
+    }
     const ids = groups.flatMap((group) => (group.rows || []).map((row) => row.id)).filter(Boolean);
     if (!ids.length) {
       showToast('원격 확인할 선택 상품이 없습니다.', 'err');
@@ -20502,7 +20516,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       // Step 1: strip Korean/CJK + leading listing status labels.
       // Step 2: artist = text before " - ", otherwise leading uppercase token block.
       // Step 3: album = first non-status [...], otherwise cleaned text after " - ".
-      // Step 4: version = text inside (...) immediately before 'ver.' (case-insensitive).
+      // Step 4: version = text inside (...) immediately before 'ver.' (case-insensitive),
+      //         or the last meaningful non-artist (...) value such as "CD Digipack".
       // Step 5: member = '' (operator fills in).
       const out = { artist: '', album: '', version: '', member: '' };
       if (!title) return out;
@@ -20526,6 +20541,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       // Version: anything inside parens that ends with 'ver' or 'ver.' (case-insensitive)
       const verM = eng.match(/\(([^)]+?)\s+[Vv][Ee][Rr]\.?\s*\)/);
       if (verM) out.version = verM[1].trim();
+      if (!out.version) {
+        const parenRe = /\(([^)]+)\)/g;
+        const parenCandidates = [];
+        let parenM;
+        while ((parenM = parenRe.exec(eng))) {
+          const value = mrNormalizeDerivedTitleToken(parenM[1]);
+          if (!value || mrIsListingStatusTag(value)) continue;
+          if (out.artist && value.toUpperCase() === out.artist.toUpperCase()) continue;
+          parenCandidates.push(value.replace(/\s+[Vv][Ee][Rr]\.?$/i, '').trim());
+        }
+        out.version = parenCandidates.filter(Boolean).pop() || '';
+      }
       return out;
     }
 

@@ -86,6 +86,10 @@ assert.match(joomBridge, /lookupJoomProductBySkuOrId/, 'Joom lookup must retry b
 assert.match(platformPublish, /joom_product_id/, 'platform-publish must select products.joom_product_id for Joom sync fallback');
 assert.match(joomAdapter, /id: s\(ctx\.masterProduct\.joom_product_id\)/, 'Joom platform adapter must send stored joom_product_id to lookup-sku');
 assert.doesNotMatch(joomBridge, /return jsonResp\(\{ ok: false, error: "upstream_joom_lookup_failed" \}, 502\);/, 'Joom lookup must not collapse every failure to upstream_joom_lookup_failed');
+assert.match(platformPublish, /function platformListingMappingStatus/, 'platform-publish must centralize platform_listings.mapping_status decisions');
+assert.match(platformPublish, /status === 'pending' \|\| status === 'draft'[\s\S]*return 'needs_review'/, 'pending platform-publish results must not leave platform_listings.mapping_status as mapped');
+assert.match(platformPublish, /status === 'rejected' \|\| status === 'error' \|\| status === 'banned'[\s\S]*return 'mapping_failed'/, 'rejected platform-publish results must be stored as mapping_failed');
+assert.match(platformPublish, /mapping_status: nextMappingStatus/, 'platform-publish must write the derived mapping_status after upsert');
 
 assert.match(ebayBridge, /healthz" && req\.method === "GET"[\s\S]*return await handleHealthz\(\)/, 'eBay healthz route should call health handler');
 assert.doesNotMatch(ebayBridge, /if \(action === "healthz" && req\.method === "GET"\) \{\s*const internalDenied = requireInternalBridge/, 'eBay healthz should not require internal bridge token for dashboard health checks');

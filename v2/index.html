@@ -1903,7 +1903,7 @@
       </button>
       <button class="nav-tab" onclick="showView('view-platform-alibaba')">
         <span class="nav-label">Alibaba</span>
-        <span class="nav-meta">준비 중</span>
+        <span class="nav-meta">등록 / 동기화</span>
       </button>
       <button class="nav-tab" onclick="showView('view-fee-settings')">
         <span class="nav-label">수수료 설정</span>
@@ -5915,9 +5915,6 @@ LEGACY END -->
   }
 
   function platformStatusForGroup(group, platform) {
-    if (platform === 'alibaba') {
-      return { key: 'missing', label: '준비 중', detail: '어댑터 연결됨 · ICBU API 문서/인증 확보 후 등록 활성화' };
-    }
     let total = 0;
     let listed = 0;
     let pending = 0;

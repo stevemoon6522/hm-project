@@ -721,16 +721,28 @@ function ebayHtmlEscape(value: unknown): string {
 }
 
 function ebayDescriptionCard(title: string, bodyHtml: string, bgColor = "#fff7fb"): string {
-  return `<table width="100%" cellpadding="12" cellspacing="0" border="0" bgcolor="${bgColor}"><tr><td><strong>${ebayHtmlEscape(title)}</strong><br>${bodyHtml}</td></tr></table>`;
+  return `<table width="100%" bgcolor="${bgColor}"><tr><td><b>${ebayHtmlEscape(title)}</b><br>${bodyHtml}</td></tr></table>`;
 }
 
 function ebayDescriptionList(items: string[]): string {
   const html = items
     .map((value) => s(value).trim())
     .filter(Boolean)
-    .map((value) => `<li>${ebayHtmlEscape(value.slice(0, 180))}</li>`)
+    .map((value) => `<li>${ebayHtmlEscape(value.slice(0, 260))}</li>`)
     .join("");
   return html ? `<ul>${html}</ul>` : "";
+}
+
+function ebayDescriptionTable(headers: string[], rows: string[][]): string {
+  const head = `<tr>${(headers || [])
+    .map((value) => `<td><b>${ebayHtmlEscape(s(value).slice(0, 80))}</b></td>`)
+    .join("")}</tr>`;
+  const body = (rows || [])
+    .map((row) => `<tr>${(row || [])
+      .map((value) => `<td>${ebayHtmlEscape(s(value).slice(0, 220))}</td>`)
+      .join("")}</tr>`)
+    .join("");
+  return `<table width="100%" border="1">${head}${body}</table>`;
 }
 
 function ebayComponentLines(components: string): string[] {
@@ -745,63 +757,63 @@ function buildEbayDescriptionText(product: any, title: string, lifecycleState: E
   const components = s(product.components_extracted_en).trim() || "- EACH OPTION INCLUDE 1 ALBUM";
   const componentLines = ebayComponentLines(components);
   const stockLine = lifecycleState === "ready_stock"
-    ? "Ready stock items are prepared quickly and usually leave our office within 1 business day."
-    : "Pre-order items ship after the official release and warehouse arrival. We will keep you updated if the distributor schedule changes.";
+    ? "Ready stock items are usually packed within 1 business day, excluding weekends and Korean holidays."
+    : "Pre-order items ship after the official release and warehouse arrival; manufacturer or distributor delays may change the schedule.";
+  const shippingTable = ebayDescriptionTable(
+    ["Service", "Destination area", "Estimated transit after dispatch"],
+    [
+      ["Economy / Standard", "US, CA, AU, JP, SG, HK, Asia", "Usually 5-20 business days; delayed parcels may take 20-30."],
+      ["Economy / Standard", "UK, DE, FR, ES, most Europe", "Usually 10-30 business days; customs or local backlog may add days."],
+      ["Economy / Standard", "Brazil, Italy, South America, Africa, remote regions", "Usually 20-50 business days; slower customs is common."],
+      ["Expedited", "US/CA/MX 2-5 days; Asia/AU 3-7; UK/EU 4-8; South America/Africa/remote 5-10+", "Used when selected, upgraded, or required for a destination."],
+    ],
+  );
   const cards = [
     ebayDescriptionCard(
-      "Thank you for visiting starphotocard",
-      `Hello, K-pop collector. We carefully prepare official K-pop albums and merch from Korea so your collection can arrive safely and happily.<br><br><strong>${ebayHtmlEscape(title)}</strong>`,
+      "Album product information",
+      `Hello, K-pop collector. Thank you for visiting starphotocard. We prepare official K-pop albums and merch from Korea with a friendly, careful packing routine.<br><br><strong>${ebayHtmlEscape(title)}</strong><br>${
+        ebayDescriptionList([
+          "100% Official & Authentic K-POP item, brand new from official Korean distributors.",
+          "Eligible albums may support Hanteo and Circle chart counts through official channels.",
+        ])
+      }`,
       "#fff7fb",
     ),
     ebayDescriptionCard(
-      "Why collectors can shop with confidence",
-      ebayDescriptionList([
-        "100% Official & Authentic K-POP item",
-        "Brand new, sealed, and sourced from official Korean distributors",
-        "Packed with care from Korea with tracking",
+      "What is included / Handling before shipment",
+      ebayDescriptionList((componentLines.length ? componentLines : ["Each option includes 1 album. Random inclusions follow the official manufacturer policy."]).concat([
         stockLine,
-      ]),
+        "We ship only to the buyer's eBay checkout address. Please confirm name, address, and phone number before payment.",
+        "Tracking is uploaded after dispatch. The first courier scan can take 24-48 hours to appear.",
+      ])),
       "#f8fbff",
     ),
     ebayDescriptionCard(
-      "Chart support",
-      ebayDescriptionList([
-        "Eligible album purchases count toward Hanteo and Circle charts when supplied through official chart-counting distributors.",
-        "Your order helps support the artist in an official and meaningful way.",
-      ]),
+      "International shipping time guide",
+      `Estimates exclude handling time, weekends, holidays, customs, and local carrier delays.<br>${shippingTable}`,
       "#fffaf0",
     ),
     ebayDescriptionCard(
-      "What is included",
-      ebayDescriptionList(componentLines.length ? componentLines : ["Each option includes 1 album. Random inclusions follow the official manufacturer policy."]),
-      "#f7fff7",
-    ),
-    ebayDescriptionCard(
-      "Packed with care from Korea",
+      "Customs, duties, VAT, and import fees",
       ebayDescriptionList([
-        "We use protective packing such as bubble wrap and a sturdy box whenever possible.",
-        "Tracking is provided after shipment.",
-        "Please message us if you are buying multiple items. We will help kindly when combined shipping is possible.",
-      ]),
-      "#fff7f0",
-    ),
-    ebayDescriptionCard(
-      "Important notice for collectors",
-      ebayDescriptionList([
-        "Outer boxes, sleeves, and shrink wrap are designed to protect the product and may have small dents, scratches, creases, or marks from production and international shipping.",
-        "These minor outer-package marks are not considered product defects.",
-        "Random photocards, posters, and other random inclusions cannot be selected unless the option title clearly says so.",
-      ]),
-      "#f8f5ff",
-    ),
-    ebayDescriptionCard(
-      "Shipping, returns, and contact",
-      ebayDescriptionList([
-        "Orders ship only to the buyer's eBay checkout address.",
-        "Import duties, taxes, VAT, brokerage, and handling fees are the buyer responsibility unless eBay collects them at checkout.",
-        "If there is any issue with your order, please contact us first. We will answer kindly and do our best to help.",
+        "Tax or duty collected by eBay appears in your order total. Any import duty, VAT, GST, brokerage, handling, or storage fee not collected by eBay is the buyer responsibility.",
+        "Fees differ by country, product value, and local rules. Please check your local customs office before buying.",
+        "We declare the accurate item name and order value. We cannot mark packages as gifts, lower value, or change invoices.",
+        "Customs inspections, document requests, and delivery holds are outside seller control and may require buyer response.",
+        "Refused delivery or unpaid import-fee returns may have shipping costs deducted from the refund.",
       ]),
       "#f8fafc",
+    ),
+    ebayDescriptionCard(
+      "Important notice and friendly support",
+      ebayDescriptionList([
+        "Outer boxes, sleeves, and shrink wrap are designed to protect the product and may have small dents, scratches, creases, or marks from production and international shipping.",
+        "Random photocards, posters, and other random inclusions cannot be selected unless the option title clearly says so.",
+        "Please contact us through eBay messages first if you have any question or delivery concern. We will answer kindly.",
+        "Returns follow the eBay return policy for this listing. Items must be unused, unopened, and complete.",
+        "Address errors, refusal, or unpaid import charges can reduce the refundable amount because shipping costs are not recoverable.",
+      ]),
+      "#fff7fb",
     ),
   ];
   return cards.join("<br>\n").slice(0, 4000);

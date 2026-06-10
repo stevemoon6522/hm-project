@@ -3,6 +3,7 @@
 // Routes create/sync through ebay-bridge and keeps unsupported update semantics out of scope.
 
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
+import { resolveEbayFulfillmentPolicy } from '../_shared/fulfillment.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
@@ -145,6 +146,7 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   const priceUsd = await ebayPriceUsd(master);
   const weightG = n(master.weight_g, 0);
   const lifecycleState = lifecycleOf(master);
+  const fulfillmentPolicy = resolveEbayFulfillmentPolicy(lifecycleState);
   if (!sku || sku.length > 50 || !description || images.length === 0 || !priceUsd || weightG <= 0) {
     return {
       ok: false,
@@ -157,6 +159,8 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
     sku,
     title: lifecycleProductName(master.product_name, lifecycleState, sku).slice(0, 80),
     lifecycleState,
+    fulfillmentPolicyId: fulfillmentPolicy.fulfillmentPolicyId,
+    fulfillmentPolicyName: fulfillmentPolicy.fulfillmentPolicyName,
     description: description.slice(0, 4000),
     imageUrls: images,
     aspects: aspectsFrom(master),

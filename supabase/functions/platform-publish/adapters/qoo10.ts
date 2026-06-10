@@ -2,6 +2,7 @@
 // Qoo10 adapter for platform-publish.
 
 import type { AdapterContext, AdapterResult, PlatformAdapter } from '../_shared/contract.ts';
+import { resolveQoo10AvailableDate } from '../_shared/fulfillment.ts';
 
 const SUPABASE_URL = (Deno as any).env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = (Deno as any).env.get('SUPABASE_ANON_KEY') || '';
@@ -67,13 +68,8 @@ function brandNoFrom(ctx: AdapterContext, qoo10: Record<string, any>): string {
 
 function availableDateFrom(ctx: AdapterContext, qoo10: Record<string, any>) {
   const lifecycle = lifecycleOf((ctx.masterProduct || {}) as Record<string, any>, qoo10);
-  const explicitType = norm(qoo10.available_date_type);
-  const storedType = norm(ctx.masterProduct?.qoo10_available_date_type);
-  let type = norm(explicitType || storedType || (lifecycle === 'pre_order' ? '2' : '0'));
-  if (!explicitType && lifecycle !== 'pre_order' && type === '2') type = '0';
-  const raw = norm(qoo10.available_date_value || qoo10.release_date || ctx.masterProduct?.qoo10_available_date_value || ctx.masterProduct?.qoo10_release_date);
-  if (type === '2') return { type: '2', value: raw.replace(/-/g, '/') };
-  return { type: '0', value: norm(raw || '3') };
+  const releaseDate = norm(qoo10.release_date || qoo10.available_date_value || ctx.masterProduct?.qoo10_release_date || ctx.masterProduct?.qoo10_available_date_value);
+  return resolveQoo10AvailableDate(lifecycle, releaseDate);
 }
 
 function weightKg(ctx: AdapterContext): number {

@@ -23,6 +23,7 @@
 //   update_variant_inventory → docs_ready=false (gap E2) — refused at gate 3 before adapter
 
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
+import { resolveShopeeDaysToShip } from '../_shared/fulfillment.ts';
 import { createClient as _createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 // ---------------------------------------------------------------------------
@@ -320,11 +321,6 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   // Price model C: cost_krw is the Global SKU price (KRW).
   // Shopee auto-converts to local currency via Price Calculation Formula.
   // ------------------------------------------------------------------
-  const dtsMap = master.shopee_days_to_ship || {};
-  const dtsSection = lifecycle_state === 'ready_stock'
-    ? (dtsMap.ready_stock || {})
-    : (dtsMap.pre_order || {});
-
   // Brand is sent via the top-level `brand` object in add_global_item, NOT in
   // attribute_list. Shopee returns "Chocolate Type(100012) is not mapped with the
   // category" if brand appears in attribute_list. Strip any 100012 entry that
@@ -350,7 +346,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
       region: r,
       price: targetPrice,
       price_krw: cost_krw,
-      days_to_ship: dtsSection[r] ?? 2,
+      days_to_ship: resolveShopeeDaysToShip(lifecycle_state, r),
       ...(ids ? { image_id_list: ids } : {}),
     };
   });
@@ -686,6 +682,7 @@ async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterRe
 
   const lifecycle_state = shopeeLifecycleOf(masterProduct as any, (ctx as any).lifecycle_state);
   const is_pre_order = lifecycle_state === 'pre_order';
+  const days_to_ship = resolveShopeeDaysToShip(lifecycle_state, region);
   const payload: Record<string, unknown> = {
     region,
     name: shopeeLifecycleProductName(masterProduct.product_name, lifecycle_state, masterProduct.sku) || masterProduct.sku,
@@ -696,10 +693,10 @@ async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterRe
     category_id: (masterProduct as any).shopee_category_id ?? null,
     image_url: masterProduct.main_image || null,
     weight_g: masterProduct.weight_g || 100,
-    days_to_ship: (masterProduct as any).days_to_ship ?? (is_pre_order ? 10 : 2),
+    days_to_ship,
     price: Number(price),
     stock: Number(stock),
-    targets: [{ region, shop_id: Number(shopId) }],
+    targets: [{ region, shop_id: Number(shopId), days_to_ship }],
     lifecycle_state,
     is_pre_order,
     publish_request_id: publishRequestId,

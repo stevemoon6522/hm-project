@@ -1943,6 +1943,10 @@
             <strong>Shopee Global Product</strong>
             <span>키워드 검색 후 선택 항목을 Master DB로 등록</span>
           </button>
+          <button type="button" class="register-choice" data-register-workbench-target="wms" aria-pressed="false" onclick="sdRegisterWorkbenchActivate('wms')">
+            <strong>WMS Inventory</strong>
+            <span>Search selected WMS idol/album groups and stage as Master products</span>
+          </button>
           <button type="button" class="register-choice" data-register-workbench-target="url" aria-pressed="false" onclick="sdRegisterWorkbenchActivate('url')">
             <strong>URL 일괄 등록</strong>
             <span>URL + 무게 입력 후 크롤 미리보기로 상품 생성</span>
@@ -1985,6 +1989,38 @@
             </div>
             <div id="sg-results" class="result-list" style="display:none;max-height:420px;overflow:auto;margin-top:12px;"></div>
             <div id="sg-log" class="notice" style="display:none;margin-top:10px;"></div>
+          </div>
+        </section>
+
+        <section class="panel register-work-panel" data-register-workbench-panel="wms" hidden>
+          <div class="register-panel-head">
+            <div>
+              <div class="register-panel-title">WMS Inventory Import</div>
+              <div class="register-panel-copy">Search only the WMS group you need, choose lifecycle, then load it into the Master preview flow.</div>
+            </div>
+            <span class="pill">Read-only WMS</span>
+          </div>
+          <div class="register-panel-body">
+            <div class="register-form-row" style="margin-bottom:10px;">
+              <input type="search" id="wms-master-search" placeholder="Search idol, album, version, member, SKU" style="min-width:320px;">
+              <button type="button" id="wms-master-search-btn" class="primary">Search WMS</button>
+              <span id="wms-master-status" style="font-size:12px;color:var(--muted);"></span>
+            </div>
+            <div class="register-form-row" style="margin-bottom:10px;font-size:12px;">
+              <label>Lifecycle
+                <select id="wms-master-lifecycle" style="font-size:12px;padding:5px 8px;">
+                  <option value="ready_stock">READY STOCK</option>
+                  <option value="pre_order">PRE ORDER</option>
+                </select>
+              </label>
+              <label id="wms-master-release-wrap" style="display:none;">Qoo10 release date
+                <input type="date" id="wms-master-release-date" style="font-size:12px;padding:5px 8px;">
+              </label>
+              <span class="pill">READY: Shopee TW=1 BR=3 others=2 / Qoo10 normal / eBay 233825118025</span>
+              <span class="pill">PRE: Shopee 60 / Qoo10 reserved / eBay 253030471025</span>
+            </div>
+            <div id="wms-master-results" class="result-list" style="display:none;max-height:420px;overflow:auto;margin-top:12px;"></div>
+            <div id="wms-master-error" class="notice" style="display:none;margin-top:10px;"></div>
           </div>
         </section>
 
@@ -4129,6 +4165,9 @@ LEGACY END -->
 
   const SUPABASE_URL = 'https://mgqlwgnmwegzsjelbrih.supabase.co';
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ncWx3Z25td2VnenNqZWxicmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDkzNDMsImV4cCI6MjA5NDg4NTM0M30.mJtqXO7WJMBUYBYVOS1FrD5qmFX6yZxGwfiGw3HUyJE';
+  const WMS_SUPABASE_URL = 'https://bpdafetvjyvvwbksvowu.supabase.co';
+  const WMS_SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwZGFmZXR2anl2dndia3N2b3d1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxODM4MjYsImV4cCI6MjA5Mjc1OTgyNn0.p9hYSOhVyLUUO8UyRJ7Av56pLgkPUAi1XCMtc6r-AZA';
+  const WMS_INVENTORY_SELECT = 'id,sku,barcode,idol,album,version,member,location,weight,stock_kr,image_url';
   const SHOPEE_BRIDGE = `${SUPABASE_URL}/functions/v1/shopee-bridge`;
   const QOO10_BRIDGE = `${SUPABASE_URL}/functions/v1/qoo10-bridge`;
   const ALIBABA_BRIDGE = `${SUPABASE_URL}/functions/v1/alibaba-bridge`;
@@ -20474,6 +20513,20 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const r = document.querySelector('input[name="mr-lifecycle"]:checked');
       return r ? r.value : 'pre_order';
     }
+    function mrSetLifecycleValue(value) {
+      const lifecycle = value === 'ready_stock' ? 'ready_stock' : 'pre_order';
+      const target = document.querySelector(`input[name="mr-lifecycle"][value="${lifecycle}"]`);
+      if (target) {
+        target.checked = true;
+        target.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return lifecycle;
+    }
+    function mrGroupLifecycle(group) {
+      const firstRow = group?.rows?.[0] || {};
+      const lifecycle = String(firstRow?._lifecycle_state || firstRow?.lifecycle_state || '').toLowerCase();
+      return lifecycle === 'ready_stock' ? 'ready_stock' : lifecycle === 'pre_order' ? 'pre_order' : mrLifecycle();
+    }
     function mrLocation() {
       if (mrLifecycle() === 'pre_order') return 'PO';
       return ($('mr-location').value || '').trim().toUpperCase();
@@ -20481,6 +20534,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Master SKU auto-assembly: location + artist + album + version + member.
     // Inputs are kept ASCII-safe because downstream marketplaces reject CJK SKUs.
     function mrComputeSku(row) {
+      if (row?._skuLocked && row?._sku) return row._sku;
       const loc = mrLocation() || 'PO';
       const member = row._opt0 || row.member || '';
       return [
@@ -21144,6 +21198,283 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
     }
 
+    function mrWmsLifecycle() {
+      const value = $('wms-master-lifecycle')?.value;
+      return value === 'pre_order' ? 'pre_order' : 'ready_stock';
+    }
+
+    function mrWmsReleaseDate() {
+      return String($('wms-master-release-date')?.value || '').trim();
+    }
+
+    function mrWmsSetStatus(message, isError = false) {
+      const status = $('wms-master-status');
+      const error = $('wms-master-error');
+      if (status) {
+        status.textContent = isError ? '' : (message || '');
+        status.style.color = 'var(--muted)';
+      }
+      if (error) {
+        error.textContent = isError ? (message || '') : '';
+        error.style.display = isError && message ? 'block' : 'none';
+      }
+    }
+
+    function mrWmsToggleReleaseDate() {
+      const wrap = $('wms-master-release-wrap');
+      if (!wrap) return;
+      wrap.style.display = mrWmsLifecycle() === 'pre_order' ? '' : 'none';
+    }
+
+    function mrWmsHeaders() {
+      return {
+        apikey: WMS_SUPABASE_ANON,
+        Authorization: `Bearer ${WMS_SUPABASE_ANON}`,
+      };
+    }
+
+    function mrWmsSearchToken(value) {
+      return String(value || '')
+        .trim()
+        .replace(/[%*(),]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .slice(0, 80);
+    }
+
+    async function mrWmsFetchInventory(params) {
+      const url = `${WMS_SUPABASE_URL}/rest/v1/inventory?${params.toString()}`;
+      const resp = await fetch(url, { headers: mrWmsHeaders() });
+      const text = await resp.text();
+      let body;
+      try { body = JSON.parse(text); } catch { body = null; }
+      if (!resp.ok) {
+        throw new Error((body && (body.message || body.error)) || text || `WMS HTTP ${resp.status}`);
+      }
+      return Array.isArray(body) ? body : [];
+    }
+
+    async function mrWmsSearchInventoryRows(query) {
+      const token = mrWmsSearchToken(query);
+      if (token.length < 2) return [];
+      const params = new URLSearchParams();
+      params.set('select', WMS_INVENTORY_SELECT);
+      params.set('or', [
+        `idol.ilike.*${token}*`,
+        `album.ilike.*${token}*`,
+        `version.ilike.*${token}*`,
+        `member.ilike.*${token}*`,
+        `sku.ilike.*${token}*`,
+        `barcode.ilike.*${token}*`,
+      ].join(','));
+      params.set('order', 'idol.asc,album.asc,version.asc,member.asc,sku.asc');
+      params.set('limit', '200');
+      return mrWmsFetchInventory(params);
+    }
+
+    async function mrWmsFetchExactGroupRows(idol, album) {
+      const params = new URLSearchParams();
+      params.set('select', WMS_INVENTORY_SELECT);
+      params.set('idol', `eq.${idol}`);
+      params.set('album', `eq.${album}`);
+      params.set('order', 'version.asc,member.asc,sku.asc');
+      params.set('limit', '200');
+      return mrWmsFetchInventory(params);
+    }
+
+    function mrWmsGroupInventoryRows(rows) {
+      const groups = new Map();
+      (rows || []).forEach((row) => {
+        const idol = String(row.idol || '').trim();
+        const album = String(row.album || '').trim();
+        const sku = String(row.sku || '').trim();
+        if (!idol || !album || !sku) return;
+        const key = `${idol.toLowerCase()}|${album.toLowerCase()}`;
+        if (!groups.has(key)) {
+          groups.set(key, {
+            idol,
+            album,
+            variant_count: 0,
+            sample_sku: sku,
+            sample_location: row.location || '',
+            sample_image_url: row.image_url || '',
+            total_stock_kr: 0,
+            matched_skus: [],
+          });
+        }
+        const group = groups.get(key);
+        group.variant_count += 1;
+        group.total_stock_kr += Number(row.stock_kr || 0) || 0;
+        if (!group.sample_location && row.location) group.sample_location = row.location;
+        if (!group.sample_image_url && row.image_url) group.sample_image_url = row.image_url;
+        if (group.matched_skus.length < 8) group.matched_skus.push(sku);
+      });
+      return Array.from(groups.values())
+        .sort((a, b) => b.variant_count - a.variant_count || a.idol.localeCompare(b.idol) || a.album.localeCompare(b.album))
+        .slice(0, 20);
+    }
+
+    function mrWmsRenderResults(rows) {
+      const wrap = $('wms-master-results');
+      if (!wrap) return;
+      wrap.innerHTML = '';
+      if (!rows.length) {
+        wrap.style.display = 'block';
+        wrap.appendChild(el('div', { class: 'empty' }, 'No WMS inventory groups found.'));
+        return;
+      }
+      rows.forEach((row) => {
+        const card = el('div', { class: 'result-item', style: 'display:grid;grid-template-columns:72px 1fr auto;gap:10px;align-items:center;' });
+        const thumb = el('div', { style: 'width:64px;height:64px;border:1px solid var(--border);border-radius:8px;background:#f8fafc;overflow:hidden;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px;' });
+        if (row.sample_image_url) {
+          const img = el('img', { src: row.sample_image_url, style: 'width:100%;height:100%;object-fit:cover;' });
+          img.addEventListener('error', () => { thumb.textContent = 'No image'; });
+          thumb.appendChild(img);
+        } else {
+          thumb.textContent = 'No image';
+        }
+        const info = el('div', { style: 'min-width:0;display:flex;flex-direction:column;gap:4px;' });
+        info.appendChild(el('strong', {}, `${row.idol || '-'} [${row.album || '-'}]`));
+        info.appendChild(el('span', { style: 'font-size:12px;color:var(--muted);' }, [
+          `${Number(row.variant_count || 0).toLocaleString()} variants`,
+          row.sample_location ? `rack ${row.sample_location}` : '',
+          row.total_stock_kr != null ? `KR stock ${Number(row.total_stock_kr || 0).toLocaleString()}` : '',
+        ].filter(Boolean).join(' / ')));
+        const skus = Array.isArray(row.matched_skus) ? row.matched_skus.filter(Boolean).slice(0, 4).join(', ') : (row.sample_sku || '');
+        info.appendChild(el('span', { class: 'mono', style: 'font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' }, skus));
+        const btn = el('button', { type: 'button', class: 'primary', 'data-wms-stage': '1' }, 'Load preview');
+        btn.addEventListener('click', () => mrWmsStageGroup(row.idol, row.album));
+        card.appendChild(thumb);
+        card.appendChild(info);
+        card.appendChild(btn);
+        wrap.appendChild(card);
+      });
+      wrap.style.display = 'block';
+    }
+
+    async function mrWmsSearchGroups() {
+      const query = String($('wms-master-search')?.value || '').trim();
+      const results = $('wms-master-results');
+      if (results) {
+        results.innerHTML = '';
+        results.style.display = 'none';
+      }
+      if (query.length < 2) {
+        mrWmsSetStatus('Enter at least 2 characters.', true);
+        return;
+      }
+      mrWmsSetStatus('Searching WMS...');
+      try {
+        const inventoryRows = await mrWmsSearchInventoryRows(query);
+        const groups = mrWmsGroupInventoryRows(inventoryRows);
+        mrWmsRenderResults(groups);
+        mrWmsSetStatus(`${groups.length} WMS groups found from ${inventoryRows.length} rows.`);
+      } catch (e) {
+        mrWmsSetStatus(`WMS search failed: ${e?.message || e}`, true);
+      }
+    }
+
+    function mrWmsTierMeta(rows) {
+      const hasVersion = rows.some(r => String(r.version || '').trim());
+      const hasMember = rows.some(r => String(r.member || '').trim());
+      if (hasVersion && hasMember) return { tierNames: ['Version', 'Member'], twoAxis: true };
+      if (hasVersion) return { tierNames: ['Version'], twoAxis: false };
+      if (hasMember) return { tierNames: ['Member'], twoAxis: false };
+      return { tierNames: ['Option'], twoAxis: false };
+    }
+
+    function mrWmsToPreviewRow(row, tierMeta, lifecycle, releaseDate) {
+      const version = String(row.version || '').trim();
+      const member = String(row.member || '').trim();
+      const option0 = tierMeta.twoAxis ? version : (version || member || row.sku || 'Option');
+      const option1 = tierMeta.twoAxis ? member : '';
+      const title = `${row.idol || ''} [${row.album || ''}]`.trim();
+      const qoo10Patch = lifecycle === 'pre_order'
+        ? {
+            _qoo10_available_date_type: '2',
+            _qoo10_available_date_value: releaseDate,
+            _qoo10_release_date: releaseDate,
+          }
+        : {
+            _qoo10_available_date_type: '0',
+            _qoo10_available_date_value: '3',
+            _qoo10_release_date: '',
+          };
+      return Object.assign({
+        source_record_id: row.source_record_id,
+        tempId: crypto.randomUUID(),
+        url: `wms://inventory/${row.inventory_id || row.sku || ''}`,
+        observed: {
+          title,
+          artist: row.idol || '',
+          idol: row.idol || '',
+          album: row.album || '',
+          source: 'wms_inventory',
+          main_image_urls: row.image_url ? [row.image_url] : [],
+          detail_image_urls: [],
+          description_html: '',
+        },
+        artist: row.idol || '',
+        album: row.album || '',
+        version,
+        member,
+        _opt0: option0,
+        _opt1: option1,
+        _tierNames: tierMeta.tierNames,
+        _twoAxis: tierMeta.twoAxis,
+        _sku: String(row.sku || '').trim(),
+        _skuLocked: true,
+        _wms_inventory_id: row.inventory_id || null,
+        _inventory_quantity: Number(row.stock_kr || 0),
+        _sourcing_price: Number(row.cost_krw || 0),
+        _cost_krw: Number(row.cost_krw || 0),
+        sourcing_price: Number(row.cost_krw || 0),
+        cost_krw: Number(row.cost_krw || 0),
+        weight_g: Number(row.weight_g || 0),
+        _weight_g: Number(row.weight_g || 0),
+        _main_image: row.image_url || '',
+        _extra_images: [],
+        _product_name: title,
+        _lifecycle_state: lifecycle,
+        collisionMode: 'reuse',
+        status: 'preview',
+        error: null,
+      }, qoo10Patch);
+    }
+
+    async function mrWmsStageGroup(idol, album) {
+      const lifecycle = mrWmsLifecycle();
+      const releaseDate = mrWmsReleaseDate();
+      if (lifecycle === 'pre_order' && !/^\d{4}-\d{2}-\d{2}$/.test(releaseDate)) {
+        mrWmsSetStatus('PRE ORDER requires a Qoo10 release date.', true);
+        return;
+      }
+      mrWmsSetStatus('Loading WMS group into preview...');
+      try {
+        const wmsRows = await mrWmsFetchExactGroupRows(idol, album);
+        if (!wmsRows.length) throw new Error('No WMS inventory rows returned.');
+        const { data, error } = await db.rpc('stage_wms_inventory_payload', {
+          p_rows: wmsRows,
+        });
+        if (error) throw error;
+        const rows = Array.isArray(data) ? data : [];
+        if (!rows.length) throw new Error('No WMS inventory rows returned.');
+        const tierMeta = mrWmsTierMeta(rows);
+        MR_PREV = rows.map(row => mrWmsToPreviewRow(row, tierMeta, lifecycle, releaseDate));
+        MR_PROMOTE_DESELECTED.clear();
+        await mrLoadExistingSkus();
+        mrSetLifecycleValue(lifecycle);
+        if (lifecycle === 'ready_stock' && $('mr-location')) $('mr-location').value = rows[0]?.location || '';
+        MR_STAGE = 2;
+        if (typeof window.sdRegisterWorkbenchActivate === 'function') window.sdRegisterWorkbenchActivate('url');
+        $('mr-stage1').style.display = 'none';
+        $('mr-stage2').style.display = '';
+        mrRenderPreviewCards();
+        mrWmsSetStatus(`${rows.length} WMS variants loaded into preview.`);
+      } catch (e) {
+        mrWmsSetStatus(`WMS stage failed: ${e?.message || e}`, true);
+      }
+    }
+
     function mrStatusLabel(s) {
       if (s === 'crawling') return { text: '크롤 중...', color: 'var(--muted)' };
       if (s === 'preview') return { text: '준비됨', color: '#16a34a' };
@@ -21441,12 +21772,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     function mrMasterPatchForGroup(group) {
       const firstRow = group?.rows?.[0] || {};
       const components = mrGroupComponents(group);
-      return {
+      const patch = {
         product_name: mrMasterProductName(firstRow),
         components_extracted_en: components || null,
         components_extracted_at: components ? new Date().toISOString() : null,
         components_approved: components ? 1 : 0,
       };
+      if (firstRow._qoo10_available_date_type) {
+        patch.qoo10_available_date_type = firstRow._qoo10_available_date_type;
+        patch.qoo10_available_date_value = firstRow._qoo10_available_date_value || (firstRow._qoo10_available_date_type === '2' ? null : '3');
+        patch.qoo10_release_date = firstRow._qoo10_available_date_type === '2' ? (firstRow._qoo10_release_date || null) : null;
+      }
+      return patch;
     }
 
     async function mrPatchCreatedProducts(productIds, group) {
@@ -22486,7 +22823,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     async function mrPromoteAll() {
       const err = $('mr-stage2-error');
       err.style.display = 'none';
-      const lifecycle = mrLifecycle();
 
       // Re-group and compute tier coords for final validation
       const groups = mrGroupCards();
@@ -22610,6 +22946,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       for (const group of activeGroups) {
         const activeRows = group.rows.filter(r => r.status === 'preview' || r.status === 'failed');
         if (activeRows.length === 0) continue;
+        const groupLifecycle = mrGroupLifecycle(group);
 
         // Build variation_options array
         const variationOptions = activeRows.map(r => ({
@@ -22640,7 +22977,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               p_source_record_id:  group.source_record_id,
               p_sku:               vOpt.sku,
               p_weight_g:          vOpt.weight_g,
-              p_lifecycle_state:   lifecycle,
+              p_lifecycle_state:   groupLifecycle,
               p_option_name:       row._singleProductMode ? null : (vOpt.option_names[0] || null),
               p_cost_krw_override: vOpt.cost_krw,
               p_overwrite:         overwrite,
@@ -22656,6 +22993,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                   extra_images: vOpt.extra_images || [],
                   sourcing_price: vOpt.sourcing_price || 0,
                   cost_krw: vOpt.cost_krw || 0,
+                  inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
                 }, mrMasterPatchForGroup(group)))
                 .eq('id', row.product_id);
             }
@@ -22673,7 +23011,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           try {
             const { data, error } = await db.rpc('promote_source_group_to_products', {
               p_source_record_id:       group.source_record_id,
-              p_lifecycle_state:        lifecycle,
+              p_lifecycle_state:        groupLifecycle,
               p_variation_tier_names:   group.tierNames.filter(Boolean),
               p_variation_options:      variationOptions,
               p_card_header_overrides:  { cost_krw: activeRows[0]._cost_krw, weight_g: activeRows[0]._weight_g },
@@ -22698,6 +23036,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 .update({
                   sourcing_price: Number(row._sourcing_price || row.sourcing_price || 0),
                   cost_krw: Number(row._cost_krw || row.cost_krw || 0),
+                  inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
                   cost_updated_at: new Date().toISOString(),
                 })
                 .eq('id', row.product_id);
@@ -22943,8 +23282,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 category_id:       firstRow._shopee_category_id || 100740,
                 description:       cbscDesc,
                 weight_g:          variationOptions[0].weight_g || firstRow._weight_g || 100,
-                is_pre_order:      lifecycle === 'pre_order',
-                lifecycle_state:   lifecycle,
+                is_pre_order:      groupLifecycle === 'pre_order',
+                lifecycle_state:   groupLifecycle,
                 attribute_list:    buildDefaultAttributeList(firstRow._shopee_category_id || 100740),
                 variation:         { tier_variation: tierVariation, model: cbscModels },
                 targets:           cbscTargets,
@@ -24625,8 +24964,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const productName = mrEbayBuildTitle(row);
       const components = mrEbayComponentLines(mrEbayMasterComponents(group, row));
       const stockLine = lifecycleState === 'ready_stock'
-        ? 'Ready stock items are usually packed within 1 business day, excluding weekends and Korean holidays.'
-        : 'Pre-order items ship after the official release and warehouse arrival; manufacturer or distributor delays may change the schedule.';
+        ? 'Ready stock ships in about 1 business day, excluding weekends and Korean holidays.'
+        : 'Pre-order ships after official release and warehouse arrival; distributor delays may change the schedule.';
       const shippingTable = mrEbayDescriptionTable(
         ['Service', 'Destination area', 'Estimated transit after dispatch'],
         [
@@ -24639,7 +24978,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const cards = [
         mrEbayDescriptionCard(
           'Album product information',
-          'Hello, K-pop collector. Thank you for visiting starphotocard. We prepare official K-pop albums and merch from Korea with a friendly, careful packing routine.<br><br>'
+          'Hello, K-pop collector. Official K-pop goods from Korea, packed carefully.<br><br>'
             + '<strong>' + esc(productName) + '</strong><br>'
             + mrEbayDescriptionList([
               '100% Official & Authentic K-POP item, brand new from official Korean distributors.',
@@ -24651,35 +24990,38 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           'What is included / Handling before shipment',
           mrEbayDescriptionList((components.length ? components : ['Each option includes 1 album. Random inclusions follow the official manufacturer policy.']).concat([
             stockLine,
-            "We ship only to the buyer's eBay checkout address. Please confirm name, address, and phone number before payment.",
-            'Tracking is uploaded after dispatch. The first courier scan can take 24-48 hours to appear.',
+            "Ships only to the buyer's eBay checkout address. Confirm name, address, and phone before payment.",
+            'Tracking uploads after dispatch; the first scan may take 24-48 hours.',
           ])),
           '#f8fbff'
         ),
         mrEbayDescriptionCard(
           'International shipping time guide',
-          'Estimates exclude handling time, weekends, holidays, customs, and local carrier delays.<br>' + shippingTable,
+          'Estimates exclude handling, weekends, holidays, customs, and local delays.<br>' + shippingTable,
           '#fffaf0'
         ),
         mrEbayDescriptionCard(
-          'Customs, duties, VAT, and import fees',
-          mrEbayDescriptionList([
-            'Tax or duty collected by eBay appears in your order total. Any import duty, VAT, GST, brokerage, handling, or storage fee not collected by eBay is the buyer responsibility.',
-            'Fees differ by country, product value, and local rules. Please check your local customs office before buying.',
-            'We declare the accurate item name and order value. We cannot mark packages as gifts, lower value, or change invoices.',
-            'Customs inspections, document requests, and delivery holds are outside seller control and may require buyer response.',
-            'Refused delivery or unpaid import-fee returns may have shipping costs deducted from the refund.',
-          ]),
+          'Customs, Duties & Taxes',
+          '<strong>For buyers in the United States (DDP Service)</strong>'
+            + mrEbayDescriptionList([
+              'Guaranteed Landed Cost: For standard US DDP orders, applicable import duties and customs taxes are handled in advance through our logistics solution. Checkout price is final for covered orders.',
+              'Zero Hidden Fees: Customs costs are prepaid, so the courier should not request extra brokerage or delivery customs fees on arrival.',
+              'Optimization Promise: Specialized logistics consolidation helps keep customs clearance compliant and administrative costs low.',
+            ])
+            + '<strong>For international buyers (Europe, Asia, Australia, Canada & More)</strong>'
+            + mrEbayDescriptionList([
+              'Transparent Pricing: Listing prices generally do not include destination import duties or VAT unless eBay collects them at checkout.',
+              'Payment of Taxes: Local duties, VAT, GST, brokerage, or handling charges are government taxes, not shipping fees, and may be collected by the carrier before delivery.',
+              'Our Promise: We prepare customs documents carefully. If documents are needed, message us via eBay and we will respond quickly.',
+              'Delivery Cooperation: Please check local customs rules. If returned because customs charges are unpaid, return shipping costs may be deducted from the refund.',
+            ]),
           '#f8fafc'
         ),
         mrEbayDescriptionCard(
           'Important notice and friendly support',
           mrEbayDescriptionList([
-            'Outer boxes, sleeves, and shrink wrap are designed to protect the product and may have small dents, scratches, creases, or marks from production and international shipping.',
-            'Random photocards, posters, and other random inclusions cannot be selected unless the option title clearly says so.',
-            'Please contact us through eBay messages first if you have any question or delivery concern. We will answer kindly.',
-            'Returns follow the eBay return policy for this listing. Items must be unused, unopened, and complete.',
-            'Address errors, refusal, or unpaid import charges can reduce the refundable amount because shipping costs are not recoverable.',
+            'Outer packaging may have small marks from production or shipping. Random inclusions cannot be selected unless the option title says so.',
+            'Please message us via eBay first. Returns follow eBay policy; items must be unused, unopened, and complete. Address errors, refusal, or unpaid fees may reduce the refund.',
           ]),
           '#fff7fb'
         ),
@@ -25398,6 +25740,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           $('mr-location').disabled = mrLifecycle() === 'pre_order';
         });
       });
+      $('wms-master-search-btn')?.addEventListener('click', mrWmsSearchGroups);
+      $('wms-master-search')?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          mrWmsSearchGroups();
+        }
+      });
+      $('wms-master-lifecycle')?.addEventListener('change', mrWmsToggleReleaseDate);
+      mrWmsToggleReleaseDate();
 
       $('mr-add-row').addEventListener('click', () => mrAddRow());
       $('mr-clear-rows').addEventListener('click', () => {

@@ -142,7 +142,7 @@ assert(html.includes("return normalizeMasterProductNameForLifecycle(row?.product
 assert(html.includes('const isPreOrder = mrQoo10IsPreOrder(rows);'), 'Qoo10 modal must not hard-code PRE ORDER shipping state');
 assert(html.includes("const defaultAvailableType = mrQoo10IsPreOrder(rows) ? '2' : '0';"), 'Qoo10 payload fallback must derive AvailableDateType from master lifecycle');
 assert(qoo10Adapter.includes('function lifecycleProductName') && qoo10Adapter.includes('lifecycleProductName(master.product_name, lifecycleOf(master, qoo10), master.sku)'), 'Qoo10 adapter fallback title must be lifecycle-normalized');
-assert(qoo10Adapter.includes("if (!explicitType && lifecycle !== 'pre_order' && type === '2') type = '0';"), 'Qoo10 adapter must ignore stale stored preorder shipping type for READY STOCK fallback payloads');
+assert(qoo10Adapter.includes('resolveQoo10AvailableDate(lifecycle, releaseDate)'), 'Qoo10 adapter must derive listing shipping type from lifecycle fulfillment rules');
 assert(qoo10Adapter.includes('function mapQoo10ListingStatus') && qoo10Adapter.includes("status === 'S4'") && qoo10Adapter.includes("return 'not_listed'"), 'Qoo10 sync must map deleted/discontinued statuses out of green LED state');
 assert(qoo10Bridge.includes('"S2,S1,S3,S0,S4,S5,S8"'), 'Qoo10 SKU scan must include deleted/restricted/rejected statuses');
 assert(joomAdapter.includes('function lifecycleProductName') && joomAdapter.includes('name: lifecycleProductName(master.product_name, lifecycleOf(master), sku)'), 'Joom adapter fallback scraped name must be lifecycle-normalized');

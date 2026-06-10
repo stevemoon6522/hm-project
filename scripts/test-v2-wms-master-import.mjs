@@ -25,6 +25,7 @@ for (const token of [
   'WMS_INVENTORY_SELECT',
   'mrWmsSearchInventoryRows',
   'mrWmsFetchExactGroupRows',
+  'mrWmsFetchExactInventoryGroupRows',
   'mrWmsGroupInventoryRows',
   'mrWmsSearchGroups',
   'mrWmsStageGroup',
@@ -42,6 +43,8 @@ for (const token of [
   'Duplicate warning must be confirmed before registration.',
   'Platform preflight blockers',
   'Staronemall URL is already used by master SKU',
+  "group_mode: groupMode",
+  "params.set('barcode', `eq.${group.barcode}`)",
   'inventory: Number(row._inventory_quantity',
 ]) {
   assert(html.includes(token), `WMS master import UI/flow missing token: ${token}`);
@@ -63,6 +66,11 @@ assert(
   html.includes("const orFilter = [") && html.includes("params.set('or', `(${orFilter})`);"),
   'WMS search must wrap PostgREST OR filters in parentheses to avoid inventory.oridol errors',
 );
+assert(
+  html.includes("const groupMode = barcode ? 'barcode' : 'idol_album'")
+    && html.includes("const key = barcode ? `barcode|${barcode}`"),
+  'WMS search results must group inventory rows by barcode before falling back to idol+album',
+);
 
 for (const token of [
   "'wms_inventory'",
@@ -73,6 +81,9 @@ for (const token of [
   'wms_observed_object_required',
   'staronemall_url',
   'source_detail',
+  "'grouping_key'",
+  "'wms_inventory:barcode:'",
+  "'wms://inventory/barcode/'",
   'linked_master_product_id uuid',
   'idx_inventory_wms_master_search_trgm',
   'source_records_source_type_check',

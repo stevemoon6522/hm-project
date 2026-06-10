@@ -21433,16 +21433,35 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return mrWmsFetchInventory(params);
     }
 
+    async function mrWmsFetchExactInventoryGroupRows(group) {
+      const params = new URLSearchParams();
+      params.set('select', WMS_INVENTORY_SELECT);
+      if (group?.group_mode === 'barcode' && group.barcode) {
+        params.set('barcode', `eq.${group.barcode}`);
+      } else {
+        params.set('idol', `eq.${group?.idol || ''}`);
+        params.set('album', `eq.${group?.album || ''}`);
+      }
+      params.set('order', 'version.asc,member.asc,sku.asc');
+      params.set('limit', '200');
+      return mrWmsFetchInventory(params);
+    }
+
     function mrWmsGroupInventoryRows(rows) {
       const groups = new Map();
       (rows || []).forEach((row) => {
         const idol = String(row.idol || '').trim();
         const album = String(row.album || '').trim();
         const sku = String(row.sku || '').trim();
+        const barcode = String(row.barcode || '').trim();
         if (!idol || !album || !sku) return;
-        const key = `${idol.toLowerCase()}|${album.toLowerCase()}`;
+        const groupMode = barcode ? 'barcode' : 'idol_album';
+        const key = barcode ? `barcode|${barcode}` : `idol_album|${idol.toLowerCase()}|${album.toLowerCase()}`;
         if (!groups.has(key)) {
           groups.set(key, {
+            group_mode: groupMode,
+            group_key: key,
+            barcode,
             idol,
             album,
             variant_count: 0,
@@ -21459,6 +21478,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (!group.sample_location && row.location) group.sample_location = row.location;
         if (!group.sample_image_url && row.image_url) group.sample_image_url = row.image_url;
         if (group.matched_skus.length < 8) group.matched_skus.push(sku);
+        if (!group.barcode && barcode) group.barcode = barcode;
       });
       return Array.from(groups.values())
         .sort((a, b) => b.variant_count - a.variant_count || a.idol.localeCompare(b.idol) || a.album.localeCompare(b.album))
@@ -21488,13 +21508,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         info.appendChild(el('strong', {}, `${row.idol || '-'} [${row.album || '-'}]`));
         info.appendChild(el('span', { style: 'font-size:12px;color:var(--muted);' }, [
           `${Number(row.variant_count || 0).toLocaleString()} variants`,
+          row.barcode ? `barcode ${row.barcode}` : '',
           row.sample_location ? `rack ${row.sample_location}` : '',
           row.total_stock_kr != null ? `KR stock ${Number(row.total_stock_kr || 0).toLocaleString()}` : '',
         ].filter(Boolean).join(' / ')));
         const skus = Array.isArray(row.matched_skus) ? row.matched_skus.filter(Boolean).slice(0, 4).join(', ') : (row.sample_sku || '');
         info.appendChild(el('span', { class: 'mono', style: 'font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' }, skus));
         const btn = el('button', { type: 'button', class: 'primary', 'data-wms-stage': '1' }, 'Load preview');
-        btn.addEventListener('click', () => mrWmsStageGroup(row.idol, row.album));
+        btn.addEventListener('click', () => mrWmsStageGroup(row));
         card.appendChild(thumb);
         card.appendChild(info);
         card.appendChild(btn);
@@ -21624,7 +21645,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }, qoo10Patch);
     }
 
-    async function mrWmsStageGroup(idol, album) {
+    async function mrWmsStageGroup(groupOrIdol, album) {
+      const group = typeof groupOrIdol === 'object' && groupOrIdol
+        ? groupOrIdol
+        : { group_mode: 'idol_album', idol: groupOrIdol, album };
       const lifecycle = mrWmsLifecycle();
       const releaseDate = mrWmsReleaseDate();
       const staronemallUrl = mrWmsStaronemallUrl();
@@ -21638,7 +21662,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
       mrWmsSetStatus(staronemallUrl ? 'Loading WMS group and Staronemall data into preview...' : 'Loading WMS group into preview...');
       try {
-        const wmsRows = await mrWmsFetchExactGroupRows(idol, album);
+        const wmsRows = await mrWmsFetchExactInventoryGroupRows(group);
         if (!wmsRows.length) throw new Error('No WMS inventory rows returned.');
         const staroneObserved = staronemallUrl ? await mrWmsFetchStaronemallObserved(staronemallUrl) : null;
         const { data, error } = await db.rpc('stage_wms_inventory_payload', {

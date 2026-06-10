@@ -1,9 +1,13 @@
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = process.cwd();
 const html = readFileSync(join(root, 'v2/index.html'), 'utf8');
-const migration = readFileSync(join(root, 'supabase/migrations/202606100001_wms_inventory_master_import.sql'), 'utf8');
+const migrationsDir = join(root, 'supabase/migrations');
+const migration = readdirSync(migrationsDir)
+  .filter((name) => name.endsWith('.sql') && name.includes('wms_inventory'))
+  .map((name) => readFileSync(join(migrationsDir, name), 'utf8'))
+  .join('\n');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -15,6 +19,7 @@ for (const token of [
   'id="wms-master-search"',
   'id="wms-master-lifecycle"',
   'id="wms-master-release-date"',
+  'id="wms-master-staronemall-url"',
   'WMS_SUPABASE_URL',
   'WMS_SUPABASE_ANON',
   'WMS_INVENTORY_SELECT',
@@ -23,12 +28,20 @@ for (const token of [
   'mrWmsGroupInventoryRows',
   'mrWmsSearchGroups',
   'mrWmsStageGroup',
+  'mrWmsFetchStaronemallObserved',
+  'mrWmsDuplicateSignals',
+  'mrRenderWmsPreflight',
   "db.rpc('stage_wms_inventory_payload'",
+  'p_observed: staroneObserved',
   '_skuLocked',
   'mrSetLifecycleValue',
   'mrGroupLifecycle',
   '_qoo10_available_date_type',
   'qoo10_release_date',
+  '_staronemall_url',
+  'Duplicate warning must be confirmed before registration.',
+  'Platform preflight blockers',
+  'Staronemall URL is already used by master SKU',
   'inventory: Number(row._inventory_quantity',
 ]) {
   assert(html.includes(token), `WMS master import UI/flow missing token: ${token}`);
@@ -52,12 +65,17 @@ for (const token of [
   'create or replace function public.search_wms_inventory_groups',
   'create or replace function public.stage_wms_inventory_group',
   'create or replace function public.stage_wms_inventory_payload',
+  'p_observed jsonb default null',
+  'wms_observed_object_required',
+  'staronemall_url',
+  'source_detail',
+  'linked_master_product_id uuid',
   'idx_inventory_wms_master_search_trgm',
   'source_records_source_type_check',
   'source_type, source_external_id, parser_version',
   'grant execute on function public.search_wms_inventory_groups',
   'grant execute on function public.stage_wms_inventory_group',
-  'grant execute on function public.stage_wms_inventory_payload',
+  'grant execute on function public.stage_wms_inventory_payload(jsonb, jsonb)',
 ]) {
   assert(migration.includes(token), `WMS master import migration missing token: ${token}`);
 }

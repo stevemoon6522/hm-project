@@ -59,6 +59,10 @@ assert(
   html.includes("PRE ORDER requires a Qoo10 release date."),
   'WMS PRE ORDER import must require manual Qoo10 release date',
 );
+assert(
+  html.includes("const orFilter = [") && html.includes("params.set('or', `(${orFilter})`);"),
+  'WMS search must wrap PostgREST OR filters in parentheses to avoid inventory.oridol errors',
+);
 
 for (const token of [
   "'wms_inventory'",

@@ -21409,14 +21409,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (token.length < 2) return [];
       const params = new URLSearchParams();
       params.set('select', WMS_INVENTORY_SELECT);
-      params.set('or', [
+      const orFilter = [
         `idol.ilike.*${token}*`,
         `album.ilike.*${token}*`,
         `version.ilike.*${token}*`,
         `member.ilike.*${token}*`,
         `sku.ilike.*${token}*`,
         `barcode.ilike.*${token}*`,
-      ].join(','));
+      ].join(',');
+      params.set('or', `(${orFilter})`);
       params.set('order', 'idol.asc,album.asc,version.asc,member.asc,sku.asc');
       params.set('limit', '200');
       return mrWmsFetchInventory(params);

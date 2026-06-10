@@ -6056,7 +6056,7 @@ LEGACY END -->
     const selectedCount = platformSelection(platform).size;
     const isAlibaba = platform === 'alibaba';
     const visibleGroups = platformVisibleGroups(platform);
-    const canUseVisibleSingle = selectedCount === 0 && visibleGroups.length === 1;
+    const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;
     const canRunSelectionAction = selectedCount > 0 || canUseVisibleSingle;
     const registerActionLabel = platform === 'ebay' ? '등록' : '등록 미리보기';
     const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
@@ -24587,70 +24587,104 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return raw || '- EACH OPTION INCLUDE 1 ALBUM';
     }
 
-    function mrEbayBuildDescription(group, row) {
+    function mrEbayDescriptionCard(title, bodyHtml, bgColor = '#fff7fb') {
+      return '<table width="100%" cellpadding="12" cellspacing="0" border="0" bgcolor="' + bgColor + '">'
+        + '<tr><td><strong>' + esc(title) + '</strong><br>' + bodyHtml + '</td></tr></table>';
+    }
+
+    function mrEbayDescriptionList(items) {
+      const html = (items || [])
+        .map(v => String(v || '').trim())
+        .filter(Boolean)
+        .map(v => '<li>' + esc(v.slice(0, 180)) + '</li>')
+        .join('');
+      return html ? '<ul>' + html + '</ul>' : '';
+    }
+
+    function mrEbayComponentLines(components) {
+      return String(components || '')
+        .split(/\n+/)
+        .map(v => v.replace(/^[\s*-]+/, '').trim())
+        .filter(Boolean)
+        .slice(0, 12);
+    }
+
+    function mrEbayBuildDescription(group, row, lifecycleState = '') {
       const productName = mrEbayBuildTitle(row);
-      const components = mrEbayMasterComponents(group, row);
-      return `🟣 ${productName}
-
-💿 100% Official &amp; Authentic K-POP Album
-- Brand new, sealed, and sourced directly from the official distributor
-
-📊 Chart Certified
-- This album counts toward Hanteo and Circle (Gaon) charts
-- Your purchase directly supports the artist's chart performance
-
-📦 Fast &amp; Secure Shipping
-- Ships from Korea with tracking
-- Safely packed with bubble wrap and a sturdy box
-- Items labeled [READY STOCK], [ON HAND], or [FAST DELIVERY] are dispatched within 1 business day
-
-📌 Contents
-${components}
-
-⚠️ Important Notice
-- The outer box is for protection and may have minor dents, scratches, or creases.
-- The outer vinyl wrap may have slight tears or marks due to shipping.
-- These are not considered defects and are not grounds for return or refund.
-- Please purchase only if you agree to the above conditions.
-
-Shipping
-- All Orders will we send to buyer's ebay shipping address.
-- We use K-packet Air-mail or Standard shipping.
-- Our orders have tracking number, and you will track your order when we ship the order.
-- Items will be shipped in 2~3 business day after we received payment.
-- The item price do not included import duties, taxes and charges. These are buyer's responsibility.
-- If your local customs charge for the tax/duty/vat/brokerage fees/handling fees, buyer will have to pay for it. Then, please check the tax rate with your local custom.
-
-Standard shipping
-US : 10 ~ 21 working days
-Asia : 7 ~ 15 working days
-South Asia / EU / Australia / Canada / Middle East : 15 ~ 25 working days
-America / Africa / Eastern Europe : 20 ~ 50 working days
-Expedited shipping
-US : 3 ~ 7 working days
-Asia : 3 ~ 5 working days
-South Asia / EU / Australia / Canada / Middle East : 5 ~ 14 working days
-America / Africa / Eastern Europe : 7 ~ 15 working days
-
-Return
-- If you want to return your item, feel free to contact us.
-- When you return your item, returning shipping cost is buyer's responsibility.
-- When we receive returned item, we will check if it came as the original packaging. (We have all videos about our orders and we will check about return item and video.)
-- If our item have problems, please contact us.
-
-Contact
-- Feel free to contact us about our items.
-- If you're looking for something but it's not in our store, please contact us and we will find it and give you reasonable price.
-- When you want to buy more than 2 items, we can give you an additional discount if you contact us in advance.
-- Your positive feedbacks are very important to us. When you have any problems about items, please contact us first.`.slice(0, 4000);
+      const components = mrEbayComponentLines(mrEbayMasterComponents(group, row));
+      const stockLine = lifecycleState === 'ready_stock'
+        ? 'Ready stock items are prepared quickly and usually leave our office within 1 business day.'
+        : 'Pre-order items ship after the official release and warehouse arrival. We will keep you updated if the distributor schedule changes.';
+      const cards = [
+        mrEbayDescriptionCard(
+          'Thank you for visiting starphotocard',
+          'Hello, K-pop collector. We carefully prepare official K-pop albums and merch from Korea so your collection can arrive safely and happily.<br><br>'
+            + '<strong>' + esc(productName) + '</strong>',
+          '#fff7fb'
+        ),
+        mrEbayDescriptionCard(
+          'Why collectors can shop with confidence',
+          mrEbayDescriptionList([
+            '100% Official & Authentic K-POP item',
+            'Brand new, sealed, and sourced from official Korean distributors',
+            'Packed with care from Korea with tracking',
+            stockLine,
+          ]),
+          '#f8fbff'
+        ),
+        mrEbayDescriptionCard(
+          'Chart support',
+          mrEbayDescriptionList([
+            'Eligible album purchases count toward Hanteo and Circle charts when supplied through official chart-counting distributors.',
+            'Your order helps support the artist in an official and meaningful way.',
+          ]),
+          '#fffaf0'
+        ),
+        mrEbayDescriptionCard(
+          'What is included',
+          mrEbayDescriptionList(components.length ? components : ['Each option includes 1 album. Random inclusions follow the official manufacturer policy.']),
+          '#f7fff7'
+        ),
+        mrEbayDescriptionCard(
+          'Packed with care from Korea',
+          mrEbayDescriptionList([
+            'We use protective packing such as bubble wrap and a sturdy box whenever possible.',
+            'Tracking is provided after shipment.',
+            'Please message us if you are buying multiple items. We will help kindly when combined shipping is possible.',
+          ]),
+          '#fff7f0'
+        ),
+        mrEbayDescriptionCard(
+          'Important notice for collectors',
+          mrEbayDescriptionList([
+            'Outer boxes, sleeves, and shrink wrap are designed to protect the product and may have small dents, scratches, creases, or marks from production and international shipping.',
+            'These minor outer-package marks are not considered product defects.',
+            'Random photocards, posters, and other random inclusions cannot be selected unless the option title clearly says so.',
+          ]),
+          '#f8f5ff'
+        ),
+        mrEbayDescriptionCard(
+          'Shipping, returns, and contact',
+          mrEbayDescriptionList([
+            "Orders ship only to the buyer's eBay checkout address.",
+            'Import duties, taxes, VAT, brokerage, and handling fees are the buyer responsibility unless eBay collects them at checkout.',
+            'If there is any issue with your order, please contact us first. We will answer kindly and do our best to help.',
+          ]),
+          '#f8fafc'
+        ),
+      ];
+      return cards.join('<br>\n').slice(0, 4000);
     }
 
     function mrEbayDescriptionForPayload(value) {
-      return String(value || '')
+      const text = String(value || '')
         .replace(/\r\n/g, '\n')
         .replace(/\r/g, '\n')
-        .trim()
-        .replace(/\n/g, '<br>\n');
+        .trim();
+      if (/<(?:table|tr|td|th|thead|tfoot|tbody|caption|colgroup|col|ul|ol|li|br|strong|b)\b/i.test(text)) {
+        return text;
+      }
+      return text.replace(/\n/g, '<br>\n');
     }
 
     function mrEbayReleaseType(firstRow) {
@@ -24851,7 +24885,7 @@ Contact
         storeCategoryNames: [MR_EBAY_STORE_CATEGORY],
         inventoryGroupKey: mrEbayBuildGroupKey(group, firstRow),
         variationAxis: MR_EBAY_VARIATION_AXIS,
-        description: String(firstRow._ebayDescription || mrEbayBuildDescription(group, firstRow)).trim().slice(0, 4000),
+        description: String(firstRow._ebayDescription || mrEbayBuildDescription(group, firstRow, lifecycleState)).trim().slice(0, 4000),
         priceUsd: overridePrice > 0 ? overridePrice : computedPriceUsd,
         computedPriceUsd,
         quantity: Math.max(1, Math.floor(Number(firstRow._ebayQuantity || 50) || 50)),
@@ -24974,9 +25008,11 @@ Contact
     function mrEbayUpdateModalStatus(draft) {
       const statusEl = document.getElementById('mr-ebay-modal-status');
       const previewEl = document.getElementById('mr-ebay-payload-preview');
+      const renderedEl = document.getElementById('mr-ebay-rendered-preview');
       const confirmBtn = document.getElementById('mr-ebay-modal-confirm');
       if (statusEl) statusEl.innerHTML = mrEbayErrorHtml(draft);
       if (previewEl) previewEl.textContent = JSON.stringify(mrEbayPayloadFromDraft(draft), null, 2);
+      if (renderedEl) renderedEl.innerHTML = mrEbayDescriptionForPayload(draft.description).slice(0, 4000);
       if (confirmBtn) {
         confirmBtn.disabled = draft.errors.length > 0;
         confirmBtn.title = draft.errors.length ? '필수 값을 먼저 채우세요.' : '현재 초안으로 eBay에 실등록합니다.';
@@ -25091,7 +25127,8 @@ Contact
         + '<div class="field" style="grid-column:span 12;"><label>배송비 기준</label><div style="font-size:12px;">미국 기준 배송비: ' + esc((draft.ebayPricing.usShippingKrw || 0).toLocaleString()) + '원 / $' + esc(draft.ebayPricing.usShippingUsd.toFixed(2)) + ' (' + esc(draft.ebayPricing.weightBucketG || 0) + 'g bucket, 상품가 포함). 국가별 extra 예시: DE $' + esc(deExtra) + ', PT $' + esc(ptExtra) + ', CH $' + esc(chExtra) + '</div></div>'
         + variationTable
         + '</div>'
-        + '<div class="field"><label>상품 설명 (영문, 최대 4000자)</label><textarea id="mr-ebay-description" rows="8" maxlength="4000" placeholder="eBay listing description">' + esc(draft.description) + '</textarea></div>'
+        + '<div class="field"><label>상품 설명 HTML (영문, 최대 4000자)</label><textarea id="mr-ebay-description" rows="8" maxlength="4000" placeholder="eBay listing description">' + esc(draft.description) + '</textarea></div>'
+        + '<div class="field"><label>eBay 표시 미리보기</label><div id="mr-ebay-rendered-preview" style="max-height:260px;overflow:auto;background:#fff;border:1px solid var(--border);border-radius:6px;padding:10px;font-size:12px;line-height:1.45;"></div></div>'
         + '<div class="grid">'
         + '<div class="field" style="grid-column:span 7;"><label>Images (' + esc(draft.imageUrls.length) + '/24)</label><div style="display:grid;gap:6px;max-height:210px;overflow:auto;">' + (imageRows || '<span class="muted">이미지 없음</span>') + '</div></div>'
         + '<div class="field" style="grid-column:span 5;"><label>Item specifics</label><div style="overflow:auto;border:1px solid var(--border);border-radius:6px;max-height:210px;"><table class="cat-table" style="width:100%;font-size:11px;"><tbody>' + aspectRows + '</tbody></table></div></div>'

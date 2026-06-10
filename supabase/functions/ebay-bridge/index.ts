@@ -700,54 +700,111 @@ function buildEbayImageUrlsFromProduct(product: any, body: any = {}): string[] {
 }
 
 function ebayDescriptionForPayload(value: unknown): string {
-  return s(value)
+  const text = s(value)
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
-    .trim()
-    .replace(/\n/g, "<br>\n")
-    .slice(0, 4000);
+    .trim();
+  if (/<(?:table|tr|td|th|thead|tfoot|tbody|caption|colgroup|col|ul|ol|li|br|strong|b)\b/i.test(text)) {
+    return text.slice(0, 4000);
+  }
+  return text.replace(/\n/g, "<br>\n").slice(0, 4000);
 }
 
-function buildEbayDescriptionText(product: any, title: string): string {
+function ebayHtmlEscape(value: unknown): string {
+  return s(value).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;",
+  }[ch] || ch));
+}
+
+function ebayDescriptionCard(title: string, bodyHtml: string, bgColor = "#fff7fb"): string {
+  return `<table width="100%" cellpadding="12" cellspacing="0" border="0" bgcolor="${bgColor}"><tr><td><strong>${ebayHtmlEscape(title)}</strong><br>${bodyHtml}</td></tr></table>`;
+}
+
+function ebayDescriptionList(items: string[]): string {
+  const html = items
+    .map((value) => s(value).trim())
+    .filter(Boolean)
+    .map((value) => `<li>${ebayHtmlEscape(value.slice(0, 180))}</li>`)
+    .join("");
+  return html ? `<ul>${html}</ul>` : "";
+}
+
+function ebayComponentLines(components: string): string[] {
+  return s(components)
+    .split(/\n+/)
+    .map((value) => value.replace(/^[\s*-]+/, "").trim())
+    .filter(Boolean)
+    .slice(0, 12);
+}
+
+function buildEbayDescriptionText(product: any, title: string, lifecycleState: EbayLifecycleState = ""): string {
   const components = s(product.components_extracted_en).trim() || "- EACH OPTION INCLUDE 1 ALBUM";
-  return `${title}
-
-100% Official & Authentic K-POP Album
-- Brand new, sealed, and sourced directly from the official distributor
-
-Chart Certified
-- This album counts toward Hanteo and Circle (Gaon) charts
-- Your purchase directly supports the artist's chart performance
-
-Fast & Secure Shipping
-- Ships from Korea with tracking
-- Safely packed with bubble wrap and a sturdy box
-- Items labeled [READY STOCK], [ON HAND], or [FAST DELIVERY] are dispatched within 1 business day
-
-Contents
-${components}
-
-Important Notice
-- The outer box is for protection and may have minor dents, scratches, or creases.
-- The outer vinyl wrap may have slight tears or marks due to shipping.
-- These are not considered defects and are not grounds for return or refund.
-- Please purchase only if you agree to the above conditions.
-
-Shipping
-- All orders will be sent to the buyer's eBay shipping address.
-- We use K-packet Air-mail or standard shipping.
-- Orders include tracking information.
-- Items will be shipped in 2-3 business days after payment is received.
-- Import duties, taxes, VAT, brokerage, and handling fees are the buyer's responsibility.
-
-Return
-- Please contact us first if you want to return an item.
-- Return shipping cost is the buyer's responsibility unless the item has a seller-side issue.
-
-Contact
-- Feel free to contact us about our items.
-- If you are looking for another K-pop item, contact us and we will try to find it.
-- For multiple-item purchases, contact us in advance for a possible discount.`.slice(0, 4000);
+  const componentLines = ebayComponentLines(components);
+  const stockLine = lifecycleState === "ready_stock"
+    ? "Ready stock items are prepared quickly and usually leave our office within 1 business day."
+    : "Pre-order items ship after the official release and warehouse arrival. We will keep you updated if the distributor schedule changes.";
+  const cards = [
+    ebayDescriptionCard(
+      "Thank you for visiting starphotocard",
+      `Hello, K-pop collector. We carefully prepare official K-pop albums and merch from Korea so your collection can arrive safely and happily.<br><br><strong>${ebayHtmlEscape(title)}</strong>`,
+      "#fff7fb",
+    ),
+    ebayDescriptionCard(
+      "Why collectors can shop with confidence",
+      ebayDescriptionList([
+        "100% Official & Authentic K-POP item",
+        "Brand new, sealed, and sourced from official Korean distributors",
+        "Packed with care from Korea with tracking",
+        stockLine,
+      ]),
+      "#f8fbff",
+    ),
+    ebayDescriptionCard(
+      "Chart support",
+      ebayDescriptionList([
+        "Eligible album purchases count toward Hanteo and Circle charts when supplied through official chart-counting distributors.",
+        "Your order helps support the artist in an official and meaningful way.",
+      ]),
+      "#fffaf0",
+    ),
+    ebayDescriptionCard(
+      "What is included",
+      ebayDescriptionList(componentLines.length ? componentLines : ["Each option includes 1 album. Random inclusions follow the official manufacturer policy."]),
+      "#f7fff7",
+    ),
+    ebayDescriptionCard(
+      "Packed with care from Korea",
+      ebayDescriptionList([
+        "We use protective packing such as bubble wrap and a sturdy box whenever possible.",
+        "Tracking is provided after shipment.",
+        "Please message us if you are buying multiple items. We will help kindly when combined shipping is possible.",
+      ]),
+      "#fff7f0",
+    ),
+    ebayDescriptionCard(
+      "Important notice for collectors",
+      ebayDescriptionList([
+        "Outer boxes, sleeves, and shrink wrap are designed to protect the product and may have small dents, scratches, creases, or marks from production and international shipping.",
+        "These minor outer-package marks are not considered product defects.",
+        "Random photocards, posters, and other random inclusions cannot be selected unless the option title clearly says so.",
+      ]),
+      "#f8f5ff",
+    ),
+    ebayDescriptionCard(
+      "Shipping, returns, and contact",
+      ebayDescriptionList([
+        "Orders ship only to the buyer's eBay checkout address.",
+        "Import duties, taxes, VAT, brokerage, and handling fees are the buyer responsibility unless eBay collects them at checkout.",
+        "If there is any issue with your order, please contact us first. We will answer kindly and do our best to help.",
+      ]),
+      "#f8fafc",
+    ),
+  ];
+  return cards.join("<br>\n").slice(0, 4000);
 }
 
 function buildEbayAspectsFromProduct(product: any, title: string): Record<string, string[]> {
@@ -800,7 +857,7 @@ async function buildHeadlessEbayProductPayload(product: any, body: any = {}): Pr
   const imageUrls = buildEbayImageUrlsFromProduct(product, body);
   const aspects = mergeAspects(buildEbayAspectsFromProduct(product, title), body.aspects);
   const descriptionText = s(body.description || body.ebay_description || "").trim()
-    || buildEbayDescriptionText(product, title);
+    || buildEbayDescriptionText(product, title, lifecycleState);
   const derived = deriveEbayKpopFromTitle(title);
 
   return {

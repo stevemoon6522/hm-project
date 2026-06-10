@@ -61,6 +61,11 @@ assert.equal(
   'Line 1<br>\n<br>\nLine 2',
   'eBay payload description must preserve textarea line breaks as HTML breaks',
 );
+assert.equal(
+  descriptionForPayload('<table>\n<tr><td><strong>Hello</strong></td></tr>\n</table>'),
+  '<table>\n<tr><td><strong>Hello</strong></td></tr>\n</table>',
+  'eBay payload description must preserve safe HTML templates without injecting extra line breaks',
+);
 
 const optionImageStart = html.indexOf('    function mrEbayOptionImageUrl');
 const optionImageEnd = html.indexOf('    function mrEbayOptionStock', optionImageStart);
@@ -137,9 +142,17 @@ for (const token of [
   'eBay item specific Artist is required for category 176984',
   'eBay item specific Release Title is required for category 176984',
   'preservePublishedVariationValue',
-  '🟣 ${productName}',
-  '📌 Contents',
-  "The item price do not included import duties",
+  'function mrEbayDescriptionCard',
+  'function mrEbayDescriptionList',
+  'Thank you for visiting starphotocard',
+  'Hello, K-pop collector',
+  'Why collectors can shop with confidence',
+  'What is included',
+  'Packed with care from Korea',
+  'Important notice for collectors',
+  'Shipping, returns, and contact',
+  'mrEbayBuildDescription(group, firstRow, lifecycleState)',
+  'id="mr-ebay-rendered-preview"',
   'function mrEbayBuildVariationOptions',
   'function mrEbayIsSkuLikeVariationValue',
   'mrEbayMasterOptionImageUrl(row)',
@@ -190,6 +203,10 @@ for (const token of [
   'withEbayPublishRun("variation"',
   'validateRequiredMusicAspects(String(categoryId), safeAspects)',
   'const EBAY_KPOP_REQUIRED_ASPECTS = ["Artist", "Release Title"]',
+  'function ebayDescriptionCard',
+  'Thank you for visiting starphotocard',
+  'Hello, K-pop collector',
+  'buildEbayDescriptionText(product, title, lifecycleState)',
 ]) {
   assert(edge.includes(token), `ebay-bridge variation flow missing token: ${token}`);
 }

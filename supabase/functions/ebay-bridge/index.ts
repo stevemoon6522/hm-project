@@ -757,8 +757,8 @@ function buildEbayDescriptionText(product: any, title: string, lifecycleState: E
   const components = s(product.components_extracted_en).trim() || "- EACH OPTION INCLUDE 1 ALBUM";
   const componentLines = ebayComponentLines(components);
   const stockLine = lifecycleState === "ready_stock"
-    ? "Ready stock items are usually packed within 1 business day, excluding weekends and Korean holidays."
-    : "Pre-order items ship after the official release and warehouse arrival; manufacturer or distributor delays may change the schedule.";
+    ? "Ready stock ships in about 1 business day, excluding weekends and Korean holidays."
+    : "Pre-order ships after official release and warehouse arrival; distributor delays may change the schedule.";
   const shippingTable = ebayDescriptionTable(
     ["Service", "Destination area", "Estimated transit after dispatch"],
     [
@@ -771,7 +771,7 @@ function buildEbayDescriptionText(product: any, title: string, lifecycleState: E
   const cards = [
     ebayDescriptionCard(
       "Album product information",
-      `Hello, K-pop collector. Thank you for visiting starphotocard. We prepare official K-pop albums and merch from Korea with a friendly, careful packing routine.<br><br><strong>${ebayHtmlEscape(title)}</strong><br>${
+      `Hello, K-pop collector. Official K-pop goods from Korea, packed carefully.<br><br><strong>${ebayHtmlEscape(title)}</strong><br>${
         ebayDescriptionList([
           "100% Official & Authentic K-POP item, brand new from official Korean distributors.",
           "Eligible albums may support Hanteo and Circle chart counts through official channels.",
@@ -783,35 +783,39 @@ function buildEbayDescriptionText(product: any, title: string, lifecycleState: E
       "What is included / Handling before shipment",
       ebayDescriptionList((componentLines.length ? componentLines : ["Each option includes 1 album. Random inclusions follow the official manufacturer policy."]).concat([
         stockLine,
-        "We ship only to the buyer's eBay checkout address. Please confirm name, address, and phone number before payment.",
-        "Tracking is uploaded after dispatch. The first courier scan can take 24-48 hours to appear.",
+        "Ships only to the buyer's eBay checkout address. Confirm name, address, and phone before payment.",
+        "Tracking uploads after dispatch; the first scan may take 24-48 hours.",
       ])),
       "#f8fbff",
     ),
     ebayDescriptionCard(
       "International shipping time guide",
-      `Estimates exclude handling time, weekends, holidays, customs, and local carrier delays.<br>${shippingTable}`,
+      `Estimates exclude handling, weekends, holidays, customs, and local delays.<br>${shippingTable}`,
       "#fffaf0",
     ),
     ebayDescriptionCard(
-      "Customs, duties, VAT, and import fees",
-      ebayDescriptionList([
-        "Tax or duty collected by eBay appears in your order total. Any import duty, VAT, GST, brokerage, handling, or storage fee not collected by eBay is the buyer responsibility.",
-        "Fees differ by country, product value, and local rules. Please check your local customs office before buying.",
-        "We declare the accurate item name and order value. We cannot mark packages as gifts, lower value, or change invoices.",
-        "Customs inspections, document requests, and delivery holds are outside seller control and may require buyer response.",
-        "Refused delivery or unpaid import-fee returns may have shipping costs deducted from the refund.",
-      ]),
+      "Customs, Duties & Taxes",
+      `<strong>For buyers in the United States (DDP Service)</strong>${
+        ebayDescriptionList([
+          "Guaranteed Landed Cost: For standard US DDP orders, applicable import duties and customs taxes are handled in advance through our logistics solution. Checkout price is final for covered orders.",
+          "Zero Hidden Fees: Customs costs are prepaid, so the courier should not request extra brokerage or delivery customs fees on arrival.",
+          "Optimization Promise: Specialized logistics consolidation helps keep customs clearance compliant and administrative costs low.",
+        ])
+      }<strong>For international buyers (Europe, Asia, Australia, Canada & More)</strong>${
+        ebayDescriptionList([
+          "Transparent Pricing: Listing prices generally do not include destination import duties or VAT unless eBay collects them at checkout.",
+          "Payment of Taxes: Local duties, VAT, GST, brokerage, or handling charges are government taxes, not shipping fees, and may be collected by the carrier before delivery.",
+          "Our Promise: We prepare customs documents carefully. If documents are needed, message us via eBay and we will respond quickly.",
+          "Delivery Cooperation: Please check local customs rules. If returned because customs charges are unpaid, return shipping costs may be deducted from the refund.",
+        ])
+      }`,
       "#f8fafc",
     ),
     ebayDescriptionCard(
       "Important notice and friendly support",
       ebayDescriptionList([
-        "Outer boxes, sleeves, and shrink wrap are designed to protect the product and may have small dents, scratches, creases, or marks from production and international shipping.",
-        "Random photocards, posters, and other random inclusions cannot be selected unless the option title clearly says so.",
-        "Please contact us through eBay messages first if you have any question or delivery concern. We will answer kindly.",
-        "Returns follow the eBay return policy for this listing. Items must be unused, unopened, and complete.",
-        "Address errors, refusal, or unpaid import charges can reduce the refundable amount because shipping costs are not recoverable.",
+        "Outer packaging may have small marks from production or shipping. Random inclusions cannot be selected unless the option title says so.",
+        "Please message us via eBay first. Returns follow eBay policy; items must be unused, unopened, and complete. Address errors, refusal, or unpaid fees may reduce the refund.",
       ]),
       "#fff7fb",
     ),

@@ -14265,13 +14265,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       const displayRefs = [];
       if (coverRef) displayRefs.push(coverRef);
-      detailImages.slice(0, 7).forEach((src) => {
+      detailImages.forEach((src) => {
         displayRefs.push({ src, sourceUrl: src, staronemallUrl, kind: 'detail-preview', label: '상세' });
       });
 
       _rsh.crawledImageRefs = displayRefs.map((ref, idx) => ({ ...ref, idx }));
       _rsh.crawledImages = _rsh.crawledImageRefs.map((ref) => ref.src);
-      _rsh.detailImageSources = detailImages.slice(0, REGISTER_MAX_IMAGE_IDS - 1)
+      _rsh.detailImageSources = detailImages
         .map((src) => ({ src, sourceUrl: src, staronemallUrl, kind: 'detail' }));
       _rsh.selectedImages = coverRef ? [{ ...coverRef, idx: 0 }] : [];
       _rsh.uploadMode = !!coverRef;
@@ -20666,7 +20666,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         detail_image_urls: detailImages.length ? detailImages : (observed.detail_image_urls || []),
       });
       if ((!Array.isArray(firstRow._extra_images) || !firstRow._extra_images.filter(Boolean).length) && detailImages.length) {
-        firstRow._extra_images = detailImages.slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
+        firstRow._extra_images = detailImages.slice();
       }
       return { mainImages, detailImages };
     }
@@ -21426,7 +21426,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (detailImages.length) {
           const existingExtras = Array.isArray(row._extra_images) ? row._extra_images.filter(Boolean) : [];
           if (!existingExtras.length || row._staronemall_autofilled_detail_images) {
-            row._extra_images = detailImages.slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
+            row._extra_images = detailImages.slice();
             row._staronemall_autofilled_detail_images = true;
           }
           row._detail_image_urls = detailImages;
@@ -21805,7 +21805,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         weight_g: Number(row.weight_g || 0),
         _weight_g: Number(row.weight_g || 0),
         _main_image: mainImages[0] || row.image_url || '',
-        _extra_images: detailImages.slice(0, 8),
+        _extra_images: detailImages.slice(),
         _detail_image_urls: detailImages,
         _product_name: title,
         _lifecycle_state: lifecycle,
@@ -21976,7 +21976,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const rawDetailImages = Array.isArray(sourceRow._detail_image_urls)
         ? sourceRow._detail_image_urls
         : (Array.isArray(observed.detail_image_urls) ? observed.detail_image_urls : []);
-      return mrJoomNormalizeImageList(rawDetailImages, baseUrl).slice(0, 9);
+      return mrJoomNormalizeImageList(rawDetailImages, baseUrl);
     }
 
     function mrSetGroupOptionImages(group, images, componentImageUrl = '') {
@@ -21984,7 +21984,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const selected = normalized.includes(componentImageUrl) ? componentImageUrl : (normalized[0] || '');
       (group?.rows || []).forEach(row => {
         row._detail_image_urls = normalized.slice();
-        row._extra_images = normalized.slice(0, 8);
+        row._extra_images = normalized.slice();
         row._components_image_url = selected;
       });
     }
@@ -22065,7 +22065,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         ...(Array.isArray(observed.main_image_urls) ? observed.main_image_urls : []),
       ].filter(Boolean);
       const representativeImages = mrJoomNormalizeImageList(rawMainImages, baseUrl).slice(0, 1);
-      const optionImages = mrGetGroupOptionImages(group, firstRow).slice(0, 7);
+      const optionImages = mrGetGroupOptionImages(group, firstRow);
 
       const wrap = el('div', {
         style: 'display:grid;grid-template-columns:minmax(120px,160px) 1fr;gap:8px;margin-top:6px;padding:8px;background:#fff;border:1px dashed var(--border);border-radius:8px;',
@@ -22849,7 +22849,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           if (row._weight_g == null) row._weight_g = row.weight_g || 0;
           if (row._main_image == null) row._main_image = row.shopee_option_image_url || '';
           if (row._extra_images == null) {
-            row._extra_images = mrJoomNormalizeImageList(row.observed?.detail_image_urls || [], row.url || firstRow.url || '').slice(0, 8);
+            row._extra_images = mrJoomNormalizeImageList(row.observed?.detail_image_urls || [], row.url || firstRow.url || '');
           }
           const isSingleProduct = !!row._singleProductMode;
 
@@ -23078,7 +23078,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               _main_image_file_name: '',
               _detail_image_urls: mrGetGroupOptionImages(group, firstRow),
               _components_image_url: mrGroupComponentImageUrl(group),
-              _extra_images: mrGetGroupOptionImages(group, firstRow).slice(0, 8),
+              _extra_images: mrGetGroupOptionImages(group, firstRow),
               _singleProductMode: false,
               _twoAxis: group.twoAxis,
               // Share the group's idempotency token

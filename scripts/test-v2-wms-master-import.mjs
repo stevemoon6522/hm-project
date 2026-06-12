@@ -59,7 +59,7 @@ for (const token of [
 }
 
 for (const token of [
-  'row._extra_images = detailImages.slice(0, MR_JOOM_MAX_EXTRA_IMAGES);',
+  'row._extra_images = detailImages.slice();',
   'row._detail_image_urls = detailImages;',
   'row.sourcing_price = observedPrice;',
   'row._sourcing_price = observedPrice;',

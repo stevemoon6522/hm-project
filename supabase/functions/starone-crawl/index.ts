@@ -424,7 +424,7 @@ function extractMainImages(doc, maxN = 5): string[] {
   return dedupArr(urls).slice(0, maxN);
 }
 
-function extractDetailImages(doc, maxN = 20): string[] {
+function extractDetailImages(doc, maxN = Number.POSITIVE_INFINITY): string[] {
   const urls: string[] = [];
   // class="img_obj_*"
   const imgObjList = doc.querySelectorAll('img[class^="img_obj_"]');
@@ -464,7 +464,9 @@ function extractDetailImages(doc, maxN = 20): string[] {
       }
     }
   }
-  return filterStaronemallDetailImageUrls(dedupArr(urls)).slice(0, maxN);
+  const filtered = filterStaronemallDetailImageUrls(dedupArr(urls));
+  if (!Number.isFinite(maxN) || maxN <= 0) return filtered;
+  return filtered.slice(0, Math.floor(maxN));
 }
 
 function extractPno(url: string): string | null {
@@ -737,7 +739,7 @@ async function crawlOne(url: string) {
   const release_date = extractReleaseDate(doc);
   const description_html = extractDescription(doc);
   const main_image_urls = extractMainImages(doc, 5);
-  const detail_image_urls = extractDetailImages(doc, 20);
+  const detail_image_urls = extractDetailImages(doc);
   const pno = extractPno(url);
 
   const observed_values = {

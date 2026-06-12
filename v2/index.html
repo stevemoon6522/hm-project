@@ -2019,12 +2019,6 @@
               <span class="pill">READY: Shopee TW=1 BR=3 others=2 / Qoo10 normal / eBay 233825118025</span>
               <span class="pill">PRE: Shopee 60 / Qoo10 reserved / eBay 253030471025</span>
             </div>
-            <div class="register-form-row" style="margin-bottom:10px;font-size:12px;">
-              <label style="flex:1;min-width:320px;">Staronemall URL (optional)
-                <input type="url" id="wms-master-staronemall-url" placeholder="https://www.staronemall.com/..." style="width:100%;font-size:12px;padding:5px 8px;">
-              </label>
-              <span class="pill">Enriches title, images, detail images, and price without writing to WMS.</span>
-            </div>
             <div id="wms-master-results" class="result-list" style="display:none;max-height:420px;overflow:auto;margin-top:12px;"></div>
             <div id="wms-master-error" class="notice" style="display:none;margin-top:10px;"></div>
           </div>
@@ -4173,7 +4167,9 @@ LEGACY END -->
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ncWx3Z25td2VnenNqZWxicmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDkzNDMsImV4cCI6MjA5NDg4NTM0M30.mJtqXO7WJMBUYBYVOS1FrD5qmFX6yZxGwfiGw3HUyJE';
   const WMS_SUPABASE_URL = 'https://bpdafetvjyvvwbksvowu.supabase.co';
   const WMS_SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwZGFmZXR2anl2dndia3N2b3d1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxODM4MjYsImV4cCI6MjA5Mjc1OTgyNn0.p9hYSOhVyLUUO8UyRJ7Av56pLgkPUAi1XCMtc6r-AZA';
-  const WMS_INVENTORY_SELECT = 'id,sku,barcode,idol,album,version,member,location,weight,stock_kr,image_url';
+  const WMS_INVENTORY_SELECT_BASE = 'id,sku,barcode,idol,album,version,member,location,weight,stock_kr,image_url';
+  const WMS_INVENTORY_SELECT = `${WMS_INVENTORY_SELECT_BASE},cost_price`;
+  let WMS_COST_PRICE_SELECT_OK = true;
   const SHOPEE_BRIDGE = `${SUPABASE_URL}/functions/v1/shopee-bridge`;
   const QOO10_BRIDGE = `${SUPABASE_URL}/functions/v1/qoo10-bridge`;
   const ALIBABA_BRIDGE = `${SUPABASE_URL}/functions/v1/alibaba-bridge`;
@@ -20654,7 +20650,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     function mrJoomSourceUrl(group) {
       const firstRow = group?.rows?.[0] || {};
-      return firstRow.url || firstRow.staronemall_url || '';
+      const sourceUrl = firstRow._staronemall_url || firstRow.staronemall_url || firstRow.url || '';
+      if (mrIsWmsGroup(group) && !isValidStaronemallUrl(sourceUrl)) return '';
+      return sourceUrl;
     }
 
     function mrJoomApplyObservedImages(group, observedValues) {
@@ -21213,14 +21211,24 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return String($('wms-master-release-date')?.value || '').trim();
     }
 
-    function mrWmsStaronemallUrl() {
-      const raw = String($('wms-master-staronemall-url')?.value || '').trim();
-      if (!raw) return '';
-      return normalizeStaronemallInput(raw);
-    }
-
     function mrWmsObservedUrl(observed) {
       return String(observed?.staronemall_url || observed?.source_url || observed?.url || '').trim();
+    }
+
+    function mrWmsCostCandidate(row) {
+      const candidates = [row?.cost_krw, row?.cost_price, row?.sourcing_price, row?.supply_price, row?.purchase_price];
+      for (const value of candidates) {
+        const n = Number(value);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return 0;
+    }
+
+    function mrWmsNormalizeStagePayloadRow(row) {
+      const cost = mrWmsCostCandidate(row);
+      return Object.assign({}, row, {
+        cost_krw: cost || row?.cost_krw || 0,
+      });
     }
 
     async function mrWmsFetchStaronemallObserved(staronemallUrl) {
@@ -21358,6 +21366,151 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return { sourceRecord: meta, signals };
     }
 
+    async function mrWmsUpdateSourceObserved(sourceRecordId, observedValues) {
+      const id = String(sourceRecordId || '').trim();
+      if (!id) throw new Error('WMS source record is missing.');
+      const { data, error } = await db.rpc('update_wms_source_observed', {
+        p_source_record_id: id,
+        p_observed: observedValues || {},
+      });
+      if (error) throw error;
+      return Array.isArray(data) ? data[0] : data;
+    }
+
+    function mrWmsSetGroupEnrichmentStatus(group, message, isError = false) {
+      (group?.rows || []).forEach(row => {
+        row._wmsEnrichmentStatus = message || '';
+        row._wmsEnrichmentStatusIsError = !!isError;
+      });
+    }
+
+    function mrWmsMergeObservedIntoGroup(group, observedValues, duplicateInfo) {
+      const rows = group?.rows || [];
+      if (!rows.length) return;
+      const observed = observedValues || {};
+      const staronemallUrl = normalizeStaronemallInput(mrWmsObservedUrl(observed));
+      const mainImages = mrJoomNormalizeImageList(mrObservedArray(observed.main_image_urls), staronemallUrl || window.location.href);
+      const detailImages = mrJoomNormalizeImageList(mrObservedArray(observed.detail_image_urls), staronemallUrl || window.location.href);
+      const observedPrice = Number(observed.price_krw || 0);
+
+      rows.forEach((row) => {
+        const previousObserved = row.observed || {};
+        const mergedObserved = Object.assign({}, previousObserved, observed, {
+          title: String(observed.title || previousObserved.title || `${row.idol || row.artist || ''} [${row.album || ''}]`).trim(),
+          artist: observed.artist_name || observed.artist || previousObserved.artist || row.idol || row.artist || '',
+          idol: row.idol || previousObserved.idol || '',
+          album: row.album || previousObserved.album || '',
+          source: 'wms_inventory',
+          source_detail: staronemallUrl ? 'staronemall' : (previousObserved.source_detail || 'wms_only'),
+          main_image_urls: mainImages.length ? mainImages : mrObservedArray(previousObserved.main_image_urls),
+          detail_image_urls: detailImages.length ? detailImages : mrObservedArray(previousObserved.detail_image_urls),
+          description_html: String(observed.description_html || previousObserved.description_html || ''),
+          staronemall_url: staronemallUrl || previousObserved.staronemall_url || null,
+          source_url: staronemallUrl || previousObserved.source_url || null,
+        });
+        row.observed = mergedObserved;
+        if (staronemallUrl) {
+          row.url = staronemallUrl;
+          row.staronemall_url = staronemallUrl;
+          row._staronemall_url = staronemallUrl;
+        }
+
+        const currentMain = String(row._main_image || '').trim();
+        const wmsMain = String(row._wms_image_url || row.image_url || '').trim();
+        const hasManualMain = !!String(row._main_image_file_name || '').trim();
+        if (mainImages[0] && (!currentMain || (!hasManualMain && currentMain === wmsMain))) {
+          row._main_image = mainImages[0];
+          row._staronemall_autofilled_main_image = true;
+        }
+
+        if (detailImages.length) {
+          const existingExtras = Array.isArray(row._extra_images) ? row._extra_images.filter(Boolean) : [];
+          if (!existingExtras.length || row._staronemall_autofilled_detail_images) {
+            row._extra_images = detailImages.slice(0, MR_JOOM_MAX_EXTRA_IMAGES);
+            row._staronemall_autofilled_detail_images = true;
+          }
+          row._detail_image_urls = detailImages;
+          if (!row._components_image_url || !detailImages.includes(row._components_image_url)) {
+            row._components_image_url = detailImages[0] || '';
+          }
+        }
+
+        const wmsCost = Number(row._wms_cost_price || row.cost_krw || 0);
+        if (observedPrice > 0) {
+          if (!row._sourcingTouched) {
+            row.sourcing_price = observedPrice;
+            row._sourcing_price = observedPrice;
+          }
+          if (!row._costTouched) {
+            row.cost_krw = rshSettlementFromSourcing(observedPrice);
+            row._cost_krw = row.cost_krw;
+          }
+        } else if (wmsCost > 0) {
+          if (!row._sourcingTouched && !(Number(row._sourcing_price) > 0)) {
+            row.sourcing_price = wmsCost;
+            row._sourcing_price = wmsCost;
+          }
+          if (!row._costTouched && !(Number(row._cost_krw) > 0)) {
+            row.cost_krw = wmsCost;
+            row._cost_krw = wmsCost;
+          }
+        }
+
+        row._product_name = mrMasterProductName(row);
+        row._duplicate_signals = duplicateInfo?.signals || [];
+        row._source_record_status = duplicateInfo?.sourceRecord?.status || row._source_record_status || '';
+        row._linked_master_product_id = duplicateInfo?.sourceRecord?.linked_master_product_id || row._linked_master_product_id || null;
+        if (row.status === 'failed' && !row.error) row.status = 'preview';
+      });
+    }
+
+    async function mrWmsLoadStaronemallForGroup(group, inputEl, buttonEl) {
+      const rawUrl = String(inputEl?.value || '').trim();
+      if (!rawUrl) {
+        mrWmsSetGroupEnrichmentStatus(group, 'Enter a Staronemall URL first.', true);
+        mrRenderPreviewCards();
+        return;
+      }
+      if (!isValidStaronemallUrl(rawUrl)) {
+        mrWmsSetGroupEnrichmentStatus(group, 'Staronemall URL must be a staronemall.com URL.', true);
+        mrRenderPreviewCards();
+        return;
+      }
+      const sourceRecordId = String(group?.source_record_id || '').trim();
+      if (!sourceRecordId) {
+        mrWmsSetGroupEnrichmentStatus(group, 'WMS source record is missing.', true);
+        mrRenderPreviewCards();
+        return;
+      }
+
+      const normalizedUrl = normalizeStaronemallInput(rawUrl);
+      if (buttonEl) {
+        buttonEl.disabled = true;
+        buttonEl.textContent = 'Loading...';
+      }
+      mrWmsSetGroupEnrichmentStatus(group, 'Loading Staronemall data...', false);
+      mrRenderPreviewCards();
+      try {
+        const observed = await mrWmsFetchStaronemallObserved(normalizedUrl);
+        const persisted = await mrWmsUpdateSourceObserved(sourceRecordId, observed);
+        const duplicateInfo = await mrWmsDuplicateSignals(sourceRecordId, normalizedUrl);
+        const nextObserved = persisted?.observed_values || observed;
+        mrWmsMergeObservedIntoGroup(group, nextObserved, duplicateInfo);
+        mrWmsSetGroupEnrichmentStatus(group, 'Staronemall data loaded into preview.', false);
+        mrWmsSetStatus('Staronemall data loaded into WMS preview.');
+      } catch (e) {
+        const message = e?.message || String(e);
+        mrWmsSetGroupEnrichmentStatus(group, `Staronemall load failed: ${message}`, true);
+        mrWmsSetStatus(`Staronemall load failed: ${message}`, true);
+      } finally {
+        if (buttonEl) {
+          buttonEl.disabled = false;
+          buttonEl.textContent = 'Load Staronemall';
+        }
+        mrRenderPreviewCards();
+      }
+    }
+
     function mrWmsSetStatus(message, isError = false) {
       const status = $('wms-master-status');
       const error = $('wms-master-error');
@@ -21392,14 +21545,29 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         .slice(0, 80);
     }
 
-    async function mrWmsFetchInventory(params) {
+    function mrWmsInventorySelect() {
+      return WMS_COST_PRICE_SELECT_OK ? WMS_INVENTORY_SELECT : WMS_INVENTORY_SELECT_BASE;
+    }
+
+    function mrWmsIsMissingCostPriceError(message) {
+      return /cost_price|PGRST204|Could not find/i.test(String(message || ''));
+    }
+
+    async function mrWmsFetchInventory(params, options = {}) {
       const url = `${WMS_SUPABASE_URL}/rest/v1/inventory?${params.toString()}`;
       const resp = await fetch(url, { headers: mrWmsHeaders() });
       const text = await resp.text();
       let body;
       try { body = JSON.parse(text); } catch { body = null; }
       if (!resp.ok) {
-        throw new Error((body && (body.message || body.error)) || text || `WMS HTTP ${resp.status}`);
+        const message = (body && (body.message || body.error)) || text || `WMS HTTP ${resp.status}`;
+        if (options.allowCostFallback !== false && String(params.get('select') || '').includes('cost_price') && mrWmsIsMissingCostPriceError(message)) {
+          WMS_COST_PRICE_SELECT_OK = false;
+          const fallbackParams = new URLSearchParams(params);
+          fallbackParams.set('select', WMS_INVENTORY_SELECT_BASE);
+          return mrWmsFetchInventory(fallbackParams, { allowCostFallback: false });
+        }
+        throw new Error(message);
       }
       return Array.isArray(body) ? body : [];
     }
@@ -21408,7 +21576,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const token = mrWmsSearchToken(query);
       if (token.length < 2) return [];
       const params = new URLSearchParams();
-      params.set('select', WMS_INVENTORY_SELECT);
+      params.set('select', mrWmsInventorySelect());
       const orFilter = [
         `idol.ilike.*${token}*`,
         `album.ilike.*${token}*`,
@@ -21425,7 +21593,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     async function mrWmsFetchExactGroupRows(idol, album) {
       const params = new URLSearchParams();
-      params.set('select', WMS_INVENTORY_SELECT);
+      params.set('select', mrWmsInventorySelect());
       params.set('idol', `eq.${idol}`);
       params.set('album', `eq.${album}`);
       params.set('order', 'version.asc,member.asc,sku.asc');
@@ -21435,7 +21603,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     async function mrWmsFetchExactInventoryGroupRows(group) {
       const params = new URLSearchParams();
-      params.set('select', WMS_INVENTORY_SELECT);
+      params.set('select', mrWmsInventorySelect());
       if (group?.group_mode === 'barcode' && group.barcode) {
         params.set('barcode', `eq.${group.barcode}`);
       } else {
@@ -21570,7 +21738,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       );
       const detailImages = mrJoomNormalizeImageList(mrObservedArray(staroneObserved.detail_image_urls), staronemallUrl || window.location.href);
       const observedPrice = Number(staroneObserved.price_krw || 0);
-      const wmsCost = Number(row.cost_krw || 0);
+      const wmsCost = mrWmsCostCandidate(row);
       const sourcingPrice = observedPrice > 0 ? observedPrice : wmsCost;
       const costKrw = observedPrice > 0 ? rshSettlementFromSourcing(observedPrice) : wmsCost;
       const observed = Object.assign({
@@ -21627,6 +21795,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         _linked_master_product_id: sourceMeta?.linked_master_product_id || row.linked_master_product_id || null,
         _duplicate_signals: duplicateSignals || [],
         _staronemall_url: staronemallUrl || '',
+        _wms_image_url: row.image_url || '',
+        _wms_cost_price: wmsCost,
         _inventory_quantity: Number(row.stock_kr || 0),
         _sourcing_price: sourcingPrice,
         _cost_krw: costKrw,
@@ -21651,36 +21821,31 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         : { group_mode: 'idol_album', idol: groupOrIdol, album };
       const lifecycle = mrWmsLifecycle();
       const releaseDate = mrWmsReleaseDate();
-      const staronemallUrl = mrWmsStaronemallUrl();
       if (lifecycle === 'pre_order' && !/^\d{4}-\d{2}-\d{2}$/.test(releaseDate)) {
         mrWmsSetStatus('PRE ORDER requires a Qoo10 release date.', true);
         return;
       }
-      if (staronemallUrl && !isValidStaronemallUrl(staronemallUrl)) {
-        mrWmsSetStatus('Staronemall URL must be a staronemall.com URL.', true);
-        return;
-      }
-      mrWmsSetStatus(staronemallUrl ? 'Loading WMS group and Staronemall data into preview...' : 'Loading WMS group into preview...');
+      mrWmsSetStatus('Loading WMS group into preview...');
       try {
         const wmsRows = await mrWmsFetchExactInventoryGroupRows(group);
         if (!wmsRows.length) throw new Error('No WMS inventory rows returned.');
-        const staroneObserved = staronemallUrl ? await mrWmsFetchStaronemallObserved(staronemallUrl) : null;
+        const wmsRowsForStage = wmsRows.map(mrWmsNormalizeStagePayloadRow);
         const { data, error } = await db.rpc('stage_wms_inventory_payload', {
-          p_rows: wmsRows,
-          p_observed: staroneObserved,
+          p_rows: wmsRowsForStage,
+          p_observed: null,
         });
         if (error) throw error;
         const rows = Array.isArray(data) ? data : [];
         if (!rows.length) throw new Error('No WMS inventory rows returned.');
         const tierMeta = mrWmsTierMeta(rows);
         const sourceRecordId = rows[0]?.source_record_id;
-        const duplicateInfo = await mrWmsDuplicateSignals(sourceRecordId, staronemallUrl);
+        const duplicateInfo = await mrWmsDuplicateSignals(sourceRecordId, '');
         MR_PREV = rows.map(row => mrWmsToPreviewRow(
           row,
           tierMeta,
           lifecycle,
           releaseDate,
-          staroneObserved,
+          null,
           duplicateInfo.sourceRecord,
           duplicateInfo.signals,
         ));
@@ -22087,6 +22252,38 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return wrap;
     }
 
+    function mrRenderWmsStaronemallEnrichment(group) {
+      if (!mrIsWmsGroup(group)) return null;
+      const firstRow = group?.rows?.[0] || {};
+      const currentUrl = String(firstRow._staronemall_url || firstRow.staronemall_url || '').trim();
+      const statusMessage = String(firstRow._wmsEnrichmentStatus || '').trim();
+      const isError = !!firstRow._wmsEnrichmentStatusIsError;
+      const wrap = el('div', {
+        style: 'display:grid;grid-template-columns:1fr auto;gap:8px;align-items:end;margin-top:6px;padding:8px;border:1px solid var(--border);background:#fff;border-radius:8px;',
+      });
+      const field = el('label', { style: 'display:flex;flex-direction:column;gap:3px;font-size:11px;color:var(--muted);font-weight:700;' }, 'Staronemall URL');
+      const input = el('input', {
+        type: 'url',
+        value: currentUrl,
+        placeholder: 'https://www.staronemall.com/...',
+        style: 'width:100%;font-size:12px;padding:5px 8px;font-weight:400;color:var(--text);',
+      });
+      field.appendChild(input);
+      const hint = el('div', {
+        style: `grid-column:1 / -1;font-size:11px;color:${isError ? 'var(--red)' : 'var(--muted)'};`,
+      }, statusMessage || 'Load after preview to enrich title, main image, detail images, description, and price.');
+      const btn = el('button', {
+        type: 'button',
+        class: 'primary',
+        style: 'font-size:12px;padding:7px 12px;white-space:nowrap;',
+      }, currentUrl ? 'Reload Staronemall' : 'Load Staronemall');
+      btn.addEventListener('click', () => { void mrWmsLoadStaronemallForGroup(group, input, btn); });
+      wrap.appendChild(field);
+      wrap.appendChild(btn);
+      wrap.appendChild(hint);
+      return wrap;
+    }
+
     function mrMasterPatchForGroup(group) {
       const firstRow = group?.rows?.[0] || {};
       const components = mrGroupComponents(group);
@@ -22226,6 +22423,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
         const titleDiv = el('div', { style: 'font-weight:600;font-size:13px;' }, mrMasterProductName(firstRow) || '(제목 없음)');
         infoCol.appendChild(titleDiv);
+        const wmsEnrichment = mrRenderWmsStaronemallEnrichment(group);
+        if (wmsEnrichment) infoCol.appendChild(wmsEnrichment);
         const duplicateWarning = mrRenderDuplicateSignals(group);
         if (duplicateWarning) infoCol.appendChild(duplicateWarning);
         const wmsPreflight = mrRenderWmsPreflight(group);
@@ -22276,6 +22475,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           const nextCost = rshSettlementFromSourcing(nextSourcing);
           const previousDefaultCost = Number(firstRow.cost_krw || firstRow._cost_krw || 0);
           group.rows.forEach(row => {
+            row._sourcingTouched = true;
             row.sourcing_price = nextSourcing;
             row._sourcing_price = nextSourcing;
             if (!row._costTouched || !(Number(row._cost_krw) > 0) || Number(row._cost_krw) === previousDefaultCost) {
@@ -22299,12 +22499,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           const previousDefault = Number(firstRow.cost_krw || firstRow._cost_krw || 0);
           const nextDefault = Number(e.target.value) || 0;
           group.rows.forEach(row => {
+            const wasTouched = !!row._costTouched;
             row.cost_krw = nextDefault;
-            if (!row._costTouched || !(Number(row._cost_krw) > 0) || Number(row._cost_krw) === previousDefault) {
+            if (!wasTouched || !(Number(row._cost_krw) > 0) || Number(row._cost_krw) === previousDefault) {
               row._cost_krw = nextDefault;
               const costInput = card.querySelector(`[data-cost-row-key="${mrRowKey(row)}"]`);
               if (costInput) costInput.value = nextDefault ? String(nextDefault) : '';
             }
+            row._costTouched = true;
           });
         });
         defCostLab.appendChild(defCostInp);
@@ -22721,6 +22923,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           optRow.appendChild(skuWr);
 
           const sourcingField = mkNumField('도매가(KRW)', row._sourcing_price, (v) => {
+            row._sourcingTouched = true;
             row._sourcing_price = v;
             row.sourcing_price = v;
             if (!row._costTouched) {

@@ -8,6 +8,7 @@ const migration = readdirSync(migrationsDir)
   .filter((name) => name.endsWith('.sql') && name.includes('wms_inventory'))
   .map((name) => readFileSync(join(migrationsDir, name), 'utf8'))
   .join('\n');
+const statusFixMigration = readFileSync(join(migrationsDir, '202606120002_wms_inventory_observed_status_fix.sql'), 'utf8');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -36,6 +37,7 @@ for (const token of [
   'mrWmsUpdateSourceObserved',
   'mrWmsLoadStaronemallForGroup',
   'mrRenderWmsStaronemallEnrichment',
+  'mrWmsMergeObservedIntoGroup',
   'mrWmsDuplicateSignals',
   'mrRenderWmsPreflight',
   "db.rpc('stage_wms_inventory_payload'",
@@ -54,6 +56,17 @@ for (const token of [
   'inventory: Number(row._inventory_quantity',
 ]) {
   assert(html.includes(token), `WMS master import UI/flow missing token: ${token}`);
+}
+
+for (const token of [
+  'row._extra_images = detailImages.slice(0, MR_JOOM_MAX_EXTRA_IMAGES);',
+  'row._detail_image_urls = detailImages;',
+  'row.sourcing_price = observedPrice;',
+  'row._sourcing_price = observedPrice;',
+  'row.cost_krw = rshSettlementFromSourcing(observedPrice);',
+  'row._cost_krw = row.cost_krw;',
+]) {
+  assert(html.includes(token), `WMS Staronemall enrichment merge missing token: ${token}`);
 }
 
 assert(
@@ -103,6 +116,16 @@ for (const token of [
   'grant execute on function public.update_wms_source_observed(uuid, jsonb)',
 ]) {
   assert(migration.includes(token), `WMS master import migration missing token: ${token}`);
+}
+
+for (const token of [
+  'create or replace function public.update_wms_source_observed',
+  'confidence = greatest(coalesce(v_source.confidence, 0), 95)',
+  "when v_source.status in ('rejected', 'superseded') then 'pending_review'",
+  'else v_source.status',
+  'public.source_records.status',
+]) {
+  assert(statusFixMigration.includes(token), `WMS observed status fix migration missing token: ${token}`);
 }
 
 assert(

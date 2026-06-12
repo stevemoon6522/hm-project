@@ -4167,7 +4167,7 @@ LEGACY END -->
   const SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ncWx3Z25td2VnenNqZWxicmloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkzMDkzNDMsImV4cCI6MjA5NDg4NTM0M30.mJtqXO7WJMBUYBYVOS1FrD5qmFX6yZxGwfiGw3HUyJE';
   const WMS_SUPABASE_URL = 'https://bpdafetvjyvvwbksvowu.supabase.co';
   const WMS_SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJwZGFmZXR2anl2dndia3N2b3d1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzcxODM4MjYsImV4cCI6MjA5Mjc1OTgyNn0.p9hYSOhVyLUUO8UyRJ7Av56pLgkPUAi1XCMtc6r-AZA';
-  const WMS_INVENTORY_SELECT_BASE = 'id,sku,barcode,idol,album,version,member,location,weight,stock_kr,image_url';
+  const WMS_INVENTORY_SELECT_BASE = 'id,sku,barcode,idol,album,version,member,location,weight,stock_kr,image_url,bundle_components,bundle_components_updated_at,updated_at';
   const WMS_INVENTORY_SELECT = `${WMS_INVENTORY_SELECT_BASE},cost_price`;
   let WMS_COST_PRICE_SELECT_OK = true;
   const SHOPEE_BRIDGE = `${SUPABASE_URL}/functions/v1/shopee-bridge`;
@@ -21224,10 +21224,43 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return 0;
     }
 
+    function mrWmsBundleComponents(row) {
+      const raw = row?.bundle_components ?? row?.bundleComponents;
+      return Array.isArray(raw) ? raw : [];
+    }
+
+    function mrWmsIsBundleRow(row) {
+      return mrWmsBundleComponents(row).length > 0;
+    }
+
+    function mrWmsBundleComponentSkus(row) {
+      return mrWmsBundleComponents(row)
+        .map(c => String(c?.sku || '').trim())
+        .filter(Boolean);
+    }
+
+    function mrWmsInventorySort(a, b) {
+      return String(a?.version || '').localeCompare(String(b?.version || ''))
+        || String(a?.member || '').localeCompare(String(b?.member || ''))
+        || String(a?.sku || '').localeCompare(String(b?.sku || ''));
+    }
+
+    function mrWmsMergeUniqueRows(rows) {
+      const byKey = new Map();
+      (rows || []).forEach((row) => {
+        const key = String(row?.id || row?.inventory_id || row?.sku || '').trim();
+        if (!key) return;
+        byKey.set(key, row);
+      });
+      return Array.from(byKey.values()).sort(mrWmsInventorySort);
+    }
+
     function mrWmsNormalizeStagePayloadRow(row) {
       const cost = mrWmsCostCandidate(row);
+      const bundleComponents = mrWmsBundleComponents(row);
       return Object.assign({}, row, {
         cost_krw: cost || row?.cost_krw || 0,
+        bundle_components: bundleComponents.length ? bundleComponents : null,
       });
     }
 
@@ -21601,6 +21634,34 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return mrWmsFetchInventory(params);
     }
 
+    async function mrWmsFetchBundleRowsForBarcodeGroup(group, barcodeRows) {
+      const skuSet = new Set((barcodeRows || []).map(r => String(r?.sku || '').trim()).filter(Boolean));
+      if (!skuSet.size) return [];
+      const idol = String(group?.idol || barcodeRows?.[0]?.idol || '').trim();
+      const album = String(group?.album || barcodeRows?.[0]?.album || '').trim();
+      if (!idol || !album) return [];
+      const candidateRows = await mrWmsFetchExactGroupRows(idol, album);
+      return candidateRows.filter(row => {
+        if (!mrWmsIsBundleRow(row)) return false;
+        return mrWmsBundleComponentSkus(row).some(sku => skuSet.has(sku));
+      });
+    }
+
+    async function mrWmsFetchBundleOnlyGroupRows(group) {
+      const targetSku = String(group?.sample_sku || '').trim();
+      const idol = String(group?.idol || '').trim();
+      const album = String(group?.album || '').trim();
+      if (!targetSku || !idol || !album) return [];
+      const candidateRows = await mrWmsFetchExactGroupRows(idol, album);
+      const bundleRow = candidateRows.find(row => String(row?.sku || '').trim() === targetSku);
+      if (!bundleRow) return [];
+      const componentSkus = new Set(mrWmsBundleComponentSkus(bundleRow));
+      return candidateRows.filter(row => {
+        const sku = String(row?.sku || '').trim();
+        return sku === targetSku || componentSkus.has(sku);
+      });
+    }
+
     async function mrWmsFetchExactInventoryGroupRows(group) {
       const params = new URLSearchParams();
       params.set('select', mrWmsInventorySelect());
@@ -21612,19 +21673,27 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
       params.set('order', 'version.asc,member.asc,sku.asc');
       params.set('limit', '200');
-      return mrWmsFetchInventory(params);
+      const rows = await mrWmsFetchInventory(params);
+      if (group?.group_mode === 'barcode' && group.barcode) {
+        const bundleRows = await mrWmsFetchBundleRowsForBarcodeGroup(group, rows);
+        return mrWmsMergeUniqueRows(rows.concat(bundleRows));
+      }
+      if (group?.group_mode === 'bundle') {
+        const bundleRows = await mrWmsFetchBundleOnlyGroupRows(group);
+        return bundleRows.length ? mrWmsMergeUniqueRows(bundleRows) : rows;
+      }
+      return rows;
     }
 
     function mrWmsGroupInventoryRows(rows) {
       const groups = new Map();
-      (rows || []).forEach((row) => {
+      const skuToGroupKey = new Map();
+      const addRowToGroup = (row, key, groupMode, barcodeOverride = '') => {
         const idol = String(row.idol || '').trim();
         const album = String(row.album || '').trim();
         const sku = String(row.sku || '').trim();
-        const barcode = String(row.barcode || '').trim();
+        const barcode = String(barcodeOverride || row.barcode || '').trim();
         if (!idol || !album || !sku) return;
-        const groupMode = barcode ? 'barcode' : 'idol_album';
-        const key = barcode ? `barcode|${barcode}` : `idol_album|${idol.toLowerCase()}|${album.toLowerCase()}`;
         if (!groups.has(key)) {
           groups.set(key, {
             group_mode: groupMode,
@@ -21638,6 +21707,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             sample_image_url: row.image_url || '',
             total_stock_kr: 0,
             matched_skus: [],
+            bundle_count: 0,
+            bundle_skus: [],
           });
         }
         const group = groups.get(key);
@@ -21647,6 +21718,44 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (!group.sample_image_url && row.image_url) group.sample_image_url = row.image_url;
         if (group.matched_skus.length < 8) group.matched_skus.push(sku);
         if (!group.barcode && barcode) group.barcode = barcode;
+        if (mrWmsIsBundleRow(row)) {
+          group.bundle_count += 1;
+          if (group.bundle_skus.length < 8) group.bundle_skus.push(sku);
+        }
+        if (groupMode === 'barcode') skuToGroupKey.set(sku, key);
+      };
+      const regularRows = (rows || []).filter(row => !mrWmsIsBundleRow(row));
+      const bundleRows = (rows || []).filter(row => mrWmsIsBundleRow(row));
+
+      regularRows.forEach((row) => {
+        const idol = String(row.idol || '').trim();
+        const album = String(row.album || '').trim();
+        const barcode = String(row.barcode || '').trim();
+        if (!idol || !album || !String(row.sku || '').trim()) return;
+        const groupMode = barcode ? 'barcode' : 'idol_album';
+        const key = barcode ? `barcode|${barcode}` : `idol_album|${idol.toLowerCase()}|${album.toLowerCase()}`;
+        addRowToGroup(row, key, groupMode, barcode);
+      });
+
+      bundleRows.forEach((row) => {
+        const idol = String(row.idol || '').trim();
+        const album = String(row.album || '').trim();
+        const sku = String(row.sku || '').trim();
+        if (!idol || !album || !sku) return;
+        const matchedKeys = new Set(
+          mrWmsBundleComponentSkus(row)
+            .map(componentSku => skuToGroupKey.get(componentSku))
+            .filter(Boolean),
+        );
+        if (matchedKeys.size === 1) {
+          const key = Array.from(matchedKeys)[0];
+          const matchedGroup = groups.get(key);
+          addRowToGroup(row, key, matchedGroup?.group_mode || 'barcode', matchedGroup?.barcode || '');
+          return;
+        }
+        const version = String(row.version || '').trim().toLowerCase();
+        const key = `bundle|${idol.toLowerCase()}|${album.toLowerCase()}|${version}|${sku.toLowerCase()}`;
+        addRowToGroup(row, key, 'bundle', '');
       });
       return Array.from(groups.values())
         .sort((a, b) => b.variant_count - a.variant_count || a.idol.localeCompare(b.idol) || a.album.localeCompare(b.album))
@@ -21676,6 +21785,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         info.appendChild(el('strong', {}, `${row.idol || '-'} [${row.album || '-'}]`));
         info.appendChild(el('span', { style: 'font-size:12px;color:var(--muted);' }, [
           `${Number(row.variant_count || 0).toLocaleString()} variants`,
+          row.bundle_count ? `${Number(row.bundle_count || 0).toLocaleString()} SET` : '',
           row.barcode ? `barcode ${row.barcode}` : '',
           row.sample_location ? `rack ${row.sample_location}` : '',
           row.total_stock_kr != null ? `KR stock ${Number(row.total_stock_kr || 0).toLocaleString()}` : '',
@@ -21790,6 +21900,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         _sku: String(row.sku || '').trim(),
         _skuLocked: true,
         _wms_inventory_id: row.inventory_id || null,
+        _wms_bundle_components: mrWmsBundleComponents(row),
+        _wms_is_bundle: mrWmsIsBundleRow(row),
         _source_kind: 'wms_inventory',
         _source_record_status: sourceMeta?.status || row.source_status || '',
         _linked_master_product_id: sourceMeta?.linked_master_product_id || row.linked_master_product_id || null,

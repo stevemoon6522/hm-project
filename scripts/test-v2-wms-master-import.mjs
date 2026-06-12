@@ -24,12 +24,20 @@ for (const token of [
   'WMS_SUPABASE_ANON',
   'WMS_INVENTORY_SELECT_BASE',
   'WMS_INVENTORY_SELECT',
+  'bundle_components',
+  'bundle_components_updated_at',
   'cost_price',
   'mrWmsInventorySelect',
+  'mrWmsBundleComponents',
+  'mrWmsIsBundleRow',
+  'mrWmsBundleComponentSkus',
   'mrWmsNormalizeStagePayloadRow',
   'mrWmsSearchInventoryRows',
   'mrWmsFetchExactGroupRows',
+  'mrWmsFetchBundleRowsForBarcodeGroup',
+  'mrWmsFetchBundleOnlyGroupRows',
   'mrWmsFetchExactInventoryGroupRows',
+  'mrWmsMergeUniqueRows',
   'mrWmsGroupInventoryRows',
   'mrWmsSearchGroups',
   'mrWmsStageGroup',
@@ -52,8 +60,12 @@ for (const token of [
   'Platform preflight blockers',
   'Staronemall URL is already used by master SKU',
   "group_mode: groupMode",
+  "addRowToGroup(row, key, matchedGroup?.group_mode || 'barcode'",
+  "row.bundle_count ? `${Number(row.bundle_count || 0).toLocaleString()} SET`",
   "params.set('barcode', `eq.${group.barcode}`)",
   'inventory: Number(row._inventory_quantity',
+  '_wms_bundle_components',
+  '_wms_is_bundle',
 ]) {
   assert(html.includes(token), `WMS master import UI/flow missing token: ${token}`);
 }
@@ -90,6 +102,18 @@ assert(
     && html.includes("const key = barcode ? `barcode|${barcode}`"),
   'WMS search results must group inventory rows by barcode before falling back to idol+album',
 );
+assert(
+  html.includes('const regularRows = (rows || []).filter(row => !mrWmsIsBundleRow(row));')
+    && html.includes('const bundleRows = (rows || []).filter(row => mrWmsIsBundleRow(row));')
+    && html.includes('mrWmsBundleComponentSkus(row)')
+    && html.includes('skuToGroupKey.get(componentSku)'),
+  'WMS search must merge WMS SET rows into their component barcode groups',
+);
+assert(
+  html.includes('const bundleRows = await mrWmsFetchBundleRowsForBarcodeGroup(group, rows);')
+    && html.includes('mrWmsMergeUniqueRows(rows.concat(bundleRows))'),
+  'WMS preview loading must re-fetch SET rows linked to a barcode component group',
+);
 
 for (const token of [
   "'wms_inventory'",
@@ -110,6 +134,8 @@ for (const token of [
   'create or replace function public.update_wms_source_observed',
   'source_record_not_wms_inventory',
   'wms_preview_staronemall_enrichment',
+  'bundle_components jsonb',
+  "'bundle_variant_count'",
   'grant execute on function public.search_wms_inventory_groups',
   'grant execute on function public.stage_wms_inventory_group',
   'grant execute on function public.stage_wms_inventory_payload(jsonb, jsonb)',

@@ -108,6 +108,15 @@ assert(publishHandler.includes('state.registerFlow.savedAt'), 'Shopee publish mu
 assert(publishHandler.includes('state.registerFlow.dirty'), 'Shopee publish must block dirty unsaved edits');
 assert(publishHandler.includes('showWizModal(p, true)'), 'Shopee publish must be an explicit secondary modal action');
 
+const mrImageListBlock = sliceBetween(html, 'const cbscTargets = publishRegions.map', 'const pathAEnabled = probeImageOk && !group.twoAxis;');
+assert(mrImageListBlock.includes('buildImageIdList(rgn).slice(0, REGISTER_MAX_IMAGE_IDS)'), 'master register publish targets must cap per-region Product Image ids at 9');
+assert(mrImageListBlock.includes("const globalImageRegion = publishRegions.includes('SG') ? 'SG' : publishRegions[0]"), 'master register must pick SG image ids for the global product when available');
+assert(mrImageListBlock.includes('const globalImageIdList = buildImageIdList(globalImageRegion).slice(0, REGISTER_MAX_IMAGE_IDS)'), 'master register must build a top-level Product Image list for add_global_item');
+
+const mrCbscBody = sliceBetween(html, 'const cbscBody = {', "console.log('[mrPromoteAll] register_cbsc payload:'");
+assert(mrCbscBody.includes('image_id:          globalImageIdList[0]'), 'master register must send the representative image id to register_cbsc');
+assert(mrCbscBody.includes('image_id_list:     globalImageIdList.length ? globalImageIdList : undefined'), 'master register must send detail image ids to global Product Image');
+
 const modalHtml = sliceBetween(html, '<div class="modal-overlay" id="register-modal"', '<script type="module">');
 assert(modalHtml.includes('id="modal-submit"'), '#register-modal must remain present');
 assert(html.includes('/register_cbsc'), 'legacy #register-modal compatibility path must remain untouched');

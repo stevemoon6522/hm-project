@@ -534,7 +534,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // =========================================================================
   const { data: product, error: productErr } = await svc
     .from('products')
-    .select('id, sku, product_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, joom_category_id, ebay_category_id, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_extra_attributes, shopee_days_to_ship, alibaba_category_id, alibaba_attributes, alibaba_group_id, alibaba_freight_template_id, alibaba_moq, alibaba_unit, alibaba_price_usd')
+    .select('id, sku, product_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, joom_category_id, ebay_category_id, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, alibaba_category_id, alibaba_attributes, alibaba_group_id, alibaba_freight_template_id, alibaba_moq, alibaba_unit, alibaba_price_usd')
     .eq('id', master_product_id)
     .maybeSingle();
 

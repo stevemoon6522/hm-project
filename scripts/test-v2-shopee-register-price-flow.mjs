@@ -61,15 +61,20 @@ for (const token of [
   "shopee_description: (body as any).shopee_description || ''",
   "shopee_product_name: (body as any).shopee_product_name || ''",
   'stock_override: (body as any).stock_override',
+  'shopee_extra_image_ids',
 ]) {
   assert(dispatcher.includes(token), `dispatcher missing token: ${token}`);
 }
 
 for (const token of [
+  'const SHOPEE_MAX_PRODUCT_IMAGES = 9',
   'const regionPrices',
+  'const baseImageIds',
+  'master.shopee_extra_image_ids',
   'const registerName',
   '(ctx as any).shopee_product_name',
   'name: registerName',
+  'image_id_list: baseImageIds.length ? baseImageIds : undefined',
   'price: targetPrice',
   'const registerDescription',
   '(ctx as any).shopee_description',

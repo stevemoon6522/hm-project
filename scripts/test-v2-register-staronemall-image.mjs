@@ -64,6 +64,9 @@ for (const token of [
   'const REGISTER_MAX_IMAGE_IDS = 9',
   'function updateRegisterRepresentativeImageId',
   'function applyPendingRegisterCoverImage',
+  'const SHOP_LAYER_CANVAS_SIZE = 1000',
+  'const SHOP_LAYER_IMAGE_SIZE = 850',
+  'const SHOP_LAYER_IMAGE_INSET = (SHOP_LAYER_CANVAS_SIZE - SHOP_LAYER_IMAGE_SIZE) / 2',
   "SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(src)",
   "SHOPEE_BRIDGE + '/upload_image'",
   'image_base64: dataUrl',
@@ -77,6 +80,18 @@ const invalidUrlBranch = sliceBetween(v2, 'if (!isValidStaronemallUrl(raw))', 'c
 assert(invalidUrlBranch.includes('image_id_list는 변경되지 않았습니다'), 'invalid URL fallback must keep current image IDs');
 assert(!invalidUrlBranch.includes('/upload_image'), 'invalid URL branch must not upload');
 assert(!invalidUrlBranch.includes('scrapeStaronemallFull'), 'invalid URL branch must not scrape');
+
+const applyShopLayerFn = sliceBetween(v2, 'async function applyShopLayer(productImageUrl)', 'function _normalizeShopeeImageUrl');
+assert(applyShopLayerFn.includes('canvas.width = SHOP_LAYER_CANVAS_SIZE'), 'legacy Shopee layer compositing must render to the 1000px shop layer canvas');
+assert(applyShopLayerFn.includes('canvas.height = SHOP_LAYER_CANVAS_SIZE'), 'legacy Shopee layer compositing must keep a square 1000px canvas');
+assert(applyShopLayerFn.includes('Math.max(SHOP_LAYER_IMAGE_SIZE / productImg.naturalWidth'), 'representative image must cover-crop into the 850px inner box');
+assert(applyShopLayerFn.includes('ctx.rect(SHOP_LAYER_IMAGE_INSET, SHOP_LAYER_IMAGE_INSET, SHOP_LAYER_IMAGE_SIZE, SHOP_LAYER_IMAGE_SIZE)'), 'representative image must be clipped to a centered 850px box');
+assert(applyShopLayerFn.includes('ctx.drawImage(layerImg, 0, 0, SHOP_LAYER_CANVAS_SIZE, SHOP_LAYER_CANVAS_SIZE)'), 'shop layer must be composited over the centered 850px representative image');
+
+const masterCompositeFn = sliceBetween(v2, 'async function mrCompositeMainImage(mainImageUrl)', 'async function mrUploadRegionImages');
+assert(masterCompositeFn.includes('const targetSize = SHOP_LAYER_CANVAS_SIZE'), 'master-register layer compositing must share the 1000px canvas constant');
+assert(masterCompositeFn.includes('const innerSize  = SHOP_LAYER_IMAGE_SIZE'), 'master-register layer compositing must share the 850px inner image constant');
+assert(masterCompositeFn.includes('const inset      = SHOP_LAYER_IMAGE_INSET'), 'master-register layer compositing must center the 850px image in the shop layer');
 
 const bindHandler = sliceBetween(v2, 'function bindRegisterStaronemallImage()', 'function validateAllWizSteps');
 assert(bindHandler.includes("input.addEventListener('input', schedule)"), 'input listener must stay bound for validation/status');

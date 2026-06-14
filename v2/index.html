@@ -10143,6 +10143,9 @@ LEGACY END -->
   const STARPHOTOCARD_LAYER = '/starphotocard-layer.png';
   const STARONEMALL_LAYER_VERSION = 'starphotocard-layer-20260515a';
   const REGISTER_MAX_IMAGE_IDS = 9;
+  const SHOP_LAYER_CANVAS_SIZE = 1000;
+  const SHOP_LAYER_IMAGE_SIZE = 850;
+  const SHOP_LAYER_IMAGE_INSET = (SHOP_LAYER_CANVAS_SIZE - SHOP_LAYER_IMAGE_SIZE) / 2;
   const EXTENSION_IDS = [
     'omkllbjahclcjooeifpbbbnchmjiafin',
     'napnekadejnlhcbobpanjpgcipgeaajh',
@@ -10206,18 +10209,28 @@ LEGACY END -->
       _loadImage(STARPHOTOCARD_LAYER, null),
       _loadImageFromAuthedUrl(productImageUrl),
     ]);
-    const size = Math.min(Math.max(productImg.naturalWidth, productImg.naturalHeight, 600), 800);
     const canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
+    canvas.width = SHOP_LAYER_CANVAS_SIZE;
+    canvas.height = SHOP_LAYER_CANVAS_SIZE;
     const ctx = canvas.getContext('2d');
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, size, size);
-    const scale = Math.min(size / productImg.naturalWidth, size / productImg.naturalHeight);
+    ctx.fillRect(0, 0, SHOP_LAYER_CANVAS_SIZE, SHOP_LAYER_CANVAS_SIZE);
+    const scale = Math.max(SHOP_LAYER_IMAGE_SIZE / productImg.naturalWidth, SHOP_LAYER_IMAGE_SIZE / productImg.naturalHeight);
     const w = productImg.naturalWidth * scale;
     const h = productImg.naturalHeight * scale;
-    ctx.drawImage(productImg, (size - w) / 2, (size - h) / 2, w, h);
-    ctx.drawImage(layerImg, 0, 0, size, size);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(SHOP_LAYER_IMAGE_INSET, SHOP_LAYER_IMAGE_INSET, SHOP_LAYER_IMAGE_SIZE, SHOP_LAYER_IMAGE_SIZE);
+    ctx.clip();
+    ctx.drawImage(
+      productImg,
+      SHOP_LAYER_IMAGE_INSET + (SHOP_LAYER_IMAGE_SIZE - w) / 2,
+      SHOP_LAYER_IMAGE_INSET + (SHOP_LAYER_IMAGE_SIZE - h) / 2,
+      w,
+      h
+    );
+    ctx.restore();
+    ctx.drawImage(layerImg, 0, 0, SHOP_LAYER_CANVAS_SIZE, SHOP_LAYER_CANVAS_SIZE);
     return canvas.toDataURL('image/jpeg', 0.92);
   }
 
@@ -23330,9 +23343,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       // Draw onto 1000x1000 canvas. Operator policy (msg #821): main image
       // sized to 850x850 inner box, centered with 75px padding to align with
       // the layer PNG's transparent window. Outer 75px frame comes from layer.
-      const targetSize = 1000;
-      const innerSize  = 850;   // main image cover-crop size
-      const inset      = (targetSize - innerSize) / 2; // 75
+      const targetSize = SHOP_LAYER_CANVAS_SIZE;
+      const innerSize  = SHOP_LAYER_IMAGE_SIZE;   // main image cover-crop size
+      const inset      = SHOP_LAYER_IMAGE_INSET;
 
       const canvas = document.createElement('canvas');
       canvas.width = canvas.height = targetSize;
@@ -23823,8 +23836,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 region:         rgn,
                 price:          firstRow._cost_krw || variationOptions[0].cost_krw || 0,
                 days_to_ship:   firstRow._shopee_days_to_ship, // validated 1-150 int
-                image_id_list:  buildImageIdList(rgn),
+                image_id_list:  buildImageIdList(rgn).slice(0, REGISTER_MAX_IMAGE_IDS),
               }));
+              const globalImageRegion = publishRegions.includes('SG') ? 'SG' : publishRegions[0];
+              const globalImageIdList = buildImageIdList(globalImageRegion).slice(0, REGISTER_MAX_IMAGE_IDS);
 
               // 2. Build tier_variation with or without per-option image_id (path A / fallback)
               // path A: probeImageOk=true AND 1-axis mode → include image.image_id per option_list entry
@@ -23932,6 +23947,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 is_pre_order:      groupLifecycle === 'pre_order',
                 lifecycle_state:   groupLifecycle,
                 attribute_list:    buildDefaultAttributeList(firstRow._shopee_category_id || 100740),
+                image_id:          globalImageIdList[0],
+                image_id_list:     globalImageIdList.length ? globalImageIdList : undefined,
                 variation:         { tier_variation: tierVariation, model: cbscModels },
                 targets:           cbscTargets,
                 idempotency_token: group.idempotency_token,

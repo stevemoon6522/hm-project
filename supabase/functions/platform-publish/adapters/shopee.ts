@@ -176,6 +176,7 @@ function mapShopeeItemStatus(shopeeStatus: unknown): AdapterResult['listingStatu
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const ALERT_BOT_URL = Deno.env.get('ALERT_BOT_URL') || '';
 const ALERT_HMAC_SECRET = Deno.env.get('ALERT_HMAC_SECRET') || '';
+const SHOPEE_MAX_PRODUCT_IMAGES = 9;
 
 function shopeeLifecycleOf(master: Record<string, unknown> = {}, override: unknown = ''): string {
   const lifecycle = String(override || (master as any).lifecycle_state || '').toLowerCase();
@@ -338,6 +339,22 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   // upload) but BR will fail at publish_task if only 1 image provided.
   const regionImageIds: Record<string, string[]> = (ctx as any).region_image_ids || {};
   const regionPrices: Record<string, number> = (ctx as any).region_prices || {};
+  // Bridge `register_cbsc` derives the Global Product base context from
+  // body.region. Use the first requested region, with SG as the empty-list
+  // fallback, then reuse that region's uploaded image list for add_global_item.
+  const baseRegion = regions[0] || 'SG';
+  const firstRegionWithImages = regions.find((r: string) => Array.isArray(regionImageIds[r]) && regionImageIds[r].length);
+  const uploadedBaseImageIds = (
+    Array.isArray(regionImageIds[baseRegion]) && regionImageIds[baseRegion].length
+      ? regionImageIds[baseRegion]
+      : (firstRegionWithImages ? regionImageIds[firstRegionWithImages] : [])
+  ).map((id: unknown) => String(id || '').trim()).filter(Boolean);
+  const cachedMasterImageIds = [
+    master.shopee_image_id,
+    ...(Array.isArray(master.shopee_extra_image_ids) ? master.shopee_extra_image_ids : []),
+  ].map((id: unknown) => String(id || '').trim()).filter(Boolean);
+  const baseImageIds = (uploadedBaseImageIds.length ? uploadedBaseImageIds : cachedMasterImageIds)
+    .slice(0, SHOPEE_MAX_PRODUCT_IMAGES);
   const targets = regions.map((r: string) => {
     const ids = Array.isArray(regionImageIds[r]) && regionImageIds[r].length ? regionImageIds[r] : null;
     const computedPrice = Number(regionPrices[r]);
@@ -350,13 +367,6 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
       ...(ids ? { image_id_list: ids } : {}),
     };
   });
-
-  // Codex P1 (code review): bridge `register_cbsc` derives base context from
-  // body.region || 'SG'. Without an explicit region, every multi-region publish
-  // creates the global item in SG context regardless of target regions. Send
-  // the first requested region as the explicit base — bridge then fans out
-  // per-target publish tasks. SG is the safest default if the list is empty.
-  const baseRegion = regions[0] || 'SG';
 
   // Operator msg #679/#680: pre_order distinction matters at every step.
   // - add_global_item Global DTS capped at 10 (bridge enforces via PRE_ORDER_GLOBAL_DTS).
@@ -389,8 +399,9 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     sku: master.sku,
     category_id: Number(master.shopee_category_id),
     brand: brand_obj,
-    image_id: master.shopee_image_id || undefined,
-    image_url: !master.shopee_image_id ? (master.main_image || undefined) : undefined,
+    image_id: baseImageIds[0] || master.shopee_image_id || undefined,
+    image_id_list: baseImageIds.length ? baseImageIds : undefined,
+    image_url: !baseImageIds.length && !master.shopee_image_id ? (master.main_image || undefined) : undefined,
     weight_g: Number(master.weight_g) || 100,
     price: cost_krw,            // Global SKU KRW price (model C — no margin multiplication)
     stock: registerStock,

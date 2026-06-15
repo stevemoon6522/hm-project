@@ -57,7 +57,10 @@ assert.match(masterRegister, /if \(mrIsCustomGroup\(group\)\) return '';/, 'cust
 assert.match(html, /const PRODUCT_KIND_ALBUM = 'album'/, 'Album product kind constant must exist');
 assert.match(html, /const PRODUCT_KIND_GOODS = 'goods'/, 'Goods product kind constant must exist');
 assert.match(html, /album:\s*Object\.freeze\(\{\s*shopee_category_id:\s*100740,[\s\S]*joom_category_id:\s*'music_albums'[\s\S]*qoo10_category_id:\s*'300002851'[\s\S]*ebay_category_id:\s*PLATFORM_EBAY_DEFAULT_CATEGORY_ID/, 'Album defaults must keep existing platform category mappings');
-assert.match(html, /goods:\s*Object\.freeze\(\{\s*shopee_category_id:\s*101390,[\s\S]*joom_category_id:\s*''[\s\S]*qoo10_category_id:\s*''[\s\S]*ebay_category_id:\s*''/, 'Goods defaults must avoid unsafe non-Shopee platform category defaults');
+assert.match(html, /const PLATFORM_JOOM_GOODS_CATEGORY_ID = '1733235756332554566-61-2-11859-1440023039'/, 'Goods Joom category constant must match the selected Memorabilia category');
+assert.match(html, /const PLATFORM_QOO10_GOODS_CATEGORY_ID = '300002855'/, 'Goods Qoo10 category constant must match KPOP goods');
+assert.match(html, /const PLATFORM_EBAY_GOODS_CATEGORY_ID = '108857'/, 'Goods eBay category constant must match K-Pop Memorabilia');
+assert.match(html, /goods:\s*Object\.freeze\(\{\s*shopee_category_id:\s*101390,[\s\S]*joom_category_id:\s*PLATFORM_JOOM_GOODS_CATEGORY_ID[\s\S]*qoo10_category_id:\s*PLATFORM_QOO10_GOODS_CATEGORY_ID[\s\S]*ebay_category_id:\s*PLATFORM_EBAY_GOODS_CATEGORY_ID/, 'Goods defaults must apply the selected non-Shopee category mappings');
 assert.match(masterRegister, /product_kind: PRODUCT_KIND_ALBUM/, 'URL and WMS registration paths must force Album product_kind');
 assert.doesNotMatch(html, /const is101390Blocked/, 'Shopee Goods category 101390 must not be blocked by the old Phase B guard');
 assert.doesNotMatch(html, /catBlocked \|\| staronemallMissing/, 'Shopee Goods category 101390 must not disable the registration submit button');

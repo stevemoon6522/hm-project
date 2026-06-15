@@ -11,6 +11,7 @@ const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const PLATFORM_BRIDGE_INTERNAL_TOKEN = (Deno as any)['env']['get']('PLATFORM_BRIDGE_INTERNAL_TOKEN') || '';
 const EBAY_DEFAULT_CATEGORY_ID = '176984'; // Music > CDs
+const EBAY_GOODS_CATEGORY_ID = '108857'; // K-Pop Memorabilia
 
 type BridgeContext = AdapterContext & { userAuthToken?: string };
 
@@ -146,7 +147,7 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   const sku = s(master.sku).trim();
   const images = imagesFrom(master);
   const goods = isGoodsMaster(master);
-  const categoryId = s(master.ebay_category_id, goods ? '' : EBAY_DEFAULT_CATEGORY_ID).trim() || (goods ? '' : EBAY_DEFAULT_CATEGORY_ID);
+  const categoryId = s(master.ebay_category_id, goods ? EBAY_GOODS_CATEGORY_ID : EBAY_DEFAULT_CATEGORY_ID).trim() || (goods ? EBAY_GOODS_CATEGORY_ID : EBAY_DEFAULT_CATEGORY_ID);
   const description = s(master.description || master.shopee_description).trim();
   const priceUsd = await ebayPriceUsd(master);
   const weightG = n(master.weight_g, 0);

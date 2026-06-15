@@ -7,6 +7,7 @@ import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter }
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
 const PLATFORM_BRIDGE_INTERNAL_TOKEN = (Deno as any)['env']['get']('PLATFORM_BRIDGE_INTERNAL_TOKEN') || '';
+const JOOM_GOODS_CATEGORY_ID = '1733235756332554566-61-2-11859-1440023039';
 
 type BridgeContext = AdapterContext & { userAuthToken?: string };
 
@@ -134,7 +135,7 @@ function buildCreateBody(ctx: BridgeContext): Record<string, unknown> | AdapterR
   const cost = n(master.cost_krw);
   const weight = n(master.weight_g);
   const goods = isGoodsMaster(master);
-  const categoryId = s(master.joom_category_id || (master as any).categoryId || (goods ? '' : 'music_albums')).trim();
+  const categoryId = s(master.joom_category_id || (master as any).categoryId || (goods ? JOOM_GOODS_CATEGORY_ID : 'music_albums')).trim();
   const brand = brandFrom(master);
   if (!sku || !cost || cost <= 0 || !weight || weight <= 0 || imgs.length === 0 || !categoryId || !brand) {
     return {

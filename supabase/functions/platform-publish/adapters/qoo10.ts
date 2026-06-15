@@ -7,6 +7,7 @@ import { resolveQoo10AvailableDate } from '../_shared/fulfillment.ts';
 const SUPABASE_URL = (Deno as any).env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = (Deno as any).env.get('SUPABASE_ANON_KEY') || '';
 const QOO10_BRIDGE_URL = (Deno as any).env.get('QOO10_BRIDGE_URL') || (SUPABASE_URL ? `${SUPABASE_URL}/functions/v1/qoo10-bridge` : '');
+const QOO10_GOODS_CATEGORY_ID = '300002855';
 
 function norm(value: unknown): string {
   return String(value || '').trim();
@@ -54,7 +55,9 @@ function titleFrom(ctx: AdapterContext, qoo10: Record<string, any>): string {
 }
 
 function categoryFrom(ctx: AdapterContext, qoo10: Record<string, any>): string {
-  return norm(qoo10.category_id || ctx.masterProduct?.qoo10_category_id);
+  const master = (ctx.masterProduct || {}) as Record<string, any>;
+  const goodsDefault = norm(master.product_kind).toLowerCase() === 'goods' ? QOO10_GOODS_CATEGORY_ID : '';
+  return norm(qoo10.category_id || master.qoo10_category_id || goodsDefault);
 }
 
 function shippingNoFrom(ctx: AdapterContext, qoo10: Record<string, any>): string {

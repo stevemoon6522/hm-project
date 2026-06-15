@@ -55,6 +55,7 @@ const ALERT_HMAC_SECRET = (Deno as any)['env']['get']('ALERT_HMAC_SECRET') || ''
 // Constants
 // ---------------------------------------------------------------------------
 const VALID_PLATFORMS = new Set(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba']);
+const QOO10_GOODS_CATEGORY_ID = '300002855';
 
 // §A.2 gate 6: banned Shopee shop IDs.
 // 1002269093 = legacy BR shop permanently banned 2026-05.
@@ -573,7 +574,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   // QOO10_CATEGORY_UNMAPPED — Qoo10 only, for create_listing.
   const qoo10Input = (body as any).qoo10 || {};
-  const qoo10CategoryId = qoo10Input.category_id || product.qoo10_category_id;
+  const qoo10GoodsDefault = String(product.product_kind || '').trim().toLowerCase() === 'goods' ? QOO10_GOODS_CATEGORY_ID : '';
+  const qoo10CategoryId = qoo10Input.category_id || product.qoo10_category_id || qoo10GoodsDefault;
   if (platform === 'qoo10' && capability === 'create_listing' && !qoo10CategoryId) {
     audit('qoo10_category_unmapped', { sku: product.sku });
     await writeAuditLog(svc, {

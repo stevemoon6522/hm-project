@@ -52,7 +52,7 @@ assert(html.includes('window.mrOpenJoomModal(plBuildJoomPublishGroupFromProducts
 assert(html.includes('window.mrDeriveFromTitle = mrDeriveFromTitle') && html.includes('window.mrOpenJoomModal = mrOpenJoomModal'), 'Master-register Joom helpers must be exported for product-list Joom buttons');
 assert(html.includes("typeof window.mrDeriveFromTitle === 'function'"), 'Product-list Joom adapter must not reference private master-register helpers directly');
 assert(html.includes('function plBuildJoomPublishGroupFromProducts(rows)'), 'Product list Joom publish must adapt products rows into the tested mrPromoteJoom payload shape');
-assert(html.includes("_joomCategory: row.joom_category_id || productKindDefaults(productKindOfRow(row)).joom_category_id || ''"), 'Product list Joom publish must default Album to Music Albums and leave Goods category for selection');
+assert(html.includes("_joomCategory: normalizeJoomCategoryId(row.joom_category_id || productKindDefaults(productKindOfRow(row)).joom_category_id || '')"), 'Product list Joom publish must normalize saved/default Joom categories, including the Goods Memorabilia category');
 assert(html.includes('main_image_urls: row.main_image ? [row.main_image] : []') && html.includes('detail_image_urls: Array.isArray(row.extra_images) ? row.extra_images : []'), 'Product-list Joom adapter must expose saved master representative/detail images to the Joom modal');
 assert(html.includes('_main_image: row.shopee_option_image_url || row.main_image || \'\''), 'Product-list Joom/eBay adapter must pass saved master option images with a representative fallback');
 assert(html.includes('id="mr-joom-modal-dryrun"'), 'Joom publish modal must expose a non-destructive dry-run button');
@@ -142,7 +142,8 @@ assert(edgeBridge.includes('const JOOM_MAX_EXTRA_IMAGES = 20') && edgeBridge.inc
 assert(edgeBridge.includes('if (!brandName) throw new Error("brand required")'), 'edge-functions Joom bridge mirror should enforce selected brand parity');
 assert(edgeBridge.includes('function joomPlainText') && edgeBridge.includes('async function createOrUpdateJoomProduct'), 'edge-functions Joom bridge mirror should sanitize descriptions and recover existing rejected SKUs');
 assert(joomAdapter.includes('function isGoodsMaster'), 'platform-publish Joom adapter must distinguish Goods from Album masters');
-assert(joomAdapter.includes("(goods ? '' : 'music_albums')"), 'platform-publish Joom adapter should default only Album masters to Music Albums');
+assert(joomAdapter.includes("const JOOM_GOODS_CATEGORY_ID = '1733235756332554566-61-2-11859-1440023039'"), 'platform-publish Joom adapter must carry the selected Goods Memorabilia category ID');
+assert(joomAdapter.includes("(goods ? JOOM_GOODS_CATEGORY_ID : 'music_albums')"), 'platform-publish Joom adapter should default Goods to Memorabilia and Album to Music Albums');
 assert(joomAdapter.includes('function brandFrom') && joomAdapter.includes('master.shopee_brand_name') && joomAdapter.includes('master.qoo10_brand_name'), 'platform-publish Joom adapter must reuse registered marketplace brand columns');
 assert(joomAdapter.includes('categoryId and brand'), 'platform-publish Joom adapter validation must block brandless Joom creates before hitting the bridge');
 

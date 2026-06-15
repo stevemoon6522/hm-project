@@ -86,7 +86,7 @@ const WRITABLE_COLUMNS: Record<string, Set<string>> = {
 // Primary keys per table — Pull uses these to match rows back to DB.
 const PRIMARY_KEYS: Record<string, string[]> = {
   products: ["id"],
-  product_shopee_listings: ["product_id", "region"],
+  product_shopee_listings: ["product_id", "account_key", "region"],
   country_settings: ["country_code"],
 };
 

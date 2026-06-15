@@ -3854,6 +3854,14 @@
             <div id="rsh-sku" class="rsh-readbox mono"></div>
           </div>
           <div class="field span-4">
+            <label for="rsh-account-key">Shopee Account</label>
+            <select id="rsh-account-key"></select>
+          </div>
+          <div class="field span-4">
+            <label>Layer</label>
+            <div id="rsh-account-layer" class="rsh-readbox mono"></div>
+          </div>
+          <div class="field span-4">
             <label>Category</label>
             <select id="rsh-category">
               <option value="100740">Hobbies &amp; Collections &gt; CD, DVD &amp; Bluray (100740)</option>
@@ -4353,6 +4361,76 @@ LEGACY END -->
   ];
 
   const db = createClient(SUPABASE_URL, SUPABASE_ANON);
+  const SHOPEE_DEFAULT_ACCOUNT_KEY = 'starphotocard';
+  const SHOPEE_LISTING_CONFLICT = 'product_id,account_key,region';
+  const SHOPEE_ACCOUNT_PROFILES_FALLBACK = [{
+    account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
+    display_name: 'starphotocard',
+    layer_asset_path: 'shop-overlay-layer.png',
+    enabled_regions: REGIONS.map((r) => r.code),
+    status: 'active',
+  }];
+  let SHOPEE_ACCOUNT_PROFILES = SHOPEE_ACCOUNT_PROFILES_FALLBACK.slice();
+  let SHOPEE_ACCOUNT_PROFILES_LOADED = false;
+
+  function sdNormalizeShopeeAccountKey(value) {
+    const raw = String(value || SHOPEE_DEFAULT_ACCOUNT_KEY).trim().toLowerCase();
+    return /^[a-z0-9][a-z0-9_-]{1,62}$/.test(raw) ? raw : SHOPEE_DEFAULT_ACCOUNT_KEY;
+  }
+
+  function sdEscapeAttr(value) {
+    return String(value ?? '').replace(/[&<>"']/g, (ch) => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#39;',
+    }[ch]));
+  }
+
+  async function sdLoadShopeeAccountProfiles(force = false) {
+    if (SHOPEE_ACCOUNT_PROFILES_LOADED && !force) return SHOPEE_ACCOUNT_PROFILES;
+    try {
+      const { data, error } = await db
+        .from('shopee_account_profiles')
+        .select('account_key,display_name,layer_asset_path,enabled_regions,status,main_account_id,merchant_id')
+        .in('status', ['active', 'pending'])
+        .order('display_name', { ascending: true });
+      if (error) throw error;
+      const rows = Array.isArray(data) ? data.filter((row) => row?.account_key) : [];
+      SHOPEE_ACCOUNT_PROFILES = rows.length ? rows : SHOPEE_ACCOUNT_PROFILES_FALLBACK.slice();
+      SHOPEE_ACCOUNT_PROFILES_LOADED = true;
+    } catch (e) {
+      console.warn('[shopee-account] profile load fallback:', e?.message || e);
+      SHOPEE_ACCOUNT_PROFILES = SHOPEE_ACCOUNT_PROFILES_FALLBACK.slice();
+      SHOPEE_ACCOUNT_PROFILES_LOADED = true;
+    }
+    return SHOPEE_ACCOUNT_PROFILES;
+  }
+
+  function sdShopeeAccountProfile(accountKey) {
+    const key = sdNormalizeShopeeAccountKey(accountKey);
+    return SHOPEE_ACCOUNT_PROFILES.find((row) => sdNormalizeShopeeAccountKey(row.account_key) === key)
+      || SHOPEE_ACCOUNT_PROFILES_FALLBACK[0];
+  }
+
+  function sdSelectedShopeeAccountKey() {
+    const select = document.getElementById('rsh-account-key');
+    return sdNormalizeShopeeAccountKey(select?.value || _rsh?.accountKey || SHOPEE_DEFAULT_ACCOUNT_KEY);
+  }
+
+  function sdShopeeLayerUrl(accountKey) {
+    const profile = sdShopeeAccountProfile(accountKey);
+    const path = String(profile.layer_asset_path || 'shop-overlay-layer.png').trim();
+    if (/^(https?:|data:|blob:)/i.test(path)) return path;
+    if (path.startsWith('/')) return path;
+    return new URL(path, window.location.href).href;
+  }
+
+  function sdShopeeLayerVersion(accountKey) {
+    const profile = sdShopeeAccountProfile(accountKey);
+    return `${sdNormalizeShopeeAccountKey(profile.account_key)}:${profile.layer_asset_path || 'shop-overlay-layer.png'}`;
+  }
   const els = {
     status: document.getElementById('conn-status'),
     authPanel: document.getElementById('auth-panel'),
@@ -4948,14 +5026,14 @@ LEGACY END -->
 
   async function sgFetchItemDetails(region, ids) {
     if (!ids.length) return [];
-    const url = `${SHOPEE_BRIDGE}/global_item_info?region=${encodeURIComponent(region)}&${ids.map((id) => `global_item_id=${encodeURIComponent(id)}`).join('&')}`;
+    const url = `${SHOPEE_BRIDGE}/global_item_info?region=${encodeURIComponent(region)}&account_key=${encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)}&${ids.map((id) => `global_item_id=${encodeURIComponent(id)}`).join('&')}`;
     const json = await fetch(url, { headers: AUTH_HEADERS }).then((r) => r.json());
     if (json?.error || json?.result?.error) throw new Error(json?.message || json?.error || json?.result?.message || json?.result?.error || 'global_item_info failed');
     return sgExtractItemList(json);
   }
 
   async function sgFetchModels(region, globalItemId) {
-    const url = `${SHOPEE_BRIDGE}/global_model_list?region=${encodeURIComponent(region)}&global_item_id=${encodeURIComponent(globalItemId)}`;
+    const url = `${SHOPEE_BRIDGE}/global_model_list?region=${encodeURIComponent(region)}&account_key=${encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)}&global_item_id=${encodeURIComponent(globalItemId)}`;
     const json = await fetch(url, { headers: AUTH_HEADERS }).then((r) => r.json());
     if (json?.error || json?.result?.error) throw new Error(json?.message || json?.error || json?.result?.message || json?.result?.error || 'global_model_list failed');
     // tier_variation in model list response contains per-option images (image_url/image_id per option)
@@ -5316,6 +5394,7 @@ LEGACY END -->
     }
     const listingPayload = {
       product_id: product.id,
+      account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
       region: sgSelectedSearchRegion(),
       shop_id: null,
       shop_item_id: null,
@@ -5326,7 +5405,7 @@ LEGACY END -->
       last_error: null,
       raw_payload: { item, model: model || null, source: 'v2_shopee_global_keyword_import' },
     };
-    const { error: listingError } = await db.from('product_shopee_listings').upsert(listingPayload, { onConflict: 'product_id,region' });
+    const { error: listingError } = await db.from('product_shopee_listings').upsert(listingPayload, { onConflict: SHOPEE_LISTING_CONFLICT });
     if (listingError) throw listingError;
     return product;
   }
@@ -5529,7 +5608,7 @@ LEGACY END -->
 
   async function pingBridge() {
     try {
-      const r = await fetch(`${SHOPEE_BRIDGE}/tokens?region=SG`, { headers: AUTH_HEADERS });
+      const r = await fetch(`${SHOPEE_BRIDGE}/tokens?region=SG&account_key=${encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)}`, { headers: AUTH_HEADERS });
       setStatus(r.ok ? 'bridge connected' : `bridge HTTP ${r.status}`, r.ok ? 'ok' : 'err');
     } catch (e) {
       setStatus(`bridge error: ${e.message || e}`, 'err');
@@ -5550,7 +5629,7 @@ LEGACY END -->
         .order('product_group_id', { ascending: true, nullsFirst: false })
         .order('variation_tier_index', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false }),
-      db.from('product_shopee_listings').select('*'),
+      db.from('product_shopee_listings').select('*').eq('account_key', SHOPEE_DEFAULT_ACCOUNT_KEY),
       db.from('platform_listing_rollups').select('master_product_id, platform, listed_count, pending_count, error_count, total_count, per_shop_detail'),
     ]);
     if (productsRes.error && /lifecycle_state|weight_measured_at|schema cache|column|variation/i.test(`${productsRes.error.message || ''} ${productsRes.error.details || ''}`)) {
@@ -7286,7 +7365,7 @@ LEGACY END -->
   }
 
   async function plMasterEditFetchNameSyncShops() {
-    const response = await fetch(`${SHOPEE_BRIDGE}/tokens?region=SG`, { headers: AUTH_HEADERS });
+    const response = await fetch(`${SHOPEE_BRIDGE}/tokens?region=SG&account_key=${encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)}`, { headers: AUTH_HEADERS });
     const json = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
     if (!response.ok || json.error) throw new Error(json.message || json.error || `tokens HTTP ${response.status}`);
     const regionOrder = new Map(SHOPEE_NAME_SYNC_REGIONS.map((region, index) => [region, index]));
@@ -7311,7 +7390,7 @@ LEGACY END -->
   }
 
   async function plMasterEditReadShopItemName(region, itemId) {
-    const qs = new URLSearchParams({ region, item_id: String(itemId) });
+    const qs = new URLSearchParams({ region, account_key: SHOPEE_DEFAULT_ACCOUNT_KEY, item_id: String(itemId) });
     const response = await fetch(`${SHOPEE_BRIDGE}/item_info?${qs.toString()}`, { headers: AUTH_HEADERS });
     const json = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
     const itemName = readyItemNameFromInfoResponse(json);
@@ -7327,7 +7406,7 @@ LEGACY END -->
     let lastError = null;
     for (const payload of attempts) {
       if (!Object.keys(payload).length) return { ok: true };
-      const { error } = await db.from('product_shopee_listings').update(payload).eq('product_id', productId).eq('region', region);
+      const { error } = await db.from('product_shopee_listings').update(payload).eq('product_id', productId).eq('account_key', SHOPEE_DEFAULT_ACCOUNT_KEY).eq('region', region);
       if (!error) return { ok: true };
       lastError = error;
       if (!/column|schema cache|Could not find/i.test(`${error.message || ''} ${error.details || ''}`)) break;
@@ -7432,7 +7511,7 @@ LEGACY END -->
         return;
       }
 
-      const publishedQs = new URLSearchParams({ region: 'SG', global_item_id: String(plan.globalItemId) });
+      const publishedQs = new URLSearchParams({ region: 'SG', account_key: SHOPEE_DEFAULT_ACCOUNT_KEY, global_item_id: String(plan.globalItemId) });
       const publishedResponse = await fetch(`${SHOPEE_BRIDGE}/published_list?${publishedQs.toString()}`, { headers: AUTH_HEADERS });
       const publishedJson = await publishedResponse.json().catch(() => ({ ok: false, error: `HTTP ${publishedResponse.status}` }));
       const published = readyPublishedItemsFromResponse(publishedJson);
@@ -8371,7 +8450,7 @@ LEGACY END -->
 
   async function refreshPlatformLedSources() {
     const [listingsRes, rollupsRes] = await Promise.all([
-      db.from('product_shopee_listings').select('*'),
+      db.from('product_shopee_listings').select('*').eq('account_key', SHOPEE_DEFAULT_ACCOUNT_KEY),
       db.from('platform_listing_rollups').select('master_product_id, platform, listed_count, pending_count, error_count, total_count, per_shop_detail'),
     ]);
     if (listingsRes.error) throw listingsRes.error;
@@ -8749,7 +8828,7 @@ LEGACY END -->
   }
 
   async function readyFetchActiveShopeeSyncShops() {
-    const response = await fetch(`${SHOPEE_BRIDGE}/tokens?region=SG`, { headers: AUTH_HEADERS });
+    const response = await fetch(`${SHOPEE_BRIDGE}/tokens?region=SG&account_key=${encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)}`, { headers: AUTH_HEADERS });
     const json = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
     if (!response.ok || json.error) throw new Error(json.message || json.error || `tokens HTTP ${response.status}`);
     const regionOrder = new Map(READY_STOCK_SYNC_REGIONS.map((region, index) => [region, index]));
@@ -8922,7 +9001,7 @@ LEGACY END -->
     for (const call of itemCalls) {
       let published = [];
       try {
-        const qs = new URLSearchParams({ region: 'SG', global_item_id: String(call.globalItemId) });
+        const qs = new URLSearchParams({ region: 'SG', account_key: SHOPEE_DEFAULT_ACCOUNT_KEY, global_item_id: String(call.globalItemId) });
         const response = await fetch(`${SHOPEE_BRIDGE}/published_list?${qs.toString()}`, { headers: AUTH_HEADERS });
         const json = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
         published = readyPublishedItemsFromResponse(json);
@@ -8954,7 +9033,7 @@ LEGACY END -->
         if (!allowedRegions.has(region)) continue;
         if (!Number.isFinite(itemId) || itemId <= 0) continue;
         try {
-          const qs = new URLSearchParams({ region, item_id: String(itemId) });
+          const qs = new URLSearchParams({ region, account_key: SHOPEE_DEFAULT_ACCOUNT_KEY, item_id: String(itemId) });
           const response = await fetch(`${SHOPEE_BRIDGE}/item_info?${qs.toString()}`, { headers: AUTH_HEADERS });
           const json = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
           const actualName = readyItemNameFromInfoResponse(json);
@@ -8985,7 +9064,7 @@ LEGACY END -->
               });
               if (updateOk) {
                 await new Promise((resolve) => setTimeout(resolve, 2500));
-                const verifyQs = new URLSearchParams({ region, item_id: String(itemId) });
+                const verifyQs = new URLSearchParams({ region, account_key: SHOPEE_DEFAULT_ACCOUNT_KEY, item_id: String(itemId) });
                 const verifyResponse = await fetch(`${SHOPEE_BRIDGE}/item_info?${verifyQs.toString()}`, { headers: AUTH_HEADERS });
                 const verifyJson = await verifyResponse.json().catch(() => ({ ok: false, error: `HTTP ${verifyResponse.status}` }));
                 const updatedName = readyItemNameFromInfoResponse(verifyJson);
@@ -9035,6 +9114,7 @@ LEGACY END -->
         .from('product_shopee_listings')
         .update(payload)
         .eq('product_id', productId)
+        .eq('account_key', SHOPEE_DEFAULT_ACCOUNT_KEY)
         .eq('region', region);
       if (!error) return { ok: true };
       lastError = error;
@@ -9417,10 +9497,11 @@ LEGACY END -->
   }
 
   async function callBridgeMutation(action, body) {
+    const requestBody = { account_key: SHOPEE_DEFAULT_ACCOUNT_KEY, ...(body || {}) };
     const response = await fetch(`${SHOPEE_BRIDGE}/${action}`, {
       method: 'POST',
       headers: AUTH_HEADERS,
-      body: JSON.stringify(body),
+      body: JSON.stringify(requestBody),
     });
     const json = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
     if (!response.ok && json.ok === undefined) json.ok = false;
@@ -9452,7 +9533,7 @@ LEGACY END -->
     ];
     let lastError = null;
     for (const payload of attempts) {
-      const { error } = await db.from('product_shopee_listings').update(payload).eq('product_id', productId);
+      const { error } = await db.from('product_shopee_listings').update(payload).eq('product_id', productId).eq('account_key', SHOPEE_DEFAULT_ACCOUNT_KEY);
       if (!error) return { ok: true };
       lastError = error;
       if (!/column|schema cache|Could not find/i.test(`${error.message || ''} ${error.details || ''}`)) break;
@@ -9974,9 +10055,10 @@ LEGACY END -->
   }
 
   async function fetchShopModels(region, itemId) {
+    const accountKey = sdSelectedShopeeAccountKey();
     const statuses = ['UNLIST', 'NORMAL'];
     for (const status of statuses) {
-      const url = `${SHOPEE_BRIDGE}/list_items?region=${encodeURIComponent(region)}&item_status=${status}&max_items=1000`;
+      const url = `${SHOPEE_BRIDGE}/list_items?region=${encodeURIComponent(region)}&account_key=${encodeURIComponent(accountKey)}&item_status=${status}&max_items=1000`;
       const json = await fetch(url, { headers: AUTH_HEADERS }).then((r) => r.json()).catch(() => null);
       const rows = Array.isArray(json?.items) ? json.items.filter((item) => String(item.item_id) === String(itemId)) : [];
       const models = rows.filter((item) => item.model_id).map((item) => ({
@@ -9992,7 +10074,8 @@ LEGACY END -->
 
   async function fetchGlobalModels(globalItemId) {
     if (!globalItemId) return [];
-    const url = `${SHOPEE_BRIDGE}/global_model_list?region=SG&global_item_id=${encodeURIComponent(globalItemId)}`;
+    const accountKey = sdSelectedShopeeAccountKey();
+    const url = `${SHOPEE_BRIDGE}/global_model_list?region=SG&account_key=${encodeURIComponent(accountKey)}&global_item_id=${encodeURIComponent(globalItemId)}`;
     const json = await fetch(url, { headers: AUTH_HEADERS }).then((r) => r.json()).catch(() => null);
     const list = json?.result?.response?.global_model || json?.result?.response?.model || [];
     return Array.isArray(list) ? list.map((model) => ({
@@ -10010,8 +10093,8 @@ LEGACY END -->
     ];
     let lastError = null;
     for (const attempt of attempts) {
-      const payload = { product_id: productId, region, ...attempt };
-      const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: 'product_id,region' });
+      const payload = { product_id: productId, account_key: sdSelectedShopeeAccountKey(), region, ...attempt };
+      const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: SHOPEE_LISTING_CONFLICT });
       if (!error) return { ok: true, saved: attempt };
       lastError = error;
       const msg = `${error.message || ''} ${error.details || ''}`;
@@ -10544,8 +10627,9 @@ LEGACY END -->
   }
 
   async function applyShopLayer(productImageUrl) {
+    const layerUrl = arguments.length > 1 ? sdShopeeLayerUrl(arguments[1]) : STARPHOTOCARD_LAYER;
     const [layerImg, productImg] = await Promise.all([
-      _loadImage(STARPHOTOCARD_LAYER, null),
+      _loadImage(layerUrl, null),
       _loadImageFromAuthedUrl(productImageUrl),
     ]);
     const canvas = document.createElement('canvas');
@@ -11705,7 +11789,8 @@ LEGACY END -->
   async function dcFetchListings() {
     return dcFetchAll(
       'product_shopee_listings',
-      '?select=product_id,region,shop_item_id,last_synced_price,last_synced_at,status,last_error'
+      '?select=product_id,account_key,region,shop_item_id,last_synced_price,last_synced_at,status,last_error'
+        + '&account_key=eq.' + encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)
         + '&order=region.asc',
       { maxRows: 8000 }
     );
@@ -12171,6 +12256,7 @@ LEGACY END -->
     productId: null,
     productGroupId: null,
     mode: 'single',
+    accountKey: SHOPEE_DEFAULT_ACCOUNT_KEY,
     master: null,            // full product row fetched on open
     products: [],            // option rows when opening a grouped master product
     selectedImages: [],      // [{ src/dataUrl, idx, kind }] — first image is Shopee cover
@@ -12189,6 +12275,44 @@ LEGACY END -->
 
   /** Quick DOM helper for rsh- prefixed IDs. */
   function $rsh(id) { return document.getElementById('rsh-' + id); }
+
+  function rshRenderShopeeAccountSelector() {
+    const select = document.getElementById('rsh-account-key');
+    if (!select) return;
+    const current = sdNormalizeShopeeAccountKey(_rsh.accountKey || SHOPEE_DEFAULT_ACCOUNT_KEY);
+    select.innerHTML = SHOPEE_ACCOUNT_PROFILES.map((profile) => {
+      const key = sdNormalizeShopeeAccountKey(profile.account_key);
+      const label = profile.display_name || key;
+      return `<option value="${sdEscapeAttr(key)}">${sdEscapeAttr(label)}</option>`;
+    }).join('');
+    select.value = SHOPEE_ACCOUNT_PROFILES.some((profile) => sdNormalizeShopeeAccountKey(profile.account_key) === current)
+      ? current
+      : SHOPEE_DEFAULT_ACCOUNT_KEY;
+    _rsh.accountKey = sdNormalizeShopeeAccountKey(select.value);
+    rshUpdateShopeeAccountLayerReadout();
+  }
+
+  function rshUpdateShopeeAccountLayerReadout() {
+    const layerEl = document.getElementById('rsh-account-layer');
+    if (!layerEl) return;
+    const profile = sdShopeeAccountProfile(sdSelectedShopeeAccountKey());
+    layerEl.textContent = profile.layer_asset_path || 'shop-overlay-layer.png';
+  }
+
+  async function rshHandleShopeeAccountChange() {
+    const nextKey = sdSelectedShopeeAccountKey();
+    if (_rsh.accountKey === nextKey) return;
+    _rsh.accountKey = nextKey;
+    _rsh.cachedImageId = null;
+    _rsh.cachedExtraIds = [];
+    _rsh.regionImageIds = {};
+    _rsh.uploadMode = true;
+    rshUpdateShopeeAccountLayerReadout();
+    if (_rsh.master) {
+      await rshUseMasterImages(_rsh.master);
+    }
+    rshCheckSubmitEnabled();
+  }
 
   async function rshEnsureCountrySettings(forceRefresh = false) {
     if (!forceRefresh && _rshCountrySettingsByRegion.size) return _rshCountrySettingsByRegion;
@@ -12735,12 +12859,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function rshBuildLayeredCoverDataUrl(mainImageUrl) {
+    const accountKey = sdSelectedShopeeAccountKey();
     if (typeof mrCompositeMainImage === 'function') {
-      const b64 = await mrCompositeMainImage(mainImageUrl);
+      const b64 = await mrCompositeMainImage(mainImageUrl, accountKey);
       return `data:image/png;base64,${b64}`;
     }
     const proxyUrl = SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(mainImageUrl);
-    return await applyShopLayer(proxyUrl);
+    return await applyShopLayer(proxyUrl, accountKey);
   }
 
   async function rshCanvasToJpegDataUrl(canvas, quality = 0.9) {
@@ -14262,6 +14387,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       productId,
       productGroupId: options.productGroupId || productRow?.product_group_id || null,
       mode: options.mode === 'group' ? 'group' : 'single',
+      accountKey: sdNormalizeShopeeAccountKey(options.accountKey || options.account_key || SHOPEE_DEFAULT_ACCOUNT_KEY),
       master: null,
       products: preloadedProducts,
       selectedImages: [],
@@ -14302,6 +14428,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     overlay.classList.add('show');
     overlay.setAttribute('aria-hidden', 'false');
+    await sdLoadShopeeAccountProfiles();
+    rshRenderShopeeAccountSelector();
 
     // Fetch full master product row (loadData only fetches partial columns).
     // Group mode passes preloaded option rows so the modal can build one
@@ -14703,6 +14831,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   async function rshUploadImages(session, regions) {
     const SHOPEE_BRIDGE_UPLOAD = `${SUPABASE_URL}/functions/v1/shopee-bridge/upload_image`;
+    const accountKey = sdSelectedShopeeAccountKey();
     const uploadHeaders = {
       Authorization: `Bearer ${session.access_token}`,
       apikey: SUPABASE_ANON,
@@ -14729,12 +14858,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     async function uploadPrepared(region, ref, duplicateIndex = 0) {
       const body = {
         region,
+        account_key: accountKey,
         image_base64: ref.b64,
         source_url: ref.sourceUrl || ref.src || '',
       };
-      if (ref.isCover && ref.kind === 'layered-cover') {
+      if (ref.isCover && /layered-cover/i.test(String(ref.kind || ''))) {
         body.main_image_url = ref.sourceUrl || '';
-        body.layer_version = STARONEMALL_LAYER_VERSION;
+        body.layer_version = sdShopeeLayerVersion(accountKey);
         body.output_hash = ref.outputHash;
       }
       if (duplicateIndex > 0) body.output_hash = `${ref.outputHash || ''}:dup${duplicateIndex}`;
@@ -14783,6 +14913,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   async function rshUploadOptionImages(session, regions) {
     if (_rsh.mode !== 'group') return {};
+    const accountKey = sdSelectedShopeeAccountKey();
     const rows = rshSortedProducts(_rsh.products || []);
     const uploadRegion = (Array.isArray(regions) && regions.includes('SG')) ? 'SG' : ((regions || [])[0] || 'SG');
     const uploadHeaders = {
@@ -14800,6 +14931,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         headers: uploadHeaders,
         body: JSON.stringify({
           region: uploadRegion,
+          account_key: accountKey,
           image_base64: rshDataUrlToBase64(dataUrl),
           source_url: src,
           actor: 'v2-rsh-option-image',
@@ -14838,6 +14970,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle) {
+    const accountKey = sdSelectedShopeeAccountKey();
     const products = rshSortedProducts(_rsh.products || []);
     const master = _rsh.master || products[0] || {};
     const categoryId = Number(document.getElementById('rsh-category')?.value) || Number(master.shopee_category_id) || 100740;
@@ -14915,6 +15048,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     });
 
     return {
+      account_key: accountKey,
       region: activeRegions[0] || 'SG',
       name: productName || parentSku,
       sku: parentSku,
@@ -15071,11 +15205,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   async function rshFetchShopeeListingResults(productId, activeRegions) {
     const regions = (activeRegions || []).map((r) => String(r).toUpperCase()).filter(Boolean);
+    const accountKey = sdSelectedShopeeAccountKey();
     if (!productId || !regions.length) return [];
     try {
       const { data, error } = await db.from('product_shopee_listings')
-        .select('region,status,shop_item_id,global_item_id,last_error,last_synced_at')
+        .select('account_key,region,status,shop_item_id,global_item_id,last_error,last_synced_at')
         .eq('product_id', productId)
+        .eq('account_key', accountKey)
         .in('region', regions);
       if (error) throw error;
       return (data || []).map(rshNormalizeRegionResult).filter((row) => row.region);
@@ -15264,6 +15400,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const singleWeightG = singleWeightKg > 0 ? Math.round(singleWeightKg * 1000) : Number(_rsh.master.weight_g || 0);
       const body = {
         platform: 'shopee',
+        account_key: sdSelectedShopeeAccountKey(),
         master_product_id: _rsh.productId,
         capability: 'create_listing_multi_region',
         regions: activeRegions,
@@ -15415,6 +15552,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     const submitBtn1 = $rsh('submit1');
     if (submitBtn1) submitBtn1.addEventListener('click', () => rshProceedToStage2());
+
+    const accountSelect = document.getElementById('rsh-account-key');
+    if (accountSelect) accountSelect.addEventListener('change', () => {
+      rshHandleShopeeAccountChange().catch((e) => {
+        console.warn('[rsh] account change failed:', e);
+        showToast(e?.message || String(e), 'err');
+      });
+    });
 
     // Stage 2 buttons
     const closeBtn2 = $rsh('close2');
@@ -15602,7 +15747,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       let lOffset = 0;
       while (true) {
         const lUrl = SUPABASE_URL + '/rest/v1/product_shopee_listings'
-          + '?select=product_id,region,shop_item_id,shop_model_id,last_synced_price,last_synced_at'
+          + '?select=product_id,account_key,region,shop_item_id,shop_model_id,last_synced_price,last_synced_at'
+          + '&account_key=eq.' + encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)
           + '&product_id=in.(' + ids + ')';
         const lRes = await fetch(lUrl, {
           headers: Object.assign({}, AUTH_HEADERS, {
@@ -16813,7 +16959,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       let lOffset = 0;
       while (true) {
         const lUrl = SUPABASE_URL + '/rest/v1/product_shopee_listings'
-          + '?select=product_id,region,shop_id,shop_item_id,shop_model_id,status,published_at,last_synced_price,last_synced_at'
+          + '?select=product_id,account_key,region,shop_id,shop_item_id,shop_model_id,status,published_at,last_synced_price,last_synced_at'
+          + '&account_key=eq.' + encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)
           + '&product_id=in.(' + ids + ')';
         const lRes = await fetch(lUrl, {
           headers: Object.assign({}, AUTH_HEADERS, {
@@ -18470,7 +18617,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const byRegion = new Map();
     const byShopId = new Map();
     try {
-      const response = await fetch(SHOPEE_BRIDGE + '/tokens?region=SG', { headers: AUTH_HEADERS });
+      const response = await fetch(SHOPEE_BRIDGE + '/tokens?region=SG&account_key=' + encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY), { headers: AUTH_HEADERS });
       const json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
       const tokens = Array.isArray(json && json.tokens) ? json.tokens : [];
       tokens.forEach(function(t) {
@@ -18563,6 +18710,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
         const payload = {
           product_id: pid,
+          account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
           region: r,
           global_item_id: globalItemId,
           shop_id: published.shop_id || published.shopId || null,
@@ -18572,7 +18720,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           published_at: new Date().toISOString(),
           raw_payload: { source: 'price_sync_auto_published_list', published: published },
         };
-        const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: 'product_id,region' });
+        const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: SHOPEE_LISTING_CONFLICT });
         if (error) throw error;
         _catCache.listings = (_catCache.listings || []).filter(function(l) { return !(String(l.product_id) === pid && String(l.region) === r); });
         _catCache.listings.push(payload);
@@ -18636,13 +18784,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
         const { error: upsertErr } = await db.from('product_shopee_listings').upsert({
           product_id: p.productId,
+          account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
           region: p.region,
           shop_item_id: p.itemId,
           shop_model_id: p.modelId || null,
           last_synced_price: p.price,
           last_synced_at: now,
           status: p.listing?.status || 'mapped',
-        }, { onConflict: 'product_id,region' });
+        }, { onConflict: SHOPEE_LISTING_CONFLICT });
         if (upsertErr) {
           errors.push(p.sku + ' ' + p.region + ': DB listing update ' + upsertErr.message);
           continue;
@@ -19933,7 +20082,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       db.from('products')
         .select('id,sku,product_name,option_name,lifecycle_state,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,joom_published_at,updated_at')
         .order('sku', { ascending: true }),
-      db.from('product_shopee_listings').select('product_id,region,shop_item_id,shop_model_id,status,last_synced_price,last_synced_at'),
+      db.from('product_shopee_listings')
+        .select('product_id,account_key,region,shop_item_id,shop_model_id,status,last_synced_price,last_synced_at')
+        .eq('account_key', SHOPEE_DEFAULT_ACCOUNT_KEY),
       db.from('platform_listings').select('master_product_id,platform,shop_id,country,platform_item_id,listing_status,last_sync_at,error_msg'),
     ]);
 
@@ -20198,7 +20349,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const globalItemId = product?.shopee_item_id || product?.global_item_id || product?.shopee_global_item_id || localRows.find((row) => row.global_item_id)?.global_item_id || '';
     if (globalItemId) {
       try {
-        const resp = await fetch(`${SHOPEE_BRIDGE}/published_list?region=SG&global_item_id=${encodeURIComponent(globalItemId)}`, { headers: AUTH_HEADERS });
+        const resp = await fetch(`${SHOPEE_BRIDGE}/published_list?region=SG&account_key=${encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)}&global_item_id=${encodeURIComponent(globalItemId)}`, { headers: AUTH_HEADERS });
         const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
         if (!resp.ok || json.ok === false) {
           return { platform: 'shopee', sku, found: false, notFound: false, error: json.error || json.message || `HTTP ${resp.status}`, raw: json };
@@ -20235,7 +20386,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const inconclusive = [];
     for (const row of candidates) {
       try {
-        const url = `${SHOPEE_BRIDGE}/item_info?region=${encodeURIComponent(row.region)}&item_id=${encodeURIComponent(row.shop_item_id)}`;
+        const url = `${SHOPEE_BRIDGE}/item_info?region=${encodeURIComponent(row.region)}&account_key=${encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)}&item_id=${encodeURIComponent(row.shop_item_id)}`;
         const resp = await fetch(url, { headers: AUTH_HEADERS });
         const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
         const items = coverageShopeeItemInfoRows(json);
@@ -20274,6 +20425,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     for (const row of rows) {
       const payload = {
         product_id: productId,
+        account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
         region: row.region || 'GLOBAL',
         global_item_id: row.global_item_id || null,
         shop_id: row.shop_id || null,
@@ -20282,7 +20434,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         status: 'mapped',
         raw_payload: { source: 'published_list_sku_sync', hit: row },
       };
-      const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: 'product_id,region' });
+      const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: SHOPEE_LISTING_CONFLICT });
       if (error) throw error;
     }
     return rows.length;
@@ -20344,7 +20496,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       .from('product_shopee_listings')
       .update(payload)
       .eq('product_id', productId)
-      .select('product_id,region');
+      .eq('account_key', SHOPEE_DEFAULT_ACCOUNT_KEY)
+      .select('product_id,account_key,region');
     if (error) throw error;
     return Array.isArray(data) ? data.length : 0;
   }
@@ -23982,7 +24135,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // 운영자 정책 msg #821 (2026-05-22): Shopee / eBay / Qoo10 만 적용. 850x850 inner + 75 padding.
     const _mrCompositeCache = new Map(); // mainImageUrl → base64
     async function mrCompositeMainImage(mainImageUrl) {
-      if (_mrCompositeCache.has(mainImageUrl)) return _mrCompositeCache.get(mainImageUrl);
+      const accountKey = sdNormalizeShopeeAccountKey(arguments.length > 1 ? arguments[1] : sdSelectedShopeeAccountKey());
+      const cacheKey = `${accountKey}:${mainImageUrl}`;
+      if (_mrCompositeCache.has(cacheKey)) return _mrCompositeCache.get(cacheKey);
 
       // Helper: fetch blob with CORS fallback
       async function fetchBlobWithFallback(url) {
@@ -24014,7 +24169,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const mainImg  = await blobToImg(mainBlob);
 
       // Load overlay layer (relative to current page /v2/)
-      const layerUrl  = new URL('shop-overlay-layer.png', window.location.href).href;
+      const layerUrl  = sdShopeeLayerUrl(accountKey);
       const layerBlob = await fetchBlobWithFallback(layerUrl);
       const layerImg  = await blobToImg(layerBlob);
 
@@ -24061,7 +24216,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }, 'image/png');
       });
 
-      _mrCompositeCache.set(mainImageUrl, b64);
+      _mrCompositeCache.set(cacheKey, b64);
       return b64;
     }
 
@@ -24073,13 +24228,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Throws if image fetch fails. Per-region upload failure returns null for that region.
     async function mrUploadRegionImages(imageUrl, onProgress, isMainImage = false) {
       const regions = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+      const accountKey = sdSelectedShopeeAccountKey();
 
       // Fetch image once and convert to base64
       let b64;
       try {
         if (isMainImage) {
           // Use composite (cover-crop + overlay layer) for main image
-          b64 = await mrCompositeMainImage(imageUrl);
+          b64 = await mrCompositeMainImage(imageUrl, accountKey);
         } else {
           // Extra images: plain fetch
           const imgResp = await fetch(imageUrl);
@@ -24109,7 +24265,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             const resp = await fetch(`${SHOPEE_BRIDGE}/upload_image`, {
               method: 'POST',
               headers: Object.assign({}, AUTH_HEADERS, { 'Content-Type': 'application/json' }),
-              body: JSON.stringify({ region: r, image_base64: b64 }),
+              body: JSON.stringify({ region: r, account_key: accountKey, image_base64: b64, layer_version: isMainImage ? sdShopeeLayerVersion(accountKey) : undefined }),
             });
             const json = await resp.json().catch(() => ({ ok: false }));
             if (!json.ok || !json.image_id) {
@@ -24620,7 +24776,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
               console.log('[mrPromoteAll] parent_sku (global_item_sku):', cbscParentSku, 'from options:', _optSkus);
 
+              const accountKey = sdSelectedShopeeAccountKey();
               const cbscBody = {
+                account_key:       accountKey,
                 region:            'SG',
                 name:              cbscTitle,
                 sku:               cbscParentSku,
@@ -24701,6 +24859,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                     const rgn = String(res.region || '').toUpperCase();
                     listingUpserts.push({
                       product_id:      row.product_id,
+                      account_key:     accountKey,
                       region:          rgn,
                       shop_item_id:    res.item_id ? Number(res.item_id) : null,
                       shopee_item_id:  globalItemId,
@@ -24711,7 +24870,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                   }
                 }
                 if (listingUpserts.length > 0) {
-                  const { error: listErr } = await db.from('product_shopee_listings').upsert(listingUpserts, { onConflict: 'product_id,region' });
+                  const { error: listErr } = await db.from('product_shopee_listings').upsert(listingUpserts, { onConflict: SHOPEE_LISTING_CONFLICT });
                   if (listErr) console.warn('[mrPromoteAll] product_shopee_listings upsert error:', listErr);
                 }
 

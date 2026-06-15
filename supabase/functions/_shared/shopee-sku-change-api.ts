@@ -25,6 +25,7 @@ const LIVE_HOST = "partner.shopeemobile.com";
 const SANDBOX_HOST = "openplatform.sandbox.test-stable.shopee.sg";
 const REFRESH_PATH = "/api/v2/auth/access_token/get";
 const SKU_CHANGE_SERVICE = "shopee-sku-change";
+const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 
 const supa = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -91,7 +92,7 @@ function asArray(value) {
 }
 
 async function getTokenRow(region) {
-  const { data, error } = await supa.from("shopee_tokens").select("*").eq("region", region).single();
+  const { data, error } = await supa.from("shopee_tokens").select("*").eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("region", region).single();
   if (error || !data) throw new Error(`token row missing for ${region}: ${error?.message || "not found"}`);
   if (!data.shop_id) throw new Error(`shop_id missing in token row for ${region}`);
   if (!data.access_token || !data.refresh_token) throw new Error(`token pair missing for ${region}`);
@@ -133,16 +134,18 @@ async function refreshAccessToken(row, principal = "shop") {
 
 async function persistShopToken(region, row, token) {
   await supa.from("shopee_tokens").update({
+    account_key: DEFAULT_SHOPEE_ACCOUNT_KEY,
     access_token: token.access_token,
     refresh_token: token.refresh_token || row.refresh_token,
     expires_at: token.expires_at,
-  }).eq("region", region);
+  }).eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("region", region);
 
   await supa.from("shopee_shops").update({
+    account_key: DEFAULT_SHOPEE_ACCOUNT_KEY,
     access_token: token.access_token,
     refresh_token: token.refresh_token || row.refresh_token,
     expires_at: new Date(token.expires_at * 1000).toISOString(),
-  }).eq("shop_id", String(row.shop_id));
+  }).eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("shop_id", String(row.shop_id));
 }
 
 async function getValidShopToken(region) {
@@ -221,7 +224,8 @@ async function loadActiveShops(body, mappingRows = []) {
 
   const { data: shopRows, error } = await supa
     .from("shopee_shops")
-    .select("shop_id, region, merchant_id, status, shop_name")
+    .select("account_key, shop_id, region, merchant_id, status, shop_name")
+    .eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY)
     .order("region", { ascending: true });
   if (error) throw new Error(`load shops failed: ${error.message}`);
 

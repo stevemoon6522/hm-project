@@ -39,9 +39,16 @@ const BANNED_SHOPEE_SHOP_IDS = new Set<string>(['1002269093']);
 // Bridge invocation helpers
 // ---------------------------------------------------------------------------
 
-// The dispatcher injects userAuthToken on the ctx object (see index.ts adapter
-// dispatch block). Typed here so TS doesn't complain under @ts-nocheck.
-type ShopeeAdapterContext = AdapterContext & { userAuthToken?: string };
+// The dispatcher injects userAuthToken and Shopee account routing on ctx.
+type ShopeeAdapterContext = AdapterContext & { userAuthToken?: string; account_key?: string; accountKey?: string };
+
+const DEFAULT_SHOPEE_ACCOUNT_KEY = 'starphotocard';
+const SHOPEE_LISTING_CONFLICT = 'product_id,account_key,region';
+
+function normalizeShopeeAccountKey(value: unknown): string {
+  const raw = String(value || DEFAULT_SHOPEE_ACCOUNT_KEY).trim().toLowerCase();
+  return /^[a-z0-9][a-z0-9_-]{1,62}$/.test(raw) ? raw : DEFAULT_SHOPEE_ACCOUNT_KEY;
+}
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
@@ -248,6 +255,7 @@ function makeSvcClient() {
 
 async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
   const master = ctx.masterProduct as any;
+  const account_key = normalizeShopeeAccountKey((ctx as any).account_key || (ctx as any).accountKey);
   const regions: string[] = Array.isArray((ctx as any).regions) ? (ctx as any).regions : [];
   const lifecycle_state: string = shopeeLifecycleOf(master, (ctx as any).lifecycle_state);
 
@@ -394,6 +402,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     : Math.max(0, Math.floor(Number(master.inventory) || 0));
 
   const bridgeBody: Record<string, unknown> = {
+    account_key,
     region: baseRegion,
     name: registerName,
     sku: master.sku,
@@ -418,6 +427,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     service: 'platform-publish/shopee-adapter',
     event: 'create_listing_multi_region_start',
     master_product_id: master.id,
+    account_key,
     regions,
     lifecycle_state,
     dry_run: ctx.dryRun,
@@ -450,6 +460,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
       service: 'platform-publish/shopee-adapter',
       event: 'create_listing_multi_region_bridge_error',
       master_product_id: master.id,
+      account_key,
       error: raw.error,
       ts: new Date().toISOString(),
     }));
@@ -470,11 +481,12 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   // ------------------------------------------------------------------
   const svc = makeSvcClient();
 
-  const regionSummary: Array<{ region: string; status: string; global_item_id?: number; shop_item_id?: number; error?: string }> = [];
+  const regionSummary: Array<{ region: string; status: string; global_item_id?: number; shop_id?: number; shop_item_id?: number; error?: string }> = [];
 
   for (const r of perRegionResults) {
     const regionCode: string = String(r.region || '').toUpperCase();
     const regionOk: boolean = r.ok === true;
+    const shopId: number | undefined = r.shop_id ? Number(r.shop_id) : undefined;
     const shopItemId: number | undefined = r.item_id || r.shop_item_id || undefined;
     // Extract the richest possible failure reason — bridge wraps the raw publish_task
     // response in `task`, which may carry { response: { publish_result: [...] } } or
@@ -502,10 +514,12 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
       errorMsg = errorMsg ? `${errorMsg} | ${composed}` : (composed || 'publish failed');
     }
 
-    // Upsert product_shopee_listings (primary key: product_id + region).
+    // Upsert product_shopee_listings (primary key: product_id + account_key + region).
     const upsertPayload: Record<string, unknown> = {
       product_id: master.id,
+      account_key,
       region: regionCode,
+      shop_id: shopId || null,
       global_item_id: global_item_id ? Number(global_item_id) : null,
       shop_item_id: shopItemId ? Number(shopItemId) : null,
       status: regionOk ? 'mapped' : 'failed',
@@ -516,13 +530,14 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
 
     const { error: upsertErr } = await svc
       .from('product_shopee_listings')
-      .upsert(upsertPayload, { onConflict: 'product_id,region' });
+      .upsert(upsertPayload, { onConflict: SHOPEE_LISTING_CONFLICT });
 
     if (upsertErr) {
       console.log(JSON.stringify({
         service: 'platform-publish/shopee-adapter',
         event: 'create_listing_multi_region_listing_upsert_failed',
         master_product_id: master.id,
+        account_key,
         region: regionCode,
         error: upsertErr.message,
         ts: new Date().toISOString(),
@@ -533,6 +548,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
       region: regionCode,
       status: regionOk ? 'mapped' : 'failed',
       global_item_id: global_item_id ? Number(global_item_id) : undefined,
+      shop_id: shopId,
       shop_item_id: shopItemId ? Number(shopItemId) : undefined,
       error: errorMsg,
     });
@@ -547,6 +563,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     if (!regionSummary.find((s) => s.region === regionCode)) {
       const upsertPayload: Record<string, unknown> = {
         product_id: master.id,
+        account_key,
         region: regionCode,
         global_item_id: global_item_id ? Number(global_item_id) : null,
         shop_item_id: null,
@@ -557,12 +574,13 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
       };
       const { error: upsertErr } = await svc
         .from('product_shopee_listings')
-        .upsert(upsertPayload, { onConflict: 'product_id,region' });
+        .upsert(upsertPayload, { onConflict: SHOPEE_LISTING_CONFLICT });
       if (upsertErr) {
         console.log(JSON.stringify({
           service: 'platform-publish/shopee-adapter',
           event: 'create_listing_multi_region_missing_region_upsert_failed',
           master_product_id: master.id,
+          account_key,
           region: regionCode,
           error: upsertErr.message,
           ts: new Date().toISOString(),
@@ -580,12 +598,12 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     const { error: rpcErr } = await svc.rpc('upsert_platform_listing', {
       p_master_product_id: master.id,
       p_platform: 'shopee',
-      p_shop_id: null,
+      p_shop_id: summary.shop_id ? String(summary.shop_id) : account_key,
       p_country: summary.region,
       p_platform_item_id: summary.global_item_id ? String(summary.global_item_id) : null,
       p_listing_status: summary.status === 'mapped' ? 'listed' : 'error',
       p_last_publish_request_id: ctx.publishRequestId,
-      p_last_payload: { capability: 'create_listing_multi_region', regions, lifecycle_state, shopee_product_name: registerName },
+      p_last_payload: { capability: 'create_listing_multi_region', account_key, regions, lifecycle_state, shopee_product_name: registerName },
       p_last_sync_at: new Date().toISOString(),
       p_error_msg: summary.error || null,
       p_error_code: summary.error ? 'PLATFORM_VALIDATION_ERROR' : null,
@@ -610,6 +628,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   _dispatchAlert({
     entity_type: 'shopee_multi_region_publish',
     master_product_id: master.id,
+    account_key,
     sku: master.sku,
     global_item_id: global_item_id ?? null,
     regions_requested: regions.length,
@@ -624,6 +643,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     service: 'platform-publish/shopee-adapter',
     event: 'create_listing_multi_region_done',
     master_product_id: master.id,
+    account_key,
     global_item_id,
     regions_ok: successCount,
     regions_failed: failCount,
@@ -635,7 +655,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     ok: overallOk,
     listingStatus: overallOk ? 'listed' : 'error',
     platformItemId: global_item_id ? String(global_item_id) : undefined,
-    rawResponse: { global_item_id, results: regionSummary },
+    rawResponse: { account_key, global_item_id, results: regionSummary },
   };
 }
 
@@ -645,6 +665,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
 // ---------------------------------------------------------------------------
 async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
   const { masterProduct, country: region, shopId, dryRun, userAuthToken, publishRequestId } = ctx;
+  const account_key = normalizeShopeeAccountKey((ctx as any).account_key || (ctx as any).accountKey);
   if (!region) {
     return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'country/region required for create_listing' };
   }
@@ -695,6 +716,7 @@ async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterRe
   const is_pre_order = lifecycle_state === 'pre_order';
   const days_to_ship = resolveShopeeDaysToShip(lifecycle_state, region);
   const payload: Record<string, unknown> = {
+    account_key,
     region,
     name: shopeeLifecycleProductName(masterProduct.product_name, lifecycle_state, masterProduct.sku) || masterProduct.sku,
     sku: masterProduct.sku,
@@ -783,6 +805,7 @@ async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterRe
 // ---------------------------------------------------------------------------
 async function handleUpdateMetadata(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
   const { masterProduct, country: region, userAuthToken, platformItemId, publishRequestId } = ctx;
+  const account_key = normalizeShopeeAccountKey((ctx as any).account_key || (ctx as any).accountKey);
   if (!platformItemId) {
     return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'platformItemId required for update_metadata' };
   }
@@ -794,6 +817,7 @@ async function handleUpdateMetadata(ctx: ShopeeAdapterContext): Promise<AdapterR
   // which breaks per-variant weight on multi-variation listings.
   // TODO: add a separate update_weight capability when needed.
   const payload: Record<string, unknown> = {
+    account_key,
     region: region || 'SG',
     global_item_id: Number(platformItemId),
     global_item_name: shopeeLifecycleProductName(masterProduct.product_name, lifecycle_state, masterProduct.sku) || undefined,
@@ -850,6 +874,7 @@ async function handleUpdateImages(_ctx: ShopeeAdapterContext): Promise<AdapterRe
 // ---------------------------------------------------------------------------
 async function handleSync(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
   const { platformItemId, country: region, userAuthToken } = ctx;
+  const account_key = normalizeShopeeAccountKey((ctx as any).account_key || (ctx as any).accountKey);
   if (!platformItemId) {
     return { ok: false, listingStatus: 'not_listed', errorCode: 'PLATFORM_NOT_FOUND', errorMsg: 'platformItemId required for sync (no existing platform_item_id on this listing)' };
   }
@@ -860,6 +885,7 @@ async function handleSync(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
   // shopee-bridge), so we forward the user token. The bridge skips its own role check for
   // PUBLIC_ACTIONS regardless of which JWT the gateway accepted.
   const raw = await bridgeGet('global_item_info', {
+    account_key,
     region: region || 'SG',
     global_item_id: platformItemId,
   }, userAuthToken || '') as any;

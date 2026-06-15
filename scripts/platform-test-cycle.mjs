@@ -201,8 +201,9 @@ async function ensureProduct(env, target, args, key = env.anon) {
 
 async function loadShopeeRows(env, productId) {
   const query = [
-    'select=product_id,region,global_item_id,global_model_id,shop_id,shop_item_id,shop_model_id,status,last_error',
+    'select=product_id,account_key,region,global_item_id,global_model_id,shop_id,shop_item_id,shop_model_id,status,last_error',
     `product_id=eq.${encodeURIComponent(productId)}`,
+    'account_key=eq.starphotocard',
   ].join('&');
   return restGet(env, 'product_shopee_listings', query);
 }

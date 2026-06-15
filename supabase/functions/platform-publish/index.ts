@@ -774,6 +774,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         // BR needs at least 2 images. Adapter passes through to bridge.
         region_image_ids: (body as any).region_image_ids || {},
         region_prices: (body as any).region_prices || {},
+        account_key: (body as any).account_key || (body as any).accountKey || '',
         shopee_description: (body as any).shopee_description || '',
         shopee_product_name: (body as any).shopee_product_name || '',
         stock_override: (body as any).stock_override,
@@ -812,7 +813,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
       p_platform_item_id: adapterResult.platformItemId ?? existingListing?.platform_item_id ?? null,
       p_listing_status: adapterResult.listingStatus,
       p_last_publish_request_id: publish_request_id,
-      p_last_payload: { capability, dry_run },
+      p_last_payload: { capability, dry_run, ...(platform === 'shopee' ? { account_key: (body as any).account_key || (body as any).accountKey || null } : {}) },
       p_last_sync_at: new Date().toISOString(),
       p_error_msg: adapterResult.errorMsg ?? null,
       p_error_code: adapterResult.errorCode ?? null,

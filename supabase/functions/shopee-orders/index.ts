@@ -12,6 +12,7 @@ const CORS = { "Access-Control-Allow-Origin":"*", "Access-Control-Allow-Headers"
 const HOST_DEF = "https://partner.shopeemobile.com";
 const REGIONS = ["SG","MY","TW","TH","PH","ID","VN","BR","MX","CL","CO","AR","PE","PL","ES","FR","IN"] as const;
 type Region = typeof REGIONS[number];
+const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 function hostFor(_r: string){ return HOST_DEF; }
 
 const PARTNER_ID  = Deno.env.get("SHOPEE_PARTNER_ID") || "";
@@ -62,7 +63,7 @@ function isPermanentShopError(err?: string, msg?: string): boolean {
 }
 
 async function markShopBanned(shopId: string, reason: string) {
-  await supa.from("shopee_shops").update({ status: "banned" }).eq("shop_id", shopId);
+  await supa.from("shopee_shops").update({ status: "banned" }).eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("shop_id", shopId);
   console.warn(`[shopee-orders] shop ${shopId} marked as banned: ${reason}`);
 }
 
@@ -156,6 +157,7 @@ async function exchangeShopToken(host: string, refresh_token: string, shopId: st
 async function persistShopTokenPair(shop: any, token: { access_token: string; refresh_token: string }, expiresAtIso: string) {
   const expSec = Math.floor(new Date(expiresAtIso).getTime()/1000);
   const { error: e1 } = await supa.from("shopee_shops").update({
+    account_key: DEFAULT_SHOPEE_ACCOUNT_KEY,
     access_token: token.access_token,
     refresh_token: token.refresh_token,
     expires_at: expiresAtIso
@@ -163,6 +165,7 @@ async function persistShopTokenPair(shop: any, token: { access_token: string; re
   if (e1) throw new Error(`persist shopee_shops failed: ${e1.message}`);
 
   const row = {
+    account_key: DEFAULT_SHOPEE_ACCOUNT_KEY,
     region: shop.region,
     shop_id: Number(shop.shop_id),
     merchant_id: shop.merchant_id || null,
@@ -171,7 +174,7 @@ async function persistShopTokenPair(shop: any, token: { access_token: string; re
     expires_at: expSec,
     is_sandbox: false,
   };
-  const { error: e2 } = await supa.from("shopee_tokens").upsert(row, { onConflict: "region" });
+  const { error: e2 } = await supa.from("shopee_tokens").upsert(row, { onConflict: "account_key,region" });
   if (e2) throw new Error(`persist shopee_tokens failed: ${e2.message}`);
   audit("persist_shop_token_pair_ok", {
     region: shop.region,
@@ -210,7 +213,7 @@ async function freshToken(shop: any): Promise<string>{
 }
 
 async function syncTokensFromShopsTable(){
-  const { data: shops, error } = await supa.from("shopee_shops").select("shop_id, region, merchant_id, access_token, refresh_token, expires_at, last_polled_at, status, authorized_at").eq("status", "active");
+  const { data: shops, error } = await supa.from("shopee_shops").select("account_key, shop_id, region, merchant_id, access_token, refresh_token, expires_at, last_polled_at, status, authorized_at").eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("status", "active");
   if (error) throw new Error(error.message);
   if (!shops || shops.length===0) return { synced: 0, skipped: [] as any[] };
   const score = (s: any) => {
@@ -227,7 +230,8 @@ async function syncTokensFromShopsTable(){
   const regions = Array.from(byRegion.keys());
   const { data: existingRows } = await supa
     .from("shopee_tokens")
-    .select("region, shop_id, merchant_id")
+    .select("account_key, region, shop_id, merchant_id")
+    .eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY)
     .in("region", regions);
   const existingByRegion = new Map<string, any>((existingRows || []).map((r: any) => [String(r.region), r]));
 
@@ -258,11 +262,12 @@ async function syncTokensFromShopsTable(){
     }
     const expSec = Math.floor(new Date(s.expires_at).getTime()/1000);
     const row = {
+      account_key: DEFAULT_SHOPEE_ACCOUNT_KEY,
       region, shop_id: Number(s.shop_id), merchant_id: s.merchant_id,
       access_token: s.access_token, refresh_token: s.refresh_token,
       expires_at: expSec, is_sandbox: false,
     };
-    const { error: ue } = await supa.from("shopee_tokens").upsert(row, { onConflict: "region" });
+    const { error: ue } = await supa.from("shopee_tokens").upsert(row, { onConflict: "account_key,region" });
     if (!ue) {
       count++;
       picks.push({ region, shop_id: s.shop_id, last_polled_at: s.last_polled_at, authorized_at: s.authorized_at || null });
@@ -391,7 +396,7 @@ async function fetchTracking(sid:string, sn:string, pkg?:string){
   const { data: ex } = await supa.from("marketplace_orders").select("id, tracking_number, raw_payload").eq("external_id", ext).maybeSingle();
   if (ex?.tracking_number) return { ok:true, tracking_number: ex.tracking_number, cached:true };
   const cachedPkg = pkg || (ex?.raw_payload as any)?.package_number || undefined;
-  const { data: shop, error } = await supa.from("shopee_shops").select("*").eq("shop_id", sid).single();
+  const { data: shop, error } = await supa.from("shopee_shops").select("*").eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("shop_id", sid).single();
   if (error||!shop) return { ok:false, error: "shop not found" };
   const at = await freshToken(shop);
   const host = hostFor(shop.region);
@@ -403,7 +408,7 @@ async function fetchTracking(sid:string, sn:string, pkg?:string){
 }
 
 async function fetchLabel(sid:string, sn:string, pkg?:string): Promise<Response>{
-  const { data:shop, error } = await supa.from("shopee_shops").select("*").eq("shop_id", sid).single();
+  const { data:shop, error } = await supa.from("shopee_shops").select("*").eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("shop_id", sid).single();
   if(error||!shop) return j({ error:"shop not found" }, 404);
   const at=await freshToken(shop); const host=hostFor(shop.region);
   const ls=await liveStatus(host,at,shop.shop_id,sn);
@@ -438,7 +443,7 @@ async function arrangeOrders(orders:{shop_id:string,order_sn:string,package_numb
   for (const o of orders) { const k = String(o.shop_id); if (!byShop.has(k)) byShop.set(k, []); byShop.get(k)!.push(o); }
   const allResults: any[] = [];
   for (const [shopId, group] of byShop) {
-    const { data: shop, error } = await supa.from("shopee_shops").select("*").eq("shop_id", shopId).single();
+    const { data: shop, error } = await supa.from("shopee_shops").select("*").eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("shop_id", shopId).single();
     if (error || !shop) { for (const o of group) allResults.push({ ...o, ok:false, error:"shop not found" }); continue; }
     const at = await freshToken(shop);
     const host = hostFor(shop.region);
@@ -505,7 +510,7 @@ async function handleCallbackShop(code:string, sid:string, region:string){
     return html(`<h2>Region resolve failed</h2><p>shop_id=${sid}</p><pre>${esc(JSON.stringify(info,null,2))}</pre>`);
   }
   const merchant_id = (r.merchant_id_list||[])[0] || (info as any)?.merchant_id || null;
-  const { data: existing } = await supa.from("shopee_shops").select("status, region, merchant_id").eq("shop_id", String(sid)).maybeSingle();
+  const { data: existing } = await supa.from("shopee_shops").select("status, region, merchant_id").eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("shop_id", String(sid)).maybeSingle();
   if (existing && existing.status === "banned") {
     return html(`<h2>Shop is permanently banned</h2><p>shop_id=${sid}</p>`);
   }
@@ -524,6 +529,7 @@ async function handleCallbackShop(code:string, sid:string, region:string){
   }
 
   const { error }=await supa.from("shopee_shops").upsert({
+    account_key: DEFAULT_SHOPEE_ACCOUNT_KEY,
     shop_id:String(sid),
     region:fr,
     shop_name:(info as any).shop_name||null,
@@ -558,7 +564,7 @@ async function handleCallbackMain(code:string, mid:string, region:string){
     .filter((x: number) => Number.isFinite(x));
   // Safe mapping: only persist merchant_id when it is deterministic for this callback payload.
   const merchant_id = merchantIds.length === 1 ? merchantIds[0] : null;
-  const { data: bannedRows } = await supa.from("shopee_shops").select("shop_id").eq("status", "banned");
+  const { data: bannedRows } = await supa.from("shopee_shops").select("shop_id").eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("status", "banned");
   const bannedSet = new Set((bannedRows||[]).map((b:any) => String(b.shop_id)));
   const enr:any[]=[]; const skipped:any[]=[]; const unresolved:any[]=[];
   const seenRegionShop = new Map<string, string>();
@@ -600,6 +606,7 @@ async function handleCallbackMain(code:string, mid:string, region:string){
     return html(`<h2>No storable shops</h2><pre>${esc(JSON.stringify({ skipped, unresolved }, null, 2))}</pre>`);
   }
   const rows=enr.map(e=>({
+    account_key: DEFAULT_SHOPEE_ACCOUNT_KEY,
     shop_id:e.shop_id,
     region:e.region,
     shop_name:e.shop_name,
@@ -629,11 +636,13 @@ async function tokenHealthSummary(runSync: boolean){
   }
   const { data: tokenRows, error: te } = await supa
     .from("shopee_tokens")
-    .select("region, shop_id, merchant_id, expires_at, access_token");
+    .select("account_key, region, shop_id, merchant_id, expires_at, access_token")
+    .eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY);
   if (te) throw new Error(te.message);
   const { data: shops, error: se } = await supa
     .from("shopee_shops")
-    .select("shop_id, region, merchant_id, status");
+    .select("account_key, shop_id, region, merchant_id, status")
+    .eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY);
   if (se) throw new Error(se.message);
   const shopById = new Map<string, any>((shops || []).map((s: any) => [String(s.shop_id), s]));
 
@@ -667,6 +676,7 @@ async function tokenHealthSummary(runSync: boolean){
       probe = { ok: false, error: `probe_failed ${String(e?.message || e)}`.trim() };
     }
     rows.push({
+      account_key: t.account_key || DEFAULT_SHOPEE_ACCOUNT_KEY,
       region,
       shop_id: sid,
       merchant_id: t.merchant_id,
@@ -891,7 +901,7 @@ async function pollShop(shop:any, opts:{ days?: number, exact?: boolean }={}){
       inserted++;
     }
   }
-  await supa.from("shopee_shops").update({ last_polled_at:new Date().toISOString() }).eq("shop_id", shop.shop_id);
+  await supa.from("shopee_shops").update({ last_polled_at:new Date().toISOString() }).eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("shop_id", shop.shop_id);
   return { inserted, updated, excluded, unknown, polled: detailed, listed: sns.length, days, exact: !!opts.exact, changed_samples: changedSamples };
 }
 
@@ -953,7 +963,7 @@ serve(async (req)=>{
       const days = Math.min(60, Math.max(1, Number(b.days)||3));
       const exact = !!b.exact;
       if(!shopId) return j({ ok:false, error:"shop_id required" }, 400);
-      const { data:shop, error }=await supa.from("shopee_shops").select("*").eq("shop_id", shopId).single();
+      const { data:shop, error }=await supa.from("shopee_shops").select("*").eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("shop_id", shopId).single();
       if(error||!shop) return j({ ok:false, error:"shop not found" }, 404);
       // v42: refuse to poll banned shops
       if(shop.status === "banned") return j({ ok:false, error:"shop_banned", message:`shop ${shopId} is permanently banned` }, 400);
@@ -964,7 +974,7 @@ serve(async (req)=>{
       const b=await req.json().catch(()=>({}));
       const days = Math.min(60, Math.max(1, Number(b.days)||3));
       const exact = !!b.exact;
-      const { data:shops, error }=await supa.from("shopee_shops").select("*").eq("status","active");
+      const { data:shops, error }=await supa.from("shopee_shops").select("*").eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("status","active");
       if(error) throw new Error(error.message);
       if(!shops||shops.length===0) return j({ ok:true, results:[] });
       const results:any[]=[];
@@ -1002,7 +1012,7 @@ serve(async (req)=>{
             .eq("order_id", dbOrder.id)
         : { data: [] as any[] };
 
-      const { data: shop, error: se } = await supa.from("shopee_shops").select("*").eq("shop_id", sid).single();
+      const { data: shop, error: se } = await supa.from("shopee_shops").select("*").eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("shop_id", sid).single();
       if (se || !shop) return j({ ok:true, external_id: ext, db_order: dbOrder || null, db_items: dbItems || [], live: { ok:false, error:"shop not found" } });
       const at = await freshToken(shop);
       const host = hostFor(shop.region);
@@ -1023,13 +1033,13 @@ serve(async (req)=>{
       });
     }
     if(p==="/shops" && req.method==="GET"){
-      const { data, error }=await supa.from("shopee_shops").select("shop_id, region, shop_name, status, expires_at, last_polled_at, authorized_at, merchant_id").order("region",{ ascending:true }).order("authorized_at",{ ascending:false });
+      const { data, error }=await supa.from("shopee_shops").select("account_key, shop_id, region, shop_name, status, expires_at, last_polled_at, authorized_at, merchant_id").eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).order("region",{ ascending:true }).order("authorized_at",{ ascending:false });
       if(error) return j({ error:error.message }, 500);
       return j({ ok:true, shops:data||[] });
     }
     if(p==="/unlink" && req.method==="POST"){
       const { shop_id }=await req.json();
-      const { error }=await supa.from("shopee_shops").delete().eq("shop_id", String(shop_id));
+      const { error }=await supa.from("shopee_shops").delete().eq("account_key", DEFAULT_SHOPEE_ACCOUNT_KEY).eq("shop_id", String(shop_id));
       if(error) return j({ error:error.message }, 500);
       return j({ ok:true });
     }

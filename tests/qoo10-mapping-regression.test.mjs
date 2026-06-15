@@ -80,7 +80,8 @@ test('Qoo10 create listing contract includes official registration side fields',
 });
 
 test('Qoo10 V2 modal defaults match lifecycle-aware listing policy', () => {
-  assert.match(html, /first\.qoo10_category_id \|\| '300002851'/, 'Qoo10 category should default to KPOP CD');
+  assert.match(html, /const qoo10CategoryDefault = productKindIsGoods\(first\) \? '' : '300002851';/, 'Qoo10 category should default to KPOP CD only for Album products');
+  assert.match(html, /first\.qoo10_category_id \|\| qoo10CategoryDefault/, 'Qoo10 modal should leave Goods category empty until selected');
   assert.match(html, /const isPreOrder = mrQoo10IsPreOrder\(rows\);/, 'Qoo10 modal should choose preorder only for pre_order lifecycle products');
   assert.match(html, /qoo10_available_date_value:\s*availableType === '2' \? releaseDate : '3'/, 'Qoo10 ready-stock listings should use normal shipping within 3 business days');
   assert.match(html, /Overseas \/ South Korea \(KR\)/, 'Qoo10 modal should display the fixed origin policy');

@@ -109,7 +109,10 @@ for (const token of [
   '마스터 옵션 이미지 추가',
   'shopee_days_to_ship',
   'shopee_extra_attributes',
-  'shopee_category_id: rows[0]?.shopee_category_id || 101390',
+  'const productKind = productKindOfRow(rows[0]);',
+  'const categoryDefaults = productKindDefaults(productKind);',
+  'product_kind: productKind',
+  'shopee_category_id: rows[0]?.shopee_category_id || categoryDefaults.shopee_category_id',
   'shopee_brand_id: rows[0]?.shopee_brand_id ?? 0',
   "shopee_brand_name: rows[0]?.shopee_brand_name || 'No Brand'",
 ]) {

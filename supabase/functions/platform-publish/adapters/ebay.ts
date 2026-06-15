@@ -23,6 +23,10 @@ function n(value: unknown, fallback = 0): number {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function isGoodsMaster(master: Record<string, unknown>): boolean {
+  return s(master.product_kind).trim().toLowerCase() === 'goods';
+}
+
 function lifecycleOf(master: Record<string, unknown>): string {
   return s(master.lifecycle_state).toLowerCase() === 'pre_order' ? 'pre_order' : 'ready_stock';
 }
@@ -141,18 +145,19 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   const master = ctx.masterProduct as Record<string, unknown>;
   const sku = s(master.sku).trim();
   const images = imagesFrom(master);
-  const categoryId = s(master.ebay_category_id, EBAY_DEFAULT_CATEGORY_ID).trim() || EBAY_DEFAULT_CATEGORY_ID;
+  const goods = isGoodsMaster(master);
+  const categoryId = s(master.ebay_category_id, goods ? '' : EBAY_DEFAULT_CATEGORY_ID).trim() || (goods ? '' : EBAY_DEFAULT_CATEGORY_ID);
   const description = s(master.description || master.shopee_description).trim();
   const priceUsd = await ebayPriceUsd(master);
   const weightG = n(master.weight_g, 0);
   const lifecycleState = lifecycleOf(master);
   const fulfillmentPolicy = resolveEbayFulfillmentPolicy(lifecycleState);
-  if (!sku || sku.length > 50 || !description || images.length === 0 || !priceUsd || weightG <= 0) {
+  if (!sku || sku.length > 50 || !categoryId || !description || images.length === 0 || !priceUsd || weightG <= 0) {
     return {
       ok: false,
       listingStatus: 'not_listed',
       errorCode: 'PLATFORM_VALIDATION_ERROR',
-      errorMsg: 'eBay create_listing requires sku<=50, description, image, price/cost and weight_g',
+      errorMsg: 'eBay create_listing requires sku<=50, categoryId, description, image, price/cost and weight_g',
     };
   }
   const body = {

@@ -119,7 +119,7 @@ assert(
   'Platform eBay registration preview must define the default Music > CDs category id',
 );
 assert(
-  platformValidation.includes('기본 Music > CDs (${PLATFORM_EBAY_DEFAULT_CATEGORY_ID})로 등록합니다.'),
+  platformValidation.includes('Music > CDs (${PLATFORM_EBAY_DEFAULT_CATEGORY_ID})'),
   'eBay registration preview must warn and use the default Music > CDs category when ebay_category_id is missing',
 );
 assert(
@@ -133,13 +133,14 @@ assert(
 );
 assert(
   ebayAdapter.includes("const EBAY_DEFAULT_CATEGORY_ID = '176984'")
-    && ebayAdapter.includes('s(master.ebay_category_id, EBAY_DEFAULT_CATEGORY_ID).trim() || EBAY_DEFAULT_CATEGORY_ID'),
-  'platform-publish eBay adapter must default missing ebay_category_id to Music > CDs',
+    && ebayAdapter.includes('function isGoodsMaster')
+    && ebayAdapter.includes("s(master.ebay_category_id, goods ? '' : EBAY_DEFAULT_CATEGORY_ID).trim() || (goods ? '' : EBAY_DEFAULT_CATEGORY_ID)"),
+  'platform-publish eBay adapter must default missing Album category to Music > CDs and require explicit Goods category',
 );
 assert(
-  !ebayAdapter.includes('!categoryId || !description')
-    && !ebayAdapter.includes('requires sku<=50, ebay_category_id'),
-  'platform-publish eBay adapter validation must not block products that rely on the default eBay category',
+  ebayAdapter.includes('!categoryId || !description')
+    && ebayAdapter.includes('requires sku<=50, categoryId'),
+  'platform-publish eBay adapter validation may require categoryId after applying the Album default',
 );
 
 const ebayPublishGroupBuilderFn = new Function(
@@ -149,7 +150,16 @@ const ebayPublishGroupBuilderFn = new Function(
   'plParentSku',
   'crypto',
   'window',
-  `const PLATFORM_EBAY_DEFAULT_CATEGORY_ID = '176984'; ${extractFunctionBlock(html, 'plBuildEbayPublishGroupFromProducts')}; return plBuildEbayPublishGroupFromProducts;`,
+  `
+    const PRODUCT_KIND_GOODS = 'goods';
+    const PLATFORM_EBAY_DEFAULT_CATEGORY_ID = '176984';
+    function productKindOfRow(row) {
+      return String(row?.product_kind || row?._product_kind || row?.observed?.product_kind || '').toLowerCase() === PRODUCT_KIND_GOODS ? 'goods' : 'album';
+    }
+    function productKindIsGoods(row) { return productKindOfRow(row) === PRODUCT_KIND_GOODS; }
+    ${extractFunctionBlock(html, 'plBuildEbayPublishGroupFromProducts')};
+    return plBuildEbayPublishGroupFromProducts;
+  `,
 )(
   (rows) => rows,
   () => false,
@@ -182,6 +192,22 @@ const ebayPublishGroupBuilderFn = new Function(
   assert.equal(group.rows[0]._ebayCategory, '176984', 'eBay publish row must default K-pop CD listings to Music > CDs');
   assert.equal(group.rows[0].artist, 'JENNIE', 'eBay publish row must derive Artist for item specifics');
   assert.equal(group.rows[0].album, 'Ruby', 'eBay publish row must derive Release Title for item specifics');
+}
+
+{
+  const group = ebayPublishGroupBuilderFn([{
+    id: 'collectible-keyring',
+    sku: 'GOODS-KEYRING',
+    product_kind: 'goods',
+    product_name: '[READY STOCK] IDOL COLLECTIBLE KEYRING',
+    option_name: 'Keyring',
+    cost_krw: 8000,
+    weight_g: 80,
+    inventory: 3,
+    main_image: 'https://cdn.example.com/keyring-main.jpg',
+    ebay_category_id: null,
+  }]);
+  assert.equal(group.rows[0]._ebayCategory, '', 'Goods eBay publish rows must not silently reuse the Album Music > CDs category');
 }
 
 assert(
@@ -351,6 +377,7 @@ const platformGroupValidationFn = new Function(`
   const PLATFORM_LABELS = Object.freeze({ ebay: 'eBay', alibaba: 'Alibaba' });
   const PLATFORM_EBAY_DEFAULT_CATEGORY_ID = '176984';
   function plProductName(row) { return row?.product_name || row?.sku || String(row?.id || ''); }
+  function productKindIsGoods(row) { return String(row?.product_kind || row?._product_kind || row?.observed?.product_kind || '').toLowerCase() === 'goods'; }
   ${extractFunctionBlock(html, 'platformGroupValidation')}
   return platformGroupValidation;
 `)();
@@ -369,6 +396,31 @@ const platformGroupValidationFn = new Function(`
   assert(
     validation.warnings.some((warning) => warning.includes('Music > CDs (176984)')),
     'eBay registration must warn that the default Music > CDs category will be used',
+  );
+}
+
+{
+  const validation = platformGroupValidationFn('ebay', 'register', {
+    rows: [{
+      id: 'collectible-keyring',
+      sku: 'GOODS-KEYRING',
+      product_kind: 'goods',
+      product_name: '[READY STOCK] IDOL COLLECTIBLE KEYRING',
+      cost_krw: 8000,
+      weight_g: 80,
+    }],
+  });
+  assert(
+    validation.errors.length === 0,
+    'Goods eBay preview should allow the registration modal to open for category selection',
+  );
+  assert(
+    validation.warnings.some((warning) => warning.includes('eBay') && warning.includes('category ID')),
+    'Goods eBay preview must warn that an explicit eBay category ID is required in the modal',
+  );
+  assert(
+    !validation.warnings.some((warning) => warning.includes('Music > CDs')),
+    'Goods eBay registration must not claim it will use the Album Music > CDs category',
   );
 }
 

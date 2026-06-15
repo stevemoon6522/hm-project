@@ -19,6 +19,10 @@ function n(value: unknown, fallback = 0): number {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function isGoodsMaster(master: Record<string, unknown>): boolean {
+  return s(master.product_kind).trim().toLowerCase() === 'goods';
+}
+
 function lifecycleOf(master: Record<string, unknown>): string {
   return s(master.lifecycle_state).toLowerCase() === 'pre_order' ? 'pre_order' : 'ready_stock';
 }
@@ -129,7 +133,8 @@ function buildCreateBody(ctx: BridgeContext): Record<string, unknown> | AdapterR
   const imgs = imagesFrom(master);
   const cost = n(master.cost_krw);
   const weight = n(master.weight_g);
-  const categoryId = s(master.joom_category_id || (master as any).categoryId || 'music_albums').trim();
+  const goods = isGoodsMaster(master);
+  const categoryId = s(master.joom_category_id || (master as any).categoryId || (goods ? '' : 'music_albums')).trim();
   const brand = brandFrom(master);
   if (!sku || !cost || cost <= 0 || !weight || weight <= 0 || imgs.length === 0 || !categoryId || !brand) {
     return {

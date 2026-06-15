@@ -67,6 +67,7 @@ export type AdapterContext = {
   masterProduct: {
     id: string;
     sku: string;
+    product_kind?: string | null;
     product_name: string | null;
     description: string | null;
     main_image: string | null;

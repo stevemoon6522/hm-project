@@ -2038,6 +2038,12 @@
           </div>
           <div class="register-panel-body">
             <div class="register-form-row" style="margin-bottom:10px;font-size:12px;">
+              <label>Product type
+                <select id="custom-master-product-kind" style="font-size:12px;padding:5px 8px;">
+                  <option value="album" selected>Album</option>
+                  <option value="goods">Goods / Idol Collectibles</option>
+                </select>
+              </label>
               <label>Lifecycle
                 <select id="custom-master-lifecycle" style="font-size:12px;padding:5px 8px;">
                   <option value="pre_order">PRE ORDER</option>
@@ -3770,7 +3776,7 @@
         <div id="rsh-loading" class="notice" style="display:none;">마스터 데이터 불러오는 중...</div>
         <div id="rsh-error" class="notice error" style="display:none;"></div>
         <!-- P1-3: Category 101390 is unsupported in Phase B -->
-        <div id="rsh-cat-blocked" class="notice error" style="display:none;">
+        <div id="rsh-cat-blocked" class="notice" style="display:none;">
           이 상품의 카테고리(101390 Idol Collectibles)는 Phase B에서 지원되지 않습니다.
           100740 (CD/DVD/Bluray)으로 변경하거나, 다음 Phase를 기다려 주세요.
         </div>
@@ -3851,7 +3857,7 @@
             <label>Category</label>
             <select id="rsh-category">
               <option value="100740">Hobbies &amp; Collections &gt; CD, DVD &amp; Bluray (100740)</option>
-              <option value="101390">Hobbies &amp; Collections &gt; Idol Collectibles (101390 · Phase C)</option>
+              <option value="101390">Hobbies &amp; Collections &gt; Idol Collectibles (101390)</option>
             </select>
             <div id="rsh-category-hint" style="font-size:11px;color:var(--muted);margin-top:3px;display:none;">변경 사항은 Register 클릭 시 저장됩니다.</div>
           </div>
@@ -4506,6 +4512,29 @@ LEGACY END -->
     retry: '실패 재시도',
   });
   const PLATFORM_EBAY_DEFAULT_CATEGORY_ID = '176984'; // Music > CDs
+  const PRODUCT_KIND_ALBUM = 'album';
+  const PRODUCT_KIND_GOODS = 'goods';
+  const PRODUCT_CATEGORY_DEFAULTS = Object.freeze({
+    album: Object.freeze({
+      shopee_category_id: 100740,
+      joom_category_id: 'music_albums',
+      qoo10_category_id: '300002851',
+      ebay_category_id: PLATFORM_EBAY_DEFAULT_CATEGORY_ID,
+    }),
+    goods: Object.freeze({
+      shopee_category_id: 101390,
+      joom_category_id: '',
+      qoo10_category_id: '',
+      ebay_category_id: '',
+    }),
+  });
+  const JOOM_CATEGORY_OPTIONS = Object.freeze([
+    { id: 'music_albums', label: 'Music Albums (Album default)' },
+    { id: 'music_albums_cd', label: 'Record CD (J1172 risk)' },
+    { id: 'trading_cards', label: 'Trading Cards' },
+    { id: 'memorabilia', label: 'Memorabilia' },
+    { id: 'fan_attributes', label: 'Fan Attributes' },
+  ]);
   const PLATFORM_SAFE_EDIT_FIELDS = Object.freeze({
     shopee: ['name_and_description', 'price', 'days_to_ship'],
     joom: ['price'],
@@ -4540,6 +4569,22 @@ LEGACY END -->
     return String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
     }[c]));
+  }
+
+  function normalizeProductKind(value) {
+    return String(value || '').toLowerCase() === PRODUCT_KIND_GOODS ? PRODUCT_KIND_GOODS : PRODUCT_KIND_ALBUM;
+  }
+
+  function productKindDefaults(value) {
+    return PRODUCT_CATEGORY_DEFAULTS[normalizeProductKind(value)] || PRODUCT_CATEGORY_DEFAULTS.album;
+  }
+
+  function productKindOfRow(row) {
+    return normalizeProductKind(row?.product_kind || row?._product_kind || row?.observed?.product_kind);
+  }
+
+  function productKindIsGoods(row) {
+    return productKindOfRow(row) === PRODUCT_KIND_GOODS;
   }
 
   const NON_MARKETPLACE_TEXT_RE = /[\u3130-\u318f\u1100-\u11ff\u3040-\u309f\u30a0-\u30ff\u3400-\u9fff\uac00-\ud7af\u200b-\u200f\ufeff]+/g;
@@ -5485,7 +5530,7 @@ LEGACY END -->
     // Fallback to no-variation select if schema cache misses on new columns.
     let [productsRes, listingsRes, rollupsRes] = await Promise.all([
       db.from('products')
-        .select('id, sku, product_name, option_name, description, cost_krw, weight_g, inventory, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at, main_image, extra_images, shopee_option_image_url, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, components_extracted_en, components_extracted_at, components_approved, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_days_to_ship, joom_category_id, qoo10_category_id, ebay_category_id')
+        .select('id, sku, product_kind, product_name, option_name, description, cost_krw, weight_g, inventory, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at, main_image, extra_images, shopee_option_image_url, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, components_extracted_en, components_extracted_at, components_approved, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_days_to_ship, joom_category_id, qoo10_category_id, ebay_category_id')
         .order('product_group_id', { ascending: true, nullsFirst: false })
         .order('variation_tier_index', { ascending: true, nullsFirst: false })
         .order('created_at', { ascending: false }),
@@ -6400,20 +6445,28 @@ LEGACY END -->
     });
     if (action === 'register' || action === 'retry') {
       const first = rows[0] || {};
+      const isGoods = productKindIsGoods(first);
       if (platform === 'shopee') {
         if (!first.shopee_category_id) errors.push('Shopee category가 없습니다.');
         if (first.shopee_brand_id == null) errors.push('Shopee brand가 없습니다.');
         if (!first.shopee_image_id && !first.main_image) errors.push('Shopee image_id 또는 대표 이미지가 없습니다.');
       }
-      if (platform === 'joom' && !first.joom_category_id) warnings.push('Joom category가 없으면 bridge 기본값으로 시도합니다.');
-      if (platform === 'qoo10' && !first.qoo10_category_id) errors.push('Qoo10 SecondSubCat category가 없습니다.');
+      if (platform === 'joom' && !first.joom_category_id) {
+        if (isGoods) warnings.push('Goods 상품은 Joom 등록 모달에서 category를 선택해야 합니다.');
+        else warnings.push('Joom category가 없으면 bridge 기본값으로 시도합니다.');
+      }
+      if (platform === 'qoo10' && !first.qoo10_category_id) {
+        if (isGoods) warnings.push('Goods 상품은 Qoo10 등록 모달에서 SecondSubCat category를 입력해야 합니다.');
+        else warnings.push('Qoo10 category가 없으면 Album 기본 KPOP CD category로 시도합니다.');
+      }
       if (platform === 'alibaba') {
         if (!first.main_image && !(Array.isArray(first.extra_images) && first.extra_images.length)) errors.push('Alibaba: 공개 https 대표 이미지가 필요합니다.');
         if (!Number(first.alibaba_price_usd || 0)) warnings.push('Alibaba FOB 단가(USD)가 비어 있습니다 — 등록 모달에서 입력하세요.');
         if (!first.alibaba_category_id) warnings.push('Alibaba 카테고리 미지정 — AI 자동 분류됩니다.');
       }
       if (platform === 'ebay' && !first.ebay_category_id) {
-        warnings.push(`eBay category ID가 없어서 기본 Music > CDs (${PLATFORM_EBAY_DEFAULT_CATEGORY_ID})로 등록합니다.`);
+        if (isGoods) warnings.push('Goods 상품은 eBay 등록 모달에서 category ID를 입력해야 합니다.');
+        else warnings.push(`eBay category ID가 없어서 기본 Music > CDs (${PLATFORM_EBAY_DEFAULT_CATEGORY_ID})로 등록합니다.`);
       }
       if (platform !== 'alibaba') {
         rows.forEach((row) => {
@@ -7846,7 +7899,10 @@ LEGACY END -->
       const detailImages = plMasterEditDetailImageUrls(renderedRows);
       const shopeeDaysToShip = plMasterEditReadJson('pl-master-edit-days', rows[0]?.shopee_days_to_ship || {}, 'Shopee DTS');
       const shopeeExtraAttributes = plMasterEditReadJson('pl-master-edit-attrs', rows[0]?.shopee_extra_attributes || [], 'Shopee extra attributes');
+      const productKind = productKindOfRow(rows[0]);
+      const categoryDefaults = productKindDefaults(productKind);
       const patch = {
+        product_kind: productKind,
         product_name: productName,
         lifecycle_state: lifecycleState,
         staronemall_url: String(document.getElementById('pl-master-edit-staronemall-url')?.value || '').trim() || null,
@@ -7854,9 +7910,11 @@ LEGACY END -->
         extra_images: detailImages,
         // Shopee category/brand are platform-specific, not part of the common
         // master. Inputs removed from the master form; preserve existing values
-        // (publish requires them) and default when absent. category 101390 =
-        // Idol Collectibles, brand 0 = No Brand.
-        shopee_category_id: rows[0]?.shopee_category_id || 101390,
+        // (publish requires them) and default when absent.
+        shopee_category_id: rows[0]?.shopee_category_id || categoryDefaults.shopee_category_id,
+        joom_category_id: rows[0]?.joom_category_id || categoryDefaults.joom_category_id || null,
+        qoo10_category_id: rows[0]?.qoo10_category_id || categoryDefaults.qoo10_category_id || null,
+        ebay_category_id: rows[0]?.ebay_category_id || categoryDefaults.ebay_category_id || null,
         shopee_brand_id: rows[0]?.shopee_brand_id ?? 0,
         shopee_brand_name: rows[0]?.shopee_brand_name || 'No Brand',
         shopee_days_to_ship: shopeeDaysToShip,
@@ -12696,13 +12754,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       : rows.every((p) => String(p.sku || '').trim());
     const hasProductName = !!rshReadProductName();
 
-    // P1-3: block if master category was 101390 (banner already shown)
-    const catBlocked = $rsh('cat-blocked') && $rsh('cat-blocked').style.display !== 'none';
-
     // P1-4a: block if staronemall URL is missing (banner already shown)
     const staronemallMissing = $rsh('no-staronemall') && $rsh('no-staronemall').style.display !== 'none';
 
-    btn.disabled = !hasImage || !hasCost || !hasStock || !hasWeight || !hasSku || !hasProductName || catBlocked || staronemallMissing;
+    btn.disabled = !hasImage || !hasCost || !hasStock || !hasWeight || !hasSku || !hasProductName || staronemallMissing;
   }
 
   // Show cached image preview strip.
@@ -12717,7 +12772,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   const RSH_PRODUCT_SELECT =
-    'id, sku, product_name, option_name, sourcing_price, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_extra_attributes, shopee_days_to_ship, main_image, extra_images, components_extracted_en, components_extracted_at, components_approved, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, shopee_option_image_url, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, ebay_sku, ebay_offer_id, ebay_item_id, ebay_marketplace_id, ebay_status, ebay_category_id, ebay_inventory_group_key, ebay_listing_mode, ebay_variation_axis, ebay_variation_value, ebay_variation_image_url';
+    'id, sku, product_kind, product_name, option_name, sourcing_price, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_extra_attributes, shopee_days_to_ship, main_image, extra_images, components_extracted_en, components_extracted_at, components_approved, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, shopee_option_image_url, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, ebay_sku, ebay_offer_id, ebay_item_id, ebay_marketplace_id, ebay_status, ebay_category_id, ebay_inventory_group_key, ebay_listing_mode, ebay_variation_axis, ebay_variation_value, ebay_variation_image_url';
 
   function rshSortedProducts(rows) {
     return (rows || []).slice().sort((a, b) => plTierSortKey(a).localeCompare(plTierSortKey(b)));
@@ -13011,7 +13066,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         _components_en: row.components_extracted_en || '',
         _tierNames: tierNames,
         _twoAxis: twoAxis,
-        _joomCategory: 'music_albums',
+        _joomCategory: row.joom_category_id || productKindDefaults(productKindOfRow(row)).joom_category_id || '',
         _joomBrand: (/^no brand$/i.test(String(row.shopee_brand_name || '').trim()) ? '' : row.shopee_brand_name) || row.qoo10_brand_name || artist,
         _joomMainImageOverride: '',
       });
@@ -13068,7 +13123,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         _components_en: row.components_extracted_en || '',
         _tierNames: tierNames,
         _twoAxis: twoAxis,
-        _ebayCategory: String(row.ebay_category_id || PLATFORM_EBAY_DEFAULT_CATEGORY_ID),
+        _ebayCategory: String(row.ebay_category_id || (productKindIsGoods(row) ? '' : PLATFORM_EBAY_DEFAULT_CATEGORY_ID)),
         _ebayInventoryGroupKey: row.ebay_inventory_group_key || '',
         _ebayVariationAxis: row.ebay_variation_axis || 'Version',
         _ebayVariationValue: row.ebay_variation_value || version || '',
@@ -13382,6 +13437,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const first = rows[0] || {};
     const basePrice = mrQoo10BasePriceFromRows(rows);
     const isPreOrder = mrQoo10IsPreOrder(rows);
+    const qoo10CategoryDefault = productKindIsGoods(first) ? '' : '300002851';
     const selectedShipping = first.qoo10_shipping_no || '715009';
     const detailImageCount = mrQoo10DetailImageUrls().length;
     const existingItemCode = _mrQoo10.existingItemCode || '';
@@ -13396,7 +13452,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           <input type="text" id="mr-qoo10-title" maxlength="100" value="${text(mrQoo10FormatTitle(first))}">
         </label>
         <label class="field">Qoo10 카테고리(SecondSubCat)
-          <input type="text" id="mr-qoo10-category" maxlength="9" value="${text(first.qoo10_category_id || '300002851')}" placeholder="300002851">
+          <input type="text" id="mr-qoo10-category" maxlength="9" value="${text(first.qoo10_category_id || qoo10CategoryDefault)}" placeholder="300002851">
         </label>
         <label class="field">브랜드 검색어
           <div style="display:flex;gap:6px;">
@@ -14102,19 +14158,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const skuEl = $rsh('sku');
     if (skuEl) skuEl.textContent = _rsh.mode === 'group' ? rshParentSku(_rsh.products) : (master.sku || '');
 
-    // P1-3: Default to 100740, NOT 101390 (101390 is blocked in Phase B).
-    // If master has 101390, show red banner + disable Register.
     const catSel = $rsh('category');
     const masterCatId = Number(master.shopee_category_id) || 100740;
     const catBlockedEl = $rsh('cat-blocked');
-    const is101390Blocked = masterCatId === 101390;
     if (catSel) {
-      // Always default dropdown to 100740 for Phase B
-      const displayCatId = is101390Blocked ? 100740 : masterCatId;
-      const opt = catSel.querySelector(`option[value="${displayCatId}"]`);
+      const opt = catSel.querySelector(`option[value="${masterCatId}"]`);
       if (opt) opt.selected = true;
     }
-    if (catBlockedEl) catBlockedEl.style.display = is101390Blocked ? 'block' : 'none';
+    if (catBlockedEl) catBlockedEl.style.display = 'none';
 
     await rshEnsureCountrySettings();
 
@@ -14141,7 +14192,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       lifecycleEl.style.color = ls === 'pre_order' ? 'var(--yellow)' : 'var(--green)';
     }
 
-    // Build spec section — P1-3: default to 100740, not 101390
     const catId = Number(master.shopee_category_id) || 100740;
     rshBuildSpecSection(catId, master);
     rshRenderVariantSection();
@@ -15233,13 +15283,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       rshProceedToStage2();
     });
 
-    // Fix4: category dropdown live change — toggle the 101390 blocked banner and update submit state
+    // Fix4: category dropdown live change — rebuild specs and update submit state
     const catSelectEl = document.getElementById('rsh-category');
     if (catSelectEl) catSelectEl.addEventListener('change', () => {
-      const val = Number(catSelectEl.value);
       const catBlockedEl = $rsh('cat-blocked');
       const categoryHintEl = document.getElementById('rsh-category-hint');
-      if (catBlockedEl) catBlockedEl.style.display = val === 101390 ? 'block' : 'none';
+      if (catBlockedEl) catBlockedEl.style.display = 'none';
       // Show the save-hint note once the operator changes the dropdown
       if (categoryHintEl) categoryHintEl.style.display = 'block';
       rshCheckSubmitEnabled();
@@ -16516,7 +16565,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let offset = 0;
     while (true) {
       const url = SUPABASE_URL + '/rest/v1/products'
-        + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
+        + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
         + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
       const res = await fetch(url, {
         headers: Object.assign({}, AUTH_HEADERS, {
@@ -16532,7 +16581,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           // Fallback query without cost_updated_at
           const res2 = await fetch(
             SUPABASE_URL + '/rest/v1/products'
-              + '?select=id,sku,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
+              + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
               + '&order=lifecycle_state.asc,created_at.asc',
             {
               headers: Object.assign({}, AUTH_HEADERS, {
@@ -21246,7 +21295,20 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const session = (await db.auth.getSession()).data.session;
       if (!session) { err.textContent = '로그인이 만료되었습니다. 다시 로그인해주세요.'; err.style.display = 'block'; return; }
 
-      MR_PREV = rows.map(r => ({ ...r, status: 'crawling', error: null }));
+      MR_PREV = rows.map(r => ({
+        ...r,
+        product_kind: PRODUCT_KIND_ALBUM,
+        _product_kind: PRODUCT_KIND_ALBUM,
+        shopee_category_id: PRODUCT_CATEGORY_DEFAULTS.album.shopee_category_id,
+        _shopee_category_id: PRODUCT_CATEGORY_DEFAULTS.album.shopee_category_id,
+        joom_category_id: PRODUCT_CATEGORY_DEFAULTS.album.joom_category_id,
+        _joomCategory: PRODUCT_CATEGORY_DEFAULTS.album.joom_category_id,
+        qoo10_category_id: PRODUCT_CATEGORY_DEFAULTS.album.qoo10_category_id,
+        ebay_category_id: PRODUCT_CATEGORY_DEFAULTS.album.ebay_category_id,
+        _ebayCategory: PRODUCT_CATEGORY_DEFAULTS.album.ebay_category_id,
+        status: 'crawling',
+        error: null,
+      }));
       MR_STAGE = 2;
       $('mr-stage1').style.display = 'none';
       $('mr-stage2').style.display = '';
@@ -21277,8 +21339,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           r.source_record_id = hit.source_record_id;
           const sourceInputRow = MR_ROWS.find(x => x.tempId === r.tempId);
           if (sourceInputRow) sourceInputRow.source_record_id = hit.source_record_id;
-          r.observed = hit.observed_values || {};
+          r.observed = Object.assign({}, hit.observed_values || {}, { product_kind: PRODUCT_KIND_ALBUM });
           r.deduped = !!hit.deduped;
+          r.product_kind = PRODUCT_KIND_ALBUM;
+          r._product_kind = PRODUCT_KIND_ALBUM;
           r.sourcing_price = (r.observed && Number.isFinite(Number(r.observed.price_krw))) ? Number(r.observed.price_krw) : 0;
           r.cost_krw = rshSettlementFromSourcing(r.sourcing_price);
           r._sourcing_price = r.sourcing_price;
@@ -21532,6 +21596,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           artist: observed.artist_name || observed.artist || previousObserved.artist || row.idol || row.artist || '',
           idol: row.idol || previousObserved.idol || '',
           album: row.album || previousObserved.album || '',
+          product_kind: PRODUCT_KIND_ALBUM,
           source: 'wms_inventory',
           source_detail: staronemallUrl ? 'staronemall' : (previousObserved.source_detail || 'wms_only'),
           main_image_urls: mainImages.length ? mainImages : mrObservedArray(previousObserved.main_image_urls),
@@ -21541,6 +21606,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           source_url: staronemallUrl || previousObserved.source_url || null,
         });
         row.observed = mergedObserved;
+        row.product_kind = PRODUCT_KIND_ALBUM;
+        row._product_kind = PRODUCT_KIND_ALBUM;
         if (staronemallUrl) {
           row.url = staronemallUrl;
           row.staronemall_url = staronemallUrl;
@@ -21955,6 +22022,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         artist: row.idol || '',
         idol: row.idol || '',
         album: row.album || '',
+        product_kind: PRODUCT_KIND_ALBUM,
         source: 'wms_inventory',
         main_image_urls: mainImages,
         detail_image_urls: detailImages,
@@ -21964,6 +22032,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         artist: staroneObserved.artist_name || staroneObserved.artist || row.idol || '',
         idol: row.idol || '',
         album: row.album || '',
+        product_kind: PRODUCT_KIND_ALBUM,
         source: 'wms_inventory',
         source_detail: staronemallUrl ? 'staronemall' : 'wms_only',
         main_image_urls: mainImages,
@@ -21990,6 +22059,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         observed,
         artist: row.idol || '',
         album: row.album || '',
+        product_kind: PRODUCT_KIND_ALBUM,
+        _product_kind: PRODUCT_KIND_ALBUM,
+        shopee_category_id: PRODUCT_CATEGORY_DEFAULTS.album.shopee_category_id,
+        _shopee_category_id: PRODUCT_CATEGORY_DEFAULTS.album.shopee_category_id,
+        joom_category_id: PRODUCT_CATEGORY_DEFAULTS.album.joom_category_id,
+        _joomCategory: PRODUCT_CATEGORY_DEFAULTS.album.joom_category_id,
+        qoo10_category_id: PRODUCT_CATEGORY_DEFAULTS.album.qoo10_category_id,
+        ebay_category_id: PRODUCT_CATEGORY_DEFAULTS.album.ebay_category_id,
+        _ebayCategory: PRODUCT_CATEGORY_DEFAULTS.album.ebay_category_id,
         version,
         member,
         _opt0: option0,
@@ -22184,6 +22262,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     async function mrStageCustomMaster() {
       const btn = $('custom-master-stage-btn');
       const title = String($('custom-master-title')?.value || '').trim();
+      const productKind = normalizeProductKind($('custom-master-product-kind')?.value || PRODUCT_KIND_ALBUM);
+      const categoryDefaults = productKindDefaults(productKind);
       const artist = String($('custom-master-artist')?.value || '').trim();
       const album = String($('custom-master-album')?.value || '').trim();
       const version = String($('custom-master-version')?.value || '').trim();
@@ -22258,6 +22338,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           artist,
           album,
           version,
+          product_kind: productKind,
           source: 'custom_master',
           source_detail: 'operator_custom',
           main_image_urls: [coverUrl],
@@ -22269,6 +22350,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const payload = {
           external_id: externalId,
           product_title: title,
+          product_kind: productKind,
           artist,
           album,
           version,
@@ -22300,6 +22382,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             artist,
             album,
             version,
+            product_kind: productKind,
+            _product_kind: productKind,
+            shopee_category_id: categoryDefaults.shopee_category_id || null,
+            _shopee_category_id: categoryDefaults.shopee_category_id || null,
+            joom_category_id: categoryDefaults.joom_category_id || null,
+            _joomCategory: categoryDefaults.joom_category_id || '',
+            qoo10_category_id: categoryDefaults.qoo10_category_id || null,
+            ebay_category_id: categoryDefaults.ebay_category_id || null,
+            _ebayCategory: categoryDefaults.ebay_category_id || '',
             member: opt.option_name || '',
             _opt0: opt.option_name || '',
             _opt1: '',
@@ -22778,8 +22869,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     function mrMasterPatchForGroup(group) {
       const firstRow = group?.rows?.[0] || {};
       const components = mrGroupComponents(group);
+      const productKind = productKindOfRow(firstRow);
+      const defaults = productKindDefaults(productKind);
       const patch = {
+        product_kind: productKind,
         product_name: mrMasterProductName(firstRow),
+        shopee_category_id: Number(firstRow._shopee_category_id || firstRow.shopee_category_id || defaults.shopee_category_id) || null,
+        joom_category_id: String(firstRow._joomCategory || firstRow.joom_category_id || defaults.joom_category_id || '').trim() || null,
+        qoo10_category_id: String(firstRow._qoo10_category_id || firstRow.qoo10_category_id || defaults.qoo10_category_id || '').trim() || null,
+        ebay_category_id: String(firstRow._ebayCategory || firstRow.ebay_category_id || defaults.ebay_category_id || '').trim() || null,
         components_extracted_en: components || null,
         components_extracted_at: components ? new Date().toISOString() : null,
         components_approved: components ? 1 : 0,
@@ -23092,17 +23190,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
         // ── Joom 발행 영역 ────────────────────────────────────────────
         {
-          // 운영자 msg #884: 모든 Joom 등록 = Music Albums 카테고리 (parent).
-          // Music Albums 는 J1172 없음 (검증 완료 2026-05-23 burnable 6a10fc14d240c30149144e1a).
-          // Record CD (music_albums_cd) 는 Joom 측 inherit 이슈로 J1172 발생.
-          const JOOM_CATEGORIES = [
-            { id: 'music_albums',    label: 'Music Albums (운영자 default)' },
-            { id: 'music_albums_cd', label: 'Record CD (J1172 발생 가능)' },
-            { id: 'trading_cards',   label: 'Trading Cards' },
-            { id: 'memorabilia',     label: 'Memorabilia' },
-            { id: 'fan_attributes',  label: 'Fan Attributes' },
-          ];
-          if (!firstRow._joomCategory) firstRow._joomCategory = 'music_albums';
+          if (!firstRow._joomCategory) firstRow._joomCategory = productKindIsGoods(firstRow) ? '' : 'music_albums';
           if (firstRow._joomBrand == null) firstRow._joomBrand = mrJoomDefaultBrand(firstRow);
           if (firstRow._joomMainImageOverride == null) firstRow._joomMainImageOverride = '';
 
@@ -23113,7 +23201,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           const joomCatWr = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
           joomCatWr.appendChild(el('span', { style: 'color:var(--muted);' }, '카테고리'));
           const joomCatSel = el('select', { style: 'font-size:12px;padding:2px 4px;' });
-          JOOM_CATEGORIES.forEach(c => {
+          const joomBlankOpt = el('option', { value: '' }, 'Select category');
+          if (!firstRow._joomCategory) joomBlankOpt.selected = true;
+          joomCatSel.appendChild(joomBlankOpt);
+          JOOM_CATEGORY_OPTIONS.forEach(c => {
             const opt = el('option', { value: c.id }, c.label);
             if (c.id === firstRow._joomCategory) opt.selected = true;
             joomCatSel.appendChild(opt);
@@ -23223,7 +23314,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
         // ── eBay 발행 영역 ────────────────────────────────────────────────
         {
-          if (firstRow._ebayCategory == null) firstRow._ebayCategory = '176984'; // K-Pop Album Music CDs
+          const ebayDefaultCategory = productKindIsGoods(firstRow) ? '' : PLATFORM_EBAY_DEFAULT_CATEGORY_ID;
+          if (firstRow._ebayCategory == null) firstRow._ebayCategory = ebayDefaultCategory;
 
           const ebayRow = el('div', { style: 'display:flex;gap:8px;align-items:center;font-size:11px;flex-wrap:wrap;margin-top:4px;' });
           ebayRow.appendChild(el('span', { style: 'color:#e53935;font-weight:700;' }, 'eBay:'));
@@ -23231,7 +23323,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           // Category ID input (editable override)
           const ebayCatWr = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
           ebayCatWr.appendChild(el('span', { style: 'color:var(--muted);' }, '카테고리 ID'));
-          const ebayCatInp = el('input', { type: 'text', style: 'font-size:12px;padding:3px 6px;width:80px;', value: firstRow._ebayCategory || '176984', placeholder: '176984' });
+          const ebayCatInp = el('input', { type: 'text', style: 'font-size:12px;padding:3px 6px;width:80px;', value: firstRow._ebayCategory || ebayDefaultCategory, placeholder: ebayDefaultCategory || 'category ID' });
           ebayCatInp.addEventListener('input', (e) => { firstRow._ebayCategory = e.target.value.trim(); });
           ebayCatWr.appendChild(ebayCatInp);
           ebayRow.appendChild(ebayCatWr);
@@ -25150,8 +25242,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!parentSku) parentSku = 'JOOM-' + (group?.source_record_id || '').slice(0, 8);
       if (!parentSku) errors.push('Parent SKU could not be derived.');
 
-      const categoryId = MR_JOOM_DEFAULT_CATEGORY_ID;
-      const categoryLabel = MR_JOOM_DEFAULT_CATEGORY_LABEL;
+      const categoryId = String(firstRow._joomCategory || firstRow.joom_category_id || (productKindIsGoods(firstRow) ? '' : MR_JOOM_DEFAULT_CATEGORY_ID)).trim();
+      const categoryLabel = categoryId || 'Select category';
       const brand = mrJoomCleanBrand(firstRow._joomBrand || mrJoomDefaultBrand(firstRow));
       const mainImageUrl = mrMasterRepresentativeImage(group);
       const extraImages = mrJoomDetailImageCandidates(group, mainImageUrl);
@@ -25229,6 +25321,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       return {
         group,
+        joomCountry,
         activeRows,
         parentSku,
         categoryId,
@@ -25347,6 +25440,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const dryRunHtml = dryRunResult
         ? '<div class="notice" style="background:#f0fdf4;color:#166534;border-color:#bbf7d0;"><strong>Dry-run 응답</strong> payload 생성 완료 · variants ' + esc(dryRunResult.payload?.variants?.length || 0) + '개 · category ' + esc(dryRunResult.payload?.categoryId || draft.categoryId) + '</div>'
         : '';
+      const categoryOptionsHtml = [
+        { id: '', label: 'Select category' },
+        ...JOOM_CATEGORY_OPTIONS,
+      ].map((c) => (
+        '<option value="' + esc(c.id) + '"' + (String(c.id) === String(draft.categoryId || '') ? ' selected' : '') + '>' + esc(c.label) + '</option>'
+      )).join('');
 
       const optionRows = draft.options.map(o => {
         const skuBadge = o.skuMatches
@@ -25373,7 +25472,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         + dryRunHtml
         + '<div class="grid" style="margin-top:10px;">'
         + '<div class="field" style="grid-column:span 4;"><label>Parent SKU</label><div class="mono" style="word-break:break-all;">' + esc(draft.parentSku || '-') + '</div></div>'
-        + '<div class="field" style="grid-column:span 4;"><label>Category default</label><div>' + esc(draft.categoryLabel) + ' <span class="mono" style="font-size:10px;">' + esc(draft.categoryId) + '</span></div></div>'
+        + '<div class="field" style="grid-column:span 4;"><label>Category</label><select id="mr-joom-category" data-joom-category-select="1" style="width:100%;font-size:12px;padding:6px 8px;">' + categoryOptionsHtml + '</select><div class="mono" style="font-size:10px;margin-top:3px;">' + esc(draft.categoryId || '-') + '</div></div>'
         + '<div class="field" style="grid-column:span 4;"><label>Brand</label><div>' + esc(draft.brand || '-') + '</div></div>'
         + '<div class="field" style="grid-column:span 12;"><label>Title</label><div>' + esc(draft.title) + '</div></div>'
         + '<div class="field" style="grid-column:span 4;"><label>Dry-run status</label><div>' + dryRunLabel + '</div></div>'
@@ -25389,6 +25488,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         + '<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:10px;font-size:11px;color:var(--muted);">'
         + '<div>MSRP: blank</div><div>GTIN/EAN: blank</div><div>HS code: blank</div><div>Package L/W/H: blank</div>'
         + '</div>';
+
+      body.querySelector('#mr-joom-category')?.addEventListener('change', (event) => {
+        const value = String(event.target?.value || '').trim();
+        (draft.group?.rows || []).forEach((row) => {
+          row._joomCategory = value;
+          row.joom_category_id = value || null;
+        });
+        _mrPendingJoomDryRunOk = false;
+        _mrPendingJoomDryRunResult = null;
+        const nextDraft = mrBuildJoomDraft(draft.group, draft.joomCountry);
+        _mrPendingJoomDraftSignature = mrJoomDraftSignature(nextDraft);
+        mrRenderJoomDraftModal(nextDraft);
+      });
 
       if (dryRunBtn) dryRunBtn.disabled = hasErrors;
       if (confirmBtn) {
@@ -25448,7 +25560,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const overlay = document.getElementById('mr-joom-modal-overlay');
       const body = document.getElementById('mr-joom-modal-body');
       const parentSku = mrJoomParentSku(group, activeRows) || ('JOOM-' + (group.source_record_id || '').slice(0, 8));
-      const category = firstRow._joomCategory || 'music_albums';
+      const category = firstRow._joomCategory || firstRow.joom_category_id || (productKindIsGoods(firstRow) ? '' : MR_JOOM_DEFAULT_CATEGORY_ID);
       const brand = firstRow._joomBrand || firstRow.artist || '—';
       const mainImage = firstRow._joomMainImageOverride || firstRow._main_image || '';
       if (body) {
@@ -25786,7 +25898,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           detailImages,
         },
         variantsConfig,
-        categoryId: firstRow._joomCategory || 'music_albums',
+        categoryId: firstRow._joomCategory || firstRow.joom_category_id || (productKindIsGoods(firstRow) ? '' : MR_JOOM_DEFAULT_CATEGORY_ID),
         enabled: true,
         namePrefix: mrJoomNamePrefix(firstRow),
         artist: firstRow.artist || '',
@@ -26287,7 +26399,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         lifecycleState,
         sku,
         title: String(firstRow._ebayTitle || mrEbayBuildTitle(firstRow)).trim().slice(0, 80),
-        categoryId: String(firstRow._ebayCategory || firstRow.ebay_category_id || MR_EBAY_DEFAULT_CATEGORY_ID).trim(),
+        categoryId: String(firstRow._ebayCategory || firstRow.ebay_category_id || (productKindIsGoods(firstRow) ? '' : MR_EBAY_DEFAULT_CATEGORY_ID)).trim(),
         storeCategoryNames: [MR_EBAY_STORE_CATEGORY],
         inventoryGroupKey: mrEbayBuildGroupKey(group, firstRow),
         variationAxis: MR_EBAY_VARIATION_AXIS,

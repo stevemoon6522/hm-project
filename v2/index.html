@@ -1947,6 +1947,10 @@
             <strong>WMS Inventory</strong>
             <span>Search selected WMS idol/album groups and stage as Master products</span>
           </button>
+          <button type="button" class="register-choice" data-register-workbench-target="custom" aria-pressed="false" onclick="sdRegisterWorkbenchActivate('custom')">
+            <strong>Custom Master</strong>
+            <span>외부 사이트용 마스터를 URL 없이 직접 입력하고 이미지 파일로 구성</span>
+          </button>
           <button type="button" class="register-choice" data-register-workbench-target="url" aria-pressed="false" onclick="sdRegisterWorkbenchActivate('url')">
             <strong>URL 일괄 등록</strong>
             <span>URL + 무게 입력 후 크롤 미리보기로 상품 생성</span>
@@ -2021,6 +2025,77 @@
             </div>
             <div id="wms-master-results" class="result-list" style="display:none;max-height:420px;overflow:auto;margin-top:12px;"></div>
             <div id="wms-master-error" class="notice" style="display:none;margin-top:10px;"></div>
+          </div>
+        </section>
+
+        <section class="panel register-work-panel" data-register-workbench-panel="custom" hidden>
+          <div class="register-panel-head">
+            <div>
+              <div class="register-panel-title">Custom Master 직접 등록</div>
+              <div class="register-panel-copy">Staronemall URL 없이 상품명, 옵션, 대표/상세/옵션 이미지를 직접 업로드해 Master preview로 보냅니다.</div>
+            </div>
+            <span class="pill">No source URL</span>
+          </div>
+          <div class="register-panel-body">
+            <div class="register-form-row" style="margin-bottom:10px;font-size:12px;">
+              <label>Lifecycle
+                <select id="custom-master-lifecycle" style="font-size:12px;padding:5px 8px;">
+                  <option value="pre_order">PRE ORDER</option>
+                  <option value="ready_stock">READY STOCK</option>
+                </select>
+              </label>
+              <label id="custom-master-location-wrap" style="display:none;">위치 코드
+                <input type="text" id="custom-master-location" placeholder="예: B1" style="font-size:12px;padding:5px 8px;width:120px;">
+              </label>
+              <label id="custom-master-release-wrap">Qoo10 release date
+                <input type="date" id="custom-master-release-date" style="font-size:12px;padding:5px 8px;">
+              </label>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:8px;margin-bottom:10px;">
+              <label style="grid-column:span 12;font-size:12px;">Master 상품명
+                <input type="text" id="custom-master-title" placeholder="예: CORTIS [GREENGREEN] Photobook Ver." style="width:100%;font-size:12px;padding:6px 8px;">
+              </label>
+              <label style="grid-column:span 4;font-size:12px;">Artist
+                <input type="text" id="custom-master-artist" placeholder="CORTIS" style="width:100%;font-size:12px;padding:6px 8px;">
+              </label>
+              <label style="grid-column:span 4;font-size:12px;">Album
+                <input type="text" id="custom-master-album" placeholder="GREENGREEN" style="width:100%;font-size:12px;padding:6px 8px;">
+              </label>
+              <label style="grid-column:span 4;font-size:12px;">Version
+                <input type="text" id="custom-master-version" placeholder="Photobook Ver." style="width:100%;font-size:12px;padding:6px 8px;">
+              </label>
+              <label style="grid-column:span 3;font-size:12px;">도매가(KRW)
+                <input type="number" id="custom-master-sourcing-price" min="0" step="1" placeholder="예: 15000" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
+              </label>
+              <label style="grid-column:span 3;font-size:12px;">정산가(KRW)
+                <input type="number" id="custom-master-cost" min="0" step="1" placeholder="자동 계산 가능" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
+              </label>
+              <label style="grid-column:span 3;font-size:12px;">무게(g)
+                <input type="number" id="custom-master-weight" min="1" step="1" placeholder="예: 200" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
+              </label>
+              <label style="grid-column:span 3;font-size:12px;">옵션 축 이름
+                <input type="text" id="custom-master-axis-name" value="Option" style="width:100%;font-size:12px;padding:6px 8px;">
+              </label>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:10px;">
+              <label style="font-size:12px;">대표 이미지 <span class="req">*</span>
+                <input type="file" id="custom-master-cover-file" accept="image/*" style="display:block;margin-top:5px;font-size:12px;">
+              </label>
+              <label style="font-size:12px;">상세 이미지
+                <input type="file" id="custom-master-detail-files" accept="image/*" multiple style="display:block;margin-top:5px;font-size:12px;">
+              </label>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+              <strong style="font-size:12px;">옵션</strong>
+              <span class="muted" style="font-size:11px;">옵션 이미지 파일은 선택 사항입니다. 비워두면 대표 이미지를 사용합니다.</span>
+              <button type="button" id="custom-master-add-option" style="font-size:11px;padding:3px 8px;margin-left:auto;">+ 옵션 추가</button>
+            </div>
+            <div id="custom-master-options" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;"></div>
+            <div class="register-form-row" style="font-size:12px;">
+              <button type="button" id="custom-master-stage-btn" class="primary" style="font-size:13px;padding:6px 14px;">Custom preview 만들기</button>
+              <span id="custom-master-status" style="color:var(--muted);font-size:12px;"></span>
+            </div>
+            <div id="custom-master-error" class="notice error" style="display:none;margin-top:10px;"></div>
           </div>
         </section>
 
@@ -2623,6 +2698,7 @@
         </div>
         <div class="master-action-bar">
           <button type="button" class="primary" data-master-register-open="global">신규 마스터 등록</button>
+          <button type="button" data-master-register-open="custom">커스텀 등록</button>
           <button type="button" data-master-register-open="url">URL 일괄 등록</button>
         </div>
       </div>
@@ -5903,9 +5979,13 @@ LEGACY END -->
     const panel = document.getElementById('master-register-panel');
     const title = document.getElementById('master-register-panel-title');
     if (panel) panel.hidden = false;
-    if (title) title.textContent = target === 'url' ? 'URL 일괄 등록' : '신규 마스터 등록';
+    if (title) {
+      title.textContent = target === 'url'
+        ? 'URL 일괄 등록'
+        : (target === 'custom' ? '커스텀 마스터 등록' : '신규 마스터 등록');
+    }
     if (typeof window.sdRegisterWorkbenchActivate === 'function') {
-      window.sdRegisterWorkbenchActivate(target === 'url' ? 'url' : 'global');
+      window.sdRegisterWorkbenchActivate(['url', 'custom', 'wms', 'retry'].includes(target) ? target : 'global');
     }
     panel?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
@@ -20661,8 +20741,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return out;
     }
 
+    function mrIsCustomGroup(group) {
+      const firstRow = group?.rows?.[0] || {};
+      return firstRow._source_kind === 'custom_master' || firstRow.observed?.source === 'custom_master';
+    }
+
     function mrJoomSourceUrl(group) {
       const firstRow = group?.rows?.[0] || {};
+      if (mrIsCustomGroup(group)) return '';
       const sourceUrl = firstRow._staronemall_url || firstRow.staronemall_url || firstRow.url || '';
       if (mrIsWmsGroup(group) && !isValidStaronemallUrl(sourceUrl)) return '';
       return sourceUrl;
@@ -21990,6 +22076,276 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
     }
 
+    let MR_CUSTOM_NEXT_OPTION = 1;
+
+    function mrCustomSetStatus(message, isError = false) {
+      const status = $('custom-master-status');
+      const error = $('custom-master-error');
+      if (status) {
+        status.textContent = isError ? '' : (message || '');
+        status.style.color = 'var(--muted)';
+      }
+      if (error) {
+        error.textContent = isError ? (message || '') : '';
+        error.style.display = isError && message ? 'block' : 'none';
+      }
+    }
+
+    function mrCustomLifecycle() {
+      return $('custom-master-lifecycle')?.value === 'ready_stock' ? 'ready_stock' : 'pre_order';
+    }
+
+    function mrCustomToggleLifecycle() {
+      const lifecycle = mrCustomLifecycle();
+      const locWrap = $('custom-master-location-wrap');
+      const releaseWrap = $('custom-master-release-wrap');
+      if (locWrap) locWrap.style.display = lifecycle === 'ready_stock' ? '' : 'none';
+      if (releaseWrap) releaseWrap.style.display = lifecycle === 'pre_order' ? '' : 'none';
+    }
+
+    function mrCustomQoo10Patch(lifecycle, releaseDate) {
+      if (lifecycle === 'ready_stock') {
+        return {
+          _qoo10_available_date_type: '0',
+          _qoo10_available_date_value: '3',
+          _qoo10_release_date: '',
+        };
+      }
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(releaseDate || ''))) {
+        return {
+          _qoo10_available_date_type: '2',
+          _qoo10_available_date_value: releaseDate,
+          _qoo10_release_date: releaseDate,
+        };
+      }
+      return {};
+    }
+
+    function mrRenderCustomOptionRow(prefill = {}) {
+      const wrap = $('custom-master-options');
+      if (!wrap) return null;
+      const rowId = `custom-opt-${MR_CUSTOM_NEXT_OPTION++}`;
+      const row = el('div', {
+        dataset: { customMasterOptionRow: rowId },
+        style: 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr) auto;gap:8px;align-items:end;padding:8px;border:1px solid var(--border);border-radius:8px;background:#fff;',
+      });
+      const nameLabel = el('label', { style: 'font-size:12px;' }, '옵션명');
+      const nameInput = el('input', {
+        type: 'text',
+        value: prefill.name || '',
+        placeholder: '예: Photobook Ver. / Member Name',
+        dataset: { customOptionName: '1' },
+        style: 'width:100%;font-size:12px;padding:6px 8px;',
+      });
+      nameLabel.appendChild(nameInput);
+      const fileLabel = el('label', { style: 'font-size:12px;' }, '옵션 이미지');
+      const fileInput = el('input', {
+        type: 'file',
+        accept: 'image/*',
+        dataset: { customOptionFile: '1' },
+        style: 'display:block;margin-top:5px;font-size:12px;',
+      });
+      fileLabel.appendChild(fileInput);
+      const removeBtn = el('button', { type: 'button', style: 'font-size:11px;padding:5px 9px;background:#fee2e2;color:#991b1b;' }, '삭제');
+      removeBtn.addEventListener('click', () => {
+        row.remove();
+        mrCustomEnsureOptionRow();
+      });
+      row.appendChild(nameLabel);
+      row.appendChild(fileLabel);
+      row.appendChild(removeBtn);
+      wrap.appendChild(row);
+      return row;
+    }
+
+    function mrCustomEnsureOptionRow() {
+      if (!$('custom-master-options')?.querySelector('[data-custom-master-option-row]')) {
+        mrRenderCustomOptionRow();
+      }
+    }
+
+    function mrCustomOptionInputs() {
+      return Array.from($('custom-master-options')?.querySelectorAll('[data-custom-master-option-row]') || [])
+        .map((row) => {
+          const name = String(row.querySelector('[data-custom-option-name]')?.value || '').trim();
+          const file = row.querySelector('[data-custom-option-file]')?.files?.[0] || null;
+          return { name, file };
+        });
+    }
+
+    async function mrCustomUploadImageFile(file, baseRow, kind) {
+      return sdUploadProductImageFile(
+        file,
+        baseRow,
+        { kind, prefix: 'v2-master-custom' },
+      );
+    }
+
+    async function mrStageCustomMaster() {
+      const btn = $('custom-master-stage-btn');
+      const title = String($('custom-master-title')?.value || '').trim();
+      const artist = String($('custom-master-artist')?.value || '').trim();
+      const album = String($('custom-master-album')?.value || '').trim();
+      const version = String($('custom-master-version')?.value || '').trim();
+      const lifecycle = mrCustomLifecycle();
+      const location = String($('custom-master-location')?.value || '').trim().toUpperCase();
+      const releaseDate = String($('custom-master-release-date')?.value || '').trim();
+      const sourcingPrice = Number($('custom-master-sourcing-price')?.value || 0);
+      const explicitCost = Number($('custom-master-cost')?.value || 0);
+      const costKrw = explicitCost > 0 ? explicitCost : rshSettlementFromSourcing(sourcingPrice);
+      const weightG = Number($('custom-master-weight')?.value || 0);
+      const axisName = String($('custom-master-axis-name')?.value || '').trim() || 'Option';
+      const coverFile = $('custom-master-cover-file')?.files?.[0] || null;
+      const detailFiles = Array.from($('custom-master-detail-files')?.files || []);
+      const rawOptions = mrCustomOptionInputs();
+      const optionInputs = rawOptions.filter(opt => opt.name || opt.file);
+
+      if (!title) { mrCustomSetStatus('Master 상품명을 입력해주세요.', true); return; }
+      if (!artist || !mrSlug(artist, 8)) { mrCustomSetStatus('Artist는 SKU 생성을 위해 영문/숫자를 포함해야 합니다.', true); return; }
+      if (!album || !mrSlug(album, 12)) { mrCustomSetStatus('Album은 SKU 생성을 위해 영문/숫자를 포함해야 합니다.', true); return; }
+      if (!(weightG > 0)) { mrCustomSetStatus('무게(g)를 1 이상으로 입력해주세요.', true); return; }
+      if (!(costKrw > 0)) { mrCustomSetStatus('정산가 또는 도매가를 입력해주세요.', true); return; }
+      if (lifecycle === 'ready_stock' && !location) { mrCustomSetStatus('READY STOCK은 위치 코드가 필요합니다.', true); return; }
+      if (!coverFile) { mrCustomSetStatus('대표 이미지를 첨부해주세요.', true); return; }
+      if (optionInputs.some(opt => !opt.name)) { mrCustomSetStatus('옵션 이미지가 있는 행은 옵션명을 입력해주세요.', true); return; }
+
+      const baseSku = [lifecycle === 'ready_stock' ? location : 'PO', mrSlug(artist, 8), mrSlug(album, 12), mrSlug(version, 12)]
+        .filter(Boolean)
+        .join('-') || 'CUSTOM';
+      const baseRow = { _sku: baseSku, sku: baseSku, product_name: title, option_name: 'custom' };
+
+      if (btn) { btn.disabled = true; btn.textContent = '업로드 중...'; }
+      mrCustomSetStatus('대표 이미지 업로드 중...');
+
+      try {
+        mrSetLifecycleValue(lifecycle);
+        if ($('mr-location')) {
+          $('mr-location').value = lifecycle === 'ready_stock' ? location : '';
+          $('mr-location').disabled = lifecycle === 'pre_order';
+        }
+
+        const coverUrl = await mrCustomUploadImageFile(coverFile, baseRow, 'cover');
+        const detailImageUrls = [];
+        for (let i = 0; i < detailFiles.length; i++) {
+          mrCustomSetStatus(`상세 이미지 업로드 중... (${i + 1}/${detailFiles.length})`);
+          detailImageUrls.push(await mrCustomUploadImageFile(detailFiles[i], baseRow, `detail-${i + 1}`));
+        }
+
+        const stagedOptions = [];
+        const effectiveOptions = optionInputs.length ? optionInputs : [{ name: '', file: null, single: true }];
+        for (let i = 0; i < effectiveOptions.length; i++) {
+          const opt = effectiveOptions[i];
+          let optionImageUrl = '';
+          if (opt.file) {
+            mrCustomSetStatus(`옵션 이미지 업로드 중... (${i + 1}/${effectiveOptions.length})`);
+            optionImageUrl = await mrCustomUploadImageFile(
+              opt.file,
+              { ...baseRow, option_name: opt.name || `option-${i + 1}` },
+              `option-${i + 1}`,
+            );
+          }
+          stagedOptions.push({
+            option_name: opt.name || '',
+            option_image_url: optionImageUrl,
+            option_image_file_name: opt.file?.name || '',
+            single: !!opt.single,
+          });
+        }
+
+        const externalId = `custom_master:${crypto.randomUUID ? crypto.randomUUID() : String(Date.now())}`;
+        const observed = {
+          title,
+          artist,
+          album,
+          version,
+          source: 'custom_master',
+          source_detail: 'operator_custom',
+          main_image_urls: [coverUrl],
+          detail_image_urls: detailImageUrls,
+          custom_options: stagedOptions,
+          price_krw: sourcingPrice > 0 ? sourcingPrice : costKrw,
+          description_html: '',
+        };
+        const payload = {
+          external_id: externalId,
+          product_title: title,
+          artist,
+          album,
+          version,
+          lifecycle_state: lifecycle,
+          sourcing_price: sourcingPrice,
+          cost_krw: costKrw,
+          weight_g: weightG,
+          main_image_urls: [coverUrl],
+          detail_image_urls: detailImageUrls,
+          options: stagedOptions,
+          qoo10_release_date: releaseDate || null,
+        };
+
+        mrCustomSetStatus('Custom source record 생성 중...');
+        const { data, error } = await db.rpc('stage_custom_master_payload', { p_payload: payload });
+        if (error) throw error;
+        const staged = Array.isArray(data) ? data[0] : data;
+        const sourceRecordId = staged?.source_record_id;
+        if (!sourceRecordId) throw new Error('Custom source_record_id가 반환되지 않았습니다.');
+        const sourceUrl = staged?.source_url || `custom://master/${externalId.replace(/^custom_master:/, '')}`;
+        const qoo10Patch = mrCustomQoo10Patch(lifecycle, releaseDate);
+
+        MR_PREV = stagedOptions.map((opt, idx) => {
+          const row = Object.assign({
+            source_record_id: sourceRecordId,
+            tempId: MR_NEXT_ID++,
+            url: sourceUrl,
+            observed,
+            artist,
+            album,
+            version,
+            member: opt.option_name || '',
+            _opt0: opt.option_name || '',
+            _opt1: '',
+            _tierNames: [axisName],
+            _twoAxis: false,
+            _source_kind: 'custom_master',
+            _singleProductMode: !!opt.single,
+            _staronemall_url: '',
+            _sourcing_price: sourcingPrice,
+            _cost_krw: costKrw,
+            sourcing_price: sourcingPrice,
+            cost_krw: costKrw,
+            weight_g: weightG,
+            _weight_g: weightG,
+            _main_image: coverUrl,
+            _main_image_file_name: coverFile.name,
+            _custom_option_image_url: opt.option_image_url || '',
+            _custom_option_image_file_name: opt.option_image_file_name || '',
+            shopee_option_image_url: opt.option_image_url || '',
+            _extra_images: detailImageUrls.slice(),
+            _detail_image_urls: detailImageUrls.slice(),
+            _components_image_url: detailImageUrls[0] || '',
+            _product_name: title,
+            _lifecycle_state: lifecycle,
+            collisionMode: 'reuse',
+            status: 'preview',
+            error: null,
+          }, qoo10Patch);
+          row._sku = mrComputeSku(row);
+          return row;
+        });
+        MR_PROMOTE_DESELECTED.clear();
+        await mrLoadExistingSkus();
+        MR_STAGE = 2;
+        if (typeof window.sdRegisterWorkbenchActivate === 'function') window.sdRegisterWorkbenchActivate('url');
+        $('mr-stage1').style.display = 'none';
+        $('mr-stage2').style.display = '';
+        mrRenderPreviewCards();
+        mrCustomSetStatus(`Custom preview ${MR_PREV.length}건 생성 완료.`);
+      } catch (e) {
+        mrCustomSetStatus(e?.message || String(e), true);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Custom preview 만들기'; }
+      }
+    }
+
     function mrStatusLabel(s) {
       if (s === 'crawling') return { text: '크롤 중...', color: 'var(--muted)' };
       if (s === 'preview') return { text: '준비됨', color: '#16a34a' };
@@ -22123,16 +22479,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     function mrOpenOptionImageModal(group) {
       const firstRow = group?.rows?.[0] || {};
+      const isCustom = mrIsCustomGroup(group);
       const images = mrGetGroupOptionImages(group, firstRow);
       let selected = mrGroupComponentImageUrl(group);
       const overlay = el('div', { class: 'modal-overlay show', style: 'z-index:90;' });
       const modal = el('div', { class: 'modal', style: 'width:min(920px,100%);' });
       const header = el('div', { class: 'modal-header' });
-      header.appendChild(el('h2', {}, '옵션 이미지 관리'));
+      header.appendChild(el('h2', {}, isCustom ? '상세 이미지 관리' : '옵션 이미지 관리'));
       const closeBtn = el('button', { type: 'button' }, '닫기');
       header.appendChild(closeBtn);
       const body = el('div', { class: 'modal-body' });
-      body.appendChild(el('p', { style: 'margin:0;color:var(--muted);font-size:12px;' }, 'Product introduction 하단 이미지 중 실제 상품 상세 이미지만 남겨주세요. 구성품 추출용 이미지를 선택하면 “이미지에서 추출” 버튼이 그 이미지를 Vision에 전달합니다.'));
+      body.appendChild(el('p', { style: 'margin:0;color:var(--muted);font-size:12px;' }, isCustom
+        ? '커스텀 등록 상세 이미지 중 Master에 남길 이미지만 체크하세요. 구성품은 직접 입력하는 흐름을 권장합니다.'
+        : 'Product introduction 하단 이미지 중 실제 상품 상세 이미지만 남겨주세요. 구성품 추출용 이미지를 선택하면 “이미지에서 추출” 버튼이 그 이미지를 Vision에 전달합니다.'));
       const grid = el('div', { style: 'display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;' });
       const checks = [];
       if (images.length) {
@@ -22146,7 +22505,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           card.appendChild(el('span', { style: 'font-size:11px;font-weight:700;' }, `이미지 #${idx + 1}`));
           const keepLine = el('span', { style: 'font-size:11px;display:flex;gap:5px;align-items:center;' });
           keepLine.appendChild(keep);
-          keepLine.appendChild(document.createTextNode('옵션 이미지로 사용'));
+          keepLine.appendChild(document.createTextNode(isCustom ? '상세 이미지로 사용' : '옵션 이미지로 사용'));
           card.appendChild(keepLine);
           const pickLine = el('span', { style: 'font-size:11px;display:flex;gap:5px;align-items:center;color:#4a275f;font-weight:700;' });
           pickLine.appendChild(pick);
@@ -22156,7 +22515,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           grid.appendChild(card);
         });
       } else {
-        grid.appendChild(el('div', { style: 'font-size:12px;color:var(--red);' }, '관리할 옵션 이미지가 없습니다. 먼저 Staronemall 상세 이미지를 다시 크롤링해주세요.'));
+        grid.appendChild(el('div', { style: 'font-size:12px;color:var(--red);' }, isCustom ? '관리할 상세 이미지가 없습니다.' : '관리할 옵션 이미지가 없습니다. 먼저 Staronemall 상세 이미지를 다시 크롤링해주세요.'));
       }
       body.appendChild(grid);
       const footer = el('div', { class: 'modal-footer' });
@@ -22184,6 +22543,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     function mrRenderCrawledImagePreview(firstRow, group) {
       const observed = firstRow?.observed || {};
       const baseUrl = firstRow?.url || '';
+      const isCustom = mrIsCustomGroup(group);
       const savedRepresentative = mrMasterRepresentativeImage(group);
       const rawMainImages = [
         savedRepresentative,
@@ -22201,7 +22561,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const titleRow = el('div', { style: 'display:flex;gap:6px;align-items:center;justify-content:space-between;' });
         titleRow.appendChild(el('div', { style: 'font-size:11px;font-weight:800;color:#4a275f;' }, title));
         if (editable && group) {
-          const manageBtn = el('button', { type: 'button', style: 'font-size:10px;padding:2px 7px;' }, '옵션 이미지 관리');
+          const manageBtn = el('button', { type: 'button', style: 'font-size:10px;padding:2px 7px;' }, isCustom ? '상세 이미지 관리' : '옵션 이미지 관리');
           manageBtn.addEventListener('click', () => mrOpenOptionImageModal(group));
           titleRow.appendChild(manageBtn);
         }
@@ -22229,13 +22589,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       };
 
       wrap.appendChild(renderBucket('대표 이미지', representativeImages, '대표 이미지 없음'));
-      wrap.appendChild(renderBucket('옵션 이미지', optionImages, '옵션 이미지 없음', true));
+      wrap.appendChild(renderBucket(isCustom ? '상세 이미지' : '옵션 이미지', optionImages, isCustom ? '상세 이미지 없음' : '옵션 이미지 없음', true));
       return wrap;
     }
 
     async function mrExtractComponentsForGroup(group, textarea, statusEl, buttonEl) {
       const firstRow = group?.rows?.[0] || {};
       const url = firstRow.url || '';
+      if (mrIsCustomGroup(group) && !isValidStaronemallUrl(url)) {
+        const msg = '커스텀 상품은 구성품을 직접 입력하세요.';
+        mrSetGroupComponentsStatus(group, msg, true);
+        if (statusEl) { statusEl.textContent = msg; statusEl.style.color = 'var(--red)'; }
+        return;
+      }
       if (!url || !isValidStaronemallUrl(url)) {
         const msg = 'StarOneMall URL이 있어야 이미지에서 구성품을 추출할 수 있습니다.';
         mrSetGroupComponentsStatus(group, msg, true);
@@ -22977,6 +23343,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             row._extra_images = mrJoomNormalizeImageList(row.observed?.detail_image_urls || [], row.url || firstRow.url || '');
           }
           const isSingleProduct = !!row._singleProductMode;
+          const isCustom = mrIsCustomGroup(group);
 
           const optRow = el('div', { style: 'display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;padding:6px 8px;background:var(--surface2,#f8f9fa);border-radius:6px;' });
 
@@ -23069,30 +23436,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
           // Product/option image: exactly one operator-created attachment.
           const imgWr = el('div', { style: 'display:flex;flex-direction:column;gap:4px;flex:2;min-width:240px;' });
-          imgWr.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, '메인/옵션 이미지 첨부 (1장) · 마스터 옵션 이미지 첨부 (로컬 1장)'));
+          imgWr.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, isCustom
+            ? '옵션 이미지 첨부 (선택) · 비우면 대표 이미지 사용'
+            : '메인/옵션 이미지 첨부 (1장) · 마스터 옵션 이미지 첨부 (로컬 1장)'));
           const imgLine = el('div', { style: 'display:flex;gap:6px;align-items:center;flex-wrap:wrap;' });
           const fileInp = el('input', {
             type: 'file',
             accept: 'image/*',
             style: 'font-size:11px;max-width:260px;',
           });
-          const imgStatus = el('span', { style: 'font-size:10px;color:var(--muted);' }, row._main_image ? '첨부 완료' : '이미지 필요');
+          const customDisplayImage = () => row._custom_option_image_url || row.shopee_option_image_url || row._main_image;
+          const imgStatus = el('span', { style: 'font-size:10px;color:var(--muted);' }, isCustom ? (row._custom_option_image_url ? '옵션 이미지 첨부 완료' : '대표 이미지 사용') : (row._main_image ? '첨부 완료' : '이미지 필요'));
           const imgPreview = el('div', {
             style: 'width:44px;height:44px;border:1px solid var(--border);border-radius:6px;background:#fff;overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:10px;color:var(--muted);',
           }, '없음');
           const paintPreview = () => {
             imgPreview.innerHTML = '';
-            if (row._main_image) {
-              const img = el('img', { src: row._main_image, style: 'width:100%;height:100%;object-fit:cover;' });
+            const previewUrl = isCustom ? customDisplayImage() : row._main_image;
+            if (previewUrl) {
+              const img = el('img', { src: previewUrl, style: 'width:100%;height:100%;object-fit:cover;' });
               img.addEventListener('error', () => { imgPreview.textContent = '오류'; imgPreview.style.background = '#fee2e2'; });
               imgPreview.appendChild(img);
-              imgStatus.textContent = row._main_image_file_name ? `첨부 완료: ${row._main_image_file_name}` : '첨부 완료';
+              imgStatus.textContent = isCustom
+                ? (row._custom_option_image_file_name ? `옵션 이미지: ${row._custom_option_image_file_name}` : '대표 이미지 사용')
+                : (row._main_image_file_name ? `첨부 완료: ${row._main_image_file_name}` : '첨부 완료');
               imgStatus.style.color = 'var(--green)';
             } else {
               imgPreview.textContent = '없음';
               imgPreview.style.background = '#fff';
-              imgStatus.textContent = '이미지 필요';
-              imgStatus.style.color = 'var(--red)';
+              imgStatus.textContent = isCustom ? '대표 이미지 없음' : '이미지 필요';
+              imgStatus.style.color = isCustom ? 'var(--muted)' : 'var(--red)';
             }
           };
           fileInp.addEventListener('change', async (e) => {
@@ -23103,15 +23476,26 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             fileInp.disabled = true;
             try {
               const imageUrl = await mrUploadMasterImageFile(file, row);
-              row._main_image = imageUrl;
-              row.shopee_option_image_url = imageUrl;
-              row._main_image_file_name = file.name;
-              row._extra_images = [];
+              if (isCustom) {
+                row._custom_option_image_url = imageUrl;
+                row.shopee_option_image_url = imageUrl;
+                row._custom_option_image_file_name = file.name;
+              } else {
+                row._main_image = imageUrl;
+                row.shopee_option_image_url = imageUrl;
+                row._main_image_file_name = file.name;
+                row._extra_images = [];
+              }
               paintPreview();
               mrRenderPreviewCards();
             } catch (uploadErr) {
-              row._main_image = '';
-              row._main_image_file_name = '';
+              if (isCustom) {
+                row._custom_option_image_url = '';
+                row._custom_option_image_file_name = '';
+              } else {
+                row._main_image = '';
+                row._main_image_file_name = '';
+              }
               imgStatus.textContent = uploadErr?.message || '업로드 실패';
               imgStatus.style.color = 'var(--red)';
               paintPreview();
@@ -23654,7 +24038,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                   sourcing_price: vOpt.sourcing_price || 0,
                   cost_krw: vOpt.cost_krw || 0,
                   inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
-                }, mrMasterPatchForGroup(group)))
+                }, Object.prototype.hasOwnProperty.call(row, '_custom_option_image_url') ? {
+                  shopee_option_image_url: row._custom_option_image_url || null,
+                } : {}, mrMasterPatchForGroup(group)))
                 .eq('id', row.product_id);
             }
             row.status = 'done';
@@ -23697,6 +24083,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                   sourcing_price: Number(row._sourcing_price || row.sourcing_price || 0),
                   cost_krw: Number(row._cost_krw || row.cost_krw || 0),
                   inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
+                  ...(Object.prototype.hasOwnProperty.call(row, '_custom_option_image_url')
+                    ? { shopee_option_image_url: row._custom_option_image_url || null }
+                    : {}),
                   cost_updated_at: new Date().toISOString(),
                 })
                 .eq('id', row.product_id);
@@ -26384,6 +26773,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         });
         if (target === 'url') mrLoadPendingStaronemallRows(false);
       };
+      window.sdRegisterWorkbenchActivate = activate;
       buttons.forEach((btn) => {
         btn.addEventListener('click', () => activate(btn.dataset.registerWorkbenchTarget));
       });
@@ -26413,6 +26803,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       });
       $('wms-master-lifecycle')?.addEventListener('change', mrWmsToggleReleaseDate);
       mrWmsToggleReleaseDate();
+      $('custom-master-lifecycle')?.addEventListener('change', mrCustomToggleLifecycle);
+      mrCustomToggleLifecycle();
+      $('custom-master-add-option')?.addEventListener('click', () => mrRenderCustomOptionRow());
+      $('custom-master-stage-btn')?.addEventListener('click', mrStageCustomMaster);
+      $('custom-master-sourcing-price')?.addEventListener('input', () => {
+        const costInput = $('custom-master-cost');
+        if (!costInput || String(costInput.value || '').trim()) return;
+        const sourcing = Number($('custom-master-sourcing-price')?.value || 0);
+        const cost = rshSettlementFromSourcing(sourcing);
+        if (cost > 0) costInput.placeholder = `자동 ${cost.toLocaleString()}`;
+      });
+      mrCustomEnsureOptionRow();
 
       $('mr-add-row').addEventListener('click', () => mrAddRow());
       $('mr-clear-rows').addEventListener('click', () => {

@@ -147,7 +147,7 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   const sku = s(master.sku).trim();
   const images = imagesFrom(master);
   const goods = isGoodsMaster(master);
-  const categoryId = s(master.ebay_category_id, goods ? EBAY_GOODS_CATEGORY_ID : EBAY_DEFAULT_CATEGORY_ID).trim() || (goods ? EBAY_GOODS_CATEGORY_ID : EBAY_DEFAULT_CATEGORY_ID);
+  const categoryId = s(master.ebay_category_id, goods ? '' : EBAY_DEFAULT_CATEGORY_ID).trim() || (goods ? '' : EBAY_DEFAULT_CATEGORY_ID);
   const description = s(master.description || master.shopee_description).trim();
   const priceUsd = await ebayPriceUsd(master);
   const weightG = n(master.weight_g, 0);

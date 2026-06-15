@@ -16,6 +16,10 @@ _Avoid_: option row, model row, item code
 A product or variant that already exists on a marketplace account. It belongs to exactly one platform/account/market and may be mapped to one Variant SKU.
 _Avoid_: master row, uploaded product
 
+**Listing Cleanup**:
+An operator action that removes or ends an existing Platform Listing on the marketplace and clears its local mapping so the same Master Product or Variant SKU can be published again.
+_Avoid_: product deletion, SKU reset, hard delete
+
 **Platform Listing Header**:
 A reusable seller-controlled content block displayed above a marketplace listing's product detail content. Its title line may quote the Master Product name as marketplace copy, but the header is still platform listing content, not a canonical Master Product description.
 _Avoid_: master description, product template
@@ -75,3 +79,7 @@ Developer: "That means making each region's Shopee Shop Item Name exactly match 
 Operator: "Use our fixed notice above every Qoo10 product detail."
 
 Developer: "That is a Platform Listing Header. We keep it separate from the Master Product description so the same product facts can still publish differently per marketplace."
+
+Operator: "This Joom listing was registered with the wrong category. Delete it so I can register it again."
+
+Developer: "That is a Listing Cleanup: we remove or end the remote Platform Listing and clear the mapping, while keeping the Master Product and Variant SKU as canonical product data."

@@ -1988,6 +1988,14 @@ function requireInternalBridge(req: Request): Response | null {
   return null;
 }
 
+async function requireBridgeTokenOrAuthenticatedUser(req: Request): Promise<Response | null> {
+  const expected = Deno.env.get('PLATFORM_BRIDGE_INTERNAL_TOKEN') || '';
+  const actual = req.headers.get('x-platform-bridge-token') || '';
+  if (expected && actual === expected) return null;
+  const authResult = await requireAuthenticatedUser(req);
+  return authResult.response || null;
+}
+
 async function resolveHeadlessGlobalItemId(body: any): Promise<{ ok: true; global_item_id: number; source: string; rows?: any[] } | { ok: false; status: number; error: string; rows?: any[] }> {
   const explicit = Number(body.global_item_id || body.globalItemId || 0);
   if (Number.isFinite(explicit) && explicit > 0) {
@@ -2033,8 +2041,8 @@ async function markShopeeGlobalItemDeleted(globalItemId: number, body: any, raw:
 }
 
 async function handleHeadlessDeleteGlobalItem(req: Request, url: URL): Promise<Response> {
-  const internal = requireInternalBridge(req);
-  if (internal) return internal;
+  const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+  if (denied) return denied;
   const body = await req.json().catch(() => ({}));
   const dryRun = body.dry_run !== false && body.dryRun !== false;
   const region = String(body.region || url.searchParams.get('region') || 'SG').toUpperCase();

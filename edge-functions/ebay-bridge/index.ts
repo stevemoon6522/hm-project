@@ -2254,12 +2254,147 @@ async function persistHeadlessEbayWithdrawResult(product: any, sku: string, reas
   return update;
 }
 
+async function persistHeadlessEbayGroupWithdrawResult(inventoryGroupKey: string, reason = "operator_test_cleanup"): Promise<any> {
+  const now = new Date().toISOString();
+  const update = {
+    ebay_item_id: null,
+    ebay_offer_id: null,
+    ebay_status: "WITHDRAWN",
+    ebay_last_synced_price: null,
+    ebay_last_synced_at: now,
+    ebay_mapping_status: null,
+    ebay_mapping_error: reason,
+    ebay_inventory_group_key: null,
+    ebay_listing_mode: null,
+    ebay_variation_axis: null,
+    ebay_variation_value: null,
+    ebay_variation_image_url: null,
+  };
+  const { error } = await supabase
+    .from("products")
+    .update(update)
+    .eq("ebay_inventory_group_key", inventoryGroupKey);
+  if (error) throw new Error(`product ebay group mapping reset failed: ${error.message || String(error)}`);
+  return update;
+}
+
+async function markEbayPlatformListingsWithdrawn(productIds: string[], reason = "operator_test_cleanup"): Promise<any> {
+  const ids = Array.from(new Set((productIds || []).map((id) => String(id || "").trim()).filter(Boolean)));
+  if (!ids.length) return { skipped: true, reason: "no_product_ids" };
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("platform_listings")
+    .update({
+      listing_status: "not_listed",
+      mapping_status: "unmatched",
+      error_msg: reason,
+      error_code: null,
+      last_sync_at: now,
+      deleted_at: now,
+      updated_at: now,
+    })
+    .eq("platform", "ebay")
+    .in("master_product_id", ids)
+    .is("deleted_at", null)
+    .select("id,master_product_id,platform_item_id");
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, rows: data || [] };
+}
+
+async function handleWithdrawInventoryItemGroup(body: any, product: any, sku: string, inventoryGroupKey: string, marketplaceId: string, resetLocal: boolean, dryRun: boolean): Promise<Response> {
+  const productIds = Array.isArray(body?.product_ids)
+    ? body.product_ids.map((id: unknown) => String(id || "").trim()).filter(Boolean)
+    : [String(product?.id || "").trim()].filter(Boolean);
+
+  if (dryRun) {
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      product_id: product.id || null,
+      product_ids: productIds,
+      sku,
+      marketplace_id: marketplaceId,
+      inventory_group_key: inventoryGroupKey,
+      reset_local: resetLocal,
+      command: "/sell/inventory/v1/offer/withdraw_by_inventory_item_group",
+      can_withdraw: true,
+    });
+  }
+
+  const confirmed = body?.confirm === EBAY_HEADLESS_WITHDRAW_CONFIRM_PHRASE || body?.confirm_withdraw === true;
+  if (!confirmed) {
+    return jsonResp({
+      ok: false,
+      error: "confirm_required",
+      message: `Set dry_run=false and confirm="${EBAY_HEADLESS_WITHDRAW_CONFIRM_PHRASE}" to withdraw.`,
+      product_id: product.id || null,
+      product_ids: productIds,
+      sku,
+      marketplace_id: marketplaceId,
+      inventory_group_key: inventoryGroupKey,
+    }, 400);
+  }
+
+  // Official local doc: C:\dev\api-refs\marketplaces\ebay\sell\inventory.yaml
+  // POST /sell/inventory/v1/offer/withdraw_by_inventory_item_group ends a multiple-variation listing.
+  const withdrawRes = await ebayFetch(
+    "/sell/inventory/v1/offer/withdraw_by_inventory_item_group",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        inventoryItemGroupKey: inventoryGroupKey,
+        marketplaceId,
+      }),
+    }
+  );
+  if (withdrawRes.status !== 200 && withdrawRes.status !== 204) {
+    const passthroughStatus = (withdrawRes.status === 401 || withdrawRes.status === 403 || withdrawRes.status === 429)
+      ? withdrawRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_group_withdraw_failed",
+      upstream_status: withdrawRes.status,
+      upstream: formatEbayErrorBody(withdrawRes.body),
+      product_id: product.id || null,
+      product_ids: productIds,
+      sku,
+      marketplace_id: marketplaceId,
+      inventory_group_key: inventoryGroupKey,
+    }, passthroughStatus);
+  }
+
+  const persisted = resetLocal
+    ? await persistHeadlessEbayGroupWithdrawResult(inventoryGroupKey, "operator_listing_cleanup")
+    : null;
+  const platform_listing_reset = resetLocal
+    ? await markEbayPlatformListingsWithdrawn(productIds, "operator_listing_cleanup")
+    : null;
+
+  return jsonResp({
+    ok: true,
+    dry_run: false,
+    product_id: product.id || null,
+    product_ids: productIds,
+    sku,
+    marketplace_id: marketplaceId,
+    inventory_group_key: inventoryGroupKey,
+    withdrawn: true,
+    persisted,
+    platform_listing_reset,
+    raw: withdrawRes.body || null,
+  });
+}
+
 async function handleWithdrawProduct(body: any): Promise<Response> {
   const dryRun = body?.dry_run !== false && body?.dryRun !== false;
   const resetLocal = body?.reset_local !== false && body?.resetLocal !== false;
   const marketplaceId = s(body?.marketplaceId || body?.marketplace_id || "EBAY_US", "EBAY_US").trim() || "EBAY_US";
   const { product, sku } = await loadHeadlessEbayMappedProduct(body || {});
   const preferredOfferId = s(body?.offerId || body?.offer_id || product.ebay_offer_id).trim();
+  const inventoryGroupKey = s(body?.inventoryGroupKey || body?.inventory_group_key || product.ebay_inventory_group_key).trim();
+  if (inventoryGroupKey) {
+    return await handleWithdrawInventoryItemGroup(body, product, sku, inventoryGroupKey, marketplaceId, resetLocal, dryRun);
+  }
 
   const offersRes = await ebayFetch(
     `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`
@@ -2321,6 +2456,10 @@ async function handleWithdrawProduct(body: any): Promise<Response> {
       }, 409);
     }
     const persisted = await persistHeadlessEbayWithdrawResult(product, sku, "no_published_offer_found_local_reset");
+    const productIds = Array.isArray(body?.product_ids)
+      ? body.product_ids.map((id: unknown) => String(id || "").trim()).filter(Boolean)
+      : [String(product?.id || "").trim()].filter(Boolean);
+    const platform_listing_reset = await markEbayPlatformListingsWithdrawn(productIds, "no_published_offer_found_local_reset");
     return jsonResp({
       ok: true,
       dry_run: false,
@@ -2330,6 +2469,7 @@ async function handleWithdrawProduct(body: any): Promise<Response> {
       remote_withdraw_skipped: true,
       reason: "no_published_offer_found",
       persisted,
+      platform_listing_reset,
     });
   }
 
@@ -2357,6 +2497,12 @@ async function handleWithdrawProduct(body: any): Promise<Response> {
   const persisted = resetLocal
     ? await persistHeadlessEbayWithdrawResult(product, sku, "operator_test_cleanup")
     : null;
+  const productIds = Array.isArray(body?.product_ids)
+    ? body.product_ids.map((id: unknown) => String(id || "").trim()).filter(Boolean)
+    : [String(product?.id || "").trim()].filter(Boolean);
+  const platform_listing_reset = resetLocal
+    ? await markEbayPlatformListingsWithdrawn(productIds, "operator_listing_cleanup")
+    : null;
 
   return jsonResp({
     ok: true,
@@ -2368,6 +2514,7 @@ async function handleWithdrawProduct(body: any): Promise<Response> {
     ebay_item_id: targetOffer?.listing?.listingId || targetOffer?.listingId || product.ebay_item_id || null,
     withdrawn: true,
     persisted,
+    platform_listing_reset,
     raw: withdrawRes.body || null,
   });
 }
@@ -2405,6 +2552,14 @@ function requireInternalBridge(req: Request): Response | null {
   return null;
 }
 
+async function requireBridgeTokenOrAuthenticatedUser(req: Request): Promise<Response | null> {
+  const expected = (Deno as any)["env"]["get"]("PLATFORM_BRIDGE_INTERNAL_TOKEN") || "";
+  const actual = req.headers.get("x-platform-bridge-token") || "";
+  if (expected && actual === expected) return null;
+  const authResult = await requireAuthenticatedUser(req);
+  return authResult.response || null;
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -2428,10 +2583,10 @@ async function handleRequest(req: Request): Promise<Response> {
     }
 
     if (action === "withdraw-product" && req.method === "POST") {
-      // Headless cleanup path for repeatable test listings. It is intentionally
-      // server-only because it can end a live eBay listing.
-      const internal = requireInternalBridge(req);
-      if (internal) return internal;
+      // Cleanup path for repeatable test listings. Browser calls require a real
+      // signed-in user plus the explicit withdraw confirmation phrase.
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
       const body = await req.json().catch(() => ({}));
       return await handleWithdrawProduct(body);
     }

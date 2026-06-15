@@ -88,6 +88,50 @@ async function joomFetch(path: string, init: RequestInit = {}): Promise<any> {
   return body.data;
 }
 
+async function markJoomListingRemoved(body: any, productId: string, raw: any) {
+  if (body.reset_local === false || body.resetLocal === false) return null;
+  const productIds = Array.isArray(body.product_ids)
+    ? body.product_ids.map((id: unknown) => String(id || "").trim()).filter(Boolean)
+    : [String(body.product_id || body.productId || "").trim()].filter(Boolean);
+  if (!productIds.length) return { skipped: true, reason: "no_product_ids" };
+  const now = new Date().toISOString();
+  const { data: listingRows, error: listingErr } = await supabase
+    .from("platform_listings")
+    .update({
+      listing_status: "not_listed",
+      mapping_status: "unmatched",
+      error_msg: "operator_listing_cleanup",
+      error_code: null,
+      last_sync_at: now,
+      deleted_at: now,
+      updated_at: now,
+    })
+    .eq("platform", "joom")
+    .in("master_product_id", productIds)
+    .is("deleted_at", null)
+    .select("id,master_product_id,platform_item_id");
+  const { data: productRows, error: productErr } = await supabase
+    .from("products")
+    .update({
+      joom_product_id: null,
+      joom_variant_id: null,
+      joom_status: "archived",
+      joom_mapping_status: null,
+      joom_mapping_error: "operator_listing_cleanup",
+      joom_last_synced_at: now,
+    })
+    .in("id", productIds)
+    .select("id,sku");
+  return {
+    ok: !listingErr && !productErr,
+    productId,
+    product_ids: productIds,
+    platform_listings: listingErr ? { ok: false, error: listingErr.message } : { ok: true, rows: listingRows || [] },
+    products: productErr ? { ok: false, error: productErr.message } : { ok: true, rows: productRows || [] },
+    raw,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Category management (dynamic fetch + fallback)
 // ---------------------------------------------------------------------------
@@ -922,12 +966,13 @@ async function handleRequest(req: Request): Promise<Response> {
       }
       // Official local doc: C:\dev\api-refs\marketplaces\joom\openapi.yaml
       // POST /products/remove archives/removes the product and all variants.
-      await joomFetch(`/products/remove?${param}`, {
+      const result = await joomFetch(`/products/remove?${param}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
       });
-      return jsonResp({ ok: true, dry_run: false, deleted: productId });
+      const persisted = await markJoomListingRemoved(body, productId, result);
+      return jsonResp({ ok: true, dry_run: false, deleted: productId, persisted });
     }
 
     return jsonResp({ ok: false, error: `unknown action: ${action} (${req.method})` }, 404);

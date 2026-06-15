@@ -7,6 +7,7 @@
 // - api-refs/marketplaces/qoo10/api-pages/카테고리브랜드/10039-SearchBrand.md
 // - api-refs/marketplaces/qoo10/api-pages/상품-수정/10030-EditGoodsHeaderFooter.md
 
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 import { AUTH_CORS, requireAuthenticatedUser } from "../_shared/auth.ts";
 
 // Normalized doc path note: the Qoo10 docs live under
@@ -24,6 +25,11 @@ const QOO10_SCAN_STATUSES = String((Deno as any).env.get("QOO10_SCAN_STATUSES") 
 const QOO10_SCAN_MAX_ITEMS = Number((Deno as any).env.get("QOO10_SCAN_MAX_ITEMS") || 3000);
 
 const CORS: Record<string, string> = { ...AUTH_CORS, "Access-Control-Max-Age": "3600" };
+
+const supabase = createClient(
+  (Deno as any).env.get("SUPABASE_URL")!,
+  (Deno as any).env.get("SUPABASE_SERVICE_ROLE_KEY")!,
+);
 
 function jsonResp(body: any, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json", ...CORS } });
@@ -200,6 +206,33 @@ function lookupFailureFromRaw(raw: any, fallback = "qoo10_lookup_failed") {
   const message = qoo10Message(raw) || fallback;
   const notFound = /not\s*found|no\s*data|empty|no item|fail to find/i.test(message || "");
   return { message, notFound };
+}
+
+async function markQoo10ListingDeleted(body: any, itemCode: string, raw: any) {
+  if (body.reset_local === false || body.resetLocal === false) return null;
+  const productIds = Array.isArray(body.product_ids)
+    ? body.product_ids.map((id: unknown) => String(id || "").trim()).filter(Boolean)
+    : [String(body.product_id || body.productId || "").trim()].filter(Boolean);
+  if (!productIds.length) return { skipped: true, reason: "no_product_ids" };
+  const now = new Date().toISOString();
+  const { data, error } = await supabase
+    .from("platform_listings")
+    .update({
+      listing_status: "not_listed",
+      mapping_status: "unmatched",
+      error_msg: "operator_listing_cleanup",
+      error_code: null,
+      last_sync_at: now,
+      deleted_at: now,
+      updated_at: now,
+    })
+    .eq("platform", "qoo10")
+    .in("master_product_id", productIds)
+    .is("deleted_at", null)
+    .select("id,master_product_id,platform_item_id");
+  return error
+    ? { ok: false, error: error.message, product_ids: productIds, item_code: itemCode, raw }
+    : { ok: true, rows: data || [], product_ids: productIds, item_code: itemCode, raw };
 }
 
 async function fetchInventoryByItemCode(itemCode: string) {
@@ -581,6 +614,7 @@ async function handleDeleteListing(req: Request): Promise<Response> {
   const res = await qoo10Fetch("ItemsBasic.EditGoodsStatus", params);
   if (res.status < 200 || res.status >= 300) return jsonResp({ ok: false, error: `qoo10_http_${res.status}`, raw: res.raw }, 502);
   if (!qoo10Success(res.raw)) return jsonResp(failureFromRaw(res.raw, "qoo10_edit_goods_status_failed"), 502);
+  const persisted = status === "3" ? await markQoo10ListingDeleted(body, itemCode, res.raw) : null;
 
   return jsonResp({
     ok: true,
@@ -589,6 +623,7 @@ async function handleDeleteListing(req: Request): Promise<Response> {
     seller_code: sellerCode || null,
     status,
     deleted: status === "3",
+    persisted,
     raw: res.raw,
   });
 }

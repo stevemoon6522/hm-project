@@ -4510,6 +4510,13 @@ LEGACY END -->
     register: '대량 등록',
     edit: '대량 수정',
     retry: '실패 재시도',
+    delete: '플랫폼 삭제',
+  });
+  const PLATFORM_DELETE_CONFIRM = Object.freeze({
+    shopee: 'DELETE_SHOPEE_GLOBAL_ITEM',
+    joom: 'DELETE_JOOM_PRODUCT',
+    qoo10: 'DELETE_QOO10_LISTING',
+    ebay: 'WITHDRAW_EBAY_LISTING',
   });
   const PLATFORM_JOOM_GOODS_CATEGORY_ID = '1733235756332554566-61-2-11859-1440023039'; // Memorabilia
   const PLATFORM_QOO10_GOODS_CATEGORY_ID = '300002855'; // KPOP goods
@@ -6201,6 +6208,7 @@ LEGACY END -->
             <button type="button" data-platform-quick="register" data-platform-key="${text(key)}"${quickDisabled}>등록</button>
             <button type="button" data-platform-quick="edit" data-platform-key="${text(key)}"${quickDisabled}>수정</button>
             <button type="button" data-platform-quick="retry" data-platform-key="${text(key)}"${quickDisabled}>재시도</button>
+            <button type="button" data-platform-quick="delete" data-platform-key="${text(key)}"${quickDisabled}>삭제</button>
           </td>
         </tr>`;
       if (!expanded) return master;
@@ -6267,6 +6275,7 @@ LEGACY END -->
           <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(registerActionLabel)}</button>
           <button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>수정 미리보기</button>
           <button type="button" data-platform-preview="retry" ${canRunSelectionAction ? '' : 'disabled'}>실패 재시도</button>
+          <button type="button" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>삭제</button>
           <button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>원격 SKU 확인</button>
         </div>
       </div>
@@ -6281,7 +6290,7 @@ LEGACY END -->
               <th style="width:150px;">등록 상태</th>
               <th style="width:110px;text-align:center;">상세</th>
               <th style="width:150px;">옵션/SKU</th>
-              <th style="width:210px;">작업</th>
+              <th style="width:250px;">작업</th>
             </tr>
           </thead>
           <tbody>${platformTableRows(platform)}</tbody>
@@ -6443,11 +6452,100 @@ LEGACY END -->
     platformOpenPreview(platform, action, explicitKeys);
   }
 
+  function platformGroupProductIds(group) {
+    return Array.from(new Set((group?.rows || []).map((row) => String(row.id || '').trim()).filter(Boolean)));
+  }
+
+  function platformGroupListingDetails(group, platform) {
+    const details = [];
+    (group?.rows || []).forEach((row) => {
+      rollupDetailValues(rollupFor(row.id, platform)).forEach((detail) => {
+        if (detail && typeof detail === 'object') details.push({ ...detail, product_id: row.id, sku: row.sku });
+      });
+    });
+    return details;
+  }
+
+  function platformUniqueValues(values) {
+    return Array.from(new Set((values || []).map((value) => String(value || '').trim()).filter(Boolean)));
+  }
+
+  function platformFirstDetailForProduct(details, productId) {
+    return (details || []).find((detail) => String(detail.product_id || '') === String(productId)) || null;
+  }
+
+  function platformDeleteTargets(platform, group) {
+    if (platform === 'alibaba') return [];
+    const rows = group?.rows || [];
+    const productIds = platformGroupProductIds(group);
+    const details = platformGroupListingDetails(group, platform);
+    const first = rows[0] || {};
+
+    if (platform === 'shopee') {
+      const localRows = (state.listings || []).filter((row) => productIds.includes(String(row.product_id || '')));
+      const globalIds = platformUniqueValues([
+        ...details.map((detail) => detail.global_item_id),
+        ...localRows.map((row) => row.global_item_id),
+      ]);
+      const region = (platformFilter(platform).regions || SHOPEE_PLATFORM_ACTIVE_REGIONS)[0] || 'SG';
+      return globalIds.map((globalItemId) => ({ global_item_id: globalItemId, region, product_ids: productIds }));
+    }
+
+    if (platform === 'joom') {
+      const productItemIds = platformUniqueValues(details.map((detail) => detail.platform_item_id || detail.external_product_id || detail.id));
+      if (productItemIds.length) return productItemIds.map((productId) => ({ productId, product_ids: productIds }));
+      const sku = platformGroupSku(group);
+      return sku ? [{ sku, product_ids: productIds }] : [];
+    }
+
+    if (platform === 'qoo10') {
+      const itemCodes = platformUniqueValues(details.map((detail) => detail.platform_item_id || detail.item_code || detail.goods_no));
+      return itemCodes.map((itemCode) => ({
+        item_code: itemCode,
+        seller_code: first.sku || platformGroupSku(group) || '',
+        product_ids: productIds,
+      }));
+    }
+
+    if (platform === 'ebay') {
+      const listingIds = platformUniqueValues(details.map((detail) => detail.platform_item_id || detail.ebay_item_id || detail.listing_id));
+      if (group?.isGrouped && listingIds.length <= 1 && first.id) {
+        const detail = platformFirstDetailForProduct(details, first.id) || details[0] || {};
+        return [{
+          product_id: first.id,
+          sku: first.sku || platformGroupSku(group) || '',
+          product_ids: productIds,
+          offer_id: detail.external_variant_id || detail.offer_id || '',
+        }];
+      }
+      return rows
+        .map((row) => {
+          const detail = platformFirstDetailForProduct(details, row.id) || {};
+          return {
+            product_id: row.id,
+            sku: row.sku || '',
+            product_ids: [row.id].filter(Boolean),
+            offer_id: detail.external_variant_id || detail.offer_id || '',
+          };
+        })
+        .filter((target) => target.product_id || target.sku);
+    }
+
+    return [];
+  }
+
   function platformGroupValidation(platform, action, group) {
     const errors = [];
     const warnings = [];
     const rows = group.rows || [];
     if (!rows.length) errors.push('상품 행이 없습니다.');
+    if (action === 'delete') {
+      const targets = platformDeleteTargets(platform, group);
+      if (platform === 'alibaba') errors.push('Alibaba 삭제는 이번 워크플로우 범위에서 제외했습니다.');
+      else if (!targets.length) errors.push(`${PLATFORM_LABELS[platform] || platform} 원격 리스팅 매핑을 찾지 못했습니다.`);
+      else warnings.push('원격 플랫폼에서 리스팅을 삭제/종료하고 로컬 매핑을 비워 다시 등록 가능한 상태로 만듭니다.');
+      return { errors, warnings };
+    }
     rows.forEach((row) => {
       if (!String(row.sku || '').trim()) errors.push(`${plProductName(row) || row.id}: SKU가 비어 있습니다.`);
       if (/[^\x00-\x7F]/.test(String(row.sku || ''))) errors.push(`${row.sku}: SKU는 ASCII만 허용됩니다.`);
@@ -6455,10 +6553,14 @@ LEGACY END -->
     if (action === 'register' || action === 'retry') {
       const first = rows[0] || {};
       const isGoods = productKindIsGoods(first);
-      const defaults = productKindDefaults(productKindOfRow(first));
-      const joomCategoryId = normalizeJoomCategoryId(first.joom_category_id || first._joomCategory || defaults.joom_category_id);
-      const qoo10CategoryId = String(first.qoo10_category_id || first._qoo10_category_id || defaults.qoo10_category_id || '').trim();
-      const ebayCategoryId = String(first.ebay_category_id || first._ebayCategory || defaults.ebay_category_id || '').trim();
+      const defaults = (typeof productKindDefaults === 'function') ? productKindDefaults(isGoods ? 'goods' : 'album') : {};
+      const normalizeJoom = (typeof normalizeJoomCategoryId === 'function') ? normalizeJoomCategoryId : (value) => String(value || '').trim();
+      const joomCategoryId = platform === 'joom' ? normalizeJoom(first.joom_category_id || first._joomCategory || defaults.joom_category_id) : '';
+      const qoo10DefaultCategoryId = isGoods ? '' : (defaults.qoo10_category_id || '300002851');
+      const ebayDefaultCategoryId = isGoods ? '' : (defaults.ebay_category_id || PLATFORM_EBAY_DEFAULT_CATEGORY_ID);
+      const qoo10CategoryId = String(first.qoo10_category_id || first._qoo10_category_id || qoo10DefaultCategoryId || '').trim();
+      const explicitEbayCategoryId = String(first.ebay_category_id || first._ebayCategory || '').trim();
+      const ebayCategoryId = String(explicitEbayCategoryId || ebayDefaultCategoryId || '').trim();
       if (platform === 'shopee') {
         if (!first.shopee_category_id) errors.push('Shopee category가 없습니다.');
         if (first.shopee_brand_id == null) errors.push('Shopee brand가 없습니다.');
@@ -6477,7 +6579,7 @@ LEGACY END -->
         if (!Number(first.alibaba_price_usd || 0)) warnings.push('Alibaba FOB 단가(USD)가 비어 있습니다 — 등록 모달에서 입력하세요.');
         if (!first.alibaba_category_id) warnings.push('Alibaba 카테고리 미지정 — AI 자동 분류됩니다.');
       }
-      if (platform === 'ebay' && !ebayCategoryId) {
+      if (platform === 'ebay' && !explicitEbayCategoryId) {
         if (isGoods) warnings.push('Goods 상품은 eBay 등록 모달에서 category ID를 입력해야 합니다.');
         else warnings.push(`eBay category ID가 없어서 기본 Music > CDs (${PLATFORM_EBAY_DEFAULT_CATEGORY_ID})로 등록합니다.`);
       }
@@ -6534,7 +6636,7 @@ LEGACY END -->
         </details>`;
     }).join('');
     const allErrors = groups.some((group) => platformGroupValidation(platform, action, group).errors.length);
-    const executeLabel = action === 'edit' ? '수정 흐름 열기' : '실행';
+    const executeLabel = action === 'edit' ? '수정 흐름 열기' : (action === 'delete' ? '삭제 실행' : '실행');
     return `
       <div class="platform-preview">
         <div class="platform-preview-head">
@@ -6567,9 +6669,14 @@ LEGACY END -->
     const action = preview.action;
     const groups = platformSelectedGroups(platform, preview.keys);
     if (!groups.length) return;
+    if (action === 'delete') {
+      const label = PLATFORM_LABELS[platform] || platform;
+      if (!confirm(`${label} 원격 리스팅을 삭제/종료하고 로컬 매핑을 비웁니다.\n\n이후 같은 Master Product를 다시 등록할 수 있습니다.\n계속할까요?`)) return;
+    }
     preview.running = true;
     renderPlatformWorkbench(platform);
     const results = [];
+    let shouldReloadData = false;
     for (const group of groups) {
       const key = platformGroupKey(group);
       const validation = platformGroupValidation(platform, action, group);
@@ -6580,6 +6687,10 @@ LEGACY END -->
         if (action === 'edit') {
           await platformOpenEditFlow(platform);
           results.push({ key, ok: true, message: '수정 흐름을 열었습니다.' });
+        } else if (action === 'delete') {
+          const json = await platformDeleteRemoteListing(platform, group);
+          shouldReloadData = true;
+          results.push({ key, ok: true, message: json.message || '삭제/정리 완료' });
         } else if (platformCanUseDispatcher(platform, action, group)) {
           const row = group.rows[0];
           const json = await platformPublishDirect(platform, row, action);
@@ -6597,9 +6708,86 @@ LEGACY END -->
       renderPlatformWorkbench(platform);
     }
     preview.running = false;
-    try { await refreshPlatformLedSources(); } catch (_) {}
+    if (shouldReloadData) {
+      await loadData();
+    } else {
+      try { await refreshPlatformLedSources(); } catch (_) {}
+    }
     renderPlatformWorkbench(platform);
     renderProducts();
+  }
+
+  async function platformDeleteRemoteListing(platform, group) {
+    const targets = platformDeleteTargets(platform, group);
+    if (!targets.length) throw new Error(`${PLATFORM_LABELS[platform] || platform} 삭제 대상이 없습니다.`);
+    const confirmPhrase = PLATFORM_DELETE_CONFIRM[platform];
+    if (!confirmPhrase) throw new Error(`${PLATFORM_LABELS[platform] || platform} 삭제는 지원하지 않습니다.`);
+    const headers = Object.assign({}, AUTH_HEADERS, { 'Content-Type': 'application/json' });
+    const bridgeUrls = {
+      shopee: SHOPEE_BRIDGE,
+      joom: SHOPEE_BRIDGE.replace('/shopee-bridge', '/joom-bridge'),
+      qoo10: QOO10_BRIDGE,
+      ebay: SHOPEE_BRIDGE.replace('/shopee-bridge', '/ebay-bridge'),
+    };
+    const results = [];
+
+    for (const target of targets) {
+      let url = '';
+      let body = { dry_run: false, reset_local: true, confirm: confirmPhrase };
+      if (platform === 'shopee') {
+        url = `${bridgeUrls.shopee}/delete_global_item_headless`;
+        body = {
+          ...body,
+          global_item_id: target.global_item_id,
+          region: target.region || 'SG',
+        };
+      } else if (platform === 'joom') {
+        url = `${bridgeUrls.joom}/delete`;
+        body = {
+          ...body,
+          productId: target.productId,
+          sku: target.sku,
+          product_ids: target.product_ids || [],
+        };
+      } else if (platform === 'qoo10') {
+        url = `${bridgeUrls.qoo10}/delete`;
+        body = {
+          ...body,
+          item_code: target.item_code,
+          seller_code: target.seller_code || '',
+          product_ids: target.product_ids || [],
+          status: '3',
+        };
+      } else if (platform === 'ebay') {
+        url = `${bridgeUrls.ebay}/withdraw-product`;
+        body = {
+          ...body,
+          product_id: target.product_id,
+          sku: target.sku || '',
+          offer_id: target.offer_id || undefined,
+          product_ids: target.product_ids || [],
+          marketplace_id: 'EBAY_US',
+        };
+      }
+
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+      const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+      if (!resp.ok || json.ok === false) {
+        throw new Error(json.message || json.error || json.error_msg || `HTTP ${resp.status}`);
+      }
+      results.push(json);
+    }
+
+    const label = PLATFORM_LABELS[platform] || platform;
+    return {
+      ok: true,
+      results,
+      message: `${label} 삭제/정리 ${results.length}건 완료`,
+    };
   }
 
   async function platformPublishDirect(platform, row, action) {
@@ -13136,7 +13324,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         _components_en: row.components_extracted_en || '',
         _tierNames: tierNames,
         _twoAxis: twoAxis,
-        _ebayCategory: String(row.ebay_category_id || productKindDefaults(productKindOfRow(row)).ebay_category_id || ''),
+        _ebayCategory: String(row.ebay_category_id || (productKindIsGoods(row) ? '' : PLATFORM_EBAY_DEFAULT_CATEGORY_ID) || ''),
         _ebayInventoryGroupKey: row.ebay_inventory_group_key || '',
         _ebayVariationAxis: row.ebay_variation_axis || 'Version',
         _ebayVariationValue: row.ebay_variation_value || version || '',
@@ -13450,7 +13638,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const first = rows[0] || {};
     const basePrice = mrQoo10BasePriceFromRows(rows);
     const isPreOrder = mrQoo10IsPreOrder(rows);
-    const qoo10CategoryDefault = productKindDefaults(productKindOfRow(first)).qoo10_category_id || '300002851';
+    const qoo10CategoryDefault = productKindIsGoods(first) ? '' : '300002851';
     const selectedShipping = first.qoo10_shipping_no || '715009';
     const detailImageCount = mrQoo10DetailImageUrls().length;
     const existingItemCode = _mrQoo10.existingItemCode || '';

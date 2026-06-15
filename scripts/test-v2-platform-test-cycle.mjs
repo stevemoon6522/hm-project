@@ -36,9 +36,11 @@ for (const token of [
   'const EBAY_HEADLESS_WITHDRAW_CONFIRM_PHRASE = "WITHDRAW_EBAY_LISTING"',
   'async function handleWithdrawProduct',
   'action === "withdraw-product" && req.method === "POST"',
-  'requireInternalBridge(req)',
+  'requireBridgeTokenOrAuthenticatedUser(req)',
   '/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/withdraw',
+  '/sell/inventory/v1/offer/withdraw_by_inventory_item_group',
   'ebay_status: "WITHDRAWN"',
+  'markEbayPlatformListingsWithdrawn',
 ]) {
   assert(ebayBridge.includes(token), `eBay cleanup path missing token: ${token}`);
 }
@@ -48,6 +50,7 @@ for (const token of [
   'const dryRun = body?.dry_run !== false && body?.dryRun !== false',
   'body.confirm === JOOM_DELETE_CONFIRM_PHRASE || body.confirm_delete === true',
   'command: "/products/remove"',
+  'markJoomListingRemoved',
 ]) {
   assert(joomBridge.includes(token), `Joom delete safety path missing token: ${token}`);
 }
@@ -59,6 +62,7 @@ for (const token of [
   'ItemsBasic.EditGoodsStatus',
   'Status=3 means Deleted/Discontinued',
   'action === "delete" && req.method === "POST"',
+  'markQoo10ListingDeleted',
 ]) {
   assert(qoo10Bridge.includes(token), `Qoo10 delete/status path missing token: ${token}`);
 }
@@ -67,7 +71,7 @@ for (const token of [
   "const SHOPEE_HEADLESS_DELETE_CONFIRM_PHRASE = 'DELETE_SHOPEE_GLOBAL_ITEM'",
   'async function handleHeadlessDeleteGlobalItem',
   "action === 'delete_global_item_headless' && req.method === 'POST'",
-  "requireInternalBridge(req)",
+  "requireBridgeTokenOrAuthenticatedUser(req)",
   "/api/v2/global_product/delete_global_item",
   "status: 'deleted'",
 ]) {

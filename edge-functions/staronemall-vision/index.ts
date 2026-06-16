@@ -3,7 +3,7 @@
 // using Claude Vision API (Anthropic Messages API).
 //
 // POST /extract
-//   body: { master_row_id: number, staronemall_url: string, image_url?: string }
+//   body: { master_row_id: number, staronemall_url: string, image_url?: string, image_urls?: string[], image_data_urls?: string[] }
 //   - If products.components_extracted_en is already set → returns cached result (no re-call).
 //   - Otherwise: fetch HTML, find largest wisacdn detail image, call Claude Vision,
 //     save result to products, return { ok: true, components_en: string }.
@@ -72,6 +72,23 @@ function parseClientImageDataUrls(value: unknown): ClaudeImageSource[] {
     });
   }
   return sources;
+}
+
+function parseRequestedImageUrls(value: unknown): { urls: string[]; invalid: string | null } {
+  const items = Array.isArray(value) ? value : [];
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    const imageUrl = String(item || "").trim();
+    if (!imageUrl) continue;
+    if (!/^https?:\/\//i.test(imageUrl)) {
+      return { urls: [], invalid: imageUrl };
+    }
+    if (seen.has(imageUrl)) continue;
+    seen.add(imageUrl);
+    urls.push(imageUrl);
+  }
+  return { urls, invalid: null };
 }
 
 function isStaronemallBannerImageUrl(url: string): boolean {
@@ -601,7 +618,7 @@ async function callClaudeVision(imageSources: ClaudeImageSource[]): Promise<stri
   }
 
   const prompt =
-    "This is a K-pop album product detail image showing the included components.\n\n" +
+    "This is one or more K-pop album product detail images showing the included components.\n\n" +
     "Extract the complete list of components exactly as printed in the image. " +
     "Output in English only, one item per line, each prefixed with a hyphen (-).\n\n" +
     "Rules:\n" +
@@ -612,6 +629,7 @@ async function callClaudeVision(imageSources: ClaudeImageSource[]): Promise<stri
     "  트레이→Tray, 포스터→Poster, 엽서카드→Postcard, 아웃박스→Outbox.\n" +
     "- Include quantities and variant counts when visible (e.g. '5 types', '2 pcs').\n" +
     "- Do not add items not shown in the image.\n" +
+    "- If multiple images show component lists, combine them into one deduplicated list.\n" +
     "- Output format: one hyphen-prefixed line per component, nothing else.";
 
   const body = {
@@ -686,7 +704,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // Parse body
-  let body: { master_row_id?: unknown; staronemall_url?: unknown; image_url?: unknown; image_data_urls?: unknown };
+  let body: { master_row_id?: unknown; staronemall_url?: unknown; image_url?: unknown; image_urls?: unknown; image_data_urls?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -696,6 +714,15 @@ Deno.serve(async (req: Request) => {
   const masterId = Number(body.master_row_id);
   const staronemallUrl = String(body.staronemall_url || "").trim();
   const requestedImageUrl = String(body.image_url || "").trim() || null;
+  const requestedImageUrlsResult = parseRequestedImageUrls(body.image_urls);
+  if (requestedImageUrlsResult.invalid) {
+    return errResp("image_urls must contain only absolute http(s) URLs.");
+  }
+  const imageUrlsToUse = Array.from(new Set([
+    ...(requestedImageUrl ? [requestedImageUrl] : []),
+    ...requestedImageUrlsResult.urls,
+  ]));
+  const hasRequestedImages = imageUrlsToUse.length > 0;
 
   // master_row_id = 0 means "extract only, do not persist to DB" (used before the row is saved)
   const persistToDb = masterId > 0;
@@ -713,7 +740,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // --- 1. Check cache (only if persisting to a real row) ---
-  if (persistToDb && !requestedImageUrl) {
+  if (persistToDb && !hasRequestedImages) {
     const { data: row, error: fetchErr } = await db
       .from("products")
       .select("components_extracted_en, components_extracted_at")
@@ -739,7 +766,7 @@ Deno.serve(async (req: Request) => {
   }
 
   let candidates: string[] = [];
-  if (!requestedImageUrl) {
+  if (!hasRequestedImages) {
     // --- 2. Fetch StarOneMall HTML ---
     let html: string;
     try {
@@ -763,7 +790,8 @@ Deno.serve(async (req: Request) => {
   }
 
   // --- 3. Extract image URL ---
-  const imageUrl = requestedImageUrl ?? pickBestDetailImage(candidates);
+  const imageUrl = imageUrlsToUse[0] ?? pickBestDetailImage(candidates);
+  const imageUrls = imageUrlsToUse.length ? imageUrlsToUse : (imageUrl ? [imageUrl] : []);
 
   if (!imageUrl) {
     return errResp(
@@ -791,29 +819,72 @@ Deno.serve(async (req: Request) => {
       };
       componentsEn = await callClaudeVision(visionImages.sources);
     } else {
-      visionImages = await prepareClaudeVisionImages(imageUrl);
+      const preparedByUrl: Array<{
+        url: string;
+        original_dimensions: ImageDimensions | null;
+        image_transform_mode: string;
+      }> = [];
+      const sources: ClaudeImageSource[] = [];
+      const modes: string[] = [];
+      for (const selectedImageUrl of imageUrls) {
+        const prepared = await prepareClaudeVisionImages(selectedImageUrl);
+        if (sources.length + prepared.sources.length > CLAUDE_MAX_CROP_TILES) {
+          throw new Error(`selected images require ${sources.length + prepared.sources.length} Claude image sources, exceeding limit ${CLAUDE_MAX_CROP_TILES}`);
+        }
+        sources.push(...prepared.sources);
+        preparedByUrl.push({
+          url: selectedImageUrl,
+          original_dimensions: prepared.original_dimensions,
+          image_transform_mode: prepared.image_transform_mode,
+        });
+        modes.push(prepared.image_transform_mode);
+      }
+      visionImages = {
+        sources,
+        original_dimensions: preparedByUrl[0]?.original_dimensions ?? null,
+        image_transform_mode: imageUrls.length > 1 ? `multi_image:${modes.join("+")}` : (modes[0] || "original"),
+      };
       try {
         componentsEn = await callClaudeVision(visionImages.sources);
       } catch (urlError) {
         if (!isClaudeDownloadError(urlError)) throw urlError;
-        try {
-          visionImages = await prepareClaudeVisionCloudinaryUploadImages(
-            imageUrl,
-            visionImages.original_dimensions,
-          );
-        } catch (uploadError) {
-          console.warn("[staronemall-vision] Cloudinary upload fallback failed; trying base64 fallback:", uploadError);
-          visionImages = await prepareClaudeVisionBase64Images(
-            imageUrl,
-            visionImages.original_dimensions,
-          );
+        const fallbackSources: ClaudeImageSource[] = [];
+        const fallbackModes: string[] = [];
+        for (const prepared of preparedByUrl) {
+          let fallbackImages: {
+            sources: ClaudeImageSource[];
+            original_dimensions: ImageDimensions | null;
+            image_transform_mode: string;
+          };
+          try {
+            fallbackImages = await prepareClaudeVisionCloudinaryUploadImages(
+              prepared.url,
+              prepared.original_dimensions,
+            );
+          } catch (uploadError) {
+            console.warn("[staronemall-vision] Cloudinary upload fallback failed; trying base64 fallback:", uploadError);
+            fallbackImages = await prepareClaudeVisionBase64Images(
+              prepared.url,
+              prepared.original_dimensions,
+            );
+          }
+          if (fallbackSources.length + fallbackImages.sources.length > CLAUDE_MAX_CROP_TILES) {
+            throw new Error(`fallback selected images require ${fallbackSources.length + fallbackImages.sources.length} Claude image sources, exceeding limit ${CLAUDE_MAX_CROP_TILES}`);
+          }
+          fallbackSources.push(...fallbackImages.sources);
+          fallbackModes.push(fallbackImages.image_transform_mode);
         }
+        visionImages = {
+          sources: fallbackSources,
+          original_dimensions: preparedByUrl[0]?.original_dimensions ?? null,
+          image_transform_mode: imageUrls.length > 1 ? `multi_image:${fallbackModes.join("+")}` : (fallbackModes[0] || "fallback"),
+        };
         componentsEn = await callClaudeVision(visionImages.sources);
       }
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    return errResp(`Claude Vision extraction failed for image ${imageUrl}: ${msg}`, 502);
+    return errResp(`Claude Vision extraction failed for image ${imageUrls.join(", ") || imageUrl}: ${msg}`, 502);
   }
 
   if (!componentsEn) {
@@ -845,6 +916,7 @@ Deno.serve(async (req: Request) => {
     persisted: persistToDb,
     components_en: componentsEn,
     image_url_used: imageUrl,
+    image_urls_used: imageUrls,
     image_transform_mode: visionImages.image_transform_mode,
     image_source_count: visionImages.sources.length,
     image_original_dimensions: visionImages.original_dimensions,

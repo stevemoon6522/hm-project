@@ -74,11 +74,14 @@ assert(!masterRegister.includes('const optionImages = normalizedMainImages.slice
 assert(masterRegister.includes('mrFilterStaronemallDetailImageUrls'), 'option image preview must exclude StarOneMall process/banner detail images');
 assert(masterRegister.includes('옵션 이미지 관리'), 'operator must be able to open an option image management modal');
 assert(masterRegister.includes('mrOpenOptionImageModal'), 'option image management modal must be wired');
-assert(masterRegister.includes('구성품 추출용'), 'modal must allow selecting the image used for component extraction');
-assert(masterRegister.includes('image_url: componentImageUrl'), 'components extraction must send the operator-selected detail image URL');
+assert(masterRegister.includes('구성품 추출용'), 'modal must allow selecting images used for component extraction');
+assert(masterRegister.includes('function mrGroupComponentImageUrls(group)'), 'components extraction must read operator-selected detail image URLs as an array');
+assert(masterRegister.includes('image_url: componentImageUrls[0] || \'\''), 'components extraction must keep the first selected detail image URL for compatibility');
+assert(masterRegister.includes('image_urls: componentImageUrls'), 'components extraction must send all operator-selected detail image URLs');
 assert(masterRegister.includes('image_data_urls: imageDataUrls'), 'components extraction must send browser-prepared image tiles when available');
 assert(masterRegister.includes('_detail_image_urls'), 'manual option image removals must be stored on the preview rows');
 assert(masterRegister.includes('_components_image_url'), 'selected component image URL must be stored on the preview rows');
+assert(masterRegister.includes('_components_image_urls'), 'selected component image URLs must be stored on the preview rows');
 assert(masterRegister.includes('components_extracted_en'), 'components must be persisted into products');
 assert(masterRegister.includes('components_approved: components ? 1 : 0'), 'operator-entered components must be saved as approved');
 assert(masterRegister.includes('function mrConvertGroupToSingleProduct'), 'last option-row removal must convert the card to single-product mode');

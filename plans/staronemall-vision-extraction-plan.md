@@ -41,6 +41,8 @@ POST `/extract` handler:
 5. Persist result to `products` (skipped for master_row_id=0)
 6. Return `{ ok, cached, persisted, components_en, image_url_used }`
 
+2026-06 update: `/extract` also accepts `image_urls?: string[]` and `image_data_urls?: string[]` so V2 can send multiple operator-selected component-detail images in one Vision call. The function combines all selected images into one English hyphen list, bypasses DB cache when selected images are supplied, and returns `image_urls_used` plus image-source diagnostics.
+
 Environment variable required: `ANTHROPIC_API_KEY` (Supabase secrets).
 
 **CORS:** OPTIONS → 204 null body (per feedback_supabase_cors_204_no_body).
@@ -119,3 +121,4 @@ Operator enters staronemall URL
 - Image URL extraction is regex-based; if staronemall changes CDN URL structure, regex needs update
 - `claude-sonnet-4-6` pricing: ~$3/MTok input + $15/MTok output (images ≈ 1-3K tokens)
 - Re-extract bypasses client session cache but NOT DB cache — for a true DB re-extract, operator must clear `components_extracted_en` manually or use the DB panel
+- V2 master registration caps selected component image sources at 20 Claude image blocks across all selected images; if the selected images split into more pieces, the operator must select fewer images.

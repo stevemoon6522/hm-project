@@ -145,14 +145,18 @@ test('READY STOCK transition is moved into product list PRE ORDER filter and PRE
   assert.match(html, /function updateProductListReadyStockButton\(lifecycleFilter\)/, 'button visibility should be tied to product list lifecycle filter');
 });
 
-test('master register flow has a manual option-image management modal and sends the picked component image to Vision', () => {
+test('master register flow has a manual option-image management modal and sends selected component images to Vision', () => {
   assert.match(masterRegisterImageTools, /function mrOpenOptionImageModal\(group\)/, 'option image management modal should exist');
   assert.match(masterRegisterImageTools, /옵션 이미지 관리/, 'modal should be labeled for operators');
   assert.match(masterRegisterImageTools, /type: 'checkbox', checked: true/, 'each crawled option image should be removable with a keep checkbox');
-  assert.match(masterRegisterImageTools, /type: 'radio', name: 'mr-component-image-url'/, 'operator should be able to pick the component extraction image');
-  assert.match(masterRegisterImageTools, /mrSetGroupOptionImages\(group, kept, picked\)/, 'modal save should persist removed images and selected component image');
-  assert.match(masterRegisterImageTools, /image_url: componentImageUrl/, 'Vision extraction should use the operator-selected component image, not the first/cover image');
+  assert.match(masterRegisterImageTools, /type: 'checkbox', name: 'mr-component-image-url'/, 'operator should be able to pick multiple component extraction images');
+  assert.match(masterRegisterImageTools, /mrSetGroupOptionImages\(group, kept, picked\)/, 'modal save should persist removed images and selected component images');
+  assert.match(masterRegisterImageTools, /function mrGroupComponentImageUrls\(group\)/, 'selected component images should be read as an array');
+  assert.match(masterRegisterImageTools, /_components_image_urls/, 'selected component images should be stored on preview rows');
+  assert.match(masterRegisterImageTools, /image_url: componentImageUrls\[0\] \|\| ''/, 'Vision extraction should keep a first-image URL for backward compatibility');
+  assert.match(masterRegisterImageTools, /image_urls: componentImageUrls/, 'Vision extraction should send all operator-selected component images');
   assert.match(masterRegisterImageTools, /image_data_urls: imageDataUrls/, 'Vision extraction should send browser-prepared image tiles when available');
+  assert.match(masterRegisterImageTools, /mrNormalizeComponentsText/, 'Vision result should be normalized into one deduplicated component list');
 });
 
 test('platform SKU sync includes Shopee lookup-sku and absorbs matched region ids', () => {

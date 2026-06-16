@@ -6,14 +6,18 @@ const source = readFileSync("supabase/functions/staronemall-vision/index.ts", "u
 const edgeCopy = readFileSync("edge-functions/staronemall-vision/index.ts", "utf8");
 const imageFilter = readFileSync("supabase/functions/_shared/staronemall-images.ts", "utf8");
 
-test("staronemall vision extraction accepts an operator-selected detail image", () => {
+test("staronemall vision extraction accepts operator-selected detail images", () => {
   for (const [name, text] of [["supabase", source], ["edge", edgeCopy]]) {
     assert.match(text, /image_url\?: unknown/, `${name} body type should accept image_url`);
+    assert.match(text, /image_urls\?: unknown/, `${name} body type should accept image_urls`);
     assert.match(text, /requestedImageUrl/, `${name} should parse requestedImageUrl`);
-    assert.match(text, /requestedImageUrl \?\? pickBestDetailImage/, `${name} should prefer requestedImageUrl over automatic selection`);
+    assert.match(text, /parseRequestedImageUrls/, `${name} should parse selected image URL arrays`);
+    assert.match(text, /imageUrlsToUse\[0\] \?\? pickBestDetailImage/, `${name} should prefer selected image URLs over automatic selection`);
     assert.match(text, /return pool\[pool\.length - 1\] \|\| null/, `${name} automatic fallback should prefer the last product-detail image`);
-    assert.match(text, /!requestedImageUrl/, `${name} cache should be bypassable when a selected image is supplied`);
+    assert.match(text, /!hasRequestedImages/, `${name} cache should be bypassable when selected images are supplied`);
     assert.match(text, /image_url_used: imageUrl/, `${name} should report the selected image URL used`);
+    assert.match(text, /image_urls_used: imageUrls/, `${name} should report all selected image URLs used`);
+    assert.match(text, /multi_image:\$\{modes\.join\("\+"\)\}/, `${name} should label multi-image extraction mode`);
   }
 });
 
@@ -35,7 +39,7 @@ test("staronemall vision extraction prepares oversize images before Claude", () 
     assert.match(text, /c_crop,w_\$\{w\},h_\$\{h\},x_\$\{x\},y_\$\{y\}/, `${name} should split oversized images into crop tiles`);
     assert.match(text, /CLAUDE_MAX_CROP_TILES/, `${name} should cap crop tile fan-out`);
     assert.match(text, /\.\.\.imageSources\.map/, `${name} should send prepared images as multiple Claude image blocks`);
-    assert.match(text, /prepareClaudeVisionImages\(imageUrl\)/, `${name} should prepare images before calling Claude`);
+    assert.match(text, /prepareClaudeVisionImages\(selectedImageUrl\)/, `${name} should prepare selected images before calling Claude`);
     assert.match(text, /callClaudeVision\(visionImages\.sources\)/, `${name} should pass prepared image sources to Claude`);
     assert.match(text, /image_transform_mode/, `${name} should return image transform metadata for diagnosis`);
     assert.match(text, /image_source_count/, `${name} should return image source count for diagnosis`);

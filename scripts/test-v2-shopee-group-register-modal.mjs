@@ -134,7 +134,7 @@ assert(
   rshModal.includes('rshBuildLayeredCoverDataUrl')
     && rshModal.includes('rshBuildDetailUploadRefs')
     && rshModal.includes('const detailSources = rshActiveDetailImageSources()')
-    && rshModal.includes('STARONEMALL_LAYER_VERSION'),
+    && rshModal.includes('sdShopeeLayerVersion(accountKey)'),
   'group modal must build a shop-layer cover and upload detail images after it',
 );
 assert(

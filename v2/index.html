@@ -13614,14 +13614,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return new File([blob], fileName, { type: blob.type || 'image/png' });
   }
 
+  const _mrMarketplaceLayeredImageCache = new Map();
+
+  async function mrBuildMarketplaceLayeredMainImageUrl(platform, mainImageUrl, row = {}) {
+    const sourceUrl = String(mainImageUrl || '').trim();
+    const platformKey = String(platform || 'marketplace').toLowerCase().replace(/[^a-z0-9-]+/g, '-') || 'marketplace';
+    if (!sourceUrl) throw new Error(`${platformKey} representative image is required before registration.`);
+    const accountKey = sdSelectedShopeeAccountKey();
+    const cacheKey = `${platformKey}:${accountKey}:${sourceUrl}`;
+    if (_mrMarketplaceLayeredImageCache.has(cacheKey)) return _mrMarketplaceLayeredImageCache.get(cacheKey);
+
+    const dataUrl = await rshBuildLayeredCoverDataUrl(sourceUrl);
+    const file = await mrQoo10DataUrlToFile(dataUrl, `${platformKey}-cover.png`);
+    const uploadRow = {
+      ...row,
+      _sku: sdProductImageSlug(row?._sku || row?.sku || row?.id || platformKey, 32) || platformKey.toUpperCase(),
+    };
+    const publicUrl = await sdUploadProductImageFile(file, uploadRow, {
+      kind: 'cover',
+      prefix: platformKey === 'qoo10' ? 'q10' : platformKey,
+    });
+    _mrMarketplaceLayeredImageCache.set(cacheKey, publicUrl);
+    return publicUrl;
+  }
+
   async function mrQoo10BuildLayeredMainImageUrl(rows) {
     const sortedRows = rows || [];
     const first = sortedRows[0] || {};
     const mainImageUrl = mrQoo10MainImageSource(sortedRows);
     if (!mainImageUrl) throw new Error('Qoo10 representative image is required before registration.');
-    const dataUrl = await rshBuildLayeredCoverDataUrl(mainImageUrl);
-    const file = await mrQoo10DataUrlToFile(dataUrl);
-    return await sdUploadProductImageFile(file, first, { kind: 'qoo10-layered-cover', prefix: 'v2-qoo10' });
+    return await mrBuildMarketplaceLayeredMainImageUrl('qoo10', mainImageUrl, first);
   }
 
   function mrQoo10ExistingItemCode(rows) {
@@ -13977,10 +13999,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (payload.publish.available_date_type === '2' && !payload.publish.release_date) throw new Error('예약발송은 출시일이 필요합니다.');
       if (!payload.publish.brand_no) throw new Error('Qoo10 BrandNo is required. Search and select the registered brand.');
       if (!payload.publish.header_html.trim()) throw new Error('Qoo10 Header HTML is required. Paste the fixed header template once.');
-      if (!_mrQoo10.existingItemCode && !payload.publish.main_image) throw new Error('Qoo10 representative image is required before registration.');
       _mrQoo10.publishInFlight = true;
       if (confirmBtn) confirmBtn.disabled = true;
-      if (!_mrQoo10.existingItemCode) {
+      if (!payload.publish.main_image) {
+        if (!_mrQoo10.existingItemCode) throw new Error('Qoo10 representative image is required before registration.');
+      } else {
         mrQoo10Status('Building Qoo10 layered representative image...');
         payload.publish.main_image = await mrQoo10BuildLayeredMainImageUrl(_mrQoo10.rows || []);
       }
@@ -26645,11 +26668,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return aspects;
     }
 
-    function mrEbayImageUrls(group, sourceRow) {
+    function mrEbayImageUrls(group, sourceRow, layeredMainImageUrl = '') {
       const firstRow = group?.rows?.[0] || {};
       const baseUrl = sourceRow?.url || firstRow.url || '';
       const mainImage = String(
-        firstRow._ebayMainImage
+        layeredMainImageUrl
+        || firstRow._ebayLayeredMainImageUrl
+        || firstRow._ebayMainImage
         || mrMasterRepresentativeImage(group)
         || sourceRow?.main_image
         || ''
@@ -26667,6 +26692,20 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         .map(v => String(v || '').trim())
         .filter(v => v && !seen.has(v) && seen.add(v))
         .slice(0, 24);
+    }
+
+    async function mrEbayBuildLayeredMainImageUrl(group, sourceRow) {
+      const firstRow = group?.rows?.[0] || {};
+      const mainImageUrl = String(
+        firstRow._ebayMainImage
+        || mrMasterRepresentativeImage(group)
+        || sourceRow?.main_image
+        || ''
+      ).trim();
+      if (!mainImageUrl) throw new Error('eBay representative image is required before registration.');
+      const layeredUrl = await mrBuildMarketplaceLayeredMainImageUrl('ebay', mainImageUrl, sourceRow || firstRow);
+      firstRow._ebayLayeredMainImageUrl = layeredUrl;
+      return layeredUrl;
     }
 
     function mrEbayBuildVariationOptions(draftBase) {
@@ -26770,6 +26809,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const ebayPricing = _v2EbayBuildPricingContext(costKrw, weightG, exCountry);
       const overridePrice = Number(firstRow._ebayPriceUsd || 0);
       const computedPriceUsd = Number(ebayPricing.priceUsd || 0);
+      const layeredMainImageUrl = await mrEbayBuildLayeredMainImageUrl(group, sourceRow);
       const draft = {
         group,
         firstRow,
@@ -26791,7 +26831,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         weightG,
         ebayPricing,
         exCountry,
-        imageUrls: mrEbayImageUrls(group, sourceRow),
+        layeredMainImageUrl,
+        imageUrls: mrEbayImageUrls(group, sourceRow, layeredMainImageUrl),
         aspects: mrEbayBuildAspects(firstRow, sourceRow),
         publishError: '',
       };
@@ -26956,7 +26997,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       draft.firstRow._ebayPriceUsd = draft.priceUsd;
       draft.firstRow._ebayQuantity = draft.quantity;
       draft.firstRow._ebayDescription = draft.description;
-      draft.imageUrls = mrEbayImageUrls(draft.group, draft.sourceRow);
+      draft.imageUrls = mrEbayImageUrls(draft.group, draft.sourceRow, draft.layeredMainImageUrl);
       Object.assign(draft, mrEbayValidateDraft(draft));
       mrEbayUpdateModalStatus(draft);
       return draft;

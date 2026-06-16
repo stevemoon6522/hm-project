@@ -233,6 +233,65 @@ assert(
   'Platform remote SKU check must use the same single visible product fallback as registration preview',
 );
 
+const productListSelectionSignatureFn = new Function(
+  'state',
+  `${extractFunctionBlock(html, 'productListSelectionSignature')}; return productListSelectionSignature;`,
+);
+
+const platformMarkSelectionManualFn = new Function(
+  'state',
+  'productListSelectionSignature',
+  `${extractFunctionBlock(html, 'platformMarkSelectionManual')}; return platformMarkSelectionManual;`,
+);
+
+const platformAdoptProductListSelectionFn = new Function(
+  'state',
+  'platformSelection',
+  'productListSelectionSignature',
+  'platformGroupKeysFromProductIds',
+  `${extractFunctionBlock(html, 'platformAdoptProductListSelection')}; return platformAdoptProductListSelection;`,
+);
+
+{
+  const state = {
+    productListSelectedIds: new Set(['custom-master-product']),
+    platformSelectionManualSources: {},
+  };
+  const selected = new Set();
+  const productListSelectionSignature = productListSelectionSignatureFn(state);
+  const markSelectionManual = platformMarkSelectionManualFn(state, productListSelectionSignature);
+  const adoptProductListSelection = platformAdoptProductListSelectionFn(
+    state,
+    () => selected,
+    productListSelectionSignature,
+    (ids) => Array.from(ids || []).map((id) => `single:${id}`),
+  );
+
+  adoptProductListSelection('ebay');
+  assert.deepEqual(
+    Array.from(selected),
+    ['single:custom-master-product'],
+    'Platform tab may seed its initial selection from the product list selection',
+  );
+
+  markSelectionManual('ebay');
+  selected.delete('single:custom-master-product');
+  adoptProductListSelection('ebay');
+  assert.deepEqual(
+    Array.from(selected),
+    [],
+    'Platform checkbox uncheck must not be re-selected by product-list auto-adoption on the next render',
+  );
+
+  state.productListSelectedIds = new Set(['next-product']);
+  adoptProductListSelection('ebay');
+  assert.deepEqual(
+    Array.from(selected),
+    ['single:next-product'],
+    'Platform tab may adopt again after the product-list selection changes',
+  );
+}
+
 const platformOpenPreviewFn = new Function(
   'state',
   'platformSelectedGroups',

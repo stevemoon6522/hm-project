@@ -4558,6 +4558,7 @@ LEGACY END -->
     productListCollapsedGroups: new Set(),
     productListSelectedIds: new Set(),
     platformSelections: {},
+    platformSelectionManualSources: {},
     platformExpandedGroups: new Set(),
     platformFilters: {},
     platformPreview: null,
@@ -6152,6 +6153,18 @@ LEGACY END -->
     return state.platformSelections[platform];
   }
 
+  function productListSelectionSignature() {
+    return Array.from(state.productListSelectedIds || [])
+      .map((id) => String(id))
+      .sort()
+      .join('\n');
+  }
+
+  function platformMarkSelectionManual(platform) {
+    if (!state.platformSelectionManualSources) state.platformSelectionManualSources = {};
+    state.platformSelectionManualSources[platform] = productListSelectionSignature();
+  }
+
   function platformMasterGroups() {
     return plBuildProductGroups(state.products || []);
   }
@@ -6412,10 +6425,12 @@ LEGACY END -->
     });
     root.querySelector('[data-platform-select-visible]')?.addEventListener('click', () => {
       const sel = platformSelection(platform);
+      platformMarkSelectionManual(platform);
       platformVisibleGroups(platform).forEach((group) => sel.add(platformGroupKey(group)));
       renderPlatformWorkbench(platform);
     });
     root.querySelector('[data-platform-clear-selection]')?.addEventListener('click', () => {
+      platformMarkSelectionManual(platform);
       platformSelection(platform).clear();
       if (state.platformPreview?.platform === platform) state.platformPreview = null;
       renderPlatformWorkbench(platform);
@@ -6424,6 +6439,7 @@ LEGACY END -->
       cb.addEventListener('change', () => {
         const sel = platformSelection(platform);
         const key = cb.dataset.platformKey || '';
+        platformMarkSelectionManual(platform);
         if (cb.checked) sel.add(key);
         else sel.delete(key);
         renderPlatformWorkbench(platform);
@@ -6473,6 +6489,8 @@ LEGACY END -->
   function platformAdoptProductListSelection(platform) {
     const sel = platformSelection(platform);
     if (sel.size || !state.productListSelectedIds?.size) return;
+    const sourceSignature = productListSelectionSignature();
+    if (state.platformSelectionManualSources?.[platform] === sourceSignature) return;
     platformGroupKeysFromProductIds(state.productListSelectedIds).forEach((key) => sel.add(key));
   }
 

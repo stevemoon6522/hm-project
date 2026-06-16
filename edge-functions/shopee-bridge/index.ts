@@ -110,11 +110,46 @@ const PROXY_ALLOWED_SUFFIXES = [
   '.shopeesz.com',
 ];
 
-async function getApp() {
+async function getAccountCredential(accountKey: string) {
+  try {
+    const { data, error } = await supabase
+      .from('shopee_account_credentials')
+      .select('account_key, partner_id, partner_key_secret_name, is_sandbox')
+      .eq('account_key', accountKey)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  } catch (e: any) {
+    audit('account_credential_lookup_failed', { account_key: accountKey, error: String(e?.message || e) });
+    return null;
+  }
+}
+
+async function getApp(accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const key = normalizeAccountKey(accountKey);
   const { data } = await supabase.from('shopee_app').select('*').eq('id', 1).single();
   if (!data) throw new Error('shopee_app no');
+  const credential = await getAccountCredential(key);
+  if (credential?.partner_id && credential?.partner_key_secret_name) {
+    const partnerKey = Deno.env.get(String(credential.partner_key_secret_name));
+    if (!partnerKey) {
+      throw new Error(`Shopee partner key secret missing for account=${key}: ${credential.partner_key_secret_name}`);
+    }
+    return {
+      ...data,
+      account_key: key,
+      partner_id: Number(credential.partner_id),
+      partner_key: partnerKey,
+      partner_key_secret_name: credential.partner_key_secret_name,
+      is_sandbox: Boolean(credential.is_sandbox),
+    };
+  }
+  if (key !== DEFAULT_SHOPEE_ACCOUNT_KEY) {
+    throw new Error(`Shopee credential missing for account=${key}`);
+  }
   return {
     ...data,
+    account_key: key,
     partner_id: ENV_PARTNER_ID ? Number(ENV_PARTNER_ID) : data.partner_id,
     partner_key: ENV_PARTNER_KEY || data.partner_key,
   };
@@ -403,7 +438,7 @@ async function refreshMerchantToken(region: string, accountKey = DEFAULT_SHOPEE_
   const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
   if (!data) throw new Error(`token no: ${region}`);
   if (!data.merchant_id) throw new Error(`merchant_id missing for region ${region}`);
-  const app = await getApp();
+  const app = await getApp(accountKey);
   const path = '/api/v2/auth/access_token/get';
   const ts = Math.floor(Date.now() / 1000);
   const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
@@ -449,7 +484,7 @@ async function canCallShopInfo(app: any, accessToken: string, shopId: number | s
 async function forceRefreshShopToken(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
   if (!data) throw new Error(`token no: ${region}`);
-  const app = await getApp();
+  const app = await getApp(accountKey);
   const path = '/api/v2/auth/access_token/get';
   const ts = Math.floor(Date.now() / 1000);
   const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
@@ -491,7 +526,7 @@ async function forceRefreshShopToken(region: string, accountKey = DEFAULT_SHOPEE
 async function issueMerchantToken(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
   if (!data) throw new Error(`token no: ${region}`);
-  const app = await getApp();
+  const app = await getApp(accountKey);
   const path = '/api/v2/auth/access_token/get';
   const ts = Math.floor(Date.now() / 1000);
   const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
@@ -528,7 +563,7 @@ async function getValidToken(region: string, mode: 'shop' | 'merchant' = 'shop',
     const r = await refreshMerchantToken(region, accountKey);
     return r;
   }
-  const app = await getApp();
+  const app = await getApp(accountKey);
   const path = '/api/v2/auth/access_token/get';
   const ts = Math.floor(Date.now() / 1000);
   const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
@@ -554,7 +589,7 @@ function isInvalidAccessToken(r: any): boolean {
 
 async function shopApiCall(region: string, path: string, opts: any = {}) {
   const accountKey = normalizeAccountKey(opts.account_key || opts.accountKey);
-  const app = await getApp();
+  const app = await getApp(accountKey);
   const callWithToken = async (t: any) => {
     const ts = Math.floor(Date.now() / 1000);
     const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}${t.access_token}${t.shop_id}`);
@@ -582,7 +617,7 @@ async function shopApiCall(region: string, path: string, opts: any = {}) {
 async function refreshMerchantRowTokenStrict(accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<{ access_token: string; merchant_id: number; expires_at: number }> {
   const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', '_MERCHANT').single();
   if (!data || !data.refresh_token || !data.merchant_id) throw new Error('merchant row token missing');
-  const app = await getApp();
+  const app = await getApp(accountKey);
   const path = '/api/v2/auth/access_token/get';
   const ts = Math.floor(Date.now() / 1000);
   const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
@@ -657,7 +692,7 @@ async function probeMerchantToken(app: any, accessToken: string, merchantId: num
 
 async function merchantApiCall(region: string, path: string, opts: any = {}) {
   const accountKey = normalizeAccountKey(opts.account_key || opts.accountKey);
-  const app = await getApp();
+  const app = await getApp(accountKey);
   const callWithToken = async (t: { access_token: string; merchant_id?: number | null }) => {
     if (!t.merchant_id) throw new Error(`merchant_id missing`);
     const ts = Math.floor(Date.now() / 1000);
@@ -953,7 +988,7 @@ async function fetchShopeeUpload(app: any, path: string, query: URLSearchParams,
 
 async function uploadShopeeMediaImage(region: string, bytes: Uint8Array, mime: string, body: any) {
   const accountKey = normalizeAccountKey(body?.account_key || body?.accountKey);
-  const app = await getApp();
+  const app = await getApp(accountKey);
   const path = '/api/v2/media_space/upload_image';
   const ts = Math.floor(Date.now() / 1000);
   const partnerSign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
@@ -2181,7 +2216,7 @@ Deno.serve(async (req) => {
 
   try {
     if (action === 'health') {
-      const app = await getApp();
+  const app = await getApp(accountKey);
       return jsonResp({
         ok: true,
         service: 'shopee-bridge',
@@ -2201,7 +2236,7 @@ Deno.serve(async (req) => {
       // Tries all known refresh parameter shapes for the current region to find the one that returns a valid token.
       const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
       if (!data) return jsonResp({ ok: false, error: `no tokens for region ${region}` }, 404);
-      const app = await getApp();
+      const app = await getApp(accountKey);
       const path = '/api/v2/auth/access_token/get';
       const ts = Math.floor(Date.now() / 1000);
       const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
@@ -2242,7 +2277,7 @@ Deno.serve(async (req) => {
       return jsonResp({ ok: true, account_key: accountKey, tokens: (data || []).map(r => ({ ...r, expires_in_sec: r.expires_at - now })) });
     }
     if (action === 'token_probe') {
-      const app = await getApp();
+      const app = await getApp(accountKey);
       const { data } = await supabase.from('shopee_tokens').select('account_key, region, shop_id, merchant_id, expires_at, is_sandbox, access_token').eq('account_key', accountKey).eq('region', region).single();
       if (!data) return jsonResp({ ok: false, region, error: 'token no' }, 404);
       const now = Math.floor(Date.now() / 1000);
@@ -2264,7 +2299,7 @@ Deno.serve(async (req) => {
       const refreshThresholdSec = parsePositiveInt(url.searchParams.get('refresh_threshold_sec'), DEFAULT_REFRESH_THRESHOLD_SEC, 60, 21600);
       const maxRefreshAttempts = parsePositiveInt(url.searchParams.get('max_refresh_attempts'), DEFAULT_REFRESH_ATTEMPTS, 1, 5);
       const retryBaseMs = parsePositiveInt(url.searchParams.get('retry_base_ms'), DEFAULT_RETRY_BASE_MS, 100, 10000);
-      const app = await getApp();
+      const app = await getApp(accountKey);
       const now = Math.floor(Date.now() / 1000);
       const { data } = await supabase
         .from('shopee_tokens')
@@ -2767,7 +2802,7 @@ Deno.serve(async (req) => {
       const layerAssetPath = String(url.searchParams.get('layer_asset_path') || url.searchParams.get('layerAssetPath') || '').trim();
       if (!code) return jsonResp({ ok: false, error: 'code required' }, 400);
       if (!main_account_id && !shop_id) return jsonResp({ ok: false, error: 'main_account_id or shop_id required' }, 400);
-      const app = await getApp();
+      const app = await getApp(accountKey);
       const path = '/api/v2/auth/token/get';
       const ts = Math.floor(Date.now() / 1000);
       const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
@@ -2870,7 +2905,7 @@ Deno.serve(async (req) => {
       return jsonResp({ ok: !result.error, account_key: accountKey, region: r, result });
     }
     if (action === 'oauth_url') {
-      const app = await getApp();
+      const app = await getApp(accountKey);
       const path = url.searchParams.get('shop') === '1'
         ? '/api/v2/shop/auth_partner'
         : '/api/v2/merchant/auth_partner';
@@ -2899,6 +2934,67 @@ Deno.serve(async (req) => {
         }
       }
       return jsonResp({ ok: true, account_key: accountKey, merchant, shops: results });
+    }
+    if (action === 'account_profile' && req.method === 'POST') {
+      const body = await req.json().catch(() => ({}));
+      const reqAccountKey = normalizeAccountKey(body.account_key || body.accountKey || accountKey);
+      const displayName = String(body.display_name || body.displayName || reqAccountKey).trim() || reqAccountKey;
+      const layerAssetPath = String(body.layer_asset_path || body.layerAssetPath || '').trim();
+      const rawRegions = Array.isArray(body.enabled_regions || body.enabledRegions)
+        ? (body.enabled_regions || body.enabledRegions)
+        : String(body.enabled_regions || body.enabledRegions || '').split(',');
+      const enabledRegions = [...new Set(rawRegions.map((v: any) => String(v || '').trim().toUpperCase()).filter((v: string) => OPERATING_REGION_SET.has(v)))];
+      const mainAccountId = Number(body.main_account_id || body.mainAccountId || 0);
+      const merchantId = Number(body.merchant_id || body.merchantId || 0);
+      const partnerId = Number(body.partner_id || body.partnerId || 0);
+      const partnerKeySecretName = String(body.partner_key_secret_name || body.partnerKeySecretName || '').trim().toUpperCase();
+      const isSandbox = body.is_sandbox === true || body.isSandbox === true;
+
+      if (!layerAssetPath) return jsonResp({ ok: false, error: 'layer_asset_path required' }, 400);
+      if ((body.partner_id || body.partnerId || partnerKeySecretName) && (!Number.isFinite(partnerId) || partnerId <= 0)) {
+        return jsonResp({ ok: false, error: 'valid partner_id required when credential is provided' }, 400);
+      }
+      if ((body.partner_id || body.partnerId || partnerId) && !/^[A-Z0-9_]{3,128}$/.test(partnerKeySecretName)) {
+        return jsonResp({ ok: false, error: 'valid partner_key_secret_name required when credential is provided' }, 400);
+      }
+
+      const profilePayload: Record<string, unknown> = {
+        account_key: reqAccountKey,
+        display_name: displayName,
+        layer_asset_path: layerAssetPath,
+        enabled_regions: enabledRegions.length ? enabledRegions : OPERATING_REGIONS,
+        status: String(body.status || 'active'),
+        updated_at: new Date().toISOString(),
+      };
+      if (Number.isFinite(mainAccountId) && mainAccountId > 0) profilePayload.main_account_id = mainAccountId;
+      if (Number.isFinite(merchantId) && merchantId > 0) profilePayload.merchant_id = merchantId;
+      const { error: profileErr } = await supabase
+        .from('shopee_account_profiles')
+        .upsert(profilePayload, { onConflict: 'account_key' });
+      if (profileErr) return jsonResp({ ok: false, error: profileErr.message, stage: 'profile_upsert' }, 500);
+
+      let credential: any = null;
+      if (Number.isFinite(partnerId) && partnerId > 0 && partnerKeySecretName) {
+        const credentialPayload = {
+          account_key: reqAccountKey,
+          partner_id: partnerId,
+          partner_key_secret_name: partnerKeySecretName,
+          is_sandbox: isSandbox,
+          updated_at: new Date().toISOString(),
+        };
+        const { error: credErr } = await supabase
+          .from('shopee_account_credentials')
+          .upsert(credentialPayload, { onConflict: 'account_key' });
+        if (credErr) return jsonResp({ ok: false, error: credErr.message, stage: 'credential_upsert' }, 500);
+        credential = {
+          account_key: reqAccountKey,
+          partner_id: partnerId,
+          partner_key_secret_name: partnerKeySecretName,
+          is_sandbox: isSandbox,
+          secret_present: !!Deno.env.get(partnerKeySecretName),
+        };
+      }
+      return jsonResp({ ok: true, account_key: reqAccountKey, profile: profilePayload, credential });
     }
     // POST /register_cbsc: high-level GlobalProduct registration and region publish orchestration.
     // v44: accepts body.idempotency_token (UUID) forwarded from UI card — used as request_id

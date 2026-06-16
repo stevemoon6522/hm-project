@@ -139,7 +139,8 @@ test('master register flow has a manual option-image management modal and sends 
   assert.match(masterRegisterImageTools, /type: 'checkbox', checked: true/, 'each crawled option image should be removable with a keep checkbox');
   assert.match(masterRegisterImageTools, /type: 'radio', name: 'mr-component-image-url'/, 'operator should be able to pick the component extraction image');
   assert.match(masterRegisterImageTools, /mrSetGroupOptionImages\(group, kept, picked\)/, 'modal save should persist removed images and selected component image');
-  assert.match(masterRegisterImageTools, /body: JSON\.stringify\(\{ master_row_id: 0, staronemall_url: url, image_url: componentImageUrl \}\)/, 'Vision extraction should use the operator-selected component image, not the first/cover image');
+  assert.match(masterRegisterImageTools, /image_url: componentImageUrl/, 'Vision extraction should use the operator-selected component image, not the first/cover image');
+  assert.match(masterRegisterImageTools, /image_data_urls: imageDataUrls/, 'Vision extraction should send browser-prepared image tiles when available');
 });
 
 test('platform SKU sync includes Shopee lookup-sku and absorbs matched region ids', () => {

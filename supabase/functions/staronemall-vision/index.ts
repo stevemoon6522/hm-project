@@ -11,6 +11,7 @@
 // OPTIONS → 204 (CORS preflight, per feedback_supabase_cors_204_no_body)
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
+import { uploadToCloudinary } from "../_shared/cloudinary.ts";
 import { filterStaronemallDetailImageUrls } from "../_shared/staronemall-images.ts";
 
 // @ts-ignore Deno env
@@ -25,6 +26,9 @@ const ANTHROPIC_API = "https://api.anthropic.com/v1/messages";
 const CLAUDE_MAX_IMAGE_EDGE = 8000;
 const CLAUDE_SAFE_IMAGE_EDGE = 7600;
 const CLAUDE_MAX_CROP_TILES = 20;
+const IMAGE_DIMENSION_PROBE_BYTES = 262143;
+const IMAGE_FETCH_CHUNK_BYTES = 1024 * 1024;
+const IMAGE_FETCH_MAX_BYTES = 40 * 1024 * 1024;
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -37,7 +41,9 @@ const CORS: Record<string, string> = {
 const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
 type ImageDimensions = { width: number; height: number };
-type ClaudeImageSource = { type: "url"; url: string };
+type ClaudeImageSource =
+  | { type: "url"; url: string }
+  | { type: "base64"; media_type: "image/jpeg" | "image/png" | "image/webp"; data: string };
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -52,6 +58,22 @@ function jsonResp(body: unknown, status = 200): Response {
 
 function errResp(message: string, status = 400): Response {
   return jsonResp({ ok: false, error: message }, status);
+}
+
+function parseClientImageDataUrls(value: unknown): ClaudeImageSource[] {
+  const items = Array.isArray(value) ? value : [];
+  const sources: ClaudeImageSource[] = [];
+  for (const item of items.slice(0, CLAUDE_MAX_CROP_TILES)) {
+    const dataUrl = String(item || "").trim();
+    const match = dataUrl.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/i);
+    if (!match) continue;
+    sources.push({
+      type: "base64",
+      media_type: match[1].toLowerCase() as "image/jpeg" | "image/png" | "image/webp",
+      data: match[2].replace(/\s+/g, ""),
+    });
+  }
+  return sources;
 }
 
 /** Extract all staronemall/wisacdn detail image URLs from HTML. */
@@ -81,8 +103,7 @@ function pickBestDetailImage(urls: string[]): string | null {
   const pool = noThumb.length > 0 ? noThumb : urls;
   // If there are multiple, pick the last one (detail pages usually show main product
   // image first and component detail image further down in the DOM).
-  // Return the first one as a reasonable default — operators can re-extract if needed.
-  return pool[0];
+  return pool[pool.length - 1] || null;
 }
 
 function parseJpegSize(bytes: Uint8Array): ImageDimensions | null {
@@ -95,6 +116,10 @@ function parseJpegSize(bytes: Uint8Array): ImageDimensions | null {
     }
     const marker = bytes[i + 1];
     if (marker === 0xD8 || marker === 0xD9) {
+      i += 2;
+      continue;
+    }
+    if (marker >= 0xD0 && marker <= 0xD7) {
       i += 2;
       continue;
     }
@@ -170,12 +195,26 @@ function parseWebpSize(bytes: Uint8Array): ImageDimensions | null {
   return null;
 }
 
+function edgeFetchImageUrl(imageUrl: string): string {
+  try {
+    const parsed = new URL(imageUrl);
+    if (parsed.protocol === "https:" && /\.wisacdn\.com$/i.test(parsed.hostname)) {
+      parsed.protocol = "http:";
+      return parsed.toString();
+    }
+  } catch {
+    return imageUrl;
+  }
+  return imageUrl;
+}
+
 async function readImageDimensions(imageUrl: string): Promise<ImageDimensions | null> {
-  const resp = await fetch(imageUrl, {
+  const fetchUrl = edgeFetchImageUrl(imageUrl);
+  const resp = await fetch(fetchUrl, {
     headers: {
       "User-Agent": "Mozilla/5.0",
       Referer: "https://www.staronemall.com/",
-      Range: "bytes=0-65535",
+      Range: `bytes=0-${IMAGE_DIMENSION_PROBE_BYTES}`,
     },
     signal: AbortSignal.timeout(15000),
   });
@@ -195,6 +234,13 @@ function buildCloudinaryFetchUrl(imageUrl: string, transforms: string): string |
   const base = cloudinaryFetchBaseUrl(imageUrl);
   if (!base) return null;
   return `${base}/${transforms}/f_jpg,q_90/${encodeURIComponent(imageUrl)}`;
+}
+
+function buildCloudinaryUploadUrl(publicId: string, transforms: string): string | null {
+  // @ts-ignore Deno env
+  const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
+  if (!cloudName || !publicId) return null;
+  return `https://res.cloudinary.com/${cloudName}/image/upload/${transforms}/f_jpg,q_90/${publicId}`;
 }
 
 function buildClaudeSafeImageUrls(imageUrl: string, dims: ImageDimensions | null): { urls: string[]; mode: string } {
@@ -249,6 +295,200 @@ async function prepareClaudeVisionImages(imageUrl: string): Promise<{
     sources: prepared.urls.map((url) => ({ type: "url", url })),
     original_dimensions: dims,
     image_transform_mode: prepared.mode,
+  };
+}
+
+function isClaudeDownloadError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /Unable to download the file|download the file/i.test(message);
+}
+
+function buildClaudeSafeCloudinaryUploadUrls(
+  publicId: string,
+  dims: ImageDimensions,
+): { urls: string[]; mode: string } {
+  if (dims.width <= CLAUDE_MAX_IMAGE_EDGE && dims.height <= CLAUDE_MAX_IMAGE_EDGE) {
+    const url = buildCloudinaryUploadUrl(publicId, `c_limit,w_${CLAUDE_SAFE_IMAGE_EDGE},h_${CLAUDE_SAFE_IMAGE_EDGE}`);
+    return url ? { urls: [url], mode: "cloudinary_upload_limit" } : { urls: [], mode: "cloudinary_upload_missing" };
+  }
+
+  const xTiles = Math.ceil(dims.width / CLAUDE_SAFE_IMAGE_EDGE);
+  const yTiles = Math.ceil(dims.height / CLAUDE_SAFE_IMAGE_EDGE);
+  const tileCount = xTiles * yTiles;
+  const urls: string[] = [];
+  if (tileCount <= CLAUDE_MAX_CROP_TILES) {
+    for (let yIndex = 0; yIndex < yTiles; yIndex += 1) {
+      const y = yIndex * CLAUDE_SAFE_IMAGE_EDGE;
+      const h = Math.min(CLAUDE_SAFE_IMAGE_EDGE, dims.height - y);
+      for (let xIndex = 0; xIndex < xTiles; xIndex += 1) {
+        const x = xIndex * CLAUDE_SAFE_IMAGE_EDGE;
+        const w = Math.min(CLAUDE_SAFE_IMAGE_EDGE, dims.width - x);
+        const url = buildCloudinaryUploadUrl(publicId, `c_crop,w_${w},h_${h},x_${x},y_${y}`);
+        if (url) urls.push(url);
+      }
+    }
+    if (urls.length) return { urls, mode: "cloudinary_upload_crop_tiles" };
+  }
+
+  const limited = buildCloudinaryUploadUrl(publicId, `c_limit,w_${CLAUDE_SAFE_IMAGE_EDGE},h_${CLAUDE_SAFE_IMAGE_EDGE}`);
+  return limited ? { urls: [limited], mode: "cloudinary_upload_limit" } : { urls: [], mode: "cloudinary_upload_missing" };
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = "";
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.slice(i, i + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function parseContentRangeTotal(value: string | null): number | null {
+  const match = String(value || "").match(/\/(\d+)$/);
+  if (!match) return null;
+  const total = Number(match[1]);
+  return Number.isFinite(total) && total > 0 ? total : null;
+}
+
+async function fetchImageBytesByRange(imageUrl: string): Promise<Uint8Array | null> {
+  const fetchUrl = edgeFetchImageUrl(imageUrl);
+  const baseHeaders = {
+    "User-Agent": "Mozilla/5.0",
+    Referer: "https://www.staronemall.com/",
+  };
+  const probe = await fetch(fetchUrl, {
+    headers: { ...baseHeaders, Range: "bytes=0-0" },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (probe.status !== 206) {
+    if (probe.ok) return new Uint8Array(await probe.arrayBuffer());
+    return null;
+  }
+
+  const total = parseContentRangeTotal(probe.headers.get("Content-Range"));
+  if (!total) return null;
+  if (total > IMAGE_FETCH_MAX_BYTES) {
+    throw new Error(`image is too large for Vision fallback: ${total} bytes`);
+  }
+
+  const out = new Uint8Array(total);
+  for (let start = 0; start < total; start += IMAGE_FETCH_CHUNK_BYTES) {
+    const end = Math.min(total - 1, start + IMAGE_FETCH_CHUNK_BYTES - 1);
+    const resp = await fetch(fetchUrl, {
+      headers: { ...baseHeaders, Range: `bytes=${start}-${end}` },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (resp.status !== 206 && !resp.ok) {
+      throw new Error(`range image fetch failed: HTTP ${resp.status}`);
+    }
+    const chunk = new Uint8Array(await resp.arrayBuffer());
+    out.set(chunk.slice(0, Math.min(chunk.length, total - start)), start);
+  }
+  return out;
+}
+
+async function fetchImageBytes(imageUrl: string): Promise<Uint8Array> {
+  const ranged = await fetchImageBytesByRange(imageUrl);
+  if (ranged) return ranged;
+
+  const fetchUrl = edgeFetchImageUrl(imageUrl);
+  const resp = await fetch(fetchUrl, {
+    headers: {
+      "User-Agent": "Mozilla/5.0",
+      Referer: "https://www.staronemall.com/",
+    },
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!resp.ok) throw new Error(`image fetch failed: HTTP ${resp.status}`);
+  const bytes = new Uint8Array(await resp.arrayBuffer());
+  if (bytes.byteLength > IMAGE_FETCH_MAX_BYTES) {
+    throw new Error(`image is too large for Vision fallback: ${bytes.byteLength} bytes`);
+  }
+  return bytes;
+}
+
+async function prepareClaudeVisionCloudinaryUploadImages(
+  imageUrl: string,
+  knownDimensions: ImageDimensions | null,
+): Promise<{
+  sources: ClaudeImageSource[];
+  original_dimensions: ImageDimensions | null;
+  image_transform_mode: string;
+}> {
+  const bytes = await fetchImageBytes(imageUrl);
+  const upload = await uploadToCloudinary(bytes, {
+    folder: "staronemall-vision",
+    contentType: "image/jpeg",
+    filename: "source.jpg",
+  });
+  if (!upload.ok || !upload.public_id) {
+    throw new Error(`cloudinary_upload_failed: ${upload.error || "unknown"}`);
+  }
+
+  const dims = {
+    width: Number(upload.width || knownDimensions?.width || 0),
+    height: Number(upload.height || knownDimensions?.height || 0),
+  };
+  if (!dims.width || !dims.height) {
+    throw new Error("cloudinary upload did not return image dimensions");
+  }
+
+  const prepared = buildClaudeSafeCloudinaryUploadUrls(upload.public_id, dims);
+  if (!prepared.urls.length) {
+    throw new Error("cloudinary upload did not produce Claude-safe image URLs");
+  }
+  return {
+    sources: prepared.urls.map((url) => ({ type: "url", url })),
+    original_dimensions: knownDimensions || dims,
+    image_transform_mode: prepared.mode,
+  };
+}
+
+async function prepareClaudeVisionBase64Images(
+  imageUrl: string,
+  knownDimensions: ImageDimensions | null,
+): Promise<{
+  sources: ClaudeImageSource[];
+  original_dimensions: ImageDimensions | null;
+  image_transform_mode: string;
+}> {
+  const bytes = await fetchImageBytes(imageUrl);
+  // @ts-ignore dynamic import for Supabase Edge runtime
+  const { Image } = await import("https://deno.land/x/imagescript@1.3.0/mod.ts");
+  const img = await Image.decode(bytes);
+  const width = Number(img.width || knownDimensions?.width || 0);
+  const height = Number(img.height || knownDimensions?.height || 0);
+  if (!width || !height) throw new Error("unable to decode image dimensions for base64 fallback");
+
+  const xTiles = Math.ceil(width / CLAUDE_SAFE_IMAGE_EDGE);
+  const yTiles = Math.ceil(height / CLAUDE_SAFE_IMAGE_EDGE);
+  const tileCount = xTiles * yTiles;
+  if (tileCount > CLAUDE_MAX_CROP_TILES) {
+    throw new Error(`image requires ${tileCount} Claude tiles, exceeding limit ${CLAUDE_MAX_CROP_TILES}`);
+  }
+
+  const sources: ClaudeImageSource[] = [];
+  for (let yIndex = 0; yIndex < yTiles; yIndex += 1) {
+    const y = yIndex * CLAUDE_SAFE_IMAGE_EDGE;
+    const h = Math.min(CLAUDE_SAFE_IMAGE_EDGE, height - y);
+    for (let xIndex = 0; xIndex < xTiles; xIndex += 1) {
+      const x = xIndex * CLAUDE_SAFE_IMAGE_EDGE;
+      const w = Math.min(CLAUDE_SAFE_IMAGE_EDGE, width - x);
+      const tile = img.clone();
+      tile.crop(x, y, w, h);
+      const encoded: Uint8Array = await tile.encodeJPEG(90);
+      sources.push({
+        type: "base64",
+        media_type: "image/jpeg",
+        data: bytesToBase64(encoded),
+      });
+    }
+  }
+
+  return {
+    sources,
+    original_dimensions: knownDimensions || { width, height },
+    image_transform_mode: tileCount > 1 ? "base64_crop_tiles" : "base64_jpeg",
   };
 }
 
@@ -346,7 +586,7 @@ Deno.serve(async (req: Request) => {
   }
 
   // Parse body
-  let body: { master_row_id?: unknown; staronemall_url?: unknown; image_url?: unknown };
+  let body: { master_row_id?: unknown; staronemall_url?: unknown; image_url?: unknown; image_data_urls?: unknown };
   try {
     body = await req.json();
   } catch {
@@ -442,8 +682,35 @@ Deno.serve(async (req: Request) => {
     image_transform_mode: string;
   };
   try {
-    visionImages = await prepareClaudeVisionImages(imageUrl);
-    componentsEn = await callClaudeVision(visionImages.sources);
+    const clientImageSources = parseClientImageDataUrls(body.image_data_urls);
+    if (clientImageSources.length) {
+      visionImages = {
+        sources: clientImageSources,
+        original_dimensions: null,
+        image_transform_mode: "client_base64_tiles",
+      };
+      componentsEn = await callClaudeVision(visionImages.sources);
+    } else {
+      visionImages = await prepareClaudeVisionImages(imageUrl);
+      try {
+        componentsEn = await callClaudeVision(visionImages.sources);
+      } catch (urlError) {
+        if (!isClaudeDownloadError(urlError)) throw urlError;
+        try {
+          visionImages = await prepareClaudeVisionCloudinaryUploadImages(
+            imageUrl,
+            visionImages.original_dimensions,
+          );
+        } catch (uploadError) {
+          console.warn("[staronemall-vision] Cloudinary upload fallback failed; trying base64 fallback:", uploadError);
+          visionImages = await prepareClaudeVisionBase64Images(
+            imageUrl,
+            visionImages.original_dimensions,
+          );
+        }
+        componentsEn = await callClaudeVision(visionImages.sources);
+      }
+    }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return errResp(`Claude Vision extraction failed for image ${imageUrl}: ${msg}`, 502);

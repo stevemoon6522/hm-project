@@ -12,6 +12,7 @@ test("isStaronemallBannerImageUrl detects common non-product banner assets", () 
     "https://staronemall2.wisacdn.com/_data/editor/event/2026_preorder.jpg",
     "https://staronemall2.wisacdn.com/_data/attach/notice_delivery.png",
     "https://staronemall2.wisacdn.com/_data/attach/guide/refund_return.webp",
+    "https://staronemall2.wisacdn.com/_data/attach/202604/13/a1533f8be6b07bff4669533902948b19.png",
     "https://staronemall2.wisacdn.com/_data/attach/common/footer_cs.jpg",
   ];
   for (const url of bannerUrls) {
@@ -28,6 +29,7 @@ test("filterStaronemallDetailImageUrls keeps product detail images in order and 
     "https://staronemall2.wisacdn.com/_data/editor/event/event-banner.jpg",
     detail1,
     detail2,
+    "https://staronemall2.wisacdn.com/_data/attach/202604/13/a1533f8be6b07bff4669533902948b19.png",
     "https://staronemall2.wisacdn.com/_data/attach/guide/refund_return.webp",
   ]);
 

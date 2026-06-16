@@ -70,6 +70,7 @@ assert(masterRegister.includes('옵션 이미지 관리'), 'operator must be abl
 assert(masterRegister.includes('mrOpenOptionImageModal'), 'option image management modal must be wired');
 assert(masterRegister.includes('구성품 추출용'), 'modal must allow selecting the image used for component extraction');
 assert(masterRegister.includes('image_url: componentImageUrl'), 'components extraction must send the operator-selected detail image URL');
+assert(masterRegister.includes('image_data_urls: imageDataUrls'), 'components extraction must send browser-prepared image tiles when available');
 assert(masterRegister.includes('_detail_image_urls'), 'manual option image removals must be stored on the preview rows');
 assert(masterRegister.includes('_components_image_url'), 'selected component image URL must be stored on the preview rows');
 assert(masterRegister.includes('components_extracted_en'), 'components must be persisted into products');

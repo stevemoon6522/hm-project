@@ -20,6 +20,8 @@ export function isStaronemallBannerImageUrl(url: string): boolean {
     /(?:^|[\/_.-])event(?:[\/_.-]|$)/,
     /(?:^|[\/_.-])notice(?:[\/_.-]|$)/,
     /(?:^|[\/_.-])guide(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])order(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])process(?:[\/_.-]|$)/,
     /(?:^|[\/_.-])common(?:[\/_.-]|$)/,
     /(?:^|[\/_.-])footer(?:[\/_.-]|$)/,
     /(?:^|[\/_.-])top(?:[\/_.-]|$)/,
@@ -35,6 +37,7 @@ export function isStaronemallBannerImageUrl(url: string): boolean {
     /(?:^|[\/_.-])transparent(?:[\/_.-]|$)/,
     /(?:^|[\/_.-])pixel(?:[\/_.-]|$)/,
     /(?:^|[\/_.-])empty(?:[\/_.-]|$)/,
+    /a1533f8be6b07bff4669533902948b19/,
   ].some((re) => re.test(haystack));
 }
 

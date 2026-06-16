@@ -23544,9 +23544,45 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return mrJoomNormalizeImageList(rawDetailImages, baseUrl);
     }
 
+    function mrIsNonComponentGuideImageUrl(url) {
+      let haystack = String(url || '').trim().toLowerCase();
+      if (!haystack) return false;
+      try {
+        const parsed = new URL(haystack, 'https://www.staronemall.com');
+        haystack = decodeURIComponent(`${parsed.hostname}${parsed.pathname}${parsed.search}`).toLowerCase();
+      } catch {
+        try { haystack = decodeURIComponent(haystack).toLowerCase(); } catch {}
+      }
+      return [
+        /(?:^|[\/_.-])banner(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])bnr(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])event(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])notice(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])guide(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])order(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])process(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])delivery(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])shipping(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])exchange(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])refund(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])return(?:[\/_.-]|$)/,
+        /(?:^|[\/_.-])common(?:[\/_.-]|$)/,
+        /a1533f8be6b07bff4669533902948b19/,
+      ].some(re => re.test(haystack));
+    }
+
+    function mrDefaultGroupComponentImageUrl(options) {
+      const values = (options || []).filter(Boolean);
+      const componentCandidates = values.filter(src => !mrIsNonComponentGuideImageUrl(src));
+      const pool = componentCandidates.length ? componentCandidates : values;
+      return pool[pool.length - 1] || '';
+    }
+
     function mrSetGroupOptionImages(group, images, componentImageUrl = '') {
       const normalized = mrJoomNormalizeImageList(images || [], group?.rows?.[0]?.url || '');
-      const selected = normalized.includes(componentImageUrl) ? componentImageUrl : (normalized[0] || '');
+      const selected = normalized.includes(componentImageUrl)
+        ? componentImageUrl
+        : mrDefaultGroupComponentImageUrl(normalized);
       (group?.rows || []).forEach(row => {
         row._detail_image_urls = normalized.slice();
         row._extra_images = normalized.slice();
@@ -23558,7 +23594,22 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const firstRow = group?.rows?.[0] || {};
       const options = mrGetGroupOptionImages(group, firstRow);
       const selected = firstRow._components_image_url || '';
-      return options.includes(selected) ? selected : (options[0] || '');
+      if (options.includes(selected) && !mrIsNonComponentGuideImageUrl(selected)) return selected;
+      return mrDefaultGroupComponentImageUrl(options);
+    }
+
+    async function mrBuildComponentImageDataUrls(componentImageUrl) {
+      const url = String(componentImageUrl || '').trim();
+      if (!url || typeof rshSplitDetailImageRef !== 'function') return [];
+      try {
+        const refs = await rshSplitDetailImageRef({ src: url, sourceUrl: url }, 6);
+        return refs
+          .map(ref => String(ref?.src || ref?.dataUrl || '').trim())
+          .filter(value => /^data:image\/(?:jpeg|png|webp);base64,/i.test(value));
+      } catch (e) {
+        console.warn('[staronemall-vision] client image slicing failed; falling back to URL source', e);
+        return [];
+      }
     }
 
     function mrOpenOptionImageModal(group) {
@@ -23709,10 +23760,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           if (statusEl) { statusEl.textContent = '캐시된 구성품을 적용했습니다.'; statusEl.style.color = 'var(--green)'; }
           return;
         }
+        const preparingMsg = 'Preparing image for Vision...';
+        mrSetGroupComponentsStatus(group, preparingMsg, false);
+        if (statusEl) { statusEl.textContent = preparingMsg; statusEl.style.color = 'var(--muted)'; }
+        const imageDataUrls = await mrBuildComponentImageDataUrls(componentImageUrl);
         const resp = await fetch(`${STARONEMALL_VISION_URL}/extract`, {
           method: 'POST',
           headers: AUTH_HEADERS,
-          body: JSON.stringify({ master_row_id: 0, staronemall_url: url, image_url: componentImageUrl }),
+          body: JSON.stringify({
+            master_row_id: 0,
+            staronemall_url: url,
+            image_url: componentImageUrl,
+            image_data_urls: imageDataUrls,
+          }),
         });
         const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
         if (!resp.ok || !json.ok) {

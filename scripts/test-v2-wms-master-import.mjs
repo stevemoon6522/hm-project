@@ -9,6 +9,7 @@ const migration = readdirSync(migrationsDir)
   .map((name) => readFileSync(join(migrationsDir, name), 'utf8'))
   .join('\n');
 const statusFixMigration = readFileSync(join(migrationsDir, '202606120002_wms_inventory_observed_status_fix.sql'), 'utf8');
+const arrayGuardMigration = readFileSync(join(migrationsDir, '202606160003_wms_jsonb_array_guards.sql'), 'utf8');
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -152,6 +153,19 @@ for (const token of [
   'public.source_records.status',
 ]) {
   assert(statusFixMigration.includes(token), `WMS observed status fix migration missing token: ${token}`);
+}
+
+for (const token of [
+  "jsonb_typeof(i.raw_bundle_components) = 'array'",
+  "else '[]'::jsonb",
+  "jsonb_typeof(r -> 'bundle_components') = 'array'",
+  "jsonb_typeof(p_observed -> 'main_image_urls') = 'array'",
+  "jsonb_typeof(v_source.observed_values -> 'main_image_urls') = 'array'",
+  "jsonb_typeof(v_source.observed_values -> 'detail_image_urls') = 'array'",
+  'grant execute on function public.stage_wms_inventory_payload(jsonb, jsonb) to authenticated',
+  'grant execute on function public.update_wms_source_observed(uuid, jsonb) to authenticated',
+]) {
+  assert(arrayGuardMigration.includes(token), `WMS JSONB array guard migration missing token: ${token}`);
 }
 
 assert(

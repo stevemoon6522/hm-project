@@ -74,7 +74,7 @@ assert(masterRegister.includes('function mrJoomNamePrefix(row)'), 'Joom title pr
 assert(masterRegister.includes('namePrefix: mrJoomNamePrefix(firstRow)'), 'Joom payload must send the lifecycle-specific namePrefix to the bridge');
 assert(!masterRegister.includes('const MR_JOOM_DEFAULT_NAME_PREFIX = \'[PRE ORDER]\''), 'Joom title prefix must not be hard-coded to PRE ORDER');
 assert(masterRegister.includes('function mrJoomCanonicalTitle(row)'), 'Joom title builder should keep the full master product name');
-assert(masterRegister.includes('const masterName = mrJoomCanonicalTitle(row);') && masterRegister.includes('if (masterName) return masterName.slice(0, 200);'), 'Joom build title should prefer the master product name before artist/album shorthand');
+assert(masterRegister.includes('const masterName = mrJoomCanonicalTitle(row);') && masterRegister.includes('if (masterName) return mrJoomTitleCase(masterName).slice(0, 200);'), 'Joom build title should prefer the title-cased master product name before artist/album shorthand');
 assert(masterRegister.includes('function mrJoomDescriptionTitle(row)'), 'Joom fixed description template title must have an explicit master-name helper');
 assert(masterRegister.includes('const title = mrJoomDescriptionTitle(row) ||'), 'Joom fixed description template title must use the master product name before listing-title fallback');
 assert(masterRegister.includes('function mrMasterRepresentativeImage(group)'), 'Joom draft must derive the main image from the master representative image');
@@ -122,7 +122,7 @@ assert(!bridge.includes('if (action === "lookup-sku" && req.method === "GET") {\
 assert(bridge.includes('function readImageDimensions'), 'Joom detail splitter must read remote image dimensions without full decode');
 assert(bridge.includes('async function buildCloudinaryFetchTiles'), 'Joom detail splitter must support Cloudinary fetch transformations');
 assert(bridge.includes('/image/fetch/'), 'Joom detail splitter must produce Cloudinary fetch URLs');
-assert(bridge.includes('const tileSize = Math.max(img.width, img.height);') && bridge.includes('c_pad,b_white,w_${tileSize},h_${tileSize}'), 'Joom detail splitter must square-pad 1000x1500 boundary images instead of sending the raw rectangular URL');
+assert(bridge.includes('const JOOM_EXTRA_IMAGE_TILE_SIZE = 1500') && bridge.includes('c_pad,b_white,w_${targetSize},h_${targetSize}'), 'Joom detail splitter must square-pad and downscale boundary images instead of sending the raw rectangular URL');
 assert(bridge.includes('function joomPlainText') && bridge.includes('replace(/<[^>]+>/g, " ")') && bridge.includes('replace(/[^\\x09\\x0A\\x0D\\x20-\\x7E]/g, "")'), 'Joom bridge descriptions must be plain ASCII text without HTML tags');
 assert(decorativeEmojiMarkers.every((marker) => !bridge.includes(`"${marker}`)), 'Joom bridge description template must not send decorative emoji/non-ASCII markers');
 assert(bridge.includes('async function createOrUpdateJoomProduct') && bridge.includes('/products/update?sku=') && bridge.includes('recovered_existing_product_id'), 'Joom bridge publish must update an existing rejected SKU instead of blindly creating duplicates');

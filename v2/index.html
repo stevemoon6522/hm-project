@@ -12837,6 +12837,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       /(?:^|[\/_.-])refund(?:[\/_.-]|$)/,
       /(?:^|[\/_.-])return(?:[\/_.-]|$)/,
       /(?:^|[\/_.-])cs(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])blank(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])spacer(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])transparent(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])pixel(?:[\/_.-]|$)/,
+      /(?:^|[\/_.-])empty(?:[\/_.-]|$)/,
     ].some(re => re.test(haystack));
   }
 
@@ -21158,6 +21163,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         /(?:^|[\\/_.-])refund(?:[\\/_.-]|$)/,
         /(?:^|[\\/_.-])return(?:[\\/_.-]|$)/,
         /(?:^|[\\/_.-])cs(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])blank(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])spacer(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])transparent(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])pixel(?:[\\/_.-]|$)/,
+        /(?:^|[\\/_.-])empty(?:[\\/_.-]|$)/,
       ].some(re => re.test(haystack));
     }
 
@@ -25513,18 +25523,26 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return mrMasterProductName(row).replace(/\s+/g, ' ').trim();
     }
 
+    function mrJoomTitleCase(value) {
+      return String(value || '').replace(/\S+/g, (word) => (
+        word.replace(/[A-Za-z][A-Za-z'’]*/g, (part) => (
+          part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
+        ))
+      )).replace(/\s+/g, ' ').trim();
+    }
+
     function mrJoomBuildTitle(row) {
       const artist = String(row?.artist || '').trim();
       const album = String(row?.album || '').trim();
       const masterName = mrJoomCanonicalTitle(row);
       const prefix = mrJoomNamePrefix(row);
-      if (masterName) return masterName.slice(0, 200);
-      if (artist && album) return `${prefix} ${artist} - ${album}`.slice(0, 200);
-      return `${prefix} K-POP Album`.slice(0, 200);
+      if (masterName) return mrJoomTitleCase(masterName).slice(0, 200);
+      if (artist && album) return mrJoomTitleCase(`${prefix} ${artist} - ${album}`).slice(0, 200);
+      return mrJoomTitleCase(`${prefix} K-POP Album`).slice(0, 200);
     }
 
     function mrJoomDescriptionTitle(row) {
-      return mrJoomCanonicalTitle(row).slice(0, 200);
+      return mrJoomTitleCase(mrJoomCanonicalTitle(row)).slice(0, 200);
     }
 
     function mrJoomDefaultDescription(group) {

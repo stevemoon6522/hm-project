@@ -214,14 +214,22 @@ function titleWithPrefix(prefix: string, title: string): string {
   return `${p} ${clean}`.replace(/\s+/g, " ").trim();
 }
 
+function joomTitleCase(value: string): string {
+  return String(value || "").replace(/\S+/g, (word) =>
+    word.replace(/[A-Za-z][A-Za-z'’]*/g, (part) =>
+      part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
+    )
+  ).replace(/\s+/g, " ").trim();
+}
+
 function buildTitle(opts: { namePrefix: string; artist?: string; album?: string; fallbackName?: string }): string {
   const prefix = (opts.namePrefix || "").trim();
   const fallback = joomPlainText(opts.fallbackName || "");
-  if (fallback) return titleWithPrefix(prefix, fallback).slice(0, 200);
+  if (fallback) return joomTitleCase(titleWithPrefix(prefix, fallback)).slice(0, 200);
   const artist = joomPlainText(opts.artist || "");
   const album = joomPlainText(opts.album || "");
-  if (artist && album) return titleWithPrefix(prefix, `${artist} - ${album}`).slice(0, 200);
-  return titleWithPrefix(prefix, "K-POP Album").slice(0, 200);
+  if (artist && album) return joomTitleCase(titleWithPrefix(prefix, `${artist} - ${album}`)).slice(0, 200);
+  return joomTitleCase(titleWithPrefix(prefix, "K-POP Album")).slice(0, 200);
 }
 
 function buildDescription(opts: { artist?: string; album?: string; contents?: string; fallbackName?: string }): string {
@@ -380,6 +388,9 @@ async function uploadTileToCloudinary(imageData: Uint8Array): Promise<string | n
 
 type ImageDimensions = { width: number; height: number };
 const JOOM_MAX_EXTRA_IMAGES = 20;
+const JOOM_EXTRA_IMAGE_TILE_SIZE = 1500;
+const JOOM_BLANK_IMAGE_SAMPLE_STEPS = 96;
+const JOOM_BLANK_IMAGE_MIN_CONTENT_RATIO = 0.004;
 
 function imageUrlKey(value: unknown): string {
   return String(value || "").trim();
@@ -440,13 +451,15 @@ async function buildCloudinaryFetchTiles(imageUrl: string, img: ImageDimensions)
   // @ts-ignore
   const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
   if (!cloudName) return [];
+  const targetSize = JOOM_EXTRA_IMAGE_TILE_SIZE;
+  const encodedUrl = encodeURIComponent(imageUrl);
   if (img.height > img.width * 1.5) {
     const tileSize = img.width;
     const numTiles = Math.min(Math.ceil(img.height / tileSize), 9);
     return Array.from({ length: numTiles }, (_, i) => {
       const y = i * tileSize;
       const h = Math.min(tileSize, img.height - y);
-      return `https://res.cloudinary.com/${cloudName}/image/fetch/c_crop,w_${img.width},h_${h},x_0,y_${y},c_pad,b_white,w_${tileSize},h_${tileSize},f_jpg,q_90/${encodeURIComponent(imageUrl)}`;
+      return `https://res.cloudinary.com/${cloudName}/image/fetch/c_crop,w_${img.width},h_${h},x_0,y_${y}/c_pad,b_white,w_${targetSize},h_${targetSize}/f_jpg,q_90/${encodedUrl}`;
     });
   }
   if (img.width > img.height * 1.5) {
@@ -455,12 +468,11 @@ async function buildCloudinaryFetchTiles(imageUrl: string, img: ImageDimensions)
     return Array.from({ length: numTiles }, (_, i) => {
       const x = i * tileSize;
       const w = Math.min(tileSize, img.width - x);
-      return `https://res.cloudinary.com/${cloudName}/image/fetch/c_crop,w_${w},h_${img.height},x_${x},y_0,c_pad,b_white,w_${tileSize},h_${tileSize},f_jpg,q_90/${encodeURIComponent(imageUrl)}`;
+      return `https://res.cloudinary.com/${cloudName}/image/fetch/c_crop,w_${w},h_${img.height},x_${x},y_0/c_pad,b_white,w_${targetSize},h_${targetSize}/f_jpg,q_90/${encodedUrl}`;
     });
   }
 
-  const tileSize = Math.max(img.width, img.height);
-  return [`https://res.cloudinary.com/${cloudName}/image/fetch/c_pad,b_white,w_${tileSize},h_${tileSize},f_jpg,q_90/${encodeURIComponent(imageUrl)}`];
+  return [`https://res.cloudinary.com/${cloudName}/image/fetch/c_pad,b_white,w_${targetSize},h_${targetSize}/f_jpg,q_90/${encodedUrl}`];
 }
 
 async function buildCloudinaryUnknownSquare(imageUrl: string): Promise<string[]> {
@@ -468,6 +480,74 @@ async function buildCloudinaryUnknownSquare(imageUrl: string): Promise<string[]>
   const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
   if (!cloudName) return [];
   return [`https://res.cloudinary.com/${cloudName}/image/fetch/c_pad,b_white,w_1500,h_1500,f_jpg,q_90/${encodeURIComponent(imageUrl)}`];
+}
+
+function isLikelyBlankImage(img: any): boolean {
+  const width = Number(img?.width || 0);
+  const height = Number(img?.height || 0);
+  const bitmap = img?.bitmap;
+  if (!width || !height || !bitmap) return false;
+
+  const cols = Math.min(JOOM_BLANK_IMAGE_SAMPLE_STEPS, width);
+  const rows = Math.min(JOOM_BLANK_IMAGE_SAMPLE_STEPS, height);
+  let total = 0;
+  let informative = 0;
+  let strongContent = 0;
+
+  for (let row = 0; row < rows; row += 1) {
+    const y = Math.min(height - 1, Math.floor((row + 0.5) * height / rows));
+    for (let col = 0; col < cols; col += 1) {
+      const x = Math.min(width - 1, Math.floor((col + 0.5) * width / cols));
+      const idx = (y * width + x) * 4;
+      const r = bitmap[idx] ?? 255;
+      const g = bitmap[idx + 1] ?? 255;
+      const b = bitmap[idx + 2] ?? 255;
+      const a = bitmap[idx + 3] ?? 255;
+      if (a < 16) continue;
+      total += 1;
+      const max = Math.max(r, g, b);
+      const min = Math.min(r, g, b);
+      const nearWhite = r >= 245 && g >= 245 && b >= 245;
+      const lowContrastWhite = r >= 238 && g >= 238 && b >= 238 && (max - min) <= 10;
+      if (!nearWhite && !lowContrastWhite) informative += 1;
+      if (r < 230 || g < 230 || b < 230 || (max - min) > 24) strongContent += 1;
+    }
+  }
+
+  if (!total) return true;
+  const informativeRatio = informative / total;
+  const strongRatio = strongContent / total;
+  return informativeRatio < JOOM_BLANK_IMAGE_MIN_CONTENT_RATIO && strongRatio < 0.002;
+}
+
+async function cloudinaryTileHasContent(tileUrl: string): Promise<boolean> {
+  try {
+    const resp = await fetch(tileUrl, {
+      headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://www.staronemall.com/" },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!resp.ok) throw new Error(`tile fetch failed: HTTP ${resp.status}`);
+    const bytes = new Uint8Array(await resp.arrayBuffer());
+    // @ts-ignore
+    const { Image } = await import("https://deno.land/x/imagescript@1.3.0/mod.ts");
+    const img = await Image.decode(bytes);
+    return !isLikelyBlankImage(img);
+  } catch (e) {
+    console.warn("[joom-bridge] blank-tile inspection failed; keeping tile:", tileUrl, e);
+    return true;
+  }
+}
+
+async function filterLikelyBlankCloudinaryTiles(tileUrls: string[]): Promise<string[]> {
+  const kept: string[] = [];
+  for (const tileUrl of tileUrls) {
+    if (await cloudinaryTileHasContent(tileUrl)) {
+      kept.push(tileUrl);
+    } else {
+      console.warn("[joom-bridge] skipped mostly blank Joom detail tile:", tileUrl);
+    }
+  }
+  return kept;
 }
 
 async function uploadTileToProductStorage(imageData: Uint8Array, sourceUrl: string, index: number): Promise<string | null> {
@@ -494,6 +574,7 @@ function decodeBase64Image(value: string): Uint8Array {
 
 async function processDetailImage(imageUrl: string): Promise<string[]> {
   try {
+    let skippedBlankTile = false;
     let dims: ImageDimensions | null = null;
     try {
       dims = await readImageDimensions(imageUrl);
@@ -502,10 +583,20 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
     }
     if (dims) {
       const cloudinaryTiles = await buildCloudinaryFetchTiles(imageUrl, dims);
-      if (cloudinaryTiles.length) return cloudinaryTiles;
+      if (cloudinaryTiles.length) {
+        const filteredTiles = await filterLikelyBlankCloudinaryTiles(cloudinaryTiles);
+        if (filteredTiles.length) return filteredTiles;
+        console.warn("[joom-bridge] all Cloudinary tiles were mostly blank; skipping source image:", imageUrl);
+        return [];
+      }
     } else {
       const cloudinarySquare = await buildCloudinaryUnknownSquare(imageUrl);
-      if (cloudinarySquare.length) return cloudinarySquare;
+      if (cloudinarySquare.length) {
+        const filteredTiles = await filterLikelyBlankCloudinaryTiles(cloudinarySquare);
+        if (filteredTiles.length) return filteredTiles;
+        console.warn("[joom-bridge] Cloudinary unknown-square tile was mostly blank; skipping source image:", imageUrl);
+        return [];
+      }
     }
 
     const resp = await fetch(imageUrl, {
@@ -538,6 +629,11 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
           square = tile;
         }
 
+        if (isLikelyBlankImage(square)) {
+          skippedBlankTile = true;
+          console.warn("[joom-bridge] skipped mostly blank Joom detail tile:", imageUrl, i);
+          continue;
+        }
         const encoded: Uint8Array = await square.encodeJPEG(90);
         const url = await uploadTileToCloudinary(encoded) || await uploadTileToProductStorage(encoded, imageUrl, i);
         if (url) tiles.push(url);
@@ -560,6 +656,11 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
           square = tile;
         }
 
+        if (isLikelyBlankImage(square)) {
+          skippedBlankTile = true;
+          console.warn("[joom-bridge] skipped mostly blank Joom detail tile:", imageUrl, i);
+          continue;
+        }
         const encoded: Uint8Array = await square.encodeJPEG(90);
         const url = await uploadTileToCloudinary(encoded) || await uploadTileToProductStorage(encoded, imageUrl, i);
         if (url) tiles.push(url);
@@ -571,12 +672,18 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
       const x = Math.max(0, Math.floor((tileSize - img.width) / 2));
       const y = Math.max(0, Math.floor((tileSize - img.height) / 2));
       square.composite(img, x, y);
+      if (isLikelyBlankImage(square)) {
+        skippedBlankTile = true;
+        console.warn("[joom-bridge] skipped mostly blank Joom detail tile:", imageUrl, 0);
+      } else {
       const encoded: Uint8Array = await square.encodeJPEG(90);
       const url = await uploadTileToCloudinary(encoded) || await uploadTileToProductStorage(encoded, imageUrl, 0);
       if (url) tiles.push(url);
+      }
     }
 
     if (tiles.length > 0) return tiles;
+    if (skippedBlankTile) return [];
     throw new Error("square image upload failed");
   } catch (e) {
     console.error("[joom-bridge] processDetailImage failed:", imageUrl, e);

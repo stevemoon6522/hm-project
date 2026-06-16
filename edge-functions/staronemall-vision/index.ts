@@ -79,6 +79,11 @@ function isStaronemallBannerImageUrl(url: string): boolean {
     /(?:^|[\/_.-])refund(?:[\/_.-]|$)/,
     /(?:^|[\/_.-])return(?:[\/_.-]|$)/,
     /(?:^|[\/_.-])cs(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])blank(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])spacer(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])transparent(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])pixel(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])empty(?:[\/_.-]|$)/,
   ].some((re) => re.test(haystack));
 }
 

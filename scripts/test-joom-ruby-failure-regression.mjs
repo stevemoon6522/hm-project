@@ -37,7 +37,7 @@ const goesToNearSquarePadding = !(rubyFixture.detail.height > rubyFixture.detail
   && !(rubyFixture.detail.width > rubyFixture.detail.height * 1.5);
 assert.equal(goesToNearSquarePadding, true, 'Ruby 1000x1500 detail image sits exactly on the old tall-image threshold boundary');
 assert.match(bridge, /const tileSize = Math\.max\(img\.width, img\.height\)/, 'Ruby threshold detail image must enter the near-square padding branch');
-assert.match(bridge, /c_pad,b_white,w_\$\{tileSize\},h_\$\{tileSize\}/, 'Ruby detail image output must be square padded through Cloudinary fetch');
+assert.match(bridge, /c_pad,b_white,w_\$\{targetSize\},h_\$\{targetSize\}/, 'Ruby detail image output must be square padded through Cloudinary fetch');
 assert.match(bridge, /async function buildCloudinaryUnknownSquare/, 'Joom bridge must have a Cloudinary square fallback when Edge cannot read source image dimensions');
 assert.match(bridge, /readImageDimensions failed[\s\S]*buildCloudinaryUnknownSquare/, 'Joom detail processing must continue through Cloudinary when source dimension fetch is blocked');
 assert.doesNotMatch(bridge, /return \[imageUrl\];/, 'Joom bridge must never fall back to raw rectangular detail images');

@@ -36,9 +36,17 @@ function stripLifecycleTags(value: unknown): string {
   return s(value).replace(/\s*\[(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\]\s*/gi, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function joomTitleCase(value) {
+  return String(value || '').replace(/\S+/g, (word) =>
+    word.replace(/[A-Za-z][A-Za-z'’]*/g, (part) =>
+      part.charAt(0).toUpperCase() + part.slice(1).toLowerCase()
+    )
+  ).replace(/\s+/g, ' ').trim();
+}
+
 function lifecycleProductName(value: unknown, lifecycle: string, fallback = ''): string {
   const body = stripLifecycleTags(value) || stripLifecycleTags(fallback) || s(fallback).trim();
-  return `${lifecyclePrefix(lifecycle)} ${body}`.replace(/\s+/g, ' ').trim();
+  return joomTitleCase(`${lifecyclePrefix(lifecycle)} ${body}`.replace(/\s+/g, ' ').trim());
 }
 
 function imagesFrom(master: Record<string, unknown>): string[] {

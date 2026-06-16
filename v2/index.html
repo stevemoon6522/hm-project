@@ -1515,7 +1515,8 @@
     .cat-cost-input:focus { border-color: var(--accent); outline: 2px solid rgba(255,45,143,.2); }
     .cat-cost-input.cost-warn { border-color: #e89b00; background: #fffbeb; }
     /* row warnings */
-    .cat-row-warn { background: #fffbeb !important; }
+    .cat-row-warn,
+    .cat-row-warn td { background: #fffbeb !important; }
     .cat-row-warn td { border-bottom-color: #f4c790 !important; }
     .cat-confirm-cb { width: auto; }
     /* price delta cells */
@@ -4634,7 +4635,7 @@ LEGACY END -->
     platformFilters: {},
     platformPreview: null,
     platformLastResults: {},
-    priceSyncCollapsedGroups: new Set(),
+    priceSyncExpandedGroups: new Set(),
     shopeeGlobalSearchResults: [],
     sgSearchMemoryCache: new Map(),
     sgActiveBackgroundRefreshKey: '',
@@ -18295,7 +18296,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   function catRenderGroupRow(group, listingIdx) {
     const rows = group.rows;
     const first = rows[0] || {};
-    const collapsed = state.priceSyncCollapsedGroups.has(group.key);
+    const collapsed = !state.priceSyncExpandedGroups.has(group.key);
     const productIds = rows.map(function(p) { return String(p.id || ''); }).filter(Boolean);
     const options = rows.map(plOptionDisplay).filter(Boolean);
     const shownOptions = options.slice(0, 4).map(esc).join(', ');
@@ -18335,7 +18336,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const maxDelta = regionResult.maxDeltaPct;
     const isStale = catIsStale(p);
     const optionLabel = plOptionDisplay(p);
-    const rowClass = (isGroupChild ? 'pl-option-row ' : '') + (isLargeChange ? 'cat-row-warn' : '');
+    const rowClass = (isGroupChild ? 'pl-option-row ' : 'pl-single-product-row ') + (isLargeChange ? 'cat-row-warn' : '');
     const skuCell = '<td><div style="font-size:13px;font-weight:500;">' + esc(p.sku || '—') + '</div>'
       + (isGroupChild ? '<div class="muted" style="font-size:11px;">' + esc(optionLabel || '옵션') + '</div>' : (p.option_name ? '<div class="muted" style="font-size:11px;">' + esc(p.option_name) + '</div>' : ''))
       + '</td>';
@@ -18575,7 +18576,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     tbody.innerHTML = groups.map(function(group) {
       if (!group.isGrouped) return catRenderProductRow(group.rows[0], listingIdx, false);
       const groupHtml = catRenderGroupRow(group, listingIdx);
-      if (state.priceSyncCollapsedGroups.has(group.key)) return groupHtml;
+      if (!state.priceSyncExpandedGroups.has(group.key)) return groupHtml;
       return groupHtml + group.rows.map(function(row) { return catRenderProductRow(row, listingIdx, true); }).join('');
     }).join('');
 
@@ -18587,8 +18588,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       btn.addEventListener('click', function() {
         const groupKey = btn.dataset.groupKey || '';
         if (!groupKey) return;
-        if (state.priceSyncCollapsedGroups.has(groupKey)) state.priceSyncCollapsedGroups.delete(groupKey);
-        else state.priceSyncCollapsedGroups.add(groupKey);
+        if (state.priceSyncExpandedGroups.has(groupKey)) state.priceSyncExpandedGroups.delete(groupKey);
+        else state.priceSyncExpandedGroups.add(groupKey);
         applyAndRenderCatalog();
       });
     });

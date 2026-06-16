@@ -15,6 +15,11 @@ function sliceBetween(source, start, end) {
 
 const productListStyles = sliceBetween(html, '.pl-group-row td,', '.empty {');
 const productListRender = sliceBetween(html, 'function renderProductOptionRow(p, groupKey, isGroupChild) {', 'function plGroupRowsById(productGroupId) {');
+const appState = sliceBetween(html, 'const state = {', 'const PLATFORM_TABS');
+const catalogStyles = sliceBetween(html, '/* row warnings */', '/* price delta cells */');
+const catalogGroupRender = sliceBetween(html, 'function catRenderGroupRow(group, listingIdx) {', 'function catRenderProductRow(p, listingIdx, isGroupChild) {');
+const catalogProductRender = sliceBetween(html, 'function catRenderProductRow(p, listingIdx, isGroupChild) {', '// \u2500\u2500 Main render');
+const catalogApplyRender = sliceBetween(html, 'function applyAndRenderCatalog() {', 'function catSyncSelectAll() {');
 
 test('single master product rows use the same highlighted background as option group headers', () => {
   assert.match(
@@ -31,5 +36,38 @@ test('single master product rows use the same highlighted background as option g
     productListRender,
     /<tr class="\$\{rowClass\}" data-product-id=/,
     'rendered product row should use the computed row class',
+  );
+});
+
+test('price sync starts option groups collapsed and highlights standalone master rows', () => {
+  assert.match(
+    appState,
+    /priceSyncExpandedGroups: new Set\(\)/,
+    'price sync should store only user-expanded option groups',
+  );
+  assert.match(
+    catalogGroupRender,
+    /const collapsed = !state\.priceSyncExpandedGroups\.has\(group\.key\);/,
+    'option groups should render collapsed until explicitly expanded',
+  );
+  assert.match(
+    catalogApplyRender,
+    /if \(!state\.priceSyncExpandedGroups\.has\(group\.key\)\) return groupHtml;/,
+    'collapsed option groups should render only their master row by default',
+  );
+  assert.match(
+    catalogApplyRender,
+    /if \(state\.priceSyncExpandedGroups\.has\(groupKey\)\) state\.priceSyncExpandedGroups\.delete\(groupKey\);[\s\S]*else state\.priceSyncExpandedGroups\.add\(groupKey\);/,
+    'the group toggle should switch between collapsed and expanded states',
+  );
+  assert.match(
+    catalogProductRender,
+    /const rowClass = \(isGroupChild \? 'pl-option-row ' : 'pl-single-product-row '\) \+ \(isLargeChange \? 'cat-row-warn' : ''\);/,
+    'standalone rows in price sync should use the master-row highlight class',
+  );
+  assert.match(
+    catalogStyles,
+    /\.cat-row-warn,\s*\.cat-row-warn td \{ background: #fffbeb !important; \}/,
+    'warning rows should still override master/option row background colors',
   );
 });

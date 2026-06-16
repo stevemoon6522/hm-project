@@ -8635,7 +8635,7 @@ LEGACY END -->
 
       await refreshPlatformLedSources();
       renderProducts();
-      const mappedByPlatform = ['shopee', ...targetPlatforms]
+      const mappedByPlatform = targetPlatforms
         .map((platform) => `${COVERAGE_LABELS[platform] || platform} ${(state.rollups || []).filter((r) => r.platform === platform && rollupListedCountForLed(r, platform) > 0).length}`)
         .join(' · ');
       setStatus(`플랫폼 SKU 동기화 완료 · 신규 ${found}건 · 원격 확인 ${verified}건 · 삭제 반영 ${removed}건 · 미등록 ${missing}건 · 스킵 ${skipped}건 · 오류 ${errors}건 · ${mappedByPlatform}`, errors ? 'err' : 'ok');
@@ -20917,13 +20917,67 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     };
   }
 
+  function coverageNormalizeShopeeSkuLookupHit(raw, sku) {
+    const rows = Array.isArray(raw?.region_hits) ? raw.region_hits : [];
+    const regionHits = rows
+      .map((entry) => {
+        const status = String(entry.item_status || entry.status || '').toUpperCase();
+        return {
+          region: String(entry.region || entry.shop_region || entry.country || '').toUpperCase(),
+          shop_item_id: entry.shop_item_id || entry.item_id || entry.shopItemId || null,
+          shop_model_id: entry.shop_model_id || entry.model_id || entry.shopModelId || null,
+          shop_id: entry.shop_id || entry.shopId || null,
+          item_status: status || null,
+          global_item_id: entry.global_item_id || null,
+          match_type: entry.match_type || null,
+          lookup_source: entry.lookup_source || 'lookup-sku',
+        };
+      })
+      .filter((entry) => entry.region && entry.shop_item_id && (!entry.item_status || ['NORMAL', 'UNLIST'].includes(entry.item_status)));
+    return {
+      platform: 'shopee',
+      sku,
+      found: regionHits.length > 0,
+      notFound: raw?.not_found === true,
+      platformItemId: regionHits[0]?.shop_item_id || null,
+      regionHits,
+      raw,
+    };
+  }
+
   async function coverageLookupShopeePublishedBySku(sku, productId) {
     const product = (state.products || []).find((p) => String(p.id) === String(productId));
     const localRows = (state.listings || []).filter((row) => String(row.product_id) === String(productId));
     const globalItemId = product?.shopee_item_id || product?.global_item_id || product?.shopee_global_item_id || localRows.find((row) => row.global_item_id)?.global_item_id || '';
+    let lookupError = null;
+    let lookupNotFound = false;
+    try {
+      const qs = new URLSearchParams({
+        account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
+        regions: SHOPEE_PLATFORM_ACTIVE_REGIONS.join(','),
+        sku,
+      });
+      const resp = await fetch(`${SHOPEE_BRIDGE}/lookup-sku?${qs.toString()}`, { headers: AUTH_HEADERS });
+      const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+      if (resp.ok && json.ok !== false) {
+        const bridgeHit = coverageNormalizeShopeeSkuLookupHit(json, sku);
+        if (bridgeHit.found) return bridgeHit;
+        lookupNotFound = json.not_found === true;
+        if (!lookupNotFound) lookupError = json.error || json.message || 'shopee_lookup_sku_inconclusive';
+      } else {
+        lookupError = json.error || json.message || `HTTP ${resp.status}`;
+      }
+    } catch (err) {
+      lookupError = err?.message || String(err);
+    }
     if (globalItemId) {
       try {
-        const resp = await fetch(`${SHOPEE_BRIDGE}/published_list?region=SG&account_key=${encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)}&global_item_id=${encodeURIComponent(globalItemId)}`, { headers: AUTH_HEADERS });
+        const qs = new URLSearchParams({
+          region: 'SG',
+          account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
+          global_item_id: String(globalItemId),
+        });
+        const resp = await fetch(`${SHOPEE_BRIDGE}/published_list?${qs.toString()}`, { headers: AUTH_HEADERS });
         const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
         if (!resp.ok || json.ok === false) {
           return { platform: 'shopee', sku, found: false, notFound: false, error: json.error || json.message || `HTTP ${resp.status}`, raw: json };
@@ -20936,7 +20990,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
     const itemInfoHit = await coverageLookupShopeeLocalRowsByItemInfo(localRows, sku);
     if (itemInfoHit) return itemInfoHit;
-    return { platform: 'shopee', sku, found: false, notFound: true, error: 'shopee_published_list_not_found', raw: {} };
+    if (lookupError && !lookupNotFound) {
+      return { platform: 'shopee', sku, found: false, notFound: false, error: lookupError, raw: { source: 'lookup-sku' } };
+    }
+    return { platform: 'shopee', sku, found: false, notFound: true, error: 'shopee_sku_not_found', raw: { source: 'lookup-sku' } };
   }
 
   function coverageShopeeItemInfoRows(raw) {
@@ -21006,7 +21063,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         shop_item_id: row.shop_item_id || null,
         shop_model_id: row.shop_model_id || null,
         status: 'mapped',
-        raw_payload: { source: 'published_list_sku_sync', hit: row },
+        last_error: null,
+        last_synced_at: new Date().toISOString(),
+        raw_payload: { source: 'sku_lookup_sync', hit: row },
       };
       const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: SHOPEE_LISTING_CONFLICT });
       if (error) throw error;
@@ -21060,7 +21119,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       last_error: hit?.error || 'Remote Shopee listing not found during SKU sync',
       last_synced_at: new Date().toISOString(),
       raw_payload: {
-        source: 'published_list_sku_sync',
+        source: 'sku_lookup_sync',
         not_found: true,
         checked_at: new Date().toISOString(),
         raw: hit?.raw || null,
@@ -21086,7 +21145,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const btn = document.getElementById('coverage-sku-check');
     const banner = document.getElementById('coverage-banner');
     const groups = coverageGroupRows().filter((group) => String(group.sku || '').trim());
-    const targetPlatforms = ['joom', 'qoo10', 'ebay'];
+    const targetPlatforms = ['shopee', 'joom', 'qoo10', 'ebay'];
     let found = 0;
     let missing = 0;
     let unsupported = 0;
@@ -21103,7 +21162,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (btn) { btn.disabled = true; btn.textContent = 'SKU 체크 중…'; }
     if (banner) {
       banner.style.display = 'block';
-      banner.textContent = `${groups.length}개 master SKU를 Joom/Qoo10/eBay에서 확인 중…`;
+      banner.textContent = `${groups.length}개 master SKU를 Shopee/Joom/Qoo10/eBay에서 확인 중…`;
     }
 
     try {
@@ -21127,7 +21186,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           try {
             hit = await coverageLookupPlatformBySku(platform, sku, group.product_id);
             if (hit.found) {
-              await coverageAbsorbLookupHit(group.product_id, hit);
+              if (platform === 'shopee') await coverageAbsorbShopeePublishedHit(group.product_id, hit);
+              else await coverageAbsorbLookupHit(group.product_id, hit);
               found += 1;
             } else if (hit.unsupported) {
               unsupported += 1;

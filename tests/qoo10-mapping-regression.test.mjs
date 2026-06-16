@@ -98,7 +98,7 @@ test('Qoo10 V2 modal defaults match lifecycle-aware listing policy', () => {
   assert.match(html, /function\s+mrQoo10MainImageSource\s*\(/, 'Qoo10 modal should derive the representative image source before registration');
   assert.match(html, /main_image:\s*mrQoo10MainImageSource\(rows\)/, 'Qoo10 create payload should start from the master representative image');
   assert.match(html, /function\s+mrQoo10BuildLayeredMainImageUrl\s*\(/, 'Qoo10 modal should build a layered representative image URL');
-  assert.match(html, /rshBuildLayeredCoverDataUrl\(mainImageUrl\)/, 'Qoo10 representative image should reuse the Shopee layered-cover composition logic');
+  assert.match(html, /rshBuildLayeredCoverDataUrl\(sourceUrl\)/, 'Qoo10 representative image should reuse the Shopee layered-cover composition logic');
   assert.match(html, /mrBuildMarketplaceLayeredMainImageUrl\('qoo10',\s*mainImageUrl,\s*first\)/, 'Qoo10 layered representative image should use the shared marketplace upload helper');
   assert.match(html, /sdUploadProductImageFile\(file,\s*uploadRow,\s*\{[\s\S]*kind:\s*'cover'[\s\S]*prefix:\s*platformKey === 'qoo10' \? 'q10' : platformKey[\s\S]*\}\)/, 'Qoo10 layered representative image should be uploaded as a short public product cover URL');
   assert.match(html, /payload\.publish\.main_image\s*=\s*await mrQoo10BuildLayeredMainImageUrl\(_mrQoo10\.rows \|\| \[\]\)/, 'Qoo10 create request should send the uploaded layered representative image URL');

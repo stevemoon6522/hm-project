@@ -39,6 +39,7 @@ const PUBLIC_ACTIONS: ReadonlySet<string> = new Set([
   "global_brands",
   "global_attributes",
   "item_info",
+  "lookup-sku",
   "list_items",
   "published_list",
   "shop_model_list",
@@ -2060,6 +2061,151 @@ async function listItemsForRegion(region: string, item_status = 'NORMAL', max_it
   return { count: enriched.length, items: enriched };
 }
 
+const SHOPEE_SKU_LOOKUP_STATUSES = ['NORMAL', 'UNLIST'];
+
+function shopeeSkuValue(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
+function shopeeSkuEquals(left: unknown, right: unknown): boolean {
+  return shopeeSkuValue(left) === shopeeSkuValue(right);
+}
+
+function shopeeListedStatus(status: unknown): boolean {
+  const value = String(status || '').toUpperCase();
+  return !value || SHOPEE_SKU_LOOKUP_STATUSES.includes(value);
+}
+
+function shopeeLookupError(stage: string, raw: any): string {
+  return `${stage}: ${raw?.error || 'error'} ${raw?.message || ''}`.trim();
+}
+
+function shopeeSearchItemIds(raw: any): number[] {
+  const response = raw?.response || raw || {};
+  const list =
+    (Array.isArray(response.item_id_list) && response.item_id_list) ||
+    (Array.isArray(response.item_list) && response.item_list) ||
+    (Array.isArray(response.item) && response.item) ||
+    [];
+  return [...new Set(list
+    .map((entry: any) => Number(entry?.item_id ?? entry))
+    .filter((id: number) => Number.isFinite(id) && id > 0))];
+}
+
+function shopeeSkuLookupHit(region: string, sku: string, item: any, model: any, source: string, shopId: number | null) {
+  const itemId = Number(item?.item_id || item?.shop_item_id || 0);
+  const modelId = Number(model?.model_id || model?.shop_model_id || 0);
+  const status = String(item?.item_status || item?.status || '').toUpperCase();
+  return {
+    region,
+    sku,
+    shop_id: shopId || null,
+    shop_item_id: itemId || null,
+    shop_model_id: modelId || null,
+    global_item_id: null,
+    item_status: status || null,
+    item_sku: shopeeSkuValue(item?.item_sku),
+    model_sku: model ? shopeeSkuValue(model?.model_sku) : null,
+    base_sku: model ? shopeeSkuValue(item?.item_sku) : null,
+    match_type: modelId ? 'model_sku' : 'item_sku',
+    lookup_source: source,
+  };
+}
+
+async function shopeeSkuHitFromItemIds(region: string, sku: string, itemIds: number[], source: string, shopId: number | null, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  if (!itemIds.length) return { hit: null, errors: [] as string[] };
+  const errors: string[] = [];
+  for (let i = 0; i < itemIds.length; i += 50) {
+    const chunk = itemIds.slice(i, i + 50);
+    const info = await shopApiCall(region, '/api/v2/product/get_item_base_info', { query: { item_id_list: chunk.join(',') }, account_key: accountKey });
+    if (info.error) {
+      errors.push(shopeeLookupError('get_item_base_info', info));
+      continue;
+    }
+    const items = Array.isArray(info.response?.item_list) ? info.response.item_list : [];
+    for (const item of items) {
+      if (!shopeeListedStatus(item?.item_status || item?.status)) continue;
+      if (shopeeSkuEquals(item?.item_sku, sku)) {
+        return { hit: shopeeSkuLookupHit(region, sku, item, null, source, shopId), errors };
+      }
+      if (!item?.has_model) continue;
+      const modelsResult = await shopApiCall(region, '/api/v2/product/get_model_list', { query: { item_id: item.item_id }, account_key: accountKey });
+      if (modelsResult.error) {
+        errors.push(shopeeLookupError('get_model_list', modelsResult));
+        continue;
+      }
+      const models = Array.isArray(modelsResult.response?.model) ? modelsResult.response.model : [];
+      const modelHit = models.find((model: any) => shopeeSkuEquals(model?.model_sku, sku));
+      if (modelHit) {
+        return { hit: shopeeSkuLookupHit(region, sku, item, modelHit, source, shopId), errors };
+      }
+    }
+  }
+  return { hit: null, errors };
+}
+
+async function lookupShopeeSkuInRegion(region: string, sku: string, maxScanItems = 5000, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const r = String(region || '').toUpperCase();
+  const needle = shopeeSkuValue(sku);
+  if (!r) return { region: r, found: false, not_found: false, error: 'region required' };
+  if (!needle) return { region: r, found: false, not_found: false, error: 'sku required' };
+
+  let shopId: number | null = null;
+  try {
+    shopId = await getRegionShopId(r, accountKey);
+  } catch (_) {
+    shopId = null;
+  }
+
+  const errors: string[] = [];
+  const searchResult = await shopApiCall(r, '/api/v2/product/search_item', { query: { item_sku: needle, offset: 0, page_size: 100 }, account_key: accountKey });
+  if (searchResult.error) {
+    errors.push(shopeeLookupError('search_item', searchResult));
+  } else {
+    const searchIds = shopeeSearchItemIds(searchResult);
+    const searched = await shopeeSkuHitFromItemIds(r, needle, searchIds, 'search_item', shopId, accountKey);
+    errors.push(...searched.errors);
+    if (searched.hit) return { region: r, found: true, hit: searched.hit, search_item_ids: searchIds, errors };
+  }
+
+  for (const status of SHOPEE_SKU_LOOKUP_STATUSES) {
+    const listed = await listItemsForRegion(r, status, maxScanItems, accountKey);
+    if ((listed as any).error) {
+      errors.push(shopeeLookupError(`list_items_${status}`, listed));
+      continue;
+    }
+    const row = ((listed as any).items || []).find((entry: any) => shopeeSkuEquals(entry?.item_sku, needle));
+    if (row) {
+      const item = { item_id: row.item_id, item_sku: row.base_sku || row.item_sku, item_status: row.status, has_model: !!row.has_model };
+      const model = row.model_id ? { model_id: row.model_id, model_sku: row.item_sku } : null;
+      return {
+        region: r,
+        found: true,
+        hit: shopeeSkuLookupHit(r, needle, item, model, `scan_${status.toLowerCase()}`, shopId),
+        scanned_status: status,
+        scanned_count: (listed as any).count || 0,
+        errors,
+      };
+    }
+  }
+
+  return { region: r, found: false, not_found: true, errors };
+}
+
+async function lookupShopeeSkuAcrossRegions(regions: string[], sku: string, maxScanItems = 5000, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const uniqueRegions = [...new Set(regions.map((r) => String(r || '').trim().toUpperCase()).filter((r) => OPERATING_REGIONS.includes(r)))];
+  const regionResults = await Promise.all(uniqueRegions.map((r) => lookupShopeeSkuInRegion(r, sku, maxScanItems, accountKey)));
+  const regionHits = regionResults
+    .filter((result: any) => result?.found && result?.hit)
+    .map((result: any) => result.hit);
+  return {
+    found: regionHits.length > 0,
+    not_found: regionHits.length === 0 && regionResults.every((result: any) => result?.not_found),
+    region_hits: regionHits,
+    region_results: regionResults,
+  };
+}
+
 function jsonResp(b: any, s = 200) { return new Response(JSON.stringify(b, null, 2), { status: s, headers: { 'Content-Type': 'application/json', ...CORS } }); }
 
 function requireInternalBridge(req: Request): Response | null {
@@ -3327,6 +3473,31 @@ Deno.serve(async (req) => {
       if (!item_id) return jsonResp({ ok: false, error: 'item_id required' }, 400);
       const result = await shopApiCall(region, '/api/v2/product/get_item_base_info', { query: { item_id_list: item_id }, account_key: accountKey });
       return jsonResp({ ok: !result.error, account_key: accountKey, region, item_id, result });
+    }
+    if (action === 'lookup-sku') {
+      const sku = shopeeSkuValue(url.searchParams.get('sku'));
+      if (!sku) return jsonResp({ ok: false, error: 'sku required' }, 400);
+      const requestedRegions = String(url.searchParams.get('regions') || url.searchParams.get('region') || region || 'SG')
+        .split(',')
+        .map((r) => r.trim().toUpperCase())
+        .filter(Boolean);
+      const requestedMaxScanItems = parseInt(url.searchParams.get('max_scan_items') || '5000');
+      const maxScanItems = Number.isFinite(requestedMaxScanItems) ? Math.max(1, Math.min(requestedMaxScanItems, 5000)) : 5000;
+      const lookup = await lookupShopeeSkuAcrossRegions(requestedRegions, sku, maxScanItems, accountKey);
+      return jsonResp({
+        ok: true,
+        account_key: accountKey,
+        sku,
+        regions: requestedRegions,
+        found: lookup.found,
+        not_found: lookup.not_found,
+        region_hits: lookup.region_hits,
+        region_results: lookup.region_results,
+        source_docs: [
+          'docs_ai/apis/product/v2.product.search_item.json:item_sku',
+          'docs_ai/apis/product/v2.product.get_model_list.json:model_sku',
+        ],
+      });
     }
     if (action === 'shop_item_dts_limit') {
       const r = String(url.searchParams.get('region') || region || '').toUpperCase();

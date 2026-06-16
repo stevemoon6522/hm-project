@@ -27,6 +27,7 @@ const shopeeRegisterOpen = sliceBetween(html, 'async function openRegisterShopee
 const masterRegisterNaming = sliceBetween(html, 'function mrMasterProductName(row) {', 'function mrGroupComponents(group) {');
 const platformSync = sliceBetween(html, 'async function syncPlatformSkus() {', 'function productListings(productId) {');
 const coverageLookup = sliceBetween(html, 'async function coverageLookupViaPlatformPublish(platform, sku, productId) {', 'async function coverageCheckExistingPlatformsBySku() {');
+const coverageSkuCheck = sliceBetween(html, 'async function coverageCheckExistingPlatformsBySku() {', 'function coverageRender() {');
 const masterRegisterImageTools = sliceBetween(html, 'function mrGetGroupOptionImages(group, firstRow) {', 'function mrMasterPatchForGroup(group) {');
 const openCreatedMasterEdit = sliceBetween(html, 'async function mrOpenCreatedMasterEdit(productId) {', 'function mrRenderPreviewCards() {');
 const masterRegisterRender = sliceBetween(html, 'function mrRenderPreviewCards() {', 'async function mrPromoteAll() {');
@@ -140,21 +141,26 @@ test('master register flow has a manual option-image management modal and sends 
   assert.match(masterRegisterImageTools, /body: JSON\.stringify\(\{ master_row_id: 0, staronemall_url: url, image_url: componentImageUrl \}\)/, 'Vision extraction should use the operator-selected component image, not the first/cover image');
 });
 
-test('platform SKU sync includes Shopee and absorbs published_list region ids for global-only rows', () => {
+test('platform SKU sync includes Shopee lookup-sku and absorbs matched region ids', () => {
   assert.match(platformSync, /const targetPlatforms = \['shopee', 'joom', 'qoo10', 'ebay'\]/, 'product list platform sync should include Shopee');
   assert.doesNotMatch(platformSync, /rollupListedCountForLed\(rollup, platform\) > 0\)[\s\S]{0,120}continue;/, 'green LED rows must be remotely rechecked instead of skipped');
   assert.match(platformSync, /const wasListed = rollupListedCountForLed\(rollup, platform\) > 0/, 'sync should remember whether a green LED is being verified');
   assert.match(platformSync, /coverageClearPlatformMapping\(group\.id, platform, hit\)/, 'remote not-found should clear stale local LED mappings');
-  assert.match(coverageLookup, /coverageLookupShopeePublishedBySku/, 'Shopee lookup should use published_list/global data');
+  assert.match(coverageLookup, /coverageLookupShopeePublishedBySku/, 'Shopee lookup should use the shared platform lookup entrypoint');
+  assert.match(coverageLookup, /coverageNormalizeShopeeSkuLookupHit/, 'Shopee lookup-sku response should be normalized before absorb');
+  assert.match(coverageLookup, /SHOPEE_BRIDGE\}\/lookup-sku\?\$\{qs\.toString\(\)\}/, 'Shopee sync should call the bridge SKU lookup route');
+  assert.match(coverageLookup, /regions: SHOPEE_PLATFORM_ACTIVE_REGIONS\.join\(','\)/, 'Shopee lookup should check every active marketplace region');
   assert.match(coverageLookup, /coverageAbsorbShopeePublishedHit/, 'Shopee hit should be absorbed into product_shopee_listings');
   assert.match(coverageLookup, /coverageClearShopeePublishedMappings/, 'Shopee not-found should mark product_shopee_listings as not_listed');
   assert.match(coverageLookup, /coverageShopeePublishedItemsFromRaw/, 'Shopee sync should normalize bridge and cached published list shapes');
   assert.match(coverageLookup, /result\?\.response\?\.published_item/, 'Shopee bridge published_list shape should be accepted');
-  assert.match(coverageLookup, /SHOPEE_BRIDGE\}\/published_list\?region=SG&global_item_id=/, 'Shopee sync should fetch published_list when only global_item_id is present');
+  assert.match(coverageLookup, /SHOPEE_BRIDGE\}\/published_list\?\$\{qs\.toString\(\)\}/, 'Shopee sync should keep published_list as a global-item fallback');
   assert.match(coverageLookup, /coverageLookupShopeeLocalRowsByItemInfo/, 'Shopee stale shop item rows should be verified by item_info when global_item_id is unavailable');
   assert.doesNotMatch(coverageLookup, /if \(localHit\) return coverageNormalizeShopeePublishedHit/, 'Shopee sync must not trust cached local rows before remote verification');
   assert.doesNotMatch(coverageLookup, /row\?\.shopee_item_id \|\| row\?\.platform_item_id/, 'products.shopee_item_id is a global id and must not be treated as shop_item_id');
   assert.match(coverageLookup, /global_item_id: row\.global_item_id \|\| null/, 'absorbed listing should preserve global_item_id for later price/sync operations');
+  assert.match(coverageSkuCheck, /const targetPlatforms = \['shopee', 'joom', 'qoo10', 'ebay'\]/, 'coverage SKU check should also include Shopee');
+  assert.match(coverageSkuCheck, /if \(platform === 'shopee'\) await coverageAbsorbShopeePublishedHit/, 'coverage Shopee hits should be absorbed through product_shopee_listings');
 });
 
 test('platform SKU sync absorbs Joom/Qoo10/eBay lookup hits through platform-publish sync', () => {

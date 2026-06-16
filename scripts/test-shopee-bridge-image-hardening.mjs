@@ -25,12 +25,13 @@ function sha256(s) {
 assert(sha256(edge) === sha256(supabase), 'edge-functions and supabase/functions shopee-bridge copies must match');
 
 for (const token of [
-  'const SOURCE_VERSION = 43',
+  'const SOURCE_VERSION = 45',
   'const OPERATING_REGION_SET = new Set(OPERATING_REGIONS)',
   'const PROXY_IMAGE_MAX_BYTES = 5 * 1024 * 1024',
   'const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024',
   'const GENERATED_UPLOAD_CACHE_TTL_MS = 30 * 60 * 1000',
   'staronemall2.wisacdn.com',
+  'mgqlwgnmwegzsjelbrih.supabase.co',
   '.wisacdn.com',
   '.shopeesz.com',
 ]) {
@@ -67,7 +68,7 @@ for (const token of [
   'normalizeRegion(body.region)',
   'decodeBase64Image(body.image_base64 || \'\')',
   'inspectUploadImage(decoded.bytes, decoded.mimeHint)',
-  'findRecentGeneratedUpload(idempotencyKeyHash, r)',
+  'findRecentGeneratedUpload(idempotencyKeyHash, r, accountKey)',
   'source_url',
   'main_image_url',
   'layer_version',

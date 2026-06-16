@@ -643,6 +643,7 @@ async function handleCreateListing(req: Request): Promise<Response> {
   const basePrice = normalizeQoo10PriceEnding90(body.base_price_jpy || body.item_price_jpy || body.ItemPrice);
   const itemTypeResult = buildItemType(Array.isArray(body.options) ? body.options : [], basePrice, body.force_options === true);
   const optionStock = itemTypeResult.options.reduce((sum, option) => sum + option.stock, 0);
+  const stockProvided = body.stock != null || body.ItemQty != null || itemTypeResult.options.length > 0;
   const stock = Math.max(0, Math.floor(Number(body.stock ?? body.ItemQty ?? optionStock) || 0));
   const weightKg = Math.max(0, Number(body.weight_kg || body.Weight || 0) || 0);
   const available = normalizeAvailableDate(body.available_date_type || body.AvailableDateType, body.available_date_value || body.AvailableDateValue);
@@ -652,7 +653,7 @@ async function handleCreateListing(req: Request): Promise<Response> {
   if (!sellerCode) return jsonResp({ ok: false, error: "SellerCode/seller_code required" }, 400);
   if (!basePrice) return jsonResp({ ok: false, error: "ItemPrice/base_price_jpy required" }, 400);
   if (!shippingNo) return jsonResp({ ok: false, error: "ShippingNo/shipping_no required; select a registered Qoo10 shipping template" }, 400);
-  if (!stock && itemTypeResult.options.length <= 1) return jsonResp({ ok: false, error: "ItemQty/stock required" }, 400);
+  if (!stockProvided && itemTypeResult.options.length <= 1) return jsonResp({ ok: false, error: "ItemQty/stock required" }, 400);
 
   const params: Record<string, string> = {
     SecondSubCat: categoryId,

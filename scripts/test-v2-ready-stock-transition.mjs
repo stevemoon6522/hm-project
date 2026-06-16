@@ -158,10 +158,14 @@ for (const source of [bridge, edgeBridge]) {
   assert(source.includes("if (action === 'update_shop_item_dts'"), 'bridge must keep update_shop_item_dts action');
   assert(source.includes("'set_global_sync_fields'"), 'bridge must expose set_global_sync_fields action');
   assert(source.includes("'update_shop_item_name'"), 'bridge must expose update_shop_item_name action');
-  assert(source.includes('body: payload })'), 'bridge must execute logged shop item update payloads');
+  assert(source.includes('body: payload, account_key: accountKey'), 'bridge must execute logged shop item update payloads');
   assert(source.includes('hydrateUpdateGlobalItemPayload'), 'bridge must hydrate update_global_item required image ids');
   assert(!source.includes("blockedFields.push('global_item_name')"), 'documented global_item_name must not be blocked by probe preflight');
   assert(source.includes('pre_order: { is_pre_order, days_to_ship }'), 'bridge must send is_pre_order + days_to_ship');
+  assert(source.includes('const READY_STOCK_GLOBAL_DTS = 1'), 'bridge must fix READY STOCK Global Product DTS at 1');
+  assert(source.includes('const PRE_ORDER_GLOBAL_DTS = 10'), 'bridge must fix PRE ORDER Global Product DTS at 10');
+  assert(source.includes('function resolveGlobalProductDts'), 'bridge must resolve Global Product DTS by lifecycle');
+  assert(!source.includes('clampReadyStockDts(targetInputs[0]?.days_to_ship'), 'bridge must not derive Global Product DTS from the first region target');
 }
 
 for (const token of [

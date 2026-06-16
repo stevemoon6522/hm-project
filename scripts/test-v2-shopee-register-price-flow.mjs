@@ -106,6 +106,20 @@ for (const token of [
   assert(publishItemBlock.includes(token), `register_cbsc publish payload missing token: ${token}`);
 }
 
+for (const token of [
+  'const READY_STOCK_GLOBAL_DTS = 1',
+  'const PRE_ORDER_GLOBAL_DTS = 10',
+  'function resolveGlobalProductDts',
+  'pre_order: { days_to_ship: resolveGlobalProductDts(body) }',
+  'days_to_ship: resolveGlobalProductDts(body)',
+]) {
+  assert(bridge.includes(token), `Global Product DTS policy missing token: ${token}`);
+}
+assert(
+  !registerCbscBlock.includes('clampReadyStockDts(targetInputs[0]?.days_to_ship'),
+  'register_cbsc must not derive Global Product ready-stock DTS from the first region target',
+);
+
 assert(
   registerCbscBlock.includes('await Promise.all(targetInputs.map(async (target: any) => {')
     && registerCbscBlock.includes('/api/v2/global_product/create_publish_task')

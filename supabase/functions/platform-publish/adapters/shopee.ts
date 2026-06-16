@@ -377,7 +377,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   });
 
   // Operator msg #679/#680: pre_order distinction matters at every step.
-  // - add_global_item Global DTS capped at 10 (bridge enforces via PRE_ORDER_GLOBAL_DTS).
+  // - add_global_item Global DTS is lifecycle-fixed in the bridge: Ready=1, Pre-Order=10.
   // - per-region create_publish_task DTS can be 3-150 (bridge clamps per is_pre_order).
   // - buildPublishItemPayload must send is_pre_order:true for pre_order lifecycle,
   //   otherwise items publish as Ready Stock with DTS > 10 → Shopee rejects.

@@ -1540,10 +1540,10 @@ function clampDaysToShip(v: unknown): number {
 
 // Per Shopee UI/docs: Ready Stock DTS valid range is 1-10 (per Global SKU
 // frame_016 observation); Pre-Order DTS valid range is 3-150 (per Shop SKU
-// frame_020 observation). The Global add_global_item endpoint caps DTS at 10
-// regardless of pre_order — operator msg #679. So:
-//   - Ready Stock: clamp 1-10 (both Global + Region)
-//   - Pre-Order Global: force 10 (max allowed at Global level)
+// frame_020 observation). Global Product DTS follows lifecycle-specific fixed values
+// by current lifecycle:
+//   - Ready Stock Global: force 1
+//   - Pre-Order Global: force 10
 //   - Pre-Order Region: clamp 3-150 (region max)
 function clampReadyStockDts(v: unknown): number {
   const n = Number(v);
@@ -1553,7 +1553,13 @@ function clampPreOrderRegionDts(v: unknown): number {
   const n = Number(v);
   return Math.max(3, Math.min(150, Number.isFinite(n) ? n : 10));
 }
+const READY_STOCK_GLOBAL_DTS = 1;
 const PRE_ORDER_GLOBAL_DTS = 10;
+
+function resolveGlobalProductDts(body: any = {}): number {
+  const isPreOrder = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
+  return isPreOrder ? PRE_ORDER_GLOBAL_DTS : READY_STOCK_GLOBAL_DTS;
+}
 
 function imageBlockFrom(body: any) {
   const image: any = {};
@@ -1643,11 +1649,10 @@ function normalizeGlobalModelForAdd(model: any) {
 }
 
 function buildAddGlobalModelPayload(global_item_id: number, models: any[], body: any = {}, target: any = {}) {
-  const dts = clampDaysToShip(target?.days_to_ship ?? body?.days_to_ship ?? body?.pre_order?.days_to_ship ?? 10);
   const payload: any = {
     global_item_id,
     global_model: models.map(normalizeGlobalModelForAdd),
-    days_to_ship: dts,
+    days_to_ship: resolveGlobalProductDts(body),
     package_length: Number(body.package_length_cm ?? body.package_length ?? body.dimension?.package_length) || 20,
     package_width: Number(body.package_width_cm ?? body.package_width ?? body.dimension?.package_width) || 15,
     package_height: Number(body.package_height_cm ?? body.package_height ?? body.dimension?.package_height) || 5,
@@ -1667,7 +1672,6 @@ function buildPublishModels(variation: any, fallbackPrice: number) {
 }
 
 function buildGlobalItemPayload(body: any) {
-  const dts = clampDaysToShip(body.days_to_ship);
   return {
     global_item_name: body.name,
     description: body.description || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`,
@@ -1684,7 +1688,7 @@ function buildGlobalItemPayload(body: any) {
     original_price: Number(body.global_price ?? body.price),
     // seller_stock replaces deprecated normal_stock at global item level (Shopee sunset 2024-10-23).
     seller_stock: [{ stock: Number(body.stock || 0) }],
-    pre_order: { days_to_ship: dts },
+    pre_order: { days_to_ship: resolveGlobalProductDts(body) },
     brand: body.brand && body.brand.original_brand_name
       ? { brand_id: Number(body.brand.brand_id || 0), original_brand_name: String(body.brand.original_brand_name) }
       : { brand_id: 0, original_brand_name: 'No Brand' },
@@ -3029,14 +3033,11 @@ Deno.serve(async (req) => {
         }, 400);
       }
 
-      // Operator msg #679: Global add_global_item DTS caps at 10. For Pre-Order
-      // products we force 10 at Global level; per-region DTS is then applied
-      // separately in each create_publish_task call (which can go up to 150).
-      // Ready Stock keeps the existing 1-10 clamp on the first target's DTS.
+      // Global Product DTS is fixed by lifecycle: Ready Stock=1,
+      // Pre-Order=10. Per-region DTS is applied separately in each
+      // create_publish_task call.
       const _isPreOrderRegister = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
-      const _globalDts = _isPreOrderRegister
-        ? PRE_ORDER_GLOBAL_DTS
-        : clampReadyStockDts(targetInputs[0]?.days_to_ship ?? body.days_to_ship);
+      const _globalDts = resolveGlobalProductDts({ ...body, is_pre_order: _isPreOrderRegister });
       const addPayload = buildGlobalItemPayload({
         ...body,
         attribute_list: catAttrs.attribute_list,

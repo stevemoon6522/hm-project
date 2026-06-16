@@ -19215,6 +19215,58 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return [];
   }
 
+  function catShopeeListingIsPriceSyncable(entry) {
+    const raw = entry?.item_status ?? entry?.status;
+    const text = String(raw ?? '').toUpperCase();
+    if (!text) return true;
+    if (text === 'NORMAL' || text === 'UNLIST' || text === 'ITEM_NORMAL' || text === 'ITEM_UNLIST') return true;
+    const status = Number(raw);
+    return !Number.isFinite(status) || [1, 8].includes(status);
+  }
+
+  function catShopeePublishedCandidateForRegion(entries, region, shopIndex) {
+    const wanted = String(region || '').toUpperCase();
+    const regionShopId = shopIndex?.byRegion?.get(wanted) || null;
+    return (entries || []).find(function(entry) {
+      const hitRegion = String(entry.region || entry.shop_region || entry.country || '').toUpperCase();
+      const shopId = Number(entry.shop_id || entry.shopId);
+      const matchesRegion = hitRegion ? hitRegion === wanted : (regionShopId && Number(shopId) === Number(regionShopId));
+      return matchesRegion && catShopeeListingIsPriceSyncable(entry);
+    }) || null;
+  }
+
+  function catShopeeSkuLookupHitsFromResponse(json) {
+    const rows = [];
+    if (Array.isArray(json?.region_hits)) rows.push.apply(rows, json.region_hits);
+    if (Array.isArray(json?.region_results)) {
+      json.region_results.forEach(function(result) {
+        if (result && result.hit) rows.push(result.hit);
+      });
+    }
+    return rows.filter(function(entry) {
+      const region = String(entry?.region || entry?.shop_region || entry?.country || '').toUpperCase();
+      const itemId = Number(entry?.shop_item_id || entry?.item_id || entry?.shopItemId);
+      return region && Number.isFinite(itemId) && itemId > 0 && catShopeeListingIsPriceSyncable(entry);
+    });
+  }
+
+  async function catFetchShopeeSkuLookupHits(sku, targetRegions) {
+    const cleanSku = String(sku || '').trim();
+    if (!cleanSku) return [];
+    const qs = new URLSearchParams({
+      account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
+      regions: targetRegions.join(','),
+      sku: cleanSku,
+    });
+    const response = await fetch(SHOPEE_BRIDGE + '/lookup-sku?' + qs.toString(), { headers: AUTH_HEADERS });
+    const json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
+    if (!response.ok || !json.ok || json.result?.error) {
+      console.warn('[CAT live] lookup-sku fallback failed:', cleanSku, json?.error || json?.message || json?.result?.error || response.status);
+      return [];
+    }
+    return catShopeeSkuLookupHitsFromResponse(json);
+  }
+
   async function catEnsureSelectedShopeeListings() {
     if (!_catCache) return 0;
     const selectedProducts = catSelectedProducts();
@@ -19230,6 +19282,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     let added = 0;
     const publishedCache = new Map();
+    const skuLookupCache = new Map();
     const modelCache = new Map();
     let shopIndex = null;
 
@@ -19237,7 +19290,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const pid = String(product.id);
       const byRegion = listingIdx.get(pid) || new Map();
       const globalItemId = catProductGlobalItemId(product, byRegion);
-      if (!Number.isFinite(globalItemId) || globalItemId <= 0) continue;
+      const hasGlobalItemId = Number.isFinite(globalItemId) && globalItemId > 0;
+      const sku = String(product.sku || product.shopee_global_model_sku || '').trim();
+      if (!hasGlobalItemId && !sku) continue;
       const needsModel = catProductNeedsShopeeModel(product);
       const needsRegion = targetRegions.some(function(r) {
         const l = byRegion.get(r);
@@ -19245,7 +19300,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       });
       if (!needsRegion) continue;
 
-      if (!publishedCache.has(globalItemId)) {
+      if (hasGlobalItemId && !publishedCache.has(globalItemId)) {
         const qs = new URLSearchParams({ region: 'SG', global_item_id: String(globalItemId) });
         const response = await fetch(SHOPEE_BRIDGE + '/published_list?' + qs.toString(), { headers: AUTH_HEADERS });
         const json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
@@ -19255,30 +19310,34 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           publishedCache.set(globalItemId, catPublishedItemsFromResponse(json));
         }
       }
+      if (sku && !skuLookupCache.has(sku)) {
+        skuLookupCache.set(sku, await catFetchShopeeSkuLookupHits(sku, targetRegions));
+      }
 
-      const publishedItems = publishedCache.get(globalItemId) || [];
+      const publishedItems = hasGlobalItemId ? (publishedCache.get(globalItemId) || []) : [];
+      const skuLookupItems = sku ? (skuLookupCache.get(sku) || []) : [];
       for (const r of targetRegions) {
         const existing = byRegion.get(r);
         if (existing && existing.shop_item_id && (!needsModel || existing.shop_model_id)) continue;
         if (!shopIndex) shopIndex = await catFetchShopeeShopRegionIndex();
-        const regionShopId = shopIndex.byRegion.get(r) || null;
-        const published = publishedItems.find(function(entry) {
-          const region = String(entry.region || entry.shop_region || entry.country || '').toUpperCase();
-          const shopId = Number(entry.shop_id || entry.shopId);
-          const status = Number(entry.item_status ?? entry.status ?? 1);
-          const matchesRegion = region ? region === r : (regionShopId && Number(shopId) === Number(regionShopId));
-          return matchesRegion && (!Number.isFinite(status) || [1, 8].includes(status));
-        });
+        const published = catShopeePublishedCandidateForRegion(publishedItems, r, shopIndex)
+          || catShopeePublishedCandidateForRegion(skuLookupItems, r, shopIndex);
         const itemId = Number(published && (published.shop_item_id || published.item_id || published.shopItemId));
         if (!Number.isFinite(itemId) || itemId <= 0) continue;
 
         let modelId = null;
+        if (published.shop_model_id || published.model_id || published.shopModelId) {
+          const rawModelId = Number(published.shop_model_id || published.model_id || published.shopModelId);
+          if (Number.isFinite(rawModelId) && rawModelId > 0) modelId = rawModelId;
+        }
         const modelKey = r + ':' + itemId;
         if (!modelCache.has(modelKey)) modelCache.set(modelKey, await catFetchShopeeModelRows(r, itemId));
         const modelInfo = modelCache.get(modelKey);
         if (modelInfo && modelInfo.ok && modelInfo.models.length) {
-          const model = modelInfo.models.find(function(m) { return catShopeeModelMatchesProduct(m, product); });
-          modelId = model && model.model_id ? Number(model.model_id) : null;
+          if (!modelId || !modelInfo.models.some(function(m) { return Number(m?.model_id) === Number(modelId); })) {
+            const model = modelInfo.models.find(function(m) { return catShopeeModelMatchesProduct(m, product); });
+            modelId = model && model.model_id ? Number(model.model_id) : null;
+          }
           if (!modelId && needsModel) continue;
         }
 
@@ -19286,13 +19345,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           product_id: pid,
           account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
           region: r,
-          global_item_id: globalItemId,
+          global_item_id: hasGlobalItemId ? globalItemId : (published.global_item_id || null),
           shop_id: published.shop_id || published.shopId || null,
           shop_item_id: itemId,
           shop_model_id: modelId,
           status: 'mapped',
           published_at: new Date().toISOString(),
-          raw_payload: { source: 'price_sync_auto_published_list', published: published },
+          raw_payload: { source: hasGlobalItemId ? 'price_sync_auto_published_list' : 'price_sync_sku_lookup', published: published },
         };
         const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: SHOPEE_LISTING_CONFLICT });
         if (error) throw error;

@@ -131,6 +131,7 @@ assertNear(getQoo10ShippingFeeJpy(2000), 910, 0.000001, 'Qoo10 shipping 2000g mu
 assertNear(getQoo10ShippingFeeJpy(2001), 910, 0.000001, 'Qoo10 shipping over known brackets should keep the last known fee until configured');
 
 const v2 = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
+const shopeeBridge = readFileSync(join(root, 'supabase', 'functions', 'shopee-bridge', 'index.ts'), 'utf8');
 assert(v2.includes("from '/v2/price-engine.js'"), 'V2 must import the shared V1 parity price engine from the deployed /v2 path');
 assert(v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/update_price'"), 'V2 Shopee sync must use shop-level update_price');
 assert(!v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/update_global_price'"), 'V2 price sync must not build global update_price payloads');
@@ -163,8 +164,17 @@ assert(v2.includes('id="login-github"'), 'V2 auth panel must expose GitHub OAuth
 assert(v2.includes("provider: 'github'"), 'V2 GitHub login must call Supabase signInWithOAuth');
 assert(v2.includes('function catEnsureSelectedShopeeListings'), 'Shopee price sync must auto-resolve GLOBAL published_list mappings into shop listings before payload build');
 assert(v2.includes("SHOPEE_BRIDGE + '/published_list?'"), 'Shopee price sync auto-resolution must use published_list from the global item id');
-assert(v2.includes("SHOPEE_BRIDGE + '/tokens?region=SG'"), 'Shopee published_list auto-resolution must map shop_id back to region using token shop ids');
-assert(v2.includes('const matchesRegion = region ? region === r : (regionShopId && Number(shopId) === Number(regionShopId));'), 'Shopee published_list entries without region must match via shop_id');
+assert(v2.includes("SHOPEE_BRIDGE + '/lookup-sku?'"), 'Shopee price sync auto-resolution must fall back to SKU lookup when global_item_id is absent');
+assert(v2.includes('price_sync_sku_lookup'), 'Shopee price sync SKU lookup fallback must mark listing rows with an audit source');
+assert(shopeeBridge.includes('"lookup-sku"'), 'Shopee bridge lookup-sku must be a public read-only action for browser mapping recovery');
+assert(shopeeBridge.includes("if (action === 'lookup-sku' && req.method === 'GET')"), 'Shopee bridge must implement lookup-sku for price sync mapping recovery');
+assert(shopeeBridge.includes('region_hits') && shopeeBridge.includes('region_results'), 'Shopee lookup-sku must return frontend-compatible region hit shapes');
+assert(shopeeBridge.includes("source: 'product_shopee_listings'"), 'Shopee lookup-sku must use DB mappings before expensive remote scans');
+assert(shopeeBridge.includes("source: 'remote_list_items'"), 'Shopee lookup-sku must retain an explicit remote scan fallback');
+assert(shopeeBridge.includes("if (action === 'update_item_logistics' && req.method === 'POST')"), 'Shopee bridge must expose explicit item logistics updates for price-limit recovery');
+assert(shopeeBridge.includes("shopApiCall(r, '/api/v2/product/update_item'"), 'Shopee item logistics recovery must use product.update_item per local API docs');
+assert(v2.includes("SHOPEE_BRIDGE + '/tokens?region=SG&account_key='"), 'Shopee published_list auto-resolution must map shop_id back to region using token shop ids');
+assert(v2.includes('const matchesRegion = hitRegion ? hitRegion === wanted : (regionShopId && Number(shopId) === Number(regionShopId));'), 'Shopee published_list entries without region must match via shop_id');
 assert(v2.includes('function catProductNeedsShopeeModel'), 'Variant/global-model rows must require shop_model_id during auto-resolution');
 assert(v2.includes('variation_tier_index.map(function(v) { return Number(v); }).join'), 'Shopee shop model matching must fall back to tier_index when SKU/name differ');
 assert(/await catEnsureSelectedShopeeListings\(\);[\s\S]*const \{ payloads \} = catBuildPriceSyncPayloads\(\)/.test(v2), 'Shopee live sync must hydrate shop listings before empty-target validation');

@@ -25,7 +25,7 @@ function sha256(s) {
 assert(sha256(edge) === sha256(supabase), 'edge-functions and supabase/functions shopee-bridge copies must match');
 
 for (const token of [
-  'const SOURCE_VERSION = 45',
+  'const SOURCE_VERSION = 49',
   'const OPERATING_REGION_SET = new Set(OPERATING_REGIONS)',
   'const PROXY_IMAGE_MAX_BYTES = 15 * 1024 * 1024',
   'const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024',
@@ -36,6 +36,16 @@ for (const token of [
   '.shopeesz.com',
 ]) {
   assert(edge.includes(token), `missing bridge hardening token: ${token}`);
+}
+
+for (const token of [
+  'import { requireAuthenticatedUser }',
+  'async function requireBridgeTokenOrAuthenticatedUser(req: Request): Promise<Response | null>',
+  'x-platform-bridge-token',
+  'bridge_token_or_authenticated_user_failed',
+  "'internal_bridge' : 'authenticated_user'",
+]) {
+  assert(edge.includes(token), `missing internal bridge operator auth guard: ${token}`);
 }
 
 const proxyBlock = sliceBetween(edge, "if (action === 'proxy_image')", '// POST /upload_image');

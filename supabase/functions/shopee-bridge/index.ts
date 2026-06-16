@@ -41,6 +41,7 @@ const PUBLIC_ACTIONS: ReadonlySet<string> = new Set([
   "item_info",
   "lookup-sku",
   "list_items",
+  "lookup-sku",
   "published_list",
   "shop_model_list",
   "global_items",
@@ -60,7 +61,7 @@ const LIVE_HOST = 'partner.shopeemobile.com';
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info, x-platform-bridge-token',
   'Access-Control-Max-Age': '3600',
 };
 
@@ -72,8 +73,8 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 // CBSC main account ID ??Shopee CB Mall / KRSC group. Same across all 10 region shops in our setup.
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
-// v45: allow the current V2 Supabase product-image storage host in /proxy_image.
-const SOURCE_VERSION = 45;
+// v49: add explicit item-level logistics update route for price-limit recovery.
+const SOURCE_VERSION = 49;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -2352,16 +2353,16 @@ Deno.serve(async (req) => {
     return await handleHeadlessDeleteGlobalItem(req, url);
   }
 
-  // Step 0 auth gate (plan v2.2): every mutating route requires a real signed-in
-  // user. Read-only PUBLIC_ACTIONS skip the check so dashboards/probes that have
-  // been working with the anon key keep working. anon JWT or no JWT → 401.
+  // Step 0 auth gate (plan v2.2): mutating routes require a signed-in user or
+  // the private internal bridge token. Read-only PUBLIC_ACTIONS skip the check.
   if (!PUBLIC_ACTIONS.has(action)) {
-    const authResult = await requireAuthenticatedUser(req);
-    if (authResult.response) {
-      audit('auth_rejected', { action, reason: 'requireAuthenticatedUser_failed' });
-      return authResult.response;
+    const authResponse = await requireBridgeTokenOrAuthenticatedUser(req);
+    if (authResponse) {
+      audit('auth_rejected', { action, reason: 'bridge_token_or_authenticated_user_failed' });
+      return authResponse;
     }
-    audit('auth_ok', { action, user_id: authResult.user.id, email: authResult.user.email });
+    const authMode = req.headers.get('x-platform-bridge-token') ? 'internal_bridge' : 'authenticated_user';
+    audit('auth_ok', { action, mode: authMode });
   }
 
   try {
@@ -3552,6 +3553,127 @@ Deno.serve(async (req) => {
       if ((r as any).error) return jsonResp({ ok: false, account_key: accountKey, region, ...r }, 502);
       return jsonResp({ ok: true, account_key: accountKey, region, count: (r as any).count, items: (r as any).items });
     }
+    if (action === 'lookup-sku' && req.method === 'GET') {
+      const sku = String(url.searchParams.get('sku') || '').trim();
+      if (!sku) return jsonResp({ ok: false, error: 'sku required' }, 400);
+      const requestedRegions = parseTargetRegions(url.searchParams.get('regions') || url.searchParams.get('region'));
+      const item_status = url.searchParams.get('item_status') || 'NORMAL';
+      const rawMaxItems = parseInt(url.searchParams.get('max_items') || '5000');
+      const max_items = Math.max(1, Math.min(5000, Number.isFinite(rawMaxItems) ? rawMaxItems : 5000));
+      const allowRemoteScan = ['1', 'true', 'yes'].includes(String(url.searchParams.get('remote') || url.searchParams.get('scan') || '').toLowerCase());
+      const needle = sku.toUpperCase();
+      const region_results: any[] = [];
+      const region_hits: any[] = [];
+
+      const productRows: any[] = [];
+      const primary = await supabase
+        .from('products')
+        .select('id,sku,shopee_global_model_sku,product_name,option_name')
+        .eq('sku', sku);
+      if (!primary.error && Array.isArray(primary.data)) productRows.push(...primary.data);
+      const modelSku = await supabase
+        .from('products')
+        .select('id,sku,shopee_global_model_sku,product_name,option_name')
+        .eq('shopee_global_model_sku', sku);
+      if (!modelSku.error && Array.isArray(modelSku.data)) {
+        for (const row of modelSku.data) {
+          if (!productRows.some((p) => String(p.id) === String(row.id))) productRows.push(row);
+        }
+      }
+
+      if (productRows.length) {
+        const productById = new Map(productRows.map((row: any) => [String(row.id), row]));
+        const listingResult = await supabase
+          .from('product_shopee_listings')
+          .select('product_id,account_key,region,shop_id,shop_item_id,shop_model_id,global_item_id,status,last_synced_price,last_synced_at')
+          .eq('account_key', accountKey)
+          .in('product_id', productRows.map((row: any) => row.id))
+          .in('region', requestedRegions);
+        if (listingResult.error) {
+          return jsonResp({ ok: false, account_key: accountKey, sku, error: listingResult.error.message || 'listing lookup failed' }, 500);
+        }
+        const byRegion = new Map<string, any[]>();
+        for (const row of listingResult.data || []) {
+          const r = String(row.region || '').toUpperCase();
+          if (!r || !row.shop_item_id) continue;
+          const product = productById.get(String(row.product_id)) || {};
+          const hit = {
+            source: 'product_shopee_listings',
+            region: r,
+            shop_id: row.shop_id || null,
+            shop_item_id: row.shop_item_id,
+            item_id: row.shop_item_id,
+            shop_model_id: row.shop_model_id || null,
+            model_id: row.shop_model_id || null,
+            global_item_id: row.global_item_id || null,
+            item_sku: product.sku || sku,
+            base_sku: product.sku || null,
+            item_name: [product.product_name, product.option_name].filter(Boolean).join(' - '),
+            current_price: row.last_synced_price ?? null,
+            original_price: row.last_synced_price ?? null,
+            currency: '',
+            status: row.status || 'mapped',
+            item_status: row.status || 'mapped',
+            has_model: !!row.shop_model_id,
+            last_synced_at: row.last_synced_at || null,
+          };
+          if (!byRegion.has(r)) byRegion.set(r, []);
+          byRegion.get(r)!.push(hit);
+        }
+        for (const r of requestedRegions) {
+          const matches = byRegion.get(r) || [];
+          const hit = matches[0] || null;
+          if (hit) region_hits.push(hit);
+          region_results.push({ region: r, ok: true, source: 'product_shopee_listings', hit, matches, count: matches.length });
+        }
+      }
+
+      if (allowRemoteScan && region_hits.length === 0) {
+        region_results.length = 0;
+        for (const r of requestedRegions) {
+          const result = await listItemsForRegion(r, item_status, max_items, accountKey);
+          if ((result as any).error) {
+            region_results.push({ region: r, ok: false, error: (result as any).error, result });
+            continue;
+          }
+          const matches = ((result as any).items || [])
+            .filter((row: any) => String(row.item_sku || row.base_sku || '').trim().toUpperCase() === needle)
+            .map((row: any) => ({
+              source: 'remote_list_items',
+              region: r,
+              shop_item_id: row.item_id,
+              item_id: row.item_id,
+              shop_model_id: row.model_id || null,
+              model_id: row.model_id || null,
+              item_sku: row.item_sku || '',
+              base_sku: row.base_sku || null,
+              item_name: row.item_name || '',
+              current_price: row.current_price ?? null,
+              original_price: row.original_price ?? null,
+              currency: row.currency || '',
+              status: row.status || '',
+              item_status: row.status || '',
+              has_model: !!row.has_model,
+            }));
+          const hit = matches[0] || null;
+          if (hit) region_hits.push(hit);
+          region_results.push({ region: r, ok: true, source: 'remote_list_items', hit, matches, count: matches.length });
+        }
+      } else if (!region_results.length) {
+        for (const r of requestedRegions) {
+          region_results.push({ region: r, ok: true, source: 'product_shopee_listings', hit: null, matches: [], count: 0 });
+        }
+      }
+
+      return jsonResp({
+        ok: true,
+        account_key: accountKey,
+        sku,
+        regions: requestedRegions,
+        region_hits,
+        region_results,
+      });
+    }
     if (action === 'update_price' && req.method === 'POST') {
       const body = await req.json();
       const reqAccountKey = normalizeAccountKey(body.account_key || body.accountKey || accountKey);
@@ -3563,6 +3685,42 @@ Deno.serve(async (req) => {
       const result = await shopApiCall(r, '/api/v2/product/update_price', { method: 'POST', body: { item_id, price_list }, account_key: reqAccountKey });
       const failureList = Array.isArray(result?.response?.failure_list) ? result.response.failure_list : [];
       return jsonResp({ ok: !result.error && failureList.length === 0, account_key: reqAccountKey, region: r, item_id, sent_price_list: price_list, failure_list: failureList, result });
+    }
+    if (action === 'update_item_logistics' && req.method === 'POST') {
+      const body = await req.json();
+      const reqAccountKey = normalizeAccountKey(body.account_key || body.accountKey || accountKey);
+      const r = body.region || 'SG';
+      const item_id = parseInt(body.item_id);
+      const logisticInfo = Array.isArray(body.logistic_info) ? body.logistic_info : [];
+      const cleaned = logisticInfo
+        .map((row: any) => {
+          const logistic_id = Number(row?.logistic_id || row?.logistics_channel_id || row?.channel_id);
+          if (!Number.isFinite(logistic_id) || logistic_id <= 0) return null;
+          const next: Record<string, unknown> = {
+            logistic_id,
+            enabled: row?.enabled === true,
+          };
+          if (row?.is_free !== undefined) next.is_free = row.is_free === true;
+          if (row?.shipping_fee !== undefined && row?.shipping_fee !== null && row?.shipping_fee !== '') {
+            const shipping_fee = Number(row.shipping_fee);
+            if (Number.isFinite(shipping_fee) && shipping_fee >= 0) next.shipping_fee = shipping_fee;
+          }
+          if (row?.size_id !== undefined && row?.size_id !== null && row?.size_id !== '') {
+            const size_id = Number(row.size_id);
+            if (Number.isFinite(size_id) && size_id >= 0) next.size_id = size_id;
+          }
+          return next;
+        })
+        .filter((row: Record<string, unknown> | null): row is Record<string, unknown> => !!row);
+      if (!item_id) return jsonResp({ ok: false, error: 'item_id required' }, 400);
+      if (!cleaned.length) return jsonResp({ ok: false, error: 'logistic_info required' }, 400);
+      const payload = { item_id, logistic_info: cleaned };
+      const result = await shopApiCall(r, '/api/v2/product/update_item', {
+        method: 'POST',
+        body: payload,
+        account_key: reqAccountKey,
+      });
+      return jsonResp({ ok: !result.error, account_key: reqAccountKey, region: r, item_id, sent_logistic_info: cleaned, result });
     }
     if (action === 'update_item_sku' && req.method === 'POST') {
       const body = await req.json();

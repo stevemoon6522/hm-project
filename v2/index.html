@@ -663,6 +663,36 @@
       font-family: var(--mono);
       font-size: 12px;
     }
+    .rsh-account-buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      min-height: 35px;
+      align-items: center;
+    }
+    .rsh-account-chip {
+      border: 1px solid var(--border);
+      background: #fff;
+      color: #344054;
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 12px;
+      font-weight: 800;
+      line-height: 1.15;
+      min-height: 35px;
+    }
+    .rsh-account-chip.active {
+      border-color: var(--accent);
+      background: #fff3fa;
+      color: var(--accent);
+    }
+    .rsh-account-chip small {
+      display: block;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 700;
+      margin-top: 2px;
+    }
     .rsh-muted-box {
       color: var(--muted);
       font-size: 12px;
@@ -3853,9 +3883,10 @@
             <label>Global item SKU</label>
             <div id="rsh-sku" class="rsh-readbox mono"></div>
           </div>
-          <div class="field span-4">
-            <label for="rsh-account-key">Shopee Account</label>
-            <select id="rsh-account-key"></select>
+          <div class="field span-8">
+            <label>Shopee Account</label>
+            <select id="rsh-account-key" style="display:none;"></select>
+            <div id="rsh-account-buttons" class="rsh-account-buttons" role="group" aria-label="Shopee account targets"></div>
           </div>
           <div class="field span-4">
             <label>Layer</label>
@@ -4415,8 +4446,48 @@ LEGACY END -->
   }
 
   function sdSelectedShopeeAccountKey() {
+    if (_rsh?.executionAccountKey) return sdNormalizeShopeeAccountKey(_rsh.executionAccountKey);
     const select = document.getElementById('rsh-account-key');
     return sdNormalizeShopeeAccountKey(select?.value || _rsh?.accountKey || SHOPEE_DEFAULT_ACCOUNT_KEY);
+  }
+
+  function sdShopeeAccountDisplayName(accountKey) {
+    const profile = sdShopeeAccountProfile(accountKey);
+    return profile.display_name || sdNormalizeShopeeAccountKey(accountKey);
+  }
+
+  function sdShopeeAccountExists(accountKey) {
+    const key = sdNormalizeShopeeAccountKey(accountKey);
+    return SHOPEE_ACCOUNT_PROFILES.some((profile) => sdNormalizeShopeeAccountKey(profile.account_key) === key);
+  }
+
+  function sdUniqueShopeeAccountKeys(keys) {
+    const out = [];
+    (Array.isArray(keys) ? keys : [keys]).forEach((value) => {
+      const key = sdNormalizeShopeeAccountKey(value);
+      if (!key || out.includes(key)) return;
+      if (SHOPEE_ACCOUNT_PROFILES_LOADED && !sdShopeeAccountExists(key)) return;
+      out.push(key);
+    });
+    return out.length ? out : [SHOPEE_DEFAULT_ACCOUNT_KEY];
+  }
+
+  function sdSetShopeeAccountSelection(keys) {
+    const selected = sdUniqueShopeeAccountKeys(keys);
+    if (_rsh) {
+      _rsh.accountKeys = selected;
+      _rsh.accountKey = selected[0] || SHOPEE_DEFAULT_ACCOUNT_KEY;
+    }
+    const select = document.getElementById('rsh-account-key');
+    if (select) select.value = _rsh?.accountKey || SHOPEE_DEFAULT_ACCOUNT_KEY;
+    return selected;
+  }
+
+  function sdSelectedShopeeAccountKeys() {
+    const keys = Array.isArray(_rsh?.accountKeys) && _rsh.accountKeys.length
+      ? _rsh.accountKeys
+      : [sdSelectedShopeeAccountKey()];
+    return sdUniqueShopeeAccountKeys(keys);
   }
 
   function sdShopeeLayerUrl(accountKey) {
@@ -12275,6 +12346,8 @@ LEGACY END -->
     productGroupId: null,
     mode: 'single',
     accountKey: SHOPEE_DEFAULT_ACCOUNT_KEY,
+    accountKeys: [SHOPEE_DEFAULT_ACCOUNT_KEY],
+    executionAccountKey: null,
     master: null,            // full product row fetched on open
     products: [],            // option rows when opening a grouped master product
     selectedImages: [],      // [{ src/dataUrl, idx, kind }] — first image is Shopee cover
@@ -12285,8 +12358,11 @@ LEGACY END -->
     crawledImageRefs: [],    // rendered image metadata, preserving data URLs and source URLs
     detailImageSources: [],  // StarOneMall detail images; uploaded after cover
     regionImageIds: {},      // product image_id_list per target region
+    accountRegionImageIds: {}, // account_key -> product image_id_list per target region
     globalOptionImageIds: {},// option SKU -> SG image_id for Shopee variation option image
+    accountGlobalOptionImageIds: {}, // account_key -> option SKU -> SG image_id
     publishRequestId: null,  // UUID generated at Stage 2 start; fresh UUID on retry (P0-2)
+    accountPublishRequestIds: {}, // account_key -> UUID
     dtsOverrides: {},        // { region: number } — user-edited DTS values
     publishInFlight: false,  // P1-2: true while fetch is in-flight — blocks modal close
   };
@@ -12296,40 +12372,63 @@ LEGACY END -->
 
   function rshRenderShopeeAccountSelector() {
     const select = document.getElementById('rsh-account-key');
-    if (!select) return;
-    const current = sdNormalizeShopeeAccountKey(_rsh.accountKey || SHOPEE_DEFAULT_ACCOUNT_KEY);
-    select.innerHTML = SHOPEE_ACCOUNT_PROFILES.map((profile) => {
+    const buttons = document.getElementById('rsh-account-buttons');
+    if (!select && !buttons) return;
+    const selected = sdSetShopeeAccountSelection(sdSelectedShopeeAccountKeys());
+    if (select) select.innerHTML = SHOPEE_ACCOUNT_PROFILES.map((profile) => {
       const key = sdNormalizeShopeeAccountKey(profile.account_key);
       const label = profile.display_name || key;
       return `<option value="${sdEscapeAttr(key)}">${sdEscapeAttr(label)}</option>`;
     }).join('');
-    select.value = SHOPEE_ACCOUNT_PROFILES.some((profile) => sdNormalizeShopeeAccountKey(profile.account_key) === current)
-      ? current
-      : SHOPEE_DEFAULT_ACCOUNT_KEY;
-    _rsh.accountKey = sdNormalizeShopeeAccountKey(select.value);
+    if (select) select.value = selected[0] || SHOPEE_DEFAULT_ACCOUNT_KEY;
+    if (buttons) {
+      buttons.innerHTML = SHOPEE_ACCOUNT_PROFILES.map((profile) => {
+        const key = sdNormalizeShopeeAccountKey(profile.account_key);
+        const label = profile.display_name || key;
+        const active = selected.includes(key);
+        return `<button type="button" class="rsh-account-chip${active ? ' active' : ''}" data-rsh-account="${sdEscapeAttr(key)}" aria-pressed="${active ? 'true' : 'false'}">${sdEscapeAttr(label)}<small>${sdEscapeAttr(key)}</small></button>`;
+      }).join('');
+    }
     rshUpdateShopeeAccountLayerReadout();
   }
 
   function rshUpdateShopeeAccountLayerReadout() {
     const layerEl = document.getElementById('rsh-account-layer');
     if (!layerEl) return;
-    const profile = sdShopeeAccountProfile(sdSelectedShopeeAccountKey());
-    layerEl.textContent = profile.layer_asset_path || 'shop-overlay-layer.png';
+    layerEl.innerHTML = sdSelectedShopeeAccountKeys().map((accountKey) => {
+      const profile = sdShopeeAccountProfile(accountKey);
+      const layer = profile.layer_asset_path || 'shop-overlay-layer.png';
+      return `<div><strong>${sdEscapeAttr(sdShopeeAccountDisplayName(accountKey))}</strong>: ${sdEscapeAttr(layer)}</div>`;
+    }).join('');
   }
 
-  async function rshHandleShopeeAccountChange() {
+  async function rshHandleShopeeAccountChange(previousPrimaryKey = _rsh.accountKey) {
     const nextKey = sdSelectedShopeeAccountKey();
-    if (_rsh.accountKey === nextKey) return;
-    _rsh.accountKey = nextKey;
-    _rsh.cachedImageId = null;
-    _rsh.cachedExtraIds = [];
-    _rsh.regionImageIds = {};
-    _rsh.uploadMode = true;
+    const primaryChanged = sdNormalizeShopeeAccountKey(previousPrimaryKey) !== nextKey;
+    if (primaryChanged) {
+      _rsh.cachedImageId = null;
+      _rsh.cachedExtraIds = [];
+      _rsh.regionImageIds = {};
+      _rsh.uploadMode = true;
+    }
     rshUpdateShopeeAccountLayerReadout();
-    if (_rsh.master) {
+    if (primaryChanged && _rsh.master) {
       await rshUseMasterImages(_rsh.master);
     }
     rshCheckSubmitEnabled();
+  }
+
+  async function rshToggleShopeeAccount(accountKey) {
+    const key = sdNormalizeShopeeAccountKey(accountKey);
+    const before = sdSelectedShopeeAccountKeys();
+    const next = before.includes(key)
+      ? before.filter((item) => item !== key)
+      : before.concat(key);
+    if (!next.length) return;
+    const previousPrimary = _rsh.accountKey;
+    sdSetShopeeAccountSelection(next);
+    rshRenderShopeeAccountSelector();
+    await rshHandleShopeeAccountChange(previousPrimary);
   }
 
   async function rshEnsureCountrySettings(forceRefresh = false) {
@@ -12881,8 +12980,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     throw new Error(`이미지 다운로드 실패: ${lastErr?.message || lastErr || value}`);
   }
 
-  async function rshBuildLayeredCoverDataUrl(mainImageUrl) {
-    const accountKey = sdSelectedShopeeAccountKey();
+  async function rshBuildLayeredCoverDataUrl(mainImageUrl, accountKeyOverride) {
+    const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     if (typeof mrCompositeMainImage === 'function') {
       const b64 = await mrCompositeMainImage(mainImageUrl, accountKey);
       return `data:image/png;base64,${b64}`;
@@ -13331,12 +13430,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return refs;
   }
 
-  async function rshUseMasterImages(master) {
+  async function rshUseMasterImages(master, accountKeyOverride) {
     const mainUrl = rshMasterMainImageUrl(master);
     if (!mainUrl) return false;
+    const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     let coverRef = null;
     try {
-      const dataUrl = await rshBuildLayeredCoverDataUrl(mainUrl);
+      const dataUrl = await rshBuildLayeredCoverDataUrl(mainUrl, accountKey);
       coverRef = {
         src: dataUrl,
         dataUrl,
@@ -13375,6 +13475,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     rshRenderImageRolePreview();
     rshCheckSubmitEnabled();
     return true;
+  }
+
+  async function rshPrepareImagesForAccount(accountKey) {
+    const key = sdNormalizeShopeeAccountKey(accountKey);
+    const previousExecution = _rsh.executionAccountKey;
+    _rsh.executionAccountKey = key;
+    try {
+      const coverRef = (_rsh.selectedImages || [])[0] || null;
+      const sourceUrl = coverRef?.sourceUrl || rshMasterMainImageUrl(_rsh.master);
+      if (sourceUrl) {
+        const dataUrl = await rshBuildLayeredCoverDataUrl(sourceUrl, key);
+        const nextCover = {
+          ...(coverRef || {}),
+          src: dataUrl,
+          dataUrl,
+          sourceUrl,
+          idx: Number.isFinite(Number(coverRef?.idx)) ? Number(coverRef.idx) : 0,
+          kind: coverRef?.kind || 'account-layered-cover',
+          label: coverRef?.label || 'Cover',
+        };
+        _rsh.selectedImages = [nextCover];
+        _rsh.uploadMode = true;
+        return true;
+      }
+      if (_rsh.master?.main_image) return await rshUseMasterImages(_rsh.master, key);
+      if (key === SHOPEE_DEFAULT_ACCOUNT_KEY && _rsh.cachedImageId) return true;
+      throw new Error(`${sdShopeeAccountDisplayName(key)}: source image is required for account-specific layer upload.`);
+    } finally {
+      _rsh.executionAccountKey = previousExecution;
+    }
   }
 
   function plBuildJoomPublishGroupFromProducts(rows) {
@@ -14434,6 +14564,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       productGroupId: options.productGroupId || productRow?.product_group_id || null,
       mode: options.mode === 'group' ? 'group' : 'single',
       accountKey: sdNormalizeShopeeAccountKey(options.accountKey || options.account_key || SHOPEE_DEFAULT_ACCOUNT_KEY),
+      accountKeys: sdUniqueShopeeAccountKeys(options.accountKeys || options.account_keys || [options.accountKey || options.account_key || SHOPEE_DEFAULT_ACCOUNT_KEY]),
+      executionAccountKey: null,
       master: null,
       products: preloadedProducts,
       selectedImages: [],
@@ -14444,11 +14576,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       crawledImageRefs: [],
       detailImageSources: [],
       regionImageIds: {},
+      accountRegionImageIds: {},
       globalOptionImageIds: {},
+      accountGlobalOptionImageIds: {},
       publishRequestId: null,
+      accountPublishRequestIds: {},
       dtsOverrides: {},
       publishInFlight: false,
     };
+    sdSetShopeeAccountSelection(_rsh.accountKeys);
 
     const overlay = document.getElementById('register-shopee-modal');
     if (!overlay) return;
@@ -14875,9 +15011,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return out;
   }
 
-  async function rshUploadImages(session, regions) {
+  async function rshUploadImages(session, regions, accountKeyOverride, options = {}) {
     const SHOPEE_BRIDGE_UPLOAD = `${SUPABASE_URL}/functions/v1/shopee-bridge/upload_image`;
-    const accountKey = sdSelectedShopeeAccountKey();
+    const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
+    const persistProductImages = options.persistProductImages !== false && accountKey === SHOPEE_DEFAULT_ACCOUNT_KEY;
     const uploadHeaders = {
       Authorization: `Bearer ${session.access_token}`,
       apikey: SUPABASE_ANON,
@@ -14940,6 +15077,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const primaryRegionIds = regionImageIds.SG || regionImageIds[targetRegions[0]] || [];
     const extraImageIds = primaryRegionIds.slice(1);
 
+    if (persistProductImages) {
     const productIds = rshProductIds();
     let updateQuery = db
       .from('products')
@@ -14951,15 +15089,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (updateErr) {
       throw new Error(`이미지 ID 저장 실패: ${updateErr.message}`);
     }
+    }
     _rsh.cachedImageId = coverImageId;
     _rsh.cachedExtraIds = extraImageIds;
 
     return { coverImageId, extraImageIds, regionImageIds };
   }
 
-  async function rshUploadOptionImages(session, regions) {
+  async function rshUploadOptionImages(session, regions, accountKeyOverride) {
     if (_rsh.mode !== 'group') return {};
-    const accountKey = sdSelectedShopeeAccountKey();
+    const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     const rows = rshSortedProducts(_rsh.products || []);
     const uploadRegion = (Array.isArray(regions) && regions.includes('SG')) ? 'SG' : ((regions || [])[0] || 'SG');
     const uploadHeaders = {
@@ -15015,8 +15154,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return optionList.length ? [{ name: rshReadVariationName(rows), option_list: optionList }] : [];
   }
 
-  function rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle) {
-    const accountKey = sdSelectedShopeeAccountKey();
+  function rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKeyOverride) {
+    const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     const products = rshSortedProducts(_rsh.products || []);
     const master = _rsh.master || products[0] || {};
     const categoryId = Number(document.getElementById('rsh-category')?.value) || Number(master.shopee_category_id) || 100740;
@@ -15123,14 +15262,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     };
   }
 
-  async function rshRegisterGroupViaCbsc(session, activeRegions, dtsValues, lifecycle, errorEl) {
+  async function rshRegisterGroupViaCbsc(session, activeRegions, dtsValues, lifecycle, errorEl, accountKeyOverride, options = {}) {
+    const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     const products = rshSortedProducts(_rsh.products || []);
     if (products.length < 2) throw new Error('옵션 묶음 상품이 아닙니다.');
 
     let payload;
     let json;
     try {
-      payload = rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle);
+      payload = rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKey);
       console.log('[rsh] group register_cbsc payload:', JSON.stringify(payload).slice(0, 2000));
       const resp = await fetch(`${SHOPEE_BRIDGE}/register_cbsc`, {
         method: 'POST',
@@ -15249,9 +15389,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return results.map(rshNormalizeRegionResult).filter((row) => row.region);
   }
 
-  async function rshFetchShopeeListingResults(productId, activeRegions) {
+  function rshDomAccountKey(accountKey) {
+    return sdNormalizeShopeeAccountKey(accountKey).replace(/[^a-z0-9_-]/g, '-');
+  }
+
+  function rshTargetEl(field, region, accountKey) {
+    const key = rshDomAccountKey(accountKey || sdSelectedShopeeAccountKey());
+    return document.getElementById(`rsh-${field}-${key}-${region}`)
+      || document.getElementById(`rsh-${field}-${region}`);
+  }
+
+  function rshSetTargetStatus(accountKey, region, status, color, message) {
+    const statusEl = rshTargetEl('status', region, accountKey);
+    if (statusEl) {
+      statusEl.textContent = status;
+      if (color) statusEl.style.color = color;
+    }
+    if (message != null) {
+      const msgEl = rshTargetEl('msg', region, accountKey);
+      if (msgEl) msgEl.textContent = message;
+    }
+  }
+
+  function rshSetTargetItem(accountKey, region, item) {
+    const itemEl = rshTargetEl('item', region, accountKey);
+    if (itemEl) itemEl.textContent = item ? String(item) : '--';
+  }
+
+  async function rshFetchShopeeListingResults(productId, activeRegions, accountKeyOverride) {
     const regions = (activeRegions || []).map((r) => String(r).toUpperCase()).filter(Boolean);
-    const accountKey = sdSelectedShopeeAccountKey();
+    const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     if (!productId || !regions.length) return [];
     try {
       const { data, error } = await db.from('product_shopee_listings')
@@ -15267,7 +15434,347 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
   }
 
+  function rshBuildPublishTargets(regionsOverride) {
+    if (Array.isArray(regionsOverride) && regionsOverride.length && typeof regionsOverride[0] === 'object') {
+      return regionsOverride.map((target) => ({
+        accountKey: sdNormalizeShopeeAccountKey(target.accountKey || target.account_key),
+        region: String(target.region || '').toUpperCase(),
+      })).filter((target) => target.accountKey && target.region);
+    }
+    const regions = Array.isArray(regionsOverride) && regionsOverride.length > 0
+      ? regionsOverride.map((r) => String(r).toUpperCase()).filter(Boolean)
+      : RSH_REGIONS;
+    return sdSelectedShopeeAccountKeys().flatMap((accountKey) =>
+      regions.map((region) => ({ accountKey, region }))
+    );
+  }
+
+  function rshTargetsByAccount(targets) {
+    const map = new Map();
+    targets.forEach((target) => {
+      const key = sdNormalizeShopeeAccountKey(target.accountKey);
+      const region = String(target.region || '').toUpperCase();
+      if (!key || !region) return;
+      if (!map.has(key)) map.set(key, []);
+      if (!map.get(key).includes(region)) map.get(key).push(region);
+    });
+    return map;
+  }
+
+  function rshRenderMultiAccountResultRows(targets) {
+    const resultBody = $rsh('result-body');
+    if (!resultBody) return;
+    resultBody.innerHTML = targets.map((target) => {
+      const accountKey = sdNormalizeShopeeAccountKey(target.accountKey);
+      const domKey = rshDomAccountKey(accountKey);
+      const region = String(target.region || '').toUpperCase();
+      return `
+          <tr id="rsh-row-${domKey}-${region}">
+            <td style="padding:7px 10px;font-weight:700;">
+              <div>${text(sdShopeeAccountDisplayName(accountKey))}</div>
+              <div class="muted" style="font-size:10px;font-family:var(--mono);">${text(region)}</div>
+            </td>
+            <td style="padding:7px 10px;"><span id="rsh-status-${domKey}-${region}" style="color:#94a3b8;">pending</span></td>
+            <td style="padding:7px 10px;font-family:var(--mono);font-size:12px;" id="rsh-item-${domKey}-${region}">--</td>
+            <td style="padding:7px 10px;font-size:12px;color:var(--muted);" id="rsh-msg-${domKey}-${region}"></td>
+          </tr>`;
+    }).join('');
+  }
+
+  function rshAccountPublishRequestId(accountKey, fresh = false) {
+    const key = sdNormalizeShopeeAccountKey(accountKey);
+    if (!_rsh.accountPublishRequestIds) _rsh.accountPublishRequestIds = {};
+    if (fresh || !_rsh.accountPublishRequestIds[key]) {
+      _rsh.accountPublishRequestIds[key] = crypto.randomUUID();
+    }
+    return _rsh.accountPublishRequestIds[key];
+  }
+
+  function rshCollectFailedTargets() {
+    const targets = rshBuildPublishTargets();
+    return targets.filter((target) => {
+      const el = rshTargetEl('status', target.region, target.accountKey);
+      return el && /fail|failed|ㅽ뙣/.test(String(el.textContent || '').toLowerCase());
+    });
+  }
+
+  async function rshPersistStage1ForPublish(activeRegions, dtsValues, lifecycle, shopeeProductName, sourcingOverride, costOverride, stockOverride, errorEl) {
+    const existingDts = _rsh.master.shopee_days_to_ship || {};
+    const updatedDts = { ...existingDts, [lifecycle]: dtsValues };
+    const liveCatId = Number(document.getElementById('rsh-category')?.value) || _rsh.master.shopee_category_id;
+    const liveBrand = rshReadBrandObject();
+    const stage1Updates = {
+      shopee_category_id: liveCatId,
+      shopee_brand_id: liveBrand.brand_id,
+      shopee_brand_name: liveBrand.original_brand_name,
+      shopee_extra_attributes: rshReadSpecAttributes(liveCatId) || _rsh.master.shopee_extra_attributes,
+      shopee_days_to_ship: updatedDts,
+    };
+    if (_rsh.mode !== 'group') {
+      stage1Updates.product_name = shopeeProductName;
+      stage1Updates.sourcing_price = sourcingOverride;
+      stage1Updates.cost_krw = costOverride;
+      stage1Updates.inventory = stockOverride;
+      stage1Updates.cost_updated_at = new Date().toISOString();
+    }
+    const productIds = rshProductIds();
+    let stage1Query = db.from('products').update(stage1Updates);
+    stage1Query = productIds.length > 1 ? stage1Query.in('id', productIds) : stage1Query.eq('id', _rsh.productId);
+    const { error: stage1PersistErr } = await stage1Query;
+    if (stage1PersistErr) {
+      if (errorEl) { errorEl.textContent = `Data save failed: ${stage1PersistErr.message}`; errorEl.style.display = 'block'; }
+      throw stage1PersistErr;
+    }
+
+    if (_rsh.mode === 'group') {
+      const variantInputs = rshReadVariantInputs(_rsh.products);
+      for (const variant of variantInputs) {
+        if (!variant.product?.id) continue;
+        const { error: pricePersistErr } = await db
+          .from('products')
+          .update({
+            sourcing_price: Number(variant.sourcing_price || 0),
+            cost_krw: Number(variant.price || 0),
+            cost_updated_at: new Date().toISOString(),
+          })
+          .eq('id', variant.product.id);
+        if (pricePersistErr) {
+          if (errorEl) { errorEl.textContent = `Option price save failed: ${pricePersistErr.message}`; errorEl.style.display = 'block'; }
+          throw pricePersistErr;
+        }
+        variant.product.sourcing_price = Number(variant.sourcing_price || 0);
+        variant.product.cost_krw = Number(variant.price || 0);
+      }
+    }
+  }
+
+  async function rshRegisterSingleForAccount(session, accountKey, activeRegions, lifecycle, shopeeProductName, stockOverride, costOverride, errorEl) {
+    const singleWeightKg = Number(document.getElementById('rsh-ship-weight-kg')?.value || 0);
+    const singleWeightG = singleWeightKg > 0 ? Math.round(singleWeightKg * 1000) : Number(_rsh.master.weight_g || 0);
+    const body = {
+      platform: 'shopee',
+      account_key: accountKey,
+      master_product_id: _rsh.productId,
+      capability: 'create_listing_multi_region',
+      regions: activeRegions,
+      publish_request_id: rshAccountPublishRequestId(accountKey),
+      lifecycle_state: lifecycle,
+      shopee_product_name: shopeeProductName,
+      shopee_description: document.getElementById('rsh-description')?.value || '',
+      stock_override: stockOverride,
+      region_image_ids: _rsh.regionImageIds || {},
+      region_prices: rshBuildSingleRegionPrices(activeRegions, costOverride, singleWeightG),
+    };
+    const resp = await fetch(PLATFORM_PUBLISH_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON, 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const dispatchResult = await resp.json();
+    let regionResults = rshExtractRegionResults(dispatchResult);
+    if (dispatchResult.ok && !regionResults.length) {
+      regionResults = await rshFetchShopeeListingResults(_rsh.productId, activeRegions, accountKey);
+    }
+    if (dispatchResult.ok && !regionResults.length) {
+      regionResults = activeRegions.map((region) => rshNormalizeRegionResult({
+        region,
+        status: 'mapped',
+        platform_item_id: dispatchResult.platform_item_id || null,
+        message: dispatchResult.listing_status || 'listed',
+      }));
+    }
+    if (!dispatchResult.ok && !regionResults.length) {
+      const errMsg = dispatchResult.error_msg || dispatchResult.error_code || 'Shopee registration failed';
+      activeRegions.forEach((region) => rshSetTargetStatus(accountKey, region, 'failed', 'var(--red)', errMsg));
+      if (errorEl) { errorEl.textContent = errMsg; errorEl.style.display = 'block'; }
+      return { anyFailed: true };
+    }
+    const resultsByRegion = {};
+    regionResults.forEach((row) => { if (row.region) resultsByRegion[String(row.region).toUpperCase()] = row; });
+    let anyFailed = false;
+    activeRegions.forEach((region) => {
+      const row = resultsByRegion[region];
+      const ok = !!row?.ok;
+      rshSetTargetStatus(accountKey, region, ok ? 'done' : 'failed', ok ? 'var(--green)' : 'var(--red)', row?.message || (ok ? 'mapped' : 'result missing'));
+      rshSetTargetItem(accountKey, region, row?.item || '');
+      if (!ok) anyFailed = true;
+    });
+    return { anyFailed };
+  }
+
+  async function rshRegisterGroupForAccount(session, accountKey, activeRegions, dtsValues, lifecycle, errorEl) {
+    const products = rshSortedProducts(_rsh.products || []);
+    const payload = rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKey);
+    payload.idempotency_token = rshAccountPublishRequestId(accountKey);
+    const resp = await fetch(`${SHOPEE_BRIDGE}/register_cbsc`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${session.access_token}`,
+        apikey: SUPABASE_ANON,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+    const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+    if (!json.ok) {
+      const details = Array.isArray(json.missing_attributes)
+        ? json.missing_attributes.map((a) => a.attribute_name || a.attribute_id).filter(Boolean).join(', ')
+        : '';
+      const errMsg = [json.stage, json.error, json.message, details].filter(Boolean).join(' - ') || 'Shopee registration failed';
+      activeRegions.forEach((region) => rshSetTargetStatus(accountKey, region, 'failed', 'var(--red)', errMsg));
+      if (errorEl) { errorEl.textContent = errMsg; errorEl.style.display = 'block'; }
+      return { anyFailed: true };
+    }
+
+    const previousCurrent = state.currentProduct;
+    state.currentProduct = products[0];
+    let mappingRows = [];
+    try {
+      mappingRows = await persistMappings(json, payload);
+      if (accountKey === SHOPEE_DEFAULT_ACCOUNT_KEY && json.global_item_id) {
+        await db.from('products')
+          .update({ shopee_item_id: json.global_item_id, shopee_publish_state: 'published' })
+          .in('id', products.map((p) => p.id));
+      }
+    } finally {
+      state.currentProduct = previousCurrent;
+    }
+    const rowsByRegion = new Map(mappingRows.map((row) => [String(row.region || '').toUpperCase(), row]));
+    let anyFailed = false;
+    activeRegions.forEach((region) => {
+      const row = rowsByRegion.get(region);
+      const ok = !!row?.ok;
+      rshSetTargetStatus(accountKey, region, ok ? 'done' : 'failed', ok ? 'var(--green)' : 'var(--red)', row?.message || (ok ? 'mapped' : 'result missing'));
+      rshSetTargetItem(accountKey, region, row?.item || '');
+      if (!ok) anyFailed = true;
+    });
+    return { anyFailed };
+  }
+
+  async function rshProceedToStage2ForAccounts(regionsOverride) {
+    const targets = rshBuildPublishTargets(regionsOverride);
+    const targetsByAccount = rshTargetsByAccount(targets);
+    const allRegions = Array.from(new Set(targets.map((target) => target.region)));
+    const isRetry = Array.isArray(regionsOverride) && regionsOverride.length > 0;
+
+    const s1 = $rsh('stage1');
+    const s2 = $rsh('stage2');
+    if (s1) s1.style.display = 'none';
+    if (s2) s2.style.display = '';
+    const subtitleEl2 = $rsh('stage2-subtitle');
+    if (subtitleEl2) subtitleEl2.textContent = [_rsh.master?.sku, cleanProductName(_rsh.master?.product_name, _rsh.master?.sku)].filter(Boolean).join(' / ');
+    const errorEl = $rsh('stage2-error');
+    if (errorEl) errorEl.style.display = 'none';
+    if (!isRetry) rshRenderMultiAccountResultRows(targets);
+    _rsh.publishInFlight = true;
+
+    const session = (await db.auth.getSession()).data.session;
+    if (!session) {
+      _rsh.publishInFlight = false;
+      if (errorEl) { errorEl.textContent = 'Login session expired. Please sign in again.'; errorEl.style.display = 'block'; }
+      rshShowStage2Buttons(false);
+      return;
+    }
+
+    const dtsValues = rshReadDts();
+    const lifecycle = _rsh.master.lifecycle_state || 'ready_stock';
+    const shopeeProductName = rshCanonicalShopeeProductName(lifecycle);
+    const sourcingOverride = Number(document.getElementById('rsh-sourcing-price-krw')?.value) || Number(_rsh.master.sourcing_price || 0);
+    const costOverride = Number(document.getElementById('rsh-cost-krw')?.value) || Number(_rsh.master.cost_krw);
+    const stockOverride = _rsh.mode === 'group' ? null : rshReadSingleStock();
+    if (_rsh.mode !== 'group' && stockOverride <= 0) {
+      _rsh.publishInFlight = false;
+      if (errorEl) { errorEl.textContent = 'Stock must be 1 or more.'; errorEl.style.display = 'block'; }
+      targets.forEach((target) => rshSetTargetStatus(target.accountKey, target.region, 'pending', '#94a3b8', ''));
+      rshShowStage2Buttons(false);
+      return;
+    }
+
+    if (!isRetry) {
+      try {
+        await rshPersistStage1ForPublish(allRegions, dtsValues, lifecycle, shopeeProductName, sourcingOverride, costOverride, stockOverride, errorEl);
+      } catch (_) {
+        _rsh.publishInFlight = false;
+        targets.forEach((target) => rshSetTargetStatus(target.accountKey, target.region, 'pending', '#94a3b8', ''));
+        rshShowStage2Buttons(false);
+        return;
+      }
+    }
+
+    let anyFailed = false;
+    const previousExecution = _rsh.executionAccountKey;
+    const previousPublishRequestId = _rsh.publishRequestId;
+    try {
+      for (const [accountKey, accountRegions] of targetsByAccount.entries()) {
+        _rsh.executionAccountKey = accountKey;
+        _rsh.publishRequestId = rshAccountPublishRequestId(accountKey);
+        _rsh.regionImageIds = _rsh.accountRegionImageIds?.[accountKey] || {};
+        _rsh.globalOptionImageIds = _rsh.accountGlobalOptionImageIds?.[accountKey] || {};
+
+        const hasRegionImages = accountRegions.every((region) => Array.isArray(_rsh.regionImageIds?.[region]) && _rsh.regionImageIds[region].length);
+        if (!hasRegionImages) {
+          accountRegions.forEach((region) => rshSetTargetStatus(accountKey, region, 'uploading images', '#6610d4', ''));
+          try {
+            await rshPrepareImagesForAccount(accountKey);
+            const uploadResult = await rshUploadImages(session, accountRegions, accountKey, { persistProductImages: false });
+            _rsh.accountRegionImageIds[accountKey] = { ...(_rsh.accountRegionImageIds[accountKey] || {}), ...(uploadResult.regionImageIds || {}) };
+            _rsh.regionImageIds = _rsh.accountRegionImageIds[accountKey];
+          } catch (uploadErr) {
+            anyFailed = true;
+            const msg = uploadErr?.message || String(uploadErr);
+            accountRegions.forEach((region) => rshSetTargetStatus(accountKey, region, 'failed', 'var(--red)', msg));
+            continue;
+          }
+        }
+
+        if (_rsh.mode === 'group' && !_rsh.accountGlobalOptionImageIds?.[accountKey]) {
+          accountRegions.forEach((region) => rshSetTargetStatus(accountKey, region, 'uploading option images', '#6610d4', ''));
+          try {
+            const optionIds = await rshUploadOptionImages(session, accountRegions, accountKey);
+            _rsh.accountGlobalOptionImageIds[accountKey] = optionIds;
+            _rsh.globalOptionImageIds = optionIds;
+          } catch (optionErr) {
+            anyFailed = true;
+            const msg = optionErr?.message || String(optionErr);
+            accountRegions.forEach((region) => rshSetTargetStatus(accountKey, region, 'failed', 'var(--red)', msg));
+            continue;
+          }
+        }
+
+        accountRegions.forEach((region) => rshSetTargetStatus(accountKey, region, 'processing', '#2563eb', ''));
+        try {
+          const result = _rsh.mode === 'group'
+            ? await rshRegisterGroupForAccount(session, accountKey, accountRegions, dtsValues, lifecycle, errorEl)
+            : await rshRegisterSingleForAccount(session, accountKey, accountRegions, lifecycle, shopeeProductName, stockOverride, costOverride, errorEl);
+          if (result?.anyFailed) anyFailed = true;
+        } catch (publishErr) {
+          anyFailed = true;
+          const msg = publishErr?.message || String(publishErr);
+          accountRegions.forEach((region) => rshSetTargetStatus(accountKey, region, 'failed', 'var(--red)', msg));
+          if (errorEl) { errorEl.textContent = msg; errorEl.style.display = 'block'; }
+        }
+      }
+    } finally {
+      _rsh.executionAccountKey = previousExecution;
+      _rsh.publishRequestId = previousPublishRequestId;
+      _rsh.publishInFlight = false;
+    }
+
+    rshShowStage2Buttons(anyFailed);
+    try {
+      await loadData();
+    } catch (e) {
+      console.warn('[rsh] loadData after multi-account registration failed:', e);
+    }
+  }
+
   async function rshProceedToStage2(regionsOverride) {
+    const selectedAccountKeys = sdSelectedShopeeAccountKeys();
+    const overrideTargets = Array.isArray(regionsOverride) && regionsOverride.some((target) => target && typeof target === 'object');
+    if (selectedAccountKeys.length > 1 || overrideTargets) {
+      await rshProceedToStage2ForAccounts(regionsOverride);
+      return;
+    }
     const activeRegions = Array.isArray(regionsOverride) && regionsOverride.length > 0
       ? regionsOverride
       : RSH_REGIONS;
@@ -15606,6 +16113,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         showToast(e?.message || String(e), 'err');
       });
     });
+    const accountButtons = document.getElementById('rsh-account-buttons');
+    if (accountButtons) accountButtons.addEventListener('click', (event) => {
+      const btn = event.target?.closest?.('[data-rsh-account]');
+      if (!btn) return;
+      rshToggleShopeeAccount(btn.dataset.rshAccount).catch((e) => {
+        console.warn('[rsh] account toggle failed:', e);
+        showToast(e?.message || String(e), 'err');
+      });
+    });
 
     // Stage 2 buttons
     const closeBtn2 = $rsh('close2');
@@ -15618,6 +16134,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (retryBtn) retryBtn.addEventListener('click', () => {
       // P0-2: Retry must use a fresh publish_request_id so the multi-region idempotency
       // cache doesn't replay the cached (failed) response. Also pass only failed regions.
+      if (sdSelectedShopeeAccountKeys().length > 1) {
+        const failedTargets = rshCollectFailedTargets();
+        if (!failedTargets.length) {
+          showToast('?ъ떆?꾪븷 ?ㅽ뙣 吏??씠 ?놁뒿?덈떎.', 'err');
+          return;
+        }
+        Array.from(new Set(failedTargets.map((target) => target.accountKey)))
+          .forEach((accountKey) => rshAccountPublishRequestId(accountKey, true));
+        console.log('[rsh] retry failed account targets:', failedTargets);
+        rshProceedToStage2(failedTargets);
+        return;
+      }
       const failedRegions = RSH_REGIONS.filter((r) => {
         const el = document.getElementById(`rsh-status-${r}`);
         return el && el.textContent === '실패';

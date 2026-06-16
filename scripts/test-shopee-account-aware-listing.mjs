@@ -26,7 +26,11 @@ assert(credentialMigration.includes('revoke all on public.shopee_account_credent
 
 assert(html.includes("const SHOPEE_DEFAULT_ACCOUNT_KEY = 'starphotocard'"), 'V2 has a default Shopee account key');
 assert(html.includes("id=\"rsh-account-key\""), 'Shopee registration modal exposes account selector');
+assert(html.includes('id="rsh-account-buttons"'), 'Shopee registration modal exposes account toggle buttons');
 assert(html.includes('sdLoadShopeeAccountProfiles'), 'V2 loads Shopee account profiles');
+assert(html.includes('accountKeys: [SHOPEE_DEFAULT_ACCOUNT_KEY]'), 'V2 tracks multiple selected Shopee accounts');
+assert(html.includes('rshProceedToStage2ForAccounts'), 'V2 can publish one product to multiple Shopee accounts');
+assert(html.includes('rshAccountPublishRequestId(accountKey'), 'V2 uses account-scoped publish request IDs');
 assert(html.includes('sdShopeeLayerUrl(accountKey)'), 'V2 layer compositing resolves layer by selected account');
 assert(html.includes('account_key: accountKey'), 'V2 sends selected account_key in registration payloads');
 assert(html.includes("const SHOPEE_LISTING_CONFLICT = 'product_id,account_key,region'"), 'V2 upserts listing rows with account-aware conflict key');

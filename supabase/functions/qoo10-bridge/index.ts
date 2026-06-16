@@ -13,7 +13,8 @@ import { AUTH_CORS, requireAuthenticatedUser } from "../_shared/auth.ts";
 // Normalized doc path note: the Qoo10 docs live under
 // C:\dev\api-refs\marketplaces\qoo10\api-pages\*\*.md. This bridge uses
 // SetNewGoods, GetSellerDeliveryGroupInfo, SearchBrand, EditGoodsHeaderFooter,
-// UpdateGoods, EditGoodsContents, EditGoodsInventory, and EditGoodsStatus.
+// UpdateGoods, EditGoodsContents, EditGoodsInventory, SetGoodsPriceQty, and
+// EditGoodsStatus.
 
 const QOO10_API_BASE = (Deno as any).env.get("QOO10_API_BASE") || "https://api.qoo10.jp/GMKT.INC.Front.QAPIService/ebayjapan.qapi";
 const QOO10_API_KEY = (Deno as any).env.get("QOO10_API_KEY") || (Deno as any).env.get("QOO10_CERT_KEY") || "";
@@ -370,7 +371,7 @@ function buildItemType(options: any[], basePrice: number, forceOptions = false) 
 
 async function handleHealthz(): Promise<Response> {
   if (!QOO10_API_KEY) return jsonResp({ ok: false, service: "qoo10-bridge", error: "QOO10_API_KEY missing" }, 500);
-  return jsonResp({ ok: true, service: "qoo10-bridge", version: 3, key_configured: true, scan_statuses: QOO10_SCAN_STATUSES, api_base: QOO10_API_BASE.replace(/\/[^/]+\.qapi$/, "/<qapi>") });
+  return jsonResp({ ok: true, service: "qoo10-bridge", version: 4, key_configured: true, scan_statuses: QOO10_SCAN_STATUSES, api_base: QOO10_API_BASE.replace(/\/[^/]+\.qapi$/, "/<qapi>") });
 }
 
 async function handleLookupSku(sku: string, itemCodeParam = ""): Promise<Response> {
@@ -572,6 +573,56 @@ async function handleEditInventory(req: Request): Promise<Response> {
   }, missingSkus.length === 0 ? 200 : 502);
 }
 
+async function handleSetPrice(req: Request): Promise<Response> {
+  if (!QOO10_API_KEY) return jsonResp({ ok: false, error: "QOO10_API_KEY missing" }, 500);
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object") return jsonResp({ ok: false, error: "JSON body required" }, 400);
+
+  const sku = clampString(body.sku || body.SellerCode || body.seller_code, 100);
+  const providedItemCode = clampString(body.item_code || body.ItemCode || body.goods_no || body.platform_item_id || body.itemCode, 10);
+  const providedSellerCode = clampString(body.seller_code || body.SellerCode || body.sellerCode || sku, 100);
+  const priceJpy = normalizeQoo10PriceEnding90(body.price_jpy || body.priceJpy || body.Price || body.price);
+  if (!priceJpy) return jsonResp({ ok: false, error: "price_jpy/price required" }, 400);
+
+  let itemCode = providedItemCode;
+  let sellerCode = providedSellerCode;
+  let lookupRaw: any = null;
+  if (!itemCode) {
+    if (!sku) return jsonResp({ ok: false, error: "sku or item_code required" }, 400);
+    let hit = await lookupBySellerProductCode(sku);
+    if (!hit) hit = await scanInventoryForOptionSku(sku);
+    if (!hit || hit.notFound || !hit.goods_no) {
+      return jsonResp({ ok: false, error: "qoo10_sku_not_found", sku, ...(hit || {}) }, 404);
+    }
+    itemCode = hit.goods_no;
+    sellerCode = sellerCode || hit.seller_code || sku;
+    lookupRaw = hit.raw || null;
+  }
+
+  const params: Record<string, string> = {
+    ItemCode: itemCode,
+    Price: String(priceJpy),
+  };
+  if (sellerCode) params.SellerCode = sellerCode;
+
+  // Official local doc: C:\dev\api-refs\marketplaces\qoo10\api-pages\상품-수정\10024-SetGoodsPriceQty.md
+  // Price-only sync intentionally omits Qty so marketplace stock is not changed.
+  const res = await qoo10Fetch("ItemsOrder.SetGoodsPriceQty", params);
+  if (res.status < 200 || res.status >= 300) return jsonResp({ ok: false, error: `qoo10_http_${res.status}`, raw: res.raw }, 502);
+  if (!qoo10Success(res.raw)) return jsonResp(failureFromRaw(res.raw, "qoo10_set_price_failed"), 502);
+
+  return jsonResp({
+    ok: true,
+    item_code: itemCode,
+    seller_code: sellerCode || null,
+    sku: sku || sellerCode || null,
+    price_jpy: priceJpy,
+    command: "ItemsOrder.SetGoodsPriceQty",
+    raw: res.raw,
+    lookup_raw: lookupRaw,
+  });
+}
+
 async function handleDeleteListing(req: Request): Promise<Response> {
   if (!QOO10_API_KEY) return jsonResp({ ok: false, error: "QOO10_API_KEY missing" }, 500);
   const body = await req.json().catch(() => null);
@@ -714,6 +765,7 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === "update-goods" && req.method === "POST") return await handleUpdateGoods(req);
     if (action === "edit-contents" && req.method === "POST") return await handleEditContents(req);
     if (action === "edit-inventory" && req.method === "POST") return await handleEditInventory(req);
+    if (action === "set-price" && req.method === "POST") return await handleSetPrice(req);
     if (action === "header-footer" && req.method === "POST") return await handleHeaderFooter(req);
     if (action === "delete" && req.method === "POST") return await handleDeleteListing(req);
     return jsonResp({ ok: false, error: `unknown action: ${action} (${req.method})` }, 404);

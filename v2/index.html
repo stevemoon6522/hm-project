@@ -17610,7 +17610,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let offset = 0;
     while (true) {
       const url = SUPABASE_URL + '/rest/v1/products'
-        + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
+        + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id,qoo10_last_synced_price,qoo10_last_synced_at'
         + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
       const res = await fetch(url, {
         headers: Object.assign({}, AUTH_HEADERS, {
@@ -17626,7 +17626,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           // Fallback query without cost_updated_at
           const res2 = await fetch(
             SUPABASE_URL + '/rest/v1/products'
-              + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id'
+              + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id,qoo10_last_synced_price,qoo10_last_synced_at'
               + '&order=lifecycle_state.asc,created_at.asc',
             {
               headers: Object.assign({}, AUTH_HEADERS, {
@@ -17891,18 +17891,35 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function catBuildQoo10Cells(product, effectiveCost) {
-    // Phase 1: no qoo10_last_synced_price column yet — current price always null
-    const currentPrice = null;
+    const currentPrice = product && product.qoo10_last_synced_price != null
+      ? Number(product.qoo10_last_synced_price) : null;
     const newPrice = catComputeQoo10Price(effectiveCost, catEffectiveWeight(product));
-    // No delta possible without current price
-    const qoo10Status = product && product.qoo10_category_id ? 'mapped' : '미매핑';
-    const html = '<td data-cat-qoo10-current="1" style="font-size:12px;color:var(--muted);">—</td>'
-      + '<td data-cat-qoo10-new="1" class="cat-new-price cat-price-same">'
+    let maxDeltaPct = 0;
+    let deltaClass = 'cat-price-same';
+    let deltaLabel = '';
+    if (currentPrice != null && currentPrice > 0 && newPrice != null) {
+      const deltaPct = (newPrice - currentPrice) / currentPrice * 100;
+      maxDeltaPct = Math.abs(deltaPct);
+      if (deltaPct > 0.5) {
+        deltaClass = 'cat-price-up';
+        deltaLabel = '↗ +' + deltaPct.toFixed(1) + '%';
+      } else if (deltaPct < -0.5) {
+        deltaClass = 'cat-price-down';
+        deltaLabel = '↘ ' + Math.abs(deltaPct).toFixed(1) + '%';
+      }
+    }
+    const qoo10Status = product && product.qoo10_last_synced_at
+      ? 'synced'
+      : (product && product.qoo10_category_id ? 'lookup' : '미매핑');
+    const html = '<td data-cat-qoo10-current="1" style="font-size:12px;">'
+      + (currentPrice != null ? catFormatQoo10Price(currentPrice) : '<span class="muted">—</span>') + '</td>'
+      + '<td data-cat-qoo10-new="1" class="cat-new-price ' + deltaClass + '">'
       + (newPrice != null ? catFormatQoo10Price(newPrice) : '<span class="muted">—</span>')
+      + (deltaLabel ? '<br><span class="cat-delta-label">' + esc(deltaLabel) + '</span>' : '')
       + '</td>'
       + '<td data-cat-qoo10-status="1" style="font-size:12px;">'
       + esc(qoo10Status) + '</td>';
-    return { html: html, maxDeltaPct: 0 };
+    return { html: html, maxDeltaPct: maxDeltaPct };
   }
 
   /**
@@ -18273,11 +18290,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function catQoo10SummaryCells(rows) {
-    // Phase 1: no current price column — show only new price range
+    const currentPrices = [];
     const newPrices = [];
+    let maxDeltaPct = 0;
     rows.forEach(function(p) {
+      const current = p.qoo10_last_synced_price != null ? Number(p.qoo10_last_synced_price) : null;
       const next = catComputeQoo10Price(catEffectiveCost(p), catEffectiveWeight(p));
+      if (current != null && Number.isFinite(current)) currentPrices.push(current);
       if (next != null && Number.isFinite(next)) newPrices.push(next);
+      if (current != null && current > 0 && next != null) {
+        const pct = Math.abs((next - current) / current * 100);
+        if (pct > maxDeltaPct) maxDeltaPct = pct;
+      }
     });
     const formatRange = function(values) {
       if (!values.length) return '—';
@@ -18285,12 +18309,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (values.length === 1 || values[0] === values[values.length - 1]) return catFormatQoo10Price(values[0]);
       return catFormatQoo10Price(values[0]) + '-' + catFormatQoo10Price(values[values.length - 1]);
     };
-    const mappedCount = rows.filter(function(p) { return p.qoo10_category_id; }).length;
-    const html = '<td data-cat-qoo10-current="1" style="font-size:12px;color:var(--muted);">—</td>'
+    const mappedCount = rows.filter(function(p) { return p.qoo10_last_synced_at || p.qoo10_category_id; }).length;
+    const html = '<td data-cat-qoo10-current="1" style="font-size:12px;">'
+      + '<span class="muted">옵션 ' + currentPrices.length + '/' + rows.length + '</span><br>' + formatRange(currentPrices) + '</td>'
       + '<td data-cat-qoo10-new="1" class="cat-new-price" style="font-size:12px;">'
       + '<span class="muted">옵션 ' + newPrices.length + '/' + rows.length + '</span><br>' + formatRange(newPrices) + '</td>'
       + '<td data-cat-qoo10-status="1" style="font-size:12px;">mapped ' + mappedCount + '/' + rows.length + '</td>';
-    return { html: html, maxDeltaPct: 0 };
+    return { html: html, maxDeltaPct: maxDeltaPct };
   }
 
   function catRenderGroupRow(group, listingIdx) {
@@ -19730,6 +19755,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     try {
       for (const product of products) {
         // §RC5: use ebay_sku only — no fallback to product.sku
+        const productId = String(product.id);
         const sku = product.ebay_sku;
         if (!sku) {
           errors.push((product.sku || product.product_name || String(product.id)) + ': eBay 미등록 (ebay_sku 없음)');
@@ -19750,6 +19776,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           continue;
         }
 
+        const persisted = await catPersistProductCost(product.id, newCost, now);
+        if (!persisted.ok) {
+          errors.push(sku + ': cost update ' + persisted.error);
+          continue;
+        }
+
+        const tr = document.querySelector('[data-cat-pid="' + productId + '"]');
+        const confirmLargePriceDelta = tr && tr.querySelector('.cat-confirm-cb:checked')
+          ? 'ALLOW_EBAY_PRICE_DELTA'
+          : undefined;
+
         let updateJson = null;
         let updateOk = false;
         try {
@@ -19761,6 +19798,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               priceUsd: priceUsd,
               productId: product.id,
               offerId: product.ebay_offer_id || undefined,
+              confirmLargePriceDelta: confirmLargePriceDelta,
             }),
           });
           updateJson = await updateResp.json().catch(function() { return { ok: false, error: 'HTTP ' + updateResp.status }; });
@@ -19772,13 +19810,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (!updateOk) {
           errors.push(sku + ': ' + (updateJson?.error || updateJson?.message || 'update-price failed'));
           continue;
-        }
-
-        const persisted = await catPersistProductCost(product.id, newCost, now);
-        let localSaveOk = true;
-        if (!persisted.ok) {
-          errors.push(sku + ': cost update ' + persisted.error);
-          localSaveOk = false;
         }
 
         const { error: productErr } = await db.from('products').update({
@@ -19794,7 +19825,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           ebay_last_synced_price: priceUsd,
           ebay_last_synced_at: now,
         });
-        if (localSaveOk) okCount++;
+        okCount++;
       }
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = oldText; }
@@ -19810,6 +19841,126 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   // ── Platform + Shopee market controls ───────────────────────────
+
+  async function catExecuteQoo10Sync() {
+    await catFlushSelectedInlineEdits({ persistWeight: true });
+    const products = catSelectedProducts();
+    if (!products.length) {
+      showToast('Qoo10 동기화 대상을 선택하세요.', 'err');
+      return;
+    }
+    if (!confirm('Qoo10(JP) 가격을 실동기화합니다.\n\n대상: ' + products.length + '건\nSKU lookup 후 SetGoodsPriceQty로 Price만 수정합니다. 진행할까요?')) return;
+
+    const btn = document.getElementById('cat-sync-btn');
+    const oldText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Qoo10 동기화 중...'; }
+
+    const qoo10Settings = catCountrySettings('Q10');
+    const now = new Date().toISOString();
+    let lookupOk = 0;
+    let priceOk = 0;
+    const errors = [];
+
+    try {
+      for (const product of products) {
+        const productId = String(product.id);
+        const sku = String(product.sku || '').trim();
+        if (!sku) {
+          errors.push(productId + ': SKU 없음');
+          continue;
+        }
+
+        const newCost = catEffectiveCost(product);
+        const calc = calculateQoo10Price({
+          costKrw: newCost,
+          weightG: catEffectiveWeight(product),
+          countrySettings: qoo10Settings,
+        });
+        if (!calc.ok || !Number.isFinite(calc.qoo10Price) || calc.qoo10Price <= 0) {
+          errors.push(sku + ': Qoo10 가격 계산 실패');
+          continue;
+        }
+        const priceJpy = Math.round(calc.qoo10Price);
+
+        let lookup = null;
+        try {
+          const lookupResp = await fetch(QOO10_BRIDGE + '/lookup-sku?sku=' + encodeURIComponent(sku), { headers: AUTH_HEADERS });
+          lookup = await lookupResp.json().catch(function() { return { ok: false, error: 'HTTP ' + lookupResp.status }; });
+          if (!lookupResp.ok && lookup && lookup.ok !== false) lookup.ok = false;
+        } catch (e) {
+          lookup = { ok: false, error: e.message || String(e) };
+        }
+
+        if (!lookup || !lookup.ok) {
+          errors.push(sku + ': lookup ' + (lookup?.error || lookup?.message || 'failed'));
+          continue;
+        }
+        lookupOk++;
+
+        const itemCode = String(lookup.goods_no || lookup.platform_item_id || lookup.item_code || '').trim();
+        if (!itemCode) {
+          errors.push(sku + ': lookup missing goods_no');
+          continue;
+        }
+
+        let updateJson = null;
+        let updateOk = false;
+        try {
+          const updateResp = await fetch(QOO10_BRIDGE + '/set-price', {
+            method: 'POST',
+            headers: AUTH_HEADERS,
+            body: JSON.stringify({
+              sku: sku,
+              item_code: itemCode,
+              seller_code: lookup.seller_code || sku,
+              price_jpy: priceJpy,
+              productId: product.id,
+            }),
+          });
+          updateJson = await updateResp.json().catch(function() { return { ok: false, error: 'HTTP ' + updateResp.status }; });
+          updateOk = updateResp.ok && updateJson && updateJson.ok;
+        } catch (e) {
+          updateJson = { ok: false, error: e.message || String(e) };
+        }
+
+        if (!updateOk) {
+          errors.push(sku + ': set-price ' + (updateJson?.error || updateJson?.message || 'failed'));
+          continue;
+        }
+
+        const persisted = await catPersistProductCost(product.id, newCost, now);
+        if (!persisted.ok) {
+          errors.push(sku + ': cost update ' + persisted.error);
+          continue;
+        }
+
+        const { error: productErr } = await db.from('products').update({
+          qoo10_last_synced_price: priceJpy,
+          qoo10_last_synced_at: now,
+        }).eq('id', product.id);
+        if (productErr) {
+          errors.push(sku + ': products update ' + productErr.message);
+          continue;
+        }
+
+        Object.assign(product, {
+          qoo10_last_synced_price: priceJpy,
+          qoo10_last_synced_at: now,
+        });
+        priceOk++;
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = oldText; }
+    }
+
+    applyAndRenderCatalog();
+    if (errors.length) {
+      console.warn('[CAT qoo10] errors:', errors);
+      showToast('Qoo10 일부 실패: ' + errors[0], 'err');
+    } else {
+      showToast('Qoo10 가격 동기화 완료 (lookup ' + lookupOk + ', price ' + priceOk + ')', 'ok');
+    }
+  }
 
   function catSyncPlatformActions() {
     // Hide Shopee market chips for any single-global-price platform
@@ -19832,7 +19983,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         catExecuteEbaySync();
         break;
       case 'qoo10':
-        showToast('Qoo10 실시간 가격 동기화는 다음 단계에서 활성화됩니다 (미리보기 전용).', '');
+        catExecuteQoo10Sync();
         break;
       default:
         showToast('알 수 없는 플랫폼 — 동기화를 실행할 수 없습니다.', '');
@@ -19863,9 +20014,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (platform === 'joom') {
           showToast('Joom은 단일 글로벌 가격 공식으로 표시합니다.', '');
         } else if (platform === 'ebay') {
-          showToast('eBay(US) — USD 가격 미리보기 전용입니다. 동기화는 다음 단계에서 활성화됩니다.', '');
+          showToast('eBay(US) USD 가격 동기화가 가능합니다.', '');
+          return;
         } else if (platform === 'qoo10') {
-          showToast('Qoo10(JPY) — JPY 가격 미리보기 전용입니다. 동기화는 다음 단계에서 활성화됩니다.', '');
+          showToast('Qoo10(JP) JPY 가격 동기화가 가능합니다.', '');
+          return;
         }
       });
     });

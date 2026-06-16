@@ -20,6 +20,7 @@ const productGrouping = sliceBetween(html, 'function plIsGroupedVariant(product)
 const nameHelpers = sliceBetween(html, 'function cleanProductName(value, fallback = \'\') {', 'function numberOrNull(value) {');
 const productNameDisplay = sliceBetween(html, 'function plProductName(product) {', 'function productLifecycleFilterKey(product) {');
 const masterEdit = sliceBetween(html, 'function plMasterEditRenderOptions(rows) {', 'async function saveProductMasterEditModal() {');
+const masterEditSkuHelpers = sliceBetween(html, 'function plMasterEditAutoSku(row = {}, optionName = \'\') {', 'function plMasterEditRenderDetailImageManager(urls) {');
 const masterEditOpenSave = sliceBetween(html, 'async function openProductMasterEditModal(productGroupId) {', 'function beginEditCell(cell) {');
 const inlineEdit = sliceBetween(html, 'function beginEditCell(cell) {', 'async function deleteOneMasterProduct(btn) {');
 const shopeeGlobalImport = sliceBetween(html, 'async function sgUpsertProduct(row, model, productGroupId, lifecycleState) {', 'function sgReadSelectedStaronemallUrls() {');
@@ -123,6 +124,17 @@ test('master edit modal supports manual option image edits including clearing UR
   assert.doesNotMatch(masterEdit, /data-field="main_image"/, 'representative image must not reuse the option image input');
   assert.match(masterEdit, /data-clear-option-image="1"/, 'clear image button should be present for manual removal');
   assert.match(masterEdit, /plMasterEditBindOptionImageControls/, 'image controls should refresh previews after edit');
+});
+
+test('master edit modal supports auto-generated editable SKUs', () => {
+  assert.match(masterEditSkuHelpers, /function plMasterEditAutoSku/, 'master edit should expose an auto SKU helper');
+  assert.match(masterEditSkuHelpers, /autoMasterSkuForRow\(row/, 'master edit auto SKU should use the shared generator');
+  assert.match(masterEdit, /data-field="sku"[\s\S]*data-sku-mode="\$\{text\(skuMode\)\}"/, 'SKU input should track auto/manual mode');
+  assert.match(masterEdit, /data-auto-sku-apply="1"/, 'SKU input should include an Auto regenerate button');
+  assert.match(masterEdit, /skuInput\.dataset\.skuMode = 'manual'/, 'typing in SKU should switch to manual mode');
+  assert.match(masterEdit, /plMasterEditRefreshSkuInput\(tr, true\)/, 'Auto button should force regeneration');
+  assert.match(html, /plMasterEditRefreshAutoSkus\(false\)/, 'master name or lifecycle changes should refresh auto-mode SKUs');
+  assert.match(masterEditOpenSave, /const seenSkus = new Set\(\)/, 'master edit save should detect duplicate SKUs before updating rows');
 });
 
 test('READY STOCK transition is moved into product list PRE ORDER filter and PRE ORDER nav tab is removed', () => {

@@ -28,10 +28,11 @@ const masterRegister = sliceBetween(
 
 assert(masterRegister.includes('const MR_MASTER_ONLY_MODE = true'), 'master register must run in master-only mode');
 assert(masterRegister.includes('function mrComputeSku(row)'), 'master register must define automatic SKU assembly');
-assert(masterRegister.includes('mrSlug(row.artist, 8)'), 'SKU must include Artist');
-assert(masterRegister.includes('mrSlug(row.album, 12)'), 'SKU must include Album');
-assert(masterRegister.includes('mrSlug(row.version, 12)'), 'SKU must include full Version text such as PHOTOBOOK');
-assert(masterRegister.includes('mrSlug(member, 12)'), 'SKU must include member/option name');
+assert(masterRegister.includes('autoMasterSkuForRow(row'), 'master register SKU assembly must use the shared master SKU generator');
+assert(html.includes('marketplaceSkuSlug(parts.artist, 8)'), 'SKU must include Artist');
+assert(html.includes('marketplaceSkuSlug(parts.album, 12)'), 'SKU must include Album');
+assert(html.includes('marketplaceSkuSlug(parts.version, 12)'), 'SKU must include full Version text such as PHOTOBOOK');
+assert(html.includes('marketplaceSkuSlug(parts.optionName, 12)'), 'SKU must include member/option name');
 assert(masterRegister.includes('function mrMasterProductName(row)'), 'master register must build sanitized master product names');
 assert(masterRegister.includes('function mrRowLifecycle(row)'), 'master product names must resolve lifecycle from each row when available');
 assert(masterRegister.includes('normalizeMasterProductNameForLifecycle(title, mrRowLifecycle(row), derived'), 'master product names must be sanitized and row-lifecycle-prefixed before saving');
@@ -40,9 +41,14 @@ assert(
     && masterRegister.includes('initialDefaultCost'),
   'first option cost must fall back to the default purchase cost',
 );
-assert(masterRegister.includes('SKU (자동 생성)'), 'SKU input must be labeled as auto-generated');
-assert(masterRegister.includes("readonly: 'readonly'"), 'SKU input must be read-only');
-assert(!masterRegister.includes('SKU (수동 입력)'), 'manual SKU wording must be removed from master register');
+assert(masterRegister.includes('SKU (auto editable)'), 'SKU input must be labeled as auto-generated and editable');
+assert(!masterRegister.includes("readonly: 'readonly'"), 'SKU input must be editable');
+assert(masterRegister.includes("skuInp.addEventListener('input'"), 'SKU input must accept manual edits');
+assert(masterRegister.includes('function mrApplyManualSku(row, value)'), 'manual SKU edits must be stored in row state');
+assert(masterRegister.includes('row._skuLocked = true'), 'manual SKU edits must lock the override against auto regeneration');
+assert(masterRegister.includes('function mrApplyAutoSku(row)'), 'SKU input must expose auto-regeneration');
+assert(masterRegister.includes('row._skuLocked = false'), 'auto-regeneration must unlock manual SKU state');
+assert(masterRegister.includes('autoSkuApply'), 'SKU input must include an Auto regenerate control');
 
 assert(masterRegister.includes('mrUploadMasterImageFile'), 'master register must upload attached image files');
 assert(masterRegister.includes('return sdUploadProductImageFile('), 'master register image upload must use the shared product image upload helper');

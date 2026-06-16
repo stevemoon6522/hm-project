@@ -4735,6 +4735,71 @@ LEGACY END -->
     return String(value || '').toLowerCase() === PRODUCT_KIND_GOODS ? PRODUCT_KIND_GOODS : PRODUCT_KIND_ALBUM;
   }
 
+  function firstNonEmpty(...values) {
+    for (const value of values) {
+      const textValue = String(value == null ? '' : value).trim();
+      if (textValue) return textValue;
+    }
+    return '';
+  }
+
+  function marketplaceSkuSlug(value, maxLength = 12) {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/&/g, 'AND')
+      .replace(/[^a-zA-Z0-9]+/g, '')
+      .slice(0, maxLength)
+      .toUpperCase();
+  }
+
+  function inferMasterSkuParts(row = {}, overrides = {}) {
+    const observed = row?.observed || {};
+    const optionNames = Array.isArray(row?.variation_option_names) ? row.variation_option_names : [];
+    const sourceTitle = firstNonEmpty(overrides.productName, row?.product_name, row?.name, observed.title);
+    let derived = {};
+    if (typeof window !== 'undefined' && typeof window.mrDeriveFromTitle === 'function' && sourceTitle) {
+      try {
+        derived = window.mrDeriveFromTitle(stripLifecycleProductNameTags(sourceTitle) || sourceTitle) || {};
+      } catch (_) {
+        derived = {};
+      }
+    }
+    const lifecycleState = firstNonEmpty(overrides.lifecycleState, row?._lifecycle_state, row?.lifecycle_state);
+    const existingSkuPrefix = marketplaceSkuSlug(String(firstNonEmpty(row?._sku, row?.sku)).split('-')[0] || '', 8);
+    const location = firstNonEmpty(
+      overrides.location,
+      row?._location,
+      row?.location,
+      lifecycleState === 'pre_order' ? 'PO' : existingSkuPrefix,
+    );
+    return {
+      location,
+      lifecycleState,
+      artist: firstNonEmpty(overrides.artist, row?.artist, row?.idol, observed.artist_name, observed.artist, observed.idol, derived.artist),
+      album: firstNonEmpty(overrides.album, row?.album, observed.album, derived.album),
+      version: firstNonEmpty(overrides.version, row?.version, observed.version, derived.version),
+      optionName: firstNonEmpty(overrides.optionName, row?._opt0, row?.member, row?.option_name, optionNames[0]),
+      optionExtra: firstNonEmpty(overrides.optionExtra, row?._opt1, optionNames[1]),
+    };
+  }
+
+  function buildAutoMasterSku(parts = {}) {
+    const location = marketplaceSkuSlug(parts.location || (parts.lifecycleState === 'ready_stock' ? '' : 'PO'), 8) || 'PO';
+    return [
+      location,
+      marketplaceSkuSlug(parts.artist, 8),
+      marketplaceSkuSlug(parts.album, 12),
+      marketplaceSkuSlug(parts.version, 12),
+      marketplaceSkuSlug(parts.optionName, 12),
+      marketplaceSkuSlug(parts.optionExtra, 8),
+    ].filter(Boolean).join('-');
+  }
+
+  function autoMasterSkuForRow(row = {}, overrides = {}) {
+    return buildAutoMasterSku(inferMasterSkuParts(row, overrides));
+  }
+
   function productKindDefaults(value) {
     return PRODUCT_CATEGORY_DEFAULTS[normalizeProductKind(value)] || PRODUCT_CATEGORY_DEFAULTS.album;
   }
@@ -7297,6 +7362,7 @@ LEGACY END -->
     const fallback = plMasterEditCurrentRows()[0]?.sku || '';
     nameInput.value = normalizeMasterProductNameForLifecycle(nameInput.value, lifecycle, fallback);
     plMasterEditUpdateNameSyncPanel();
+    plMasterEditRefreshAutoSkus(false);
   }
 
   function plMasterEditGlobalItemId(rows) {
@@ -7786,6 +7852,37 @@ LEGACY END -->
     return `<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start;">${clean.map((url, idx) => plMasterEditImageThumb(url, `이미지 ${idx + 1}`)).join('')}</div>`;
   }
 
+  function plMasterEditAutoSku(row = {}, optionName = '') {
+    const lifecycleState = document.getElementById('pl-master-edit-lifecycle')?.value || row.lifecycle_state || 'pre_order';
+    const productName = document.getElementById('pl-master-edit-name')?.value || row.product_name || '';
+    return autoMasterSkuForRow(row, { lifecycleState, productName, optionName });
+  }
+
+  function plMasterEditRowForSkuInput(tr) {
+    const productId = String(tr?.dataset?.productId || '');
+    return plMasterEditCurrentRows().find((row) => String(row.id) === productId) || {};
+  }
+
+  function plMasterEditRefreshSkuInput(tr, force = false) {
+    const skuInput = tr?.querySelector('[data-field="sku"]');
+    if (!skuInput) return;
+    const optionInput = tr.querySelector('[data-field="option_name"]');
+    const row = plMasterEditRowForSkuInput(tr);
+    const autoSku = plMasterEditAutoSku(row, optionInput?.value || '');
+    skuInput.dataset.autoSku = autoSku;
+    skuInput.title = autoSku ? `Auto SKU: ${autoSku}` : 'Auto SKU needs product and option text.';
+    if (autoSku && (force || skuInput.dataset.skuMode === 'auto' || !String(skuInput.value || '').trim())) {
+      skuInput.value = autoSku;
+      skuInput.dataset.skuMode = 'auto';
+    }
+  }
+
+  function plMasterEditRefreshAutoSkus(force = false) {
+    document.querySelectorAll('#pl-master-edit-options tr[data-product-id]').forEach((tr) => {
+      plMasterEditRefreshSkuInput(tr, force);
+    });
+  }
+
   function plMasterEditRenderDetailImageManager(urls) {
     const clean = Array.from(new Set((urls || []).map((url) => String(url || '').trim()).filter((url) => /^https?:\/\//i.test(url))));
     const thumbs = clean.length
@@ -7875,13 +7972,20 @@ LEGACY END -->
         <tbody>
           ${rows.map((row) => {
             const optionImageUrl = plMasterEditOptionImageUrl(row);
+            const autoSku = plMasterEditAutoSku(row, plOptionDisplay(row) || row.option_name || '');
+            const currentSku = String(row.sku || '').trim();
+            const skuValue = currentSku || autoSku;
+            const skuMode = currentSku ? 'manual' : 'auto';
             return `
               <tr data-product-id="${text(row.id)}">
                 <td style="padding:6px;border-bottom:1px solid var(--border);">
                   <input data-field="option_name" type="text" value="${text(plOptionDisplay(row) || row.option_name || '')}" style="width:120px;font-size:12px;padding:4px 6px;">
                 </td>
                 <td style="padding:6px;border-bottom:1px solid var(--border);">
-                  <input data-field="sku" type="text" value="${text(row.sku || '')}" style="width:260px;font-family:var(--mono);font-size:12px;padding:4px 6px;">
+                  <div style="display:flex;gap:4px;align-items:center;">
+                    <input data-field="sku" data-sku-mode="${text(skuMode)}" data-auto-sku="${text(autoSku)}" type="text" value="${text(skuValue)}" style="width:220px;font-family:var(--mono);font-size:12px;padding:4px 6px;">
+                    <button type="button" data-auto-sku-apply="1" title="Regenerate SKU from current fields" style="font-size:11px;padding:4px 8px;">Auto</button>
+                  </div>
                 </td>
                 <td style="padding:6px;border-bottom:1px solid var(--border);text-align:right;">
                   <input data-field="cost_krw" type="number" min="0" step="1" value="${text(String(Number(row.cost_krw || 0) || ''))}" style="width:90px;text-align:right;font-size:12px;padding:4px 6px;">
@@ -8094,6 +8198,19 @@ LEGACY END -->
       const input = tr.querySelector('[data-field="shopee_option_image_url"]');
       const clearBtn = tr.querySelector('[data-clear-option-image="1"]');
       const fileInput = tr.querySelector('[data-master-option-image-file]');
+      const skuInput = tr.querySelector('[data-field="sku"]');
+      const optionInput = tr.querySelector('[data-field="option_name"]');
+      const autoSkuBtn = tr.querySelector('[data-auto-sku-apply="1"]');
+      plMasterEditRefreshSkuInput(tr, false);
+      skuInput?.addEventListener('input', () => {
+        skuInput.dataset.skuMode = 'manual';
+      });
+      optionInput?.addEventListener('input', () => {
+        plMasterEditRefreshSkuInput(tr, false);
+      });
+      autoSkuBtn?.addEventListener('click', () => {
+        plMasterEditRefreshSkuInput(tr, true);
+      });
       input?.addEventListener('input', () => plMasterEditRefreshOptionImagePreview(tr));
       clearBtn?.addEventListener('click', () => {
         if (input) input.value = '';
@@ -8209,6 +8326,7 @@ LEGACY END -->
 
   function plMasterEditReadOptionPatches(rows) {
     const byId = new Map(rows.map((row) => [String(row.id), row]));
+    const seenSkus = new Set();
     return Array.from(document.querySelectorAll('#pl-master-edit-options tr[data-product-id]')).map((tr) => {
       const id = String(tr.dataset.productId || '');
       const existing = byId.get(id) || {};
@@ -8216,6 +8334,8 @@ LEGACY END -->
       const sku = stripNonMarketplaceText(field('sku')?.value || '').trim();
       if (!sku) throw new Error('옵션 SKU는 비울 수 없습니다.');
       if (hasNonMarketplaceText(sku)) throw new Error(`SKU는 영문/숫자만 허용됩니다: ${sku}`);
+      if (seenSkus.has(sku)) throw new Error(`Duplicate SKU in this master: ${sku}`);
+      seenSkus.add(sku);
       const rawOptionName = String(field('option_name')?.value || '').trim();
       if (hasNonMarketplaceText(rawOptionName)) throw new Error(`Option name must be English: ${rawOptionName}`);
       const optionName = stripNonMarketplaceText(rawOptionName).trim();
@@ -10378,7 +10498,10 @@ LEGACY END -->
   document.getElementById('pl-master-edit-close')?.addEventListener('click', closeProductMasterEditModal);
   document.getElementById('pl-master-edit-cancel')?.addEventListener('click', closeProductMasterEditModal);
   document.getElementById('pl-master-edit-save')?.addEventListener('click', saveProductMasterEditModal);
-  document.getElementById('pl-master-edit-name')?.addEventListener('input', plMasterEditUpdateNameSyncPanel);
+  document.getElementById('pl-master-edit-name')?.addEventListener('input', () => {
+    plMasterEditUpdateNameSyncPanel();
+    plMasterEditRefreshAutoSkus(false);
+  });
   document.getElementById('pl-master-edit-lifecycle')?.addEventListener('change', plMasterEditApplyLifecyclePrefixToName);
   document.getElementById('pl-master-edit-staronemall-url')?.addEventListener('input', () => plMasterEditScheduleStaronemallCrawl(700, false));
   document.getElementById('pl-master-edit-staronemall-url')?.addEventListener('change', () => plMasterEditScheduleStaronemallCrawl(0, true));
@@ -21726,16 +21849,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Inputs are kept ASCII-safe because downstream marketplaces reject CJK SKUs.
     function mrComputeSku(row) {
       if (row?._skuLocked && row?._sku) return row._sku;
-      const loc = mrLocation() || 'PO';
-      const member = row._opt0 || row.member || '';
-      return [
-        mrSlug(loc, 8) || 'PO',
-        mrSlug(row.artist, 8),
-        mrSlug(row.album, 12),
-        mrSlug(row.version, 12),
-        mrSlug(member, 12),
-        mrSlug(row._opt1 || '', 8),
-      ].filter(Boolean).join('-');
+      return autoMasterSkuForRow(row, {
+        location: mrLocation() || 'PO',
+        optionName: row?._opt0 || row?.member || '',
+        optionExtra: row?._opt1 || '',
+      });
     }
 
     function mrRowKey(row) {
@@ -21754,7 +21872,27 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       input.style.background = mrSkuBad(row) ? '#fee2e2' : '';
       input.title = mrSkuBad(row)
         ? 'Artist/Album/Version/멤버는 영문/숫자 기반으로 입력해야 자동 SKU가 유효합니다.'
-        : 'Artist / Album / Version / 멤버에서 자동 생성됩니다.';
+        : (row?._skuLocked ? 'Manual SKU override. Click Auto to regenerate from the current fields.' : 'Auto-generated SKU. You can edit it before saving.');
+    }
+
+    function mrUpdateParentSkuPreview(card, group) {
+      const parentSkuEl = card?.querySelector('[data-parent-sku-preview]');
+      if (parentSkuEl) parentSkuEl.textContent = `parent SKU: ${mrPreviewParentSku(group)}`;
+    }
+
+    function mrApplyManualSku(row, value) {
+      row._sku = String(value || '').trim();
+      row.sku = row._sku;
+      row._skuLocked = true;
+      row._skuManual = true;
+    }
+
+    function mrApplyAutoSku(row) {
+      row._skuLocked = false;
+      row._skuManual = false;
+      row._sku = mrComputeSku(row);
+      row.sku = row._sku;
+      return row._sku;
     }
 
     function mrPreviewParentSku(group) {
@@ -24606,17 +24744,37 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
           // SKU (auto-generated from Artist / Album / Version / member)
           const skuWr = el('div', { style: 'display:flex;flex-direction:column;gap:1px;flex:1;min-width:130px;' });
-          skuWr.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, 'SKU (자동 생성)'));
+          skuWr.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, 'SKU (auto editable)'));
+          const skuLine = el('div', { style: 'display:flex;gap:4px;align-items:center;' });
           const skuInp = el('input', {
             type: 'text',
-            readonly: 'readonly',
             dataset: { autoSkuRowKey: rowKey },
-            style: 'font-size:12px;padding:3px 6px;width:100%;font-family:monospace;background:#f8fafc;',
+            style: 'font-size:12px;padding:3px 6px;width:100%;font-family:monospace;',
             value: row._sku || '',
             placeholder: 'Artist/Album/Version/멤버 입력 시 자동 생성',
           });
+          skuInp.addEventListener('input', (e) => {
+            mrApplyManualSku(row, e.target.value);
+            mrSetSkuInputState(skuInp, row);
+            mrUpdateParentSkuPreview(card, group);
+            mrRefreshCollisionUi(card, row);
+          });
           mrSetSkuInputState(skuInp, row);
-          skuWr.appendChild(skuInp);
+          const skuAutoBtn = el('button', {
+            type: 'button',
+            dataset: { autoSkuApply: rowKey },
+            title: 'Regenerate SKU from current fields',
+            style: 'font-size:11px;padding:3px 7px;white-space:nowrap;',
+          }, 'Auto');
+          skuAutoBtn.addEventListener('click', () => {
+            mrApplyAutoSku(row);
+            mrSetSkuInputState(skuInp, row);
+            mrUpdateParentSkuPreview(card, group);
+            mrRefreshCollisionUi(card, row);
+          });
+          skuLine.appendChild(skuInp);
+          skuLine.appendChild(skuAutoBtn);
+          skuWr.appendChild(skuLine);
           optRow.appendChild(skuWr);
 
           const sourcingField = mkNumField('도매가(KRW)', row._sourcing_price, (v) => {

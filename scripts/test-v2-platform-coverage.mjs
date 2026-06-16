@@ -176,6 +176,10 @@ for (const [label, source] of [['Supabase', ebayBridge], ['edge mirror', edgeEba
     assert(routeIndex >= 0, `${label} eBay bridge must include ${routeToken}`);
     assert(!source.slice(routeIndex, routeIndex + 520).includes('requireInternalBridge(req)'), `${label} eBay browser ${routeToken} route must not require the internal bridge token`);
   }
+  const withdrawRouteIndex = source.indexOf('action === "withdraw-product" && req.method === "POST"');
+  assert(withdrawRouteIndex >= 0, `${label} eBay bridge must include withdraw-product cleanup route`);
+  assert(source.slice(withdrawRouteIndex, withdrawRouteIndex + 520).includes('requireBridgeTokenOrAuthenticatedUser(req)'), `${label} eBay withdraw-product route must allow signed-in browser UI calls`);
+  assert(!source.slice(withdrawRouteIndex, withdrawRouteIndex + 520).includes('requireInternalBridge(req)'), `${label} eBay withdraw-product route must not require only the internal bridge token`);
 }
 assert(ebayAdapter.includes('x-platform-bridge-token') && ebayAdapter.includes('PLATFORM_BRIDGE_INTERNAL_TOKEN'), 'eBay adapter must forward the internal bridge token when routed through platform-publish');
 assert(ebayAdapter.includes('lookupMiss') && ebayAdapter.includes('PLATFORM_NOT_FOUND'), 'eBay adapter must classify ordinary lookup misses as PLATFORM_NOT_FOUND');

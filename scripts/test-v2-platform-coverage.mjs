@@ -81,10 +81,8 @@ for (const viewId of [
 assert(!html.includes('<button class="nav-tab" onclick="showView(\'view-coverage\')"'), 'V2 nav must not expose the legacy platform coverage tab');
 assert(html.includes('id="view-coverage"'), 'V2 must include platform coverage view');
 assert(html.includes('id="platform-shopee-root"') && html.includes('function renderPlatformWorkbench(platform)'), 'V2 must include separated platform workbench tabs');
-assert(html.includes('data-platform-quick="retry"') && html.includes('data-platform-quick="delete"'), 'platform quick actions must include delete beside retry');
-assert(html.indexOf('data-platform-quick="retry"') < html.indexOf('data-platform-quick="delete"'), 'platform quick delete button must render to the right of retry');
-assert(html.includes('data-platform-preview="retry"') && html.includes('data-platform-preview="delete"'), 'platform preview actions must include delete beside retry');
-assert(html.indexOf('data-platform-preview="retry"') < html.indexOf('data-platform-preview="delete"'), 'platform preview delete button must render to the right of retry');
+assert(!html.includes('data-platform-quick="retry"') && !html.includes('data-platform-preview="retry"'), 'platform tabs must not expose duplicate retry buttons');
+assert(html.includes('data-platform-quick="delete"') && html.includes('data-platform-preview="delete"'), 'platform delete action must remain available after retry simplification');
 assert(html.includes('async function platformDeleteRemoteListing') && html.includes('PLATFORM_DELETE_CONFIRM'), 'platform delete action must call bridge cleanup endpoints with explicit confirmations');
 assert(html.includes('renderCoverageView(false)'), 'showView patch must render coverage on tab activation');
 assert(html.includes('async function coverageFetchFromView()'), 'coverage view must prefer DB coverage view');

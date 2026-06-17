@@ -223,11 +223,11 @@ assert(
   'Platform registration button must become direct registration when search/filter leaves one visible product even without a checkbox selection',
 );
 assert(
-  platformAction.includes("if (action === 'register' || action === 'retry')")
+  platformAction.includes("if (action === 'register')")
     && platformAction.includes('if (groups.length > 1)')
     && platformAction.includes('platformOpenPreview(platform, action, explicitKeys);')
     && platformAction.includes('await platformOpenExistingModal(platform, groups[0]);'),
-  'Single platform register/retry actions must open the existing registration modal directly while multi-selection keeps confirmation',
+  'Single platform register actions must open the existing registration modal directly while multi-selection keeps confirmation',
 );
 assert(
   platformPreview.includes('if (!groups.length && !explicitKeys)')

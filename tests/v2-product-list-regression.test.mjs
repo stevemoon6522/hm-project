@@ -45,7 +45,7 @@ test('primary marketplace tabs render as a large left-side navigation rail', () 
   assert.match(html, /<section class="app-content" aria-label="Dashboard content">/, 'views should render in the right content area');
   assert.match(html, /\.nav-tab[\s\S]*min-height: 64px/, 'desktop nav tabs should be visibly larger than the old top strip');
   assert.match(nav, /<span class="nav-label">마스터 상품<\/span>[\s\S]*<span class="nav-meta">공통 상품 관리<\/span>/, 'master tab should include a visible label and purpose');
-  assert.match(nav, /<span class="nav-label">Shopee<\/span>[\s\S]*<span class="nav-meta">등록 \/ 수정 \/ 재시도<\/span>/, 'Shopee tab should expose the main work type');
+  assert.match(nav, /<span class="nav-label">Shopee<\/span>[\s\S]*<span class="nav-meta">등록 \/ 수정<\/span>/, 'Shopee tab should expose only the primary platform work types');
 });
 
 test('Shopee platform tab always includes BR as an active region', () => {
@@ -64,7 +64,8 @@ test('platform tab buttons keep selection and route registration through the pro
   assert.match(platformPreviewExecution, /return false;/, 'platform tabs must not bypass registration modals through direct dispatcher execution');
   assert.match(platformPreviewExecution, /platformOpenExistingModal\(platform, group\)/, 'preview execution must open the existing platform registration modal');
   assert.match(html, /const registerActionLabel = actionTargetCount === 1 \? '등록' : '선택 등록 확인'/, 'single platform registration should be labeled as direct registration, not preview');
-  assert.match(html, /if \(action === 'register' \|\| action === 'retry'\)[\s\S]*if \(groups\.length > 1\)[\s\S]*platformOpenPreview\(platform, action, explicitKeys\)[\s\S]*await platformOpenExistingModal\(platform, groups\[0\]\)/, 'single register/retry actions should open existing platform modals directly while multi-selection keeps confirmation');
+  assert.doesNotMatch(html, /data-platform-(?:quick|preview)="retry"/, 'platform tabs should not expose a duplicate retry button that opens the same registration flow');
+  assert.match(html, /if \(action === 'register'\)[\s\S]*if \(groups\.length > 1\)[\s\S]*platformOpenPreview\(platform, action, explicitKeys\)[\s\S]*await platformOpenExistingModal\(platform, groups\[0\]\)/, 'single register actions should open existing platform modals directly while multi-selection keeps confirmation');
   assert.match(html, /if \(platform === 'shopee'\)[\s\S]*openRegisterShopeeSingleModal\(group\.rows\[0\]\.id\)/, 'Shopee single registration must use the existing single modal');
   assert.match(html, /if \(platform === 'joom'\) return openRegisterJoomGroupModal\(targetId\)/, 'Joom registration must use the existing Joom modal');
   assert.match(html, /if \(platform === 'qoo10'\) return openRegisterQoo10GroupModal\(targetId\)/, 'Qoo10 registration must use the existing Qoo10 modal');

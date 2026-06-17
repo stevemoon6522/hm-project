@@ -1918,7 +1918,7 @@
       </button>
       <button class="nav-tab" onclick="showView('view-platform-shopee')">
         <span class="nav-label">Shopee</span>
-        <span class="nav-meta">등록 / 수정 / 재시도</span>
+        <span class="nav-meta">등록 / 수정</span>
       </button>
       <button class="nav-tab" onclick="showView('view-platform-joom')">
         <span class="nav-label">Joom</span>
@@ -4642,7 +4642,6 @@ LEGACY END -->
   const PLATFORM_ACTION_LABELS = Object.freeze({
     register: '대량 등록',
     edit: '가격 수정',
-    retry: '실패 재시도',
     delete: '플랫폼 삭제',
   });
   const PLATFORM_DELETE_CONFIRM = Object.freeze({
@@ -6637,7 +6636,6 @@ LEGACY END -->
           <td style="white-space:nowrap;">
             <button type="button" data-platform-quick="register" data-platform-key="${text(key)}"${quickDisabled}>등록</button>
             <button type="button" data-platform-quick="edit" data-platform-key="${text(key)}"${quickDisabled}>가격 수정</button>
-            <button type="button" data-platform-quick="retry" data-platform-key="${text(key)}"${quickDisabled}>재시도</button>
             <button type="button" data-platform-quick="delete" data-platform-key="${text(key)}"${quickDisabled}>삭제</button>
           </td>
         </tr>`;
@@ -6706,7 +6704,6 @@ LEGACY END -->
           <button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>
           <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(registerActionLabel)}</button>
           <button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>가격 수정</button>
-          <button type="button" data-platform-preview="retry" ${canRunSelectionAction ? '' : 'disabled'}>실패 재시도</button>
           <button type="button" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>삭제</button>
           ${platform === 'shopee' ? `<button type="button" data-shopee-name-sync ${canRunSelectionAction ? '' : 'disabled'}>영문명 동기화</button>` : ''}
           <button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>${text(label)} SKU 매핑</button>
@@ -7034,7 +7031,7 @@ LEGACY END -->
       await platformOpenEditFlow(platform, productIds);
       return;
     }
-    if (action === 'register' || action === 'retry') {
+    if (action === 'register') {
       const groups = platformActionGroups(platform, explicitKeys);
       if (!groups.length) {
         showToast('선택한 마스터 상품이 없습니다.', 'err');
@@ -7042,7 +7039,7 @@ LEGACY END -->
       }
       if (groups.length > 1) {
         platformOpenPreview(platform, action, explicitKeys);
-        showToast(`${PLATFORM_LABELS[platform] || platform} ${action === 'retry' ? '재시도' : '등록'} 대상이 여러 개입니다. 선택 확인 후 1개씩 실행하세요.`, 'ok');
+        showToast(`${PLATFORM_LABELS[platform] || platform} 등록 대상이 여러 개입니다. 선택 확인 후 1개씩 실행하세요.`, 'ok');
         return;
       }
       try {
@@ -7051,7 +7048,7 @@ LEGACY END -->
         await platformOpenExistingModal(platform, groups[0]);
       } catch (e) {
         console.error('[platformOpenAction] platform modal open failed:', e);
-        showToast(`${PLATFORM_LABELS[platform] || platform} ${action === 'retry' ? '재시도' : '등록'} 모달 열기 실패: ${e.message || e}`, 'err');
+        showToast(`${PLATFORM_LABELS[platform] || platform} 등록 모달 열기 실패: ${e.message || e}`, 'err');
       }
       return;
     }
@@ -7156,7 +7153,7 @@ LEGACY END -->
       if (!String(row.sku || '').trim()) errors.push(`${plProductName(row) || row.id}: SKU가 비어 있습니다.`);
       if (/[^\x00-\x7F]/.test(String(row.sku || ''))) errors.push(`${row.sku}: SKU는 ASCII만 허용됩니다.`);
     });
-    if (action === 'register' || action === 'retry') {
+    if (action === 'register') {
       const first = rows[0] || {};
       const isGoods = productKindIsGoods(first);
       const defaults = (typeof productKindDefaults === 'function') ? productKindDefaults(isGoods ? 'goods' : 'album') : {};

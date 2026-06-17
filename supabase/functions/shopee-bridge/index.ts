@@ -2002,6 +2002,95 @@ function parsePublishOutcome(region: string, shopId: number, publishTaskId: numb
   };
 }
 
+async function verifyPublishedListOutcome(region: string, shopId: number, globalItemId: number, publishTaskId: number, task: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const retries = (region === 'BR' || region === 'TW') ? 4 : 3;
+  const sleepMs = 5000;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    if (attempt > 0) await new Promise(s => setTimeout(s, sleepMs));
+    const publishedRes = await merchantApiCall(region, '/api/v2/global_product/get_published_list', { query: { global_item_id: globalItemId }, account_key: accountKey });
+    const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
+    const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shopId));
+    if (hit && hit.item_id) {
+      return {
+        ok: true,
+        region,
+        shop_id: shopId,
+        publish_task_id: publishTaskId,
+        item_id: Number(hit.item_id),
+        publish_status: 'verified_via_published_list_retry_' + attempt,
+        error: null,
+        task,
+      };
+    }
+  }
+  return null;
+}
+
+async function syncShopModelPricesAfterPublish(region: string, itemId: number, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const variation = normalizeVariation(target?.variation || body?.variation);
+  const priceList: any[] = [];
+  if (variation) {
+    const modelsResult = await shopApiCall(region, '/api/v2/product/get_model_list', { query: { item_id: itemId }, account_key: accountKey });
+    const shopModels = Array.isArray(modelsResult?.response?.model) ? modelsResult.response.model : [];
+    if (modelsResult.error || !shopModels.length) {
+      return { ok: false, stage: 'get_model_list', error: modelsResult.error || 'shop models not found', raw: modelsResult };
+    }
+    for (const sourceModel of variation.model) {
+      const sku = String(sourceModel?.model_sku || sourceModel?.global_model_sku || '').trim();
+      const tierKey = JSON.stringify(Array.isArray(sourceModel?.tier_index) ? sourceModel.tier_index.map((x: any) => Number(x)) : []);
+      const shopModel = shopModels.find((m: any) => String(m?.model_sku || '').trim() === sku)
+        || shopModels.find((m: any) => JSON.stringify(Array.isArray(m?.tier_index) ? m.tier_index.map((x: any) => Number(x)) : []) === tierKey);
+      const price = Number(sourceModel?.original_price ?? target?.price ?? body?.price);
+      const modelId = Number(shopModel?.model_id || 0);
+      if (modelId > 0 && Number.isFinite(price) && price > 0) priceList.push({ model_id: modelId, original_price: price });
+    }
+  } else {
+    const price = Number(target?.price ?? body?.price);
+    if (Number.isFinite(price) && price > 0) priceList.push({ original_price: price });
+  }
+  if (!priceList.length) return { ok: false, stage: 'build_price_list', error: 'price_list empty' };
+  const result = await shopApiCall(region, '/api/v2/product/update_price', { method: 'POST', body: { item_id: itemId, price_list: priceList }, account_key: accountKey });
+  const failureList = Array.isArray(result?.response?.failure_list) ? result.response.failure_list : [];
+  return { ok: !result.error && failureList.length === 0, sent_price_list: priceList, failure_list: failureList, raw: result };
+}
+
+async function retryTwMinimalPublish(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const region = String(target?.region || '').toUpperCase();
+  if (region !== 'TW') return null;
+  const retryBody = { global_item_id: globalItemId, shop_id: shopId, shop_region: region, item: { logistic: logistics } };
+  const retryCreate = await merchantApiCall(region, '/api/v2/global_product/create_publish_task', { method: 'POST', body: retryBody, account_key: accountKey });
+  if (retryCreate.error || !retryCreate.response?.publish_task_id) {
+    return { ok: false, region, shop_id: shopId, stage: 'tw_minimal_publish_create', error: retryCreate.error || 'publish_task_id missing', message: retryCreate.message, raw_retry_create: retryCreate };
+  }
+  const retryTaskId = Number(retryCreate.response.publish_task_id);
+  let retryTask: any = null;
+  let retryPollAttempts = 0;
+  for (let i = 0; i < 8; i += 1) {
+    await new Promise(s => setTimeout(s, 2000));
+    const taskRes = await merchantApiCall(region, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id: retryTaskId }, account_key: accountKey });
+    retryTask = taskRes;
+    retryPollAttempts = i + 1;
+    if (taskRes.error || !isPublishPending(taskRes)) break;
+  }
+  let retryOutcome: any = parsePublishOutcome(region, shopId, retryTaskId, retryTask);
+  if (!retryOutcome.ok) {
+    const verified = await verifyPublishedListOutcome(region, shopId, globalItemId, retryTaskId, retryTask, accountKey);
+    if (verified) retryOutcome = verified;
+  }
+  retryOutcome.tw_minimal_item_retry = true;
+  retryOutcome.raw_retry_create = retryCreate;
+  retryOutcome.raw_retry_task = retryTask;
+  retryOutcome.retry_poll_attempts = retryPollAttempts;
+  if (retryOutcome.ok && retryOutcome.item_id) {
+    try {
+      retryOutcome.price_sync = await syncShopModelPricesAfterPublish(region, Number(retryOutcome.item_id), target, body, accountKey);
+    } catch (e: any) {
+      retryOutcome.price_sync = { ok: false, error: String(e?.message || e) };
+    }
+  }
+  return retryOutcome;
+}
+
 // /list_items ??paginated get_item_list + batch get_item_base_info + per-item get_model_list (when has_model=true).
 async function listItemsForRegion(region: string, item_status = 'NORMAL', max_items = 5000, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   const authFailure = (prefix: string, r: any) => ({
@@ -3059,6 +3148,15 @@ Deno.serve(async (req) => {
               } catch (_) {}
             }
           }
+          if (!outcome.ok) {
+            const verified = await verifyPublishedListOutcome(targetRegion, shop_id, global_item_id, publish_task_id, task, reqAccountKey).catch(() => null);
+            if (verified) outcome = verified;
+          }
+          if (!outcome.ok && targetRegion === 'TW') {
+            const retryOutcome = await retryTwMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'tw_minimal_publish_exception', error: String(e?.message || e) }));
+            if (retryOutcome?.ok) outcome = retryOutcome;
+            else (outcome as any).tw_minimal_item_retry = retryOutcome;
+          }
           // BR-only: if still failing after fallback, re-issue create_publish_task once more
           if (!outcome.ok && targetRegion === 'BR') {
             try {
@@ -3600,6 +3698,15 @@ Deno.serve(async (req) => {
                 }
               } catch (_) { /* ignore — keep original parsePublishOutcome verdict */ }
             }
+          }
+          if (!outcome.ok) {
+            const verified = await verifyPublishedListOutcome(targetRegion, shop_id, global_item_id, publish_task_id, task, accountKey).catch(() => null);
+            if (verified) outcome = verified;
+          }
+          if (!outcome.ok && targetRegion === 'TW') {
+            const retryOutcome = await retryTwMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'tw_minimal_publish_exception', error: String(e?.message || e) }));
+            if (retryOutcome?.ok) outcome = retryOutcome;
+            else (outcome as any).tw_minimal_item_retry = retryOutcome;
           }
           // BR-only: if still failing after fallback retries, re-issue create_publish_task once more
           if (!outcome.ok && targetRegion === 'BR') {

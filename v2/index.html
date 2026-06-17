@@ -3728,30 +3728,6 @@
           <div id="pl-master-edit-image-summary" class="pl-master-option-list"></div>
         </section>
 
-        <section class="pl-master-edit-card pl-master-edit-name-sync-card">
-          <div class="pl-master-edit-card-title">
-            <span>Shopee region name sync</span>
-            <small>Global English Name -> Shop Item Name</small>
-          </div>
-          <div class="pl-master-edit-field-grid">
-            <div class="field span-8">
-              <label>Global English Name</label>
-              <div id="pl-master-edit-name-sync-global" class="mono" style="font-size:12px;overflow-wrap:anywhere;">-</div>
-            </div>
-            <div class="field span-4">
-              <label for="pl-master-edit-tw-short-name">TW English Short Name</label>
-              <input id="pl-master-edit-tw-short-name" type="text" maxlength="60" placeholder="Required if Global > 60 chars">
-              <div id="pl-master-edit-tw-count" class="subhead">0/60</div>
-            </div>
-            <div class="field span-12" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-              <button type="button" id="pl-master-edit-name-sync-preview">Preview</button>
-              <button type="button" id="pl-master-edit-name-sync-apply" class="primary">Apply to Shopee</button>
-              <span id="pl-master-edit-name-sync-status" class="muted" style="font-size:12px;"></span>
-            </div>
-            <div class="span-12" id="pl-master-edit-name-sync-results"></div>
-          </div>
-        </section>
-
         <section class="pl-master-edit-card pl-master-edit-text-card" data-master-components-only="pl-master-components-only">
           <div class="pl-master-edit-card-title">
             <span>상품 구성품</span>
@@ -4639,6 +4615,8 @@ LEGACY END -->
     platformFilters: {},
     platformPreview: null,
     platformLastResults: {},
+    shopeeNameSync: null,
+    pendingPriceSyncSelectedIds: null,
     priceSyncExpandedGroups: new Set(),
     shopeeGlobalSearchResults: [],
     sgSearchMemoryCache: new Map(),
@@ -4663,7 +4641,7 @@ LEGACY END -->
   });
   const PLATFORM_ACTION_LABELS = Object.freeze({
     register: '대량 등록',
-    edit: '대량 수정',
+    edit: '가격 수정',
     retry: '실패 재시도',
     delete: '플랫폼 삭제',
   });
@@ -6573,7 +6551,7 @@ LEGACY END -->
 
   function platformSafeFieldsLabel(platform) {
     const fields = PLATFORM_SAFE_EDIT_FIELDS[platform] || [];
-    if (!fields.length) return '대량 수정 필드 없음';
+    if (!fields.length) return '가격 수정 필드 없음';
     return fields.join(', ');
   }
 
@@ -6658,7 +6636,7 @@ LEGACY END -->
           <td class="muted" style="font-size:12px;">${text(optionSummary)}</td>
           <td style="white-space:nowrap;">
             <button type="button" data-platform-quick="register" data-platform-key="${text(key)}"${quickDisabled}>등록</button>
-            <button type="button" data-platform-quick="edit" data-platform-key="${text(key)}"${quickDisabled}>수정</button>
+            <button type="button" data-platform-quick="edit" data-platform-key="${text(key)}"${quickDisabled}>가격 수정</button>
             <button type="button" data-platform-quick="retry" data-platform-key="${text(key)}"${quickDisabled}>재시도</button>
             <button type="button" data-platform-quick="delete" data-platform-key="${text(key)}"${quickDisabled}>삭제</button>
           </td>
@@ -6698,6 +6676,7 @@ LEGACY END -->
       `<button type="button" class="platform-status-tab${filter.status === key ? ' is-active' : ''}" data-platform-status="${key}" aria-pressed="${filter.status === key ? 'true' : 'false'}">${PLATFORM_STATUS_LABELS[key]} ${counts[key] || 0}</button>`
     )).join('');
     const previewHtml = state.platformPreview?.platform === platform ? platformPreviewHtml() : '';
+    const shopeeNameSyncHtml = platform === 'shopee' ? shopeeNameSyncPanelHtml() : '';
     root.innerHTML = `
       <div class="platform-page-head">
         <div>
@@ -6725,13 +6704,15 @@ LEGACY END -->
           <button type="button" data-platform-select-visible>표시 항목 선택</button>
           <button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>
           <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(registerActionLabel)}</button>
-          <button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>수정 미리보기</button>
+          <button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>가격 수정</button>
           <button type="button" data-platform-preview="retry" ${canRunSelectionAction ? '' : 'disabled'}>실패 재시도</button>
           <button type="button" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>삭제</button>
-          <button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>플랫폼 SKU 확인</button>
+          ${platform === 'shopee' ? `<button type="button" data-shopee-name-sync ${canRunSelectionAction ? '' : 'disabled'}>영문명 동기화</button>` : ''}
+          <button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>${text(label)} SKU 매핑</button>
         </div>
       </div>
       ${previewHtml}
+      ${shopeeNameSyncHtml}
       <div class="panel table-scroll">
         <table class="platform-table">
           <thead>
@@ -6816,15 +6797,31 @@ LEGACY END -->
     root.querySelectorAll('[data-platform-preview]').forEach((btn) => {
       btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformPreview || 'register'));
     });
+    root.querySelector('[data-shopee-name-sync]')?.addEventListener('click', () => openShopeeNameSyncPanel());
     root.querySelectorAll('[data-platform-quick]').forEach((btn) => {
       btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformQuick || 'register', [btn.dataset.platformKey || '']));
     });
-    root.querySelector('[data-platform-sync]')?.addEventListener('click', () => platformSyncSelected(platform));
+    root.querySelector('[data-platform-sync]')?.addEventListener('click', (event) => platformSyncSelected(platform, event.currentTarget));
     root.querySelector('[data-platform-preview-close]')?.addEventListener('click', () => {
       state.platformPreview = null;
       renderPlatformWorkbench(platform);
     });
     root.querySelector('[data-platform-preview-execute]')?.addEventListener('click', () => platformExecutePreview());
+    root.querySelector('[data-shopee-name-sync-close]')?.addEventListener('click', () => {
+      state.shopeeNameSync = null;
+      renderPlatformWorkbench('shopee');
+    });
+    root.querySelector('[data-shopee-name-sync-preview]')?.addEventListener('click', () => {
+      if (!state.shopeeNameSync) return;
+      state.shopeeNameSync.preview = true;
+      renderPlatformWorkbench('shopee');
+    });
+    root.querySelector('[data-shopee-name-sync-apply]')?.addEventListener('click', () => applyShopeeNameSyncFromPanel());
+    root.querySelector('[data-shopee-name-sync-tw]')?.addEventListener('input', (event) => {
+      if (!state.shopeeNameSync) return;
+      state.shopeeNameSync.twShortName = event.target.value || '';
+      state.shopeeNameSync.preview = false;
+    });
     root.querySelectorAll('[data-edit-master]').forEach((btn) => {
       btn.addEventListener('click', () => openProductMasterEditModal(btn.dataset.editMaster));
     });
@@ -6836,6 +6833,151 @@ LEGACY END -->
   function platformGroupsByKeys(keys) {
     const wanted = new Set((keys || []).filter(Boolean));
     return platformMasterGroups().filter((group) => wanted.has(platformGroupKey(group)));
+  }
+
+  function platformActionGroups(platform, explicitKeys = null) {
+    let groups = platformSelectedGroups(platform, explicitKeys);
+    if (!groups.length && !explicitKeys) {
+      const visibleGroups = platformVisibleGroups(platform);
+      if (visibleGroups.length === 1) groups = visibleGroups;
+    }
+    return groups;
+  }
+
+  function openShopeeNameSyncPanel() {
+    const groups = platformActionGroups('shopee');
+    if (!groups.length) {
+      showToast('Shopee 영문명 동기화할 상품을 선택하세요.', 'err');
+      return;
+    }
+    if (groups.length !== 1) {
+      showToast('Shopee 영문명 동기화는 한 상품씩 실행하세요.', 'err');
+      return;
+    }
+    state.shopeeNameSync = {
+      key: platformGroupKey(groups[0]),
+      twShortName: '',
+      preview: false,
+      running: false,
+      regionResults: [],
+      resultRows: [],
+      statusMessage: '',
+      statusKind: '',
+    };
+    renderPlatformWorkbench('shopee');
+    document.getElementById('platform-shopee-root')?.querySelector('.shopee-name-sync-panel')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+
+  function shopeeNameSyncPanelHtml() {
+    const sync = state.shopeeNameSync;
+    if (!sync) return '';
+    const group = platformGroupsByKeys([sync.key])[0];
+    if (!group) {
+      return '<div class="platform-preview shopee-name-sync-panel"><div class="platform-preview-head"><strong>Shopee 영문명 동기화</strong><button type="button" data-shopee-name-sync-close>닫기</button></div><div class="platform-preview-body"><div class="platform-result-err">선택한 마스터 상품을 찾지 못했습니다.</div></div></div>';
+    }
+    const rows = group.rows || [];
+    const first = rows[0] || {};
+    const plan = plMasterEditBuildNameSyncPlan(rows, {
+      globalName: first.product_name || plProductName(first) || '',
+      lifecycleState: first.lifecycle_state || 'ready_stock',
+      twShortName: sync.twShortName || '',
+    });
+    const statusText = sync.statusMessage || plan.errors[0] || `Ready for ${SHOPEE_NAME_SYNC_REGIONS.join(', ')}`;
+    const statusStyle = (sync.statusKind === 'err' || plan.errors.length) ? 'color:var(--red);' : (sync.statusKind === 'ok' ? 'color:var(--green);' : 'color:var(--muted);');
+    const resultHtml = sync.regionResults?.length
+      ? plMasterEditNameSyncResultsHtml(sync.regionResults)
+      : (sync.preview ? plMasterEditNameSyncPreviewHtml(plan) : '');
+    const globalLimitWarn = plan.globalChars > plMasterEditNameLimit('TW')
+      ? '<span class="platform-result-err">TW는 60자 제한이 있어 짧은 영문명을 입력해야 합니다.</span>'
+      : '';
+    return `
+      <div class="platform-preview shopee-name-sync-panel">
+        <div class="platform-preview-head">
+          <div>
+            <strong>Shopee 영문명 동기화</strong>
+            <div class="muted" style="font-size:12px;margin-top:3px;">선택한 마스터 상품 1개의 Global English Name을 Shopee Shop Item Name에 반영합니다.</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button type="button" data-shopee-name-sync-close>닫기</button>
+            <button type="button" data-shopee-name-sync-preview ${plan.globalName ? '' : 'disabled'}>미리보기</button>
+            <button type="button" class="primary" data-shopee-name-sync-apply ${sync.running || !plan.valid ? 'disabled' : ''}>Shopee에 적용</button>
+          </div>
+        </div>
+        <div class="platform-preview-body">
+          <div class="pl-master-edit-field-grid">
+            <div class="field span-8">
+              <label>Global English Name</label>
+              <div class="mono" style="font-size:12px;overflow-wrap:anywhere;">${text(plan.globalName || '-')} (${text(plan.globalChars)} chars)</div>
+            </div>
+            <div class="field span-4">
+              <label>TW English Short Name</label>
+              <input type="text" data-shopee-name-sync-tw maxlength="60" value="${text(sync.twShortName || '')}" placeholder="Global > 60 chars일 때 입력">
+              <div class="subhead">${text(plMasterEditNameChars(sync.twShortName || ''))}/60</div>
+            </div>
+            <div class="field span-12">
+              <div style="font-size:12px;${statusStyle}">${text(statusText)}</div>
+              ${globalLimitWarn}
+            </div>
+            <div class="span-12">${resultHtml}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  async function applyShopeeNameSyncFromPanel() {
+    const sync = state.shopeeNameSync;
+    if (!sync || sync.running) return;
+    const group = platformGroupsByKeys([sync.key])[0];
+    if (!group) {
+      showToast('선택한 Shopee 상품을 찾지 못했습니다.', 'err');
+      return;
+    }
+    const rows = group.rows || [];
+    const first = rows[0] || {};
+    const plan = plMasterEditBuildNameSyncPlan(rows, {
+      globalName: first.product_name || plProductName(first) || '',
+      lifecycleState: first.lifecycle_state || 'ready_stock',
+      twShortName: sync.twShortName || '',
+    });
+    if (!plan.valid) {
+      state.shopeeNameSync.preview = true;
+      state.shopeeNameSync.statusMessage = plan.errors[0] || 'Shopee 영문명 동기화 값을 확인하세요.';
+      state.shopeeNameSync.statusKind = 'err';
+      renderPlatformWorkbench('shopee');
+      return;
+    }
+    state.shopeeNameSync.running = true;
+    state.shopeeNameSync.preview = false;
+    state.shopeeNameSync.regionResults = [];
+    state.shopeeNameSync.resultRows = [];
+    state.shopeeNameSync.statusMessage = 'Applying Shopee names...';
+    state.shopeeNameSync.statusKind = '';
+    renderPlatformWorkbench('shopee');
+    try {
+      await applyShopeeNameSyncPlan(plan, {
+        onStatus(message, kind) {
+          if (!state.shopeeNameSync) return;
+          state.shopeeNameSync.statusMessage = message || '';
+          state.shopeeNameSync.statusKind = kind || '';
+        },
+        onResults(regionResults, resultRows) {
+          if (!state.shopeeNameSync) return;
+          state.shopeeNameSync.regionResults = (regionResults || []).map((row) => ({ ...row }));
+          state.shopeeNameSync.resultRows = (resultRows || []).map((row) => ({ ...row }));
+          renderPlatformWorkbench('shopee');
+        },
+      });
+      await refreshPlatformLedSources().catch(() => {});
+    } catch (e) {
+      state.shopeeNameSync.statusMessage = e?.message || String(e);
+      state.shopeeNameSync.statusKind = 'err';
+      showToast(`Shopee 영문명 동기화 실패: ${e?.message || e}`, 'err');
+    } finally {
+      if (state.shopeeNameSync) {
+        state.shopeeNameSync.running = false;
+        renderPlatformWorkbench('shopee');
+      }
+    }
   }
 
   function platformGroupKeysFromProductIds(productIds) {
@@ -6881,6 +7023,16 @@ LEGACY END -->
   }
 
   async function platformOpenAction(platform, action, explicitKeys = null) {
+    if (action === 'edit') {
+      const groups = platformActionGroups(platform, explicitKeys);
+      if (!groups.length) {
+        showToast('가격을 수정할 상품을 선택하세요.', 'err');
+        return;
+      }
+      const productIds = groups.flatMap(platformGroupProductIds);
+      await platformOpenEditFlow(platform, productIds);
+      return;
+    }
     if (platform === 'ebay' && (action === 'register' || action === 'retry')) {
       let groups = platformSelectedGroups(platform, explicitKeys);
       if (!groups.length && !explicitKeys) {
@@ -7050,9 +7202,9 @@ LEGACY END -->
     }
     if (action === 'edit') {
       const fields = PLATFORM_SAFE_EDIT_FIELDS[platform] || [];
-      if (!fields.length) errors.push(`${PLATFORM_LABELS[platform] || platform} 대량 수정 필드가 아직 없습니다.`);
+      if (!fields.length) errors.push(`${PLATFORM_LABELS[platform] || platform} 가격 수정 필드가 아직 없습니다.`);
       else warnings.push(`노출 필드: ${fields.join(', ')}`);
-      warnings.push('1차 대량 수정은 안전 필드 미리보기 후 기존 가격 동기화/마스터 수정 흐름으로 연결합니다.');
+      warnings.push('가격 수정은 선택 상품만 가격 동기화 화면으로 연결합니다.');
     }
     return { errors, warnings };
   }
@@ -7093,7 +7245,7 @@ LEGACY END -->
         </details>`;
     }).join('');
     const allErrors = groups.some((group) => platformGroupValidation(platform, action, group).errors.length);
-    const executeLabel = action === 'edit' ? '수정 흐름 열기' : (action === 'delete' ? '삭제 실행' : '실행');
+    const executeLabel = action === 'edit' ? '가격 수정 열기' : (action === 'delete' ? '삭제 실행' : '실행');
     return `
       <div class="platform-preview">
         <div class="platform-preview-head">
@@ -7126,6 +7278,12 @@ LEGACY END -->
     const action = preview.action;
     const groups = platformSelectedGroups(platform, preview.keys);
     if (!groups.length) return;
+    if (action === 'edit') {
+      await platformOpenEditFlow(platform, groups.flatMap(platformGroupProductIds));
+      state.platformPreview = null;
+      renderPlatformWorkbench(platform);
+      return;
+    }
     if (action === 'delete') {
       const label = PLATFORM_LABELS[platform] || platform;
       if (!confirm(`${label} 원격 리스팅을 삭제/종료하고 로컬 매핑을 비웁니다.\n\n이후 같은 Master Product를 다시 등록할 수 있습니다.\n계속할까요?`)) return;
@@ -7141,10 +7299,7 @@ LEGACY END -->
         if (action !== 'edit' && validation.errors.length) {
           throw new Error(validation.errors[0]);
         }
-        if (action === 'edit') {
-          await platformOpenEditFlow(platform);
-          results.push({ key, ok: true, message: '수정 흐름을 열었습니다.' });
-        } else if (action === 'delete') {
+        if (action === 'delete') {
           const json = await platformDeleteRemoteListing(platform, group);
           shouldReloadData = true;
           results.push({ key, ok: true, message: json.message || '삭제/정리 완료' });
@@ -7291,18 +7446,20 @@ LEGACY END -->
     throw new Error(`${PLATFORM_LABELS[platform] || platform} 실행 흐름이 아직 없습니다.`);
   }
 
-  async function platformOpenEditFlow(platform) {
+  async function platformOpenEditFlow(platform, productIds = []) {
     if (platform === 'shopee' || platform === 'joom' || platform === 'qoo10' || platform === 'ebay') {
+      const ids = Array.from(new Set((productIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
+      if (ids.length) state.pendingPriceSyncSelectedIds = ids;
       showView('view-price-sync');
       const btn = document.querySelector(`#cat-platform-tabs .cat-platform-tab[data-cat-platform="${platform}"]`);
       if (btn) btn.click();
-      showToast(`${PLATFORM_LABELS[platform]} 대량 수정은 가격 동기화 화면에서 안전 필드만 실행하세요.`, 'ok');
+      showToast(`${PLATFORM_LABELS[platform]} 가격 수정 화면을 열었습니다. 선택 상품만 체크되어 있습니다.`, 'ok');
       return;
     }
-    throw new Error('대량 수정 흐름이 아직 없습니다.');
+    throw new Error('가격 수정 흐름이 아직 없습니다.');
   }
 
-  async function platformSyncSelected(platform) {
+  async function platformSyncSelected(platform, triggerButton = null) {
     let groups = platformSelectedGroups(platform);
     if (!groups.length) {
       const visibleGroups = platformVisibleGroups(platform);
@@ -7313,8 +7470,20 @@ LEGACY END -->
       showToast('원격 확인할 선택 상품이 없습니다.', 'err');
       return;
     }
-    await syncPlatformSkusForProductIds(ids);
-    renderPlatformWorkbenches();
+    const original = triggerButton?.textContent || '';
+    if (triggerButton) {
+      triggerButton.disabled = true;
+      triggerButton.textContent = '매핑 중...';
+    }
+    try {
+      await syncPlatformSkusForProductIds(ids, [platform]);
+      renderPlatformWorkbenches();
+    } finally {
+      if (triggerButton) {
+        triggerButton.disabled = false;
+        triggerButton.textContent = original || `${PLATFORM_LABELS[platform] || platform} SKU 매핑`;
+      }
+    }
   }
 
   function plGroupRowsById(productGroupId) {
@@ -7617,14 +7786,18 @@ LEGACY END -->
     return String(actual || '').replace(/\s+/g, ' ').trim() === String(expected || '').replace(/\s+/g, ' ').trim();
   }
 
-  function plMasterEditBuildNameSyncPlan(rows = plMasterEditCurrentRows()) {
+  function plMasterEditBuildNameSyncPlan(rows = plMasterEditCurrentRows(), options = {}) {
     const first = rows[0] || {};
+    const hasOwn = (key) => Object.prototype.hasOwnProperty.call(options || {}, key);
     const globalName = normalizeMasterProductNameForLifecycle(
-      document.getElementById('pl-master-edit-name')?.value || first.product_name || '',
-      document.getElementById('pl-master-edit-lifecycle')?.value || first.lifecycle_state || 'ready_stock',
+      hasOwn('globalName') ? options.globalName : (document.getElementById('pl-master-edit-name')?.value || first.product_name || ''),
+      hasOwn('lifecycleState') ? options.lifecycleState : (document.getElementById('pl-master-edit-lifecycle')?.value || first.lifecycle_state || 'ready_stock'),
       first.sku || ''
     ).replace(/\s+/g, ' ').trim();
-    const twShortName = cleanProductName(document.getElementById('pl-master-edit-tw-short-name')?.value || '', '').replace(/\s+/g, ' ').trim();
+    const twShortName = cleanProductName(
+      hasOwn('twShortName') ? options.twShortName : (document.getElementById('pl-master-edit-tw-short-name')?.value || ''),
+      ''
+    ).replace(/\s+/g, ' ').trim();
     const globalItemId = plMasterEditGlobalItemId(rows);
     const globalChars = plMasterEditNameChars(globalName);
     const errors = [];
@@ -7791,6 +7964,215 @@ LEGACY END -->
       if (!/column|schema cache|Could not find/i.test(`${error.message || ''} ${error.details || ''}`)) break;
     }
     return { ok: false, error: lastError };
+  }
+
+  async function applyShopeeNameSyncPlan(plan, hooks = {}) {
+    if (!plan?.valid) throw new Error((plan?.errors || [])[0] || 'Shopee name sync plan is not valid.');
+    const emitStatus = (message, kind = '') => {
+      if (typeof hooks.onStatus === 'function') hooks.onStatus(message, kind);
+    };
+    const emitResults = () => {
+      if (typeof hooks.onResults === 'function') hooks.onResults(regionResults, resultRows);
+    };
+    const runId = `shopee-name-sync-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const resultRows = [];
+    const regionResults = plan.targets.map((target) => ({
+      region: target.region,
+      status: 'pending',
+      message: 'Waiting',
+    }));
+    const setRegionResult = (region, patch) => {
+      const row = regionResults.find((item) => item.region === String(region || '').toUpperCase());
+      if (!row) return;
+      Object.assign(row, patch || {});
+      emitResults();
+    };
+    const addResult = (row) => {
+      resultRows.push(row);
+      emitResults();
+    };
+    const failPendingRegions = (message) => {
+      regionResults.forEach((row) => {
+        if (row.status !== 'ok') {
+          row.status = 'error';
+          row.message = message || 'Name sync failed';
+        }
+      });
+      emitStatus(message || 'Name sync failed', 'err');
+      emitResults();
+    };
+
+    emitResults();
+    emitStatus('Applying Shopee names...', '');
+    const syncShops = await plMasterEditFetchNameSyncShops();
+    if (!syncShops.length) throw new Error('No active Shopee shops resolved.');
+
+    const syncJson = await callBridgeMutation('set_global_sync_fields', {
+      region: 'SG',
+      actor: 'v2-shopee-tab-name-sync',
+      run_id: runId,
+      shop_sync_list: syncShops,
+    });
+    const syncOk = bridgeResultOk(syncJson);
+    addResult({
+      target: syncShops.map((shop) => `${shop.shop_region}/${shop.shop_id}`).join(', '),
+      action: 'set_global_sync_fields',
+      ok: syncOk,
+      status: syncOk ? 'ok' : 'error',
+      message: bridgeResultMessage(syncJson),
+    });
+    if (!syncOk) {
+      failPendingRegions(bridgeResultMessage(syncJson));
+      return { ok: false, regionResults, resultRows };
+    }
+
+    const globalJson = await callBridgeMutation('update_global_item', {
+      region: 'SG',
+      actor: 'v2-shopee-tab-name-sync',
+      run_id: runId,
+      global_item_id: plan.globalItemId,
+      global_item_name: plan.globalName,
+    });
+    const globalOk = bridgeResultOk(globalJson);
+    addResult({
+      target: `global ${plan.globalItemId}`,
+      action: 'update_global_item_name',
+      ok: globalOk,
+      status: globalOk ? 'ok' : 'error',
+      message: bridgeResultMessage(globalJson),
+    });
+    if (!globalOk) {
+      failPendingRegions(bridgeResultMessage(globalJson));
+      return { ok: false, regionResults, resultRows };
+    }
+
+    const publishedQs = new URLSearchParams({ region: 'SG', account_key: SHOPEE_DEFAULT_ACCOUNT_KEY, global_item_id: String(plan.globalItemId) });
+    const publishedResponse = await fetch(`${SHOPEE_BRIDGE}/published_list?${publishedQs.toString()}`, { headers: AUTH_HEADERS });
+    const publishedJson = await publishedResponse.json().catch(() => ({ ok: false, error: `HTTP ${publishedResponse.status}` }));
+    const published = readyPublishedItemsFromResponse(publishedJson);
+    const publishedOk = publishedResponse.ok && !publishedJson.error && !publishedJson.result?.error;
+    addResult({
+      target: `global ${plan.globalItemId}`,
+      action: 'published_list',
+      ok: publishedOk,
+      status: publishedOk ? 'ok' : 'error',
+      message: publishedOk ? `${published.length} shop items` : bridgeResultMessage(publishedJson),
+    });
+    if (!publishedOk) {
+      failPendingRegions(bridgeResultMessage(publishedJson));
+      return { ok: false, regionResults, resultRows };
+    }
+
+    const byShopId = new Map(syncShops.map((shop) => [String(shop.shop_id), shop.shop_region]));
+    const targetByRegion = new Map(plan.targets.map((target) => [target.region, target]));
+    const seenRegions = new Set();
+    for (const item of published) {
+      const shopId = Number(item.shop_id || item.shopId || 0);
+      const region = String(item.shop_region || item.region || byShopId.get(String(shopId)) || '').toUpperCase();
+      const itemId = Number(item.item_id || item.itemId || 0);
+      const target = targetByRegion.get(region);
+      if (!target) continue;
+      seenRegions.add(region);
+      setRegionResult(region, { status: 'running', message: 'Checking shop item name' });
+      if (!Number.isFinite(itemId) || itemId <= 0) {
+        addResult({ target: `${region}/unknown`, action: 'resolve_shop_item', ok: false, status: 'error', message: 'item_id missing' });
+        setRegionResult(region, { status: 'error', message: 'item_id missing' });
+        continue;
+      }
+      const before = await plMasterEditReadShopItemName(region, itemId);
+      const alreadyOk = before.ok && plMasterEditNamesMatch(before.itemName, target.targetName);
+      addResult({
+        target: `${region}/${itemId}`,
+        action: 'verify_before_update',
+        ok: before.ok,
+        status: alreadyOk ? 'ok' : 'pending',
+        message: alreadyOk ? 'already exact' : `expected "${target.targetName}", got "${before.itemName || 'unavailable'}"`,
+      });
+      if (alreadyOk) {
+        setRegionResult(region, { status: 'ok', message: 'Already exact' });
+        continue;
+      }
+      setRegionResult(region, { status: 'running', message: 'Updating shop item name' });
+      const updateJson = await callBridgeMutation('update_shop_item_name', {
+        region,
+        actor: 'v2-shopee-tab-name-sync',
+        run_id: runId,
+        item_id: itemId,
+        item_name: target.targetName,
+      });
+      const updateOk = bridgeResultOk(updateJson);
+      addResult({
+        target: `${region}/${itemId}`,
+        action: 'update_shop_item_name',
+        ok: updateOk,
+        status: updateOk ? 'ok' : 'error',
+        message: bridgeResultMessage(updateJson),
+      });
+      if (!updateOk) {
+        setRegionResult(region, { status: 'error', message: bridgeResultMessage(updateJson) });
+        continue;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+      const after = await plMasterEditReadShopItemName(region, itemId);
+      const verified = after.ok && plMasterEditNamesMatch(after.itemName, target.targetName);
+      addResult({
+        target: `${region}/${itemId}`,
+        action: 'verify_after_update',
+        ok: verified,
+        status: verified ? 'ok' : 'pending',
+        message: verified ? 'exact match' : `expected "${target.targetName}", got "${after.itemName || 'unavailable'}"`,
+      });
+      setRegionResult(region, {
+        status: verified ? 'ok' : 'error',
+        message: verified ? 'Changed' : `Not verified: ${after.itemName || 'unavailable'}`,
+      });
+    }
+
+    for (const target of plan.targets) {
+      if (!seenRegions.has(target.region)) {
+        addResult({
+          target: target.region,
+          action: 'published_list_region_check',
+          ok: false,
+          status: 'pending',
+          message: 'No published shop item returned for this region.',
+        });
+        setRegionResult(target.region, { status: 'error', message: 'No published shop item returned for this region.' });
+      }
+    }
+
+    const productIds = plan.rows.map((row) => row.id).filter(Boolean);
+    const { error: productErr } = await db.from('products').update({ product_name: plan.globalName }).in('id', productIds);
+    addResult({
+      target: `${productIds.length} master rows`,
+      action: 'db_update_product_name',
+      ok: !productErr,
+      status: productErr ? 'error' : 'ok',
+      message: productErr ? productErr.message : 'master product_name updated',
+    });
+    if (!productErr) {
+      const ids = new Set(productIds.map(String));
+      state.products.forEach((row) => {
+        if (ids.has(String(row.id))) row.product_name = plan.globalName;
+      });
+    }
+
+    const now = new Date().toISOString();
+    for (const row of plan.rows) {
+      for (const target of plan.targets) {
+        await plMasterEditUpdateListingNameWithFallback(row.id, target.region, {
+          last_pushed_name: target.targetName,
+          last_pushed_at: now,
+        });
+      }
+    }
+    await loadData();
+    renderProducts();
+    const okCount = regionResults.filter((row) => row.status === 'ok').length;
+    const allOk = regionResults.length > 0 && okCount === regionResults.length && !productErr;
+    emitStatus(`Done: ${okCount}/${regionResults.length} regions`, allOk ? 'ok' : 'err');
+    showToast(`Shopee name sync done: ${okCount}/${regionResults.length} regions`, allOk ? 'ok' : 'err');
+    return { ok: allOk, regionResults, resultRows };
   }
 
   async function plMasterEditApplyNameSync() {
@@ -8900,22 +9282,34 @@ LEGACY END -->
     return skuRows.filter((p) => selectedIds.has(String(p.id)));
   }
 
-  async function syncPlatformSkusForProductIds(productIds) {
+  function normalizePlatformSyncTargets(platforms) {
+    const allowed = ['shopee', 'joom', 'qoo10', 'ebay'];
+    const requested = Array.isArray(platforms) ? platforms : [];
+    const clean = requested
+      .map((platform) => String(platform || '').toLowerCase())
+      .filter((platform, index, arr) => allowed.includes(platform) && arr.indexOf(platform) === index);
+    return clean.length ? clean : allowed;
+  }
+
+  async function syncPlatformSkusForProductIds(productIds, platforms = null) {
     const ids = new Set((productIds || []).map((id) => String(id || '')).filter(Boolean));
     if (!ids.size) return { ok: false, reason: 'no_product_ids' };
     const previous = new Set(state.productListSelectedIds || []);
     state.productListSelectedIds = ids;
     try {
-      return await syncPlatformSkus();
+      return await syncPlatformSkus({ platforms });
     } finally {
       state.productListSelectedIds = previous;
     }
   }
 
-  async function syncPlatformSkus() {
+  async function syncPlatformSkus(options = {}) {
     const btn = document.getElementById('pl-sync-platform-skus');
     const original = btn?.textContent || '';
-    const targetPlatforms = ['shopee', 'joom', 'qoo10', 'ebay'];
+    const targetPlatforms = normalizePlatformSyncTargets(options.platforms);
+    const targetLabel = targetPlatforms.length === 1
+      ? `${COVERAGE_LABELS[targetPlatforms[0]] || PLATFORM_LABELS[targetPlatforms[0]] || targetPlatforms[0]} SKU`
+      : '플랫폼 SKU';
     const groups = platformSkuSyncGroups();
     let found = 0;
     let verified = 0;
@@ -8925,13 +9319,13 @@ LEGACY END -->
     let errors = 0;
 
     if (!groups.length) {
-      setStatus('플랫폼 SKU 동기화: 확인할 SKU가 없습니다.', 'err');
+      setStatus(`${targetLabel} 동기화: 확인할 SKU가 없습니다.`, 'err');
       if (typeof showToast === 'function') showToast('확인할 SKU가 없습니다.', 'err');
       return;
     }
 
     if (btn) { btn.disabled = true; btn.textContent = 'SKU 확인 중…'; }
-    setStatus(`플랫폼 SKU 동기화: ${groups.length}개 SKU 확인 준비 중…`, 'ok');
+    setStatus(`${targetLabel} 동기화: ${groups.length}개 SKU 확인 준비 중…`, 'ok');
     try {
       await refreshPlatformLedSources();
       renderProducts();
@@ -8942,7 +9336,7 @@ LEGACY END -->
         .filter((h) => !h.ok)
         .map((h) => `${COVERAGE_LABELS[h.platform] || h.platform}${h.error ? ' (' + h.error + ')' : ''}`);
       if (unavailableLabels.length) {
-        setStatus(`플랫폼 SKU 동기화: ${unavailableLabels.join(', ')} 스킵 · 나머지 확인 중…`, 'err');
+        setStatus(`${targetLabel} 동기화: ${unavailableLabels.join(', ')} 스킵 · 나머지 확인 중…`, 'err');
       }
 
       for (const group of groups) {
@@ -8983,11 +9377,11 @@ LEGACY END -->
       const mappedByPlatform = targetPlatforms
         .map((platform) => `${COVERAGE_LABELS[platform] || platform} ${(state.rollups || []).filter((r) => r.platform === platform && rollupListedCountForLed(r, platform) > 0).length}`)
         .join(' · ');
-      setStatus(`플랫폼 SKU 동기화 완료 · 신규 ${found}건 · 원격 확인 ${verified}건 · 삭제 반영 ${removed}건 · 미등록 ${missing}건 · 스킵 ${skipped}건 · 오류 ${errors}건 · ${mappedByPlatform}`, errors ? 'err' : 'ok');
-      if (typeof showToast === 'function') showToast('플랫폼 SKU 동기화 완료', errors ? 'err' : 'ok');
+      setStatus(`${targetLabel} 동기화 완료 · 신규 ${found}건 · 원격 확인 ${verified}건 · 삭제 반영 ${removed}건 · 미등록 ${missing}건 · 스킵 ${skipped}건 · 오류 ${errors}건 · ${mappedByPlatform}`, errors ? 'err' : 'ok');
+      if (typeof showToast === 'function') showToast(`${targetLabel} 동기화 완료`, errors ? 'err' : 'ok');
     } catch (e) {
-      setStatus(`플랫폼 SKU 동기화 실패: ${e.message || e}`, 'err');
-      if (typeof showToast === 'function') showToast(`플랫폼 SKU 동기화 실패: ${e.message || e}`, 'err');
+      setStatus(`${targetLabel} 동기화 실패: ${e.message || e}`, 'err');
+      if (typeof showToast === 'function') showToast(`${targetLabel} 동기화 실패: ${e.message || e}`, 'err');
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = original || '🔁 플랫폼 SKU 동기화'; }
     }
@@ -18807,7 +19201,32 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Rebuild region header columns
     catSyncRegionHeaders();
 
+    catApplyPendingSelection();
     applyAndRenderCatalog();
+  }
+
+  function catApplyPendingSelection() {
+    const pending = state.pendingPriceSyncSelectedIds;
+    if (!pending) return;
+    state.pendingPriceSyncSelectedIds = null;
+
+    const ids = Array.from(new Set((pending || []).map((id) => String(id || '').trim()).filter(Boolean)));
+    catSelectedIds.clear();
+    ids.forEach((id) => catSelectedIds.add(id));
+
+    const searchEl = document.getElementById('cat-search');
+    if (searchEl) searchEl.value = '';
+    const lifecycleEl = document.getElementById('cat-lifecycle-filter');
+    if (lifecycleEl) lifecycleEl.value = '';
+
+    if (_catCache && ids.length) {
+      const selected = new Set(ids);
+      catBuildProductGroups(_catCache.products || []).forEach((group) => {
+        if ((group.rows || []).some((row) => selected.has(String(row.id)))) {
+          state.priceSyncExpandedGroups.add(group.key);
+        }
+      });
+    }
   }
 
   /** Inject/update region column headers into the table thead. */

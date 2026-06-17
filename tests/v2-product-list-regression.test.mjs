@@ -26,7 +26,7 @@ const inlineEdit = sliceBetween(html, 'function beginEditCell(cell) {', 'async f
 const shopeeGlobalImport = sliceBetween(html, 'async function sgUpsertProduct(row, model, productGroupId, lifecycleState) {', 'function sgReadSelectedStaronemallUrls() {');
 const shopeeRegisterOpen = sliceBetween(html, 'async function openRegisterShopeeGroupModal(productGroupId) {', 'function rshCrawlImages(staronemallUrl) {');
 const masterRegisterNaming = sliceBetween(html, 'function mrMasterProductName(row) {', 'function mrGroupComponents(group) {');
-const platformSync = sliceBetween(html, 'async function syncPlatformSkus() {', 'function productListings(productId) {');
+const platformSync = sliceBetween(html, 'function normalizePlatformSyncTargets(platforms) {', 'function productListings(productId) {');
 const coverageLookup = sliceBetween(html, 'async function coverageLookupViaPlatformPublish(platform, sku, productId) {', 'async function coverageCheckExistingPlatformsBySku() {');
 const coverageSkuCheck = sliceBetween(html, 'async function coverageCheckExistingPlatformsBySku() {', 'function coverageRender() {');
 const masterRegisterImageTools = sliceBetween(html, 'function mrGetGroupOptionImages(group, firstRow) {', 'function mrMasterPatchForGroup(group) {');
@@ -58,7 +58,7 @@ test('platform tab buttons keep selection and route registration through the pro
   assert.match(platformSelectionFlow, /function platformGroupKeysFromProductIds\(productIds\)/, 'platform tabs should be able to map master-list selections to platform groups');
   assert.match(platformSelectionFlow, /state\.productListSelectedIds/, 'platform tabs should adopt master product selections when opened');
   assert.match(html, /platformAdoptProductListSelection\(platform\);[\s\S]*const selectedCount = platformSelection\(platform\)\.size/, 'platform render should adopt selections before enabling action buttons');
-  assert.match(html, /data-platform-sync[\s\S]*>플랫폼 SKU 확인<\/button>/, 'platform tabs should label remote SKU matching as platform SKU check');
+  assert.match(html, /data-platform-sync[\s\S]*>\$\{text\(label\)\} SKU 매핑<\/button>/, 'platform tabs should label remote SKU matching as platform-specific SKU mapping');
   assert.match(platformBinding, /data-platform-preview[\s\S]*platformOpenAction\(platform, btn\.dataset\.platformPreview \|\| 'register'\)/, 'bulk preview buttons must route through the platform action handler');
   assert.match(platformBinding, /platform-master-check[\s\S]*sel\.add\(key\)[\s\S]*renderPlatformWorkbench\(platform\)/, 'row selection must enable preview actions after rerender');
   assert.match(platformPreviewExecution, /return false;/, 'platform tabs must not bypass registration modals through direct dispatcher execution');
@@ -160,7 +160,9 @@ test('master register flow has a manual option-image management modal and sends 
 });
 
 test('platform SKU sync includes Shopee lookup-sku and absorbs matched region ids', () => {
-  assert.match(platformSync, /const targetPlatforms = \['shopee', 'joom', 'qoo10', 'ebay'\]/, 'product list platform sync should include Shopee');
+  assert.match(platformSync, /const allowed = \['shopee', 'joom', 'qoo10', 'ebay'\]/, 'product list platform sync default targets should include Shopee');
+  assert.match(platformSync, /const targetPlatforms = normalizePlatformSyncTargets\(options\.platforms\)/, 'platform SKU sync should accept a narrowed platform target list');
+  assert.match(platformSync, /async function syncPlatformSkusForProductIds\(productIds, platforms = null\)[\s\S]*return await syncPlatformSkus\(\{ platforms \}\)/, 'platform tab SKU mapping should pass selected product IDs with narrowed platform targets');
   assert.doesNotMatch(platformSync, /rollupListedCountForLed\(rollup, platform\) > 0\)[\s\S]{0,120}continue;/, 'green LED rows must be remotely rechecked instead of skipped');
   assert.match(platformSync, /const wasListed = rollupListedCountForLed\(rollup, platform\) > 0/, 'sync should remember whether a green LED is being verified');
   assert.match(platformSync, /coverageClearPlatformMapping\(group\.id, platform, hit\)/, 'remote not-found should clear stale local LED mappings');

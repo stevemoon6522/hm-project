@@ -28,6 +28,12 @@ const syncCode = sliceBetween(
   'function plMasterEditReadJson',
 );
 
+const platformCode = sliceBetween(
+  html,
+  'function renderPlatformWorkbench(platform)',
+  'function platformGroupKeysFromProductIds(productIds)',
+);
+
 for (const token of [
   'class="pl-master-edit-card pl-master-edit-name-sync-card"',
   'id="pl-master-edit-name-sync-global"',
@@ -36,7 +42,20 @@ for (const token of [
   'id="pl-master-edit-name-sync-apply"',
   'id="pl-master-edit-name-sync-results"',
 ]) {
-  assert(modalHtml.includes(token), `master edit modal missing Shopee English name sync UI: ${token}`);
+  assert(!modalHtml.includes(token), `master edit modal should not contain Shopee English name sync UI: ${token}`);
+}
+
+for (const token of [
+  'data-shopee-name-sync',
+  'openShopeeNameSyncPanel()',
+  'function shopeeNameSyncPanelHtml()',
+  'data-shopee-name-sync-preview',
+  'data-shopee-name-sync-apply',
+  'applyShopeeNameSyncFromPanel()',
+  'plMasterEditBuildNameSyncPlan(rows, {',
+  'applyShopeeNameSyncPlan(plan, {',
+]) {
+  assert(platformCode.includes(token), `Shopee tab missing English name sync UI/handler: ${token}`);
 }
 
 for (const token of [
@@ -59,6 +78,7 @@ for (const token of [
   'const regionResults = plan.targets.map',
   "message: verified ? 'Changed'",
   'plMasterEditNameSyncResultsHtml(regionResults)',
+  'async function applyShopeeNameSyncPlan(plan, hooks = {})',
   'Done: ${okCount}/${regionResults.length} regions',
 ]) {
   assert(syncCode.includes(token), `Shopee English name sync flow missing token: ${token}`);
@@ -67,4 +87,4 @@ for (const token of [
 assert(!syncCode.includes('SHOPEE_BANNED_SHOP_IDS'), 'Shopee English name sync must not use the legacy BR banned-shop guard');
 assert(!syncCode.includes('<thead><tr><th>Target</th><th>Action</th><th>Status</th><th>Message</th></tr></thead>'), 'Shopee English name sync results must not render the full operation log table');
 
-console.log('v2 master English name sync checks passed');
+console.log('v2 Shopee English name sync checks passed');

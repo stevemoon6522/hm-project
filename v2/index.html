@@ -4627,7 +4627,7 @@ LEGACY END -->
     rswDryRunDone: false,     // unlocks live button after dry-run
     rswModalAction: null,     // function to call on modal confirm
     rswRunId: null,           // run_id for this transition session
-    productListCollapsedGroups: new Set(),
+    productListExpandedGroups: new Set(),
     productListSelectedIds: new Set(),
     platformSelections: {},
     platformSelectionManualSources: {},
@@ -5909,10 +5909,10 @@ LEGACY END -->
       btn.addEventListener('click', () => {
         const groupKey = btn.dataset.groupKey || '';
         if (!groupKey) return;
-        if (state.productListCollapsedGroups.has(groupKey)) {
-          state.productListCollapsedGroups.delete(groupKey);
+        if (state.productListExpandedGroups.has(groupKey)) {
+          state.productListExpandedGroups.delete(groupKey);
         } else {
-          state.productListCollapsedGroups.add(groupKey);
+          state.productListExpandedGroups.add(groupKey);
         }
         renderProducts();
       });
@@ -6167,7 +6167,7 @@ LEGACY END -->
   function renderProductGroup(group) {
     const rows = group.rows;
     const first = rows[0] || {};
-    const collapsed = state.productListCollapsedGroups.has(group.key);
+    const collapsed = !state.productListExpandedGroups.has(group.key);
     const options = rows.map(plOptionDisplay).filter(Boolean);
     const shownOptions = options.slice(0, 4).map(text).join(', ');
     const more = options.length > 4 ? ` 외 ${options.length - 4}개` : '';

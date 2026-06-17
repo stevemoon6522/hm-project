@@ -15,6 +15,8 @@ function sliceBetween(source, start, end) {
 
 const productListStyles = sliceBetween(html, '.pl-group-row td,', '.empty {');
 const productListRender = sliceBetween(html, 'function renderProductOptionRow(p, groupKey, isGroupChild) {', 'function plGroupRowsById(productGroupId) {');
+const productGroupRender = sliceBetween(html, 'function renderProductGroup(group) {', 'function plMasterEditTargetKey(product) {');
+const productsRender = sliceBetween(html, 'function renderProducts() {', 'function plSetProductSelected(productId, selected) {');
 const appState = sliceBetween(html, 'const state = {', 'const PLATFORM_TABS');
 const catalogStyles = sliceBetween(html, '/* row warnings */', '/* price delta cells */');
 const catalogGroupRender = sliceBetween(html, 'function catRenderGroupRow(group, listingIdx) {', 'function catRenderProductRow(p, listingIdx, isGroupChild) {');
@@ -36,6 +38,29 @@ test('single master product rows use the same highlighted background as option g
     productListRender,
     /<tr class="\$\{rowClass\}" data-product-id=/,
     'rendered product row should use the computed row class',
+  );
+});
+
+test('master product option groups start collapsed in the product list', () => {
+  assert.match(
+    appState,
+    /productListExpandedGroups: new Set\(\)/,
+    'product list should store only user-expanded option groups',
+  );
+  assert.match(
+    productGroupRender,
+    /const collapsed = !state\.productListExpandedGroups\.has\(group\.key\);/,
+    'master product option groups should render collapsed until explicitly expanded',
+  );
+  assert.match(
+    productGroupRender,
+    /if \(collapsed\) return groupHtml;/,
+    'collapsed master product groups should render only their master row',
+  );
+  assert.match(
+    productsRender,
+    /if \(state\.productListExpandedGroups\.has\(groupKey\)\) \{[\s\S]*state\.productListExpandedGroups\.delete\(groupKey\);[\s\S]*\} else \{[\s\S]*state\.productListExpandedGroups\.add\(groupKey\);/,
+    'the master product toggle should switch between collapsed and expanded states',
   );
 });
 

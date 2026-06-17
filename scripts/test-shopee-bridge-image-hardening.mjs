@@ -25,7 +25,7 @@ function sha256(s) {
 assert(sha256(edge) === sha256(supabase), 'edge-functions and supabase/functions shopee-bridge copies must match');
 
 for (const token of [
-  'const SOURCE_VERSION = 50',
+  'const SOURCE_VERSION = 51',
   'const OPERATING_REGION_SET = new Set(OPERATING_REGIONS)',
   'const PROXY_IMAGE_MAX_BYTES = 15 * 1024 * 1024',
   'const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024',
@@ -110,6 +110,7 @@ for (const token of [
   'function pickOptionForExistingValue',
   'async function buildCategoryAttributeListForRegions',
   'function isTransientPublishTaskLookup',
+  'function isAmbiguousPublishFailure',
   'function shouldContinuePublishPolling',
   'response.has_next_page',
   'response.next_offset',
@@ -117,6 +118,8 @@ for (const token of [
   "targetInputs.map((target: any) => target.region)",
   "normalized.includes('south korea')",
   'task not found',
+  'partner does not have permission to operate shop',
+  'verified_via_already_published_create_error',
   'brands: deduped',
   "'partner_public'",
   "'shop_access_token_fallback'",

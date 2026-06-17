@@ -73,8 +73,8 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 // CBSC main account ID ??Shopee CB Mall / KRSC group. Same across all 10 region shops in our setup.
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
-// v49: add explicit item-level logistics update route for price-limit recovery.
-const SOURCE_VERSION = 50;
+// v51: treat CBSC publish task "permission"/empty failed results as async-pending until published_list proves final state.
+const SOURCE_VERSION = 51;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -2046,11 +2046,33 @@ function isPublishPending(task: any): boolean {
 
 function isTransientPublishTaskLookup(task: any): boolean {
   const text = `${task?.error || ''} ${task?.message || ''} ${task?.debug_message || ''}`.toLowerCase();
-  return /task not found|cannot_get_publish_result|taking some time|system busy|try later/.test(text);
+  return /task not found|cannot_get_publish_result|taking some time|system busy|try later|crossupload\.api error:partner does not have permission to operate shop/.test(text);
+}
+
+function isAmbiguousPublishFailure(task: any): boolean {
+  const response = task?.response || {};
+  const status = String(response.publish_status || response.status || '').toLowerCase();
+  if (status !== 'failed') return false;
+  const list = Array.isArray(response.publish_result) ? response.publish_result : [];
+  const reasons = [
+    response.failed?.failed_reason,
+    response.failed?.message,
+    response.failed?.error,
+    ...list.flatMap((row: any) => [
+      row?.failed?.failed_reason,
+      row?.failed?.message,
+      row?.failed?.error,
+      row?.failed_reason,
+      row?.message,
+      row?.error,
+    ]),
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+  const hasSuccess = !!(response.success?.item_id || list.some((row: any) => row?.success?.item_id || row?.item_id || row?.shop_item_id));
+  return !hasSuccess && reasons.length === 0;
 }
 
 function shouldContinuePublishPolling(task: any): boolean {
-  return isPublishPending(task) || isTransientPublishTaskLookup(task);
+  return isPublishPending(task) || isTransientPublishTaskLookup(task) || isAmbiguousPublishFailure(task);
 }
 
 function parsePublishOutcome(region: string, shopId: number, publishTaskId: number, task: any) {
@@ -3722,6 +3744,15 @@ Deno.serve(async (req) => {
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: accountKey });
           if (publishRes.error) {
+            if (/published this global item to the same shop already/i.test(`${publishRes.message || ''} ${publishRes.debug_message || ''}`)) {
+              const verified = await verifyPublishedListOutcome(targetRegion, shop_id, global_item_id, 0, publishRes, accountKey).catch(() => null);
+              if (verified) {
+                verified.publish_status = 'verified_via_already_published_create_error';
+                verified.raw_create = publishRes;
+                results.push(verified);
+                return;
+              }
+            }
             results.push({ ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes });
             return;
           }

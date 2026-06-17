@@ -10839,11 +10839,38 @@ LEGACY END -->
     }
   }
 
+  async function _loadImageFromSafeBlobUrl(rawUrl, headers) {
+    const url = String(rawUrl || '').trim();
+    if (!url) throw new Error('Image URL is empty.');
+    const candidates = [url];
+    if (/^https?:\/\//i.test(url) && !url.includes('/proxy_image?')) {
+      candidates.push(SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(url));
+    }
+    let lastErr = null;
+    for (const candidate of candidates) {
+      try {
+        const useAuth = candidate.includes('/proxy_image?');
+        const r = await fetch(candidate, useAuth ? { headers: headers || AUTH_HEADERS } : undefined);
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const blob = await r.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        try {
+          return await _loadImage(objectUrl, null);
+        } finally {
+          URL.revokeObjectURL(objectUrl);
+        }
+      } catch (e) {
+        lastErr = e;
+      }
+    }
+    throw new Error(`Image load failed: ${lastErr?.message || lastErr || url}`);
+  }
+
   async function applyShopLayer(productImageUrl) {
     const layerUrl = arguments.length > 1 ? sdShopeeLayerUrl(arguments[1]) : STARPHOTOCARD_LAYER;
     const [layerImg, productImg] = await Promise.all([
-      _loadImage(layerUrl, null),
-      _loadImageFromAuthedUrl(productImageUrl),
+      _loadImageFromSafeBlobUrl(layerUrl),
+      _loadImageFromSafeBlobUrl(productImageUrl, AUTH_HEADERS),
     ]);
     const canvas = document.createElement('canvas');
     canvas.width = SHOP_LAYER_CANVAS_SIZE;

@@ -25,13 +25,14 @@ function sha256(s) {
 assert(sha256(edge) === sha256(supabase), 'edge-functions and supabase/functions shopee-bridge copies must match');
 
 for (const token of [
-  'const SOURCE_VERSION = 49',
+  'const SOURCE_VERSION = 50',
   'const OPERATING_REGION_SET = new Set(OPERATING_REGIONS)',
   'const PROXY_IMAGE_MAX_BYTES = 15 * 1024 * 1024',
   'const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024',
   'const GENERATED_UPLOAD_CACHE_TTL_MS = 30 * 60 * 1000',
   'staronemall2.wisacdn.com',
   'mgqlwgnmwegzsjelbrih.supabase.co',
+  'res.cloudinary.com',
   '.wisacdn.com',
   '.shopeesz.com',
 ]) {

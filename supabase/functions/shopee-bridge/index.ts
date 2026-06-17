@@ -74,7 +74,7 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 // v49: add explicit item-level logistics update route for price-limit recovery.
-const SOURCE_VERSION = 49;
+const SOURCE_VERSION = 50;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -106,6 +106,7 @@ const PROXY_ALLOWED_HOSTS = new Set([
   'cf.shopee.com.br',
   'bpdafetvjyvvwbksvowu.supabase.co',
   'mgqlwgnmwegzsjelbrih.supabase.co',
+  'res.cloudinary.com',
 ]);
 const PROXY_ALLOWED_SUFFIXES = [
   '.wisacdn.com',

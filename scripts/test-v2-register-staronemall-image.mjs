@@ -82,6 +82,12 @@ assert(!invalidUrlBranch.includes('/upload_image'), 'invalid URL branch must not
 assert(!invalidUrlBranch.includes('scrapeStaronemallFull'), 'invalid URL branch must not scrape');
 
 const applyShopLayerFn = sliceBetween(v2, 'async function applyShopLayer(productImageUrl)', 'function _normalizeShopeeImageUrl');
+const safeBlobLoaderFn = sliceBetween(v2, 'async function _loadImageFromSafeBlobUrl', 'async function applyShopLayer(productImageUrl)');
+assert(safeBlobLoaderFn.includes('URL.createObjectURL(blob)'), 'safe image loader must render fetched blobs through object URLs');
+assert(safeBlobLoaderFn.includes("SHOPEE_BRIDGE + '/proxy_image?url=' + encodeURIComponent(url)"), 'safe image loader must fall back to shopee-bridge proxy for remote images');
+assert(applyShopLayerFn.includes('_loadImageFromSafeBlobUrl(layerUrl)'), 'legacy Shopee layer compositing must load the layer as a blob to avoid tainted canvas');
+assert(applyShopLayerFn.includes('_loadImageFromSafeBlobUrl(productImageUrl, AUTH_HEADERS)'), 'legacy Shopee layer compositing must load the product image as a blob to avoid tainted canvas');
+assert(!applyShopLayerFn.includes('_loadImage(layerUrl, null)'), 'legacy Shopee layer compositing must not draw a direct cross-origin layer image');
 assert(applyShopLayerFn.includes('canvas.width = SHOP_LAYER_CANVAS_SIZE'), 'legacy Shopee layer compositing must render to the 1000px shop layer canvas');
 assert(applyShopLayerFn.includes('canvas.height = SHOP_LAYER_CANVAS_SIZE'), 'legacy Shopee layer compositing must keep a square 1000px canvas');
 assert(applyShopLayerFn.includes('Math.max(SHOP_LAYER_IMAGE_SIZE / productImg.naturalWidth'), 'representative image must cover-crop into the 850px inner box');

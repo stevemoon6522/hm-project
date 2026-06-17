@@ -84,9 +84,17 @@ for (const token of [
   'async function ensureProduct',
   'ebay-register',
   "confirm: live ? CONFIRM.ebayPublish : undefined",
+  'DEFAULT_TEST_IMAGE',
+  'function joomPublishBody',
+  'function joomCycle',
+  'product_ids: productIds',
+  'joom-register',
+  'joom-cycle',
+  "live ? 'publish' : 'dryrun'",
   'ebay-policy',
   "confirm: live ? CONFIRM.ebayPolicy : undefined",
   'dry-run-all',
+  'joom_register: await joomRegister',
   'cleanup-all',
   'PLATFORM_BRIDGE_INTERNAL_TOKEN is required',
   "confirm: live ? CONFIRM.ebayWithdraw : undefined",
@@ -105,6 +113,10 @@ for (const pathToken of [
   'C:\\dev\\api-refs\\marketplaces\\shopee\\docs_ai\\apis\\global_product\\v2.global_product.delete_global_item.json',
 ]) {
   assert(docs.includes(pathToken), `test cycle docs must cite local API doc path: ${pathToken}`);
+}
+
+for (const token of ['joom-cycle --live', 'POST /products/create', 'POST /products/update', 'POST /products/remove']) {
+  assert(docs.includes(token), `test cycle docs must describe Joom disposable cycle token: ${token}`);
 }
 
 console.log('v2 platform test cycle static checks passed');

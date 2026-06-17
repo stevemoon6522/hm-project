@@ -16,6 +16,9 @@ const CONFIRM = {
   shopeeDelete: 'DELETE_SHOPEE_GLOBAL_ITEM',
 };
 
+const DEFAULT_TEST_IMAGE = 'https://staronemall2.wisacdn.com/_data/product/c24/m9980/5f89fa5684d4141047298b2acfe4aac6.png';
+const DEFAULT_TEST_DETAIL_IMAGE = 'https://staronemall2.wisacdn.com/_data/attach/c24/m19/dae3838cec72eb5fa6ebcb933edc951a.jpg';
+
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
@@ -38,7 +41,11 @@ function targetProduct(target, args = {}) {
     cost_krw: Number(args.costKrw || 16000),
     weight_g: Number(args.weightG || 150),
     inventory: Number(args.inventory || 3),
-    main_image: args.mainImage || 'https://placehold.co/1200x1200/png?text=JENNIE+Ruby+CD+Digipack',
+    main_image: args.mainImage || DEFAULT_TEST_IMAGE,
+    extra_images: [DEFAULT_TEST_DETAIL_IMAGE],
+    description: args.description || 'API registration smoke-test product for starphotocard.',
+    joom_category_id: args.joomCategoryId || 'music_albums',
+    shopee_brand_name: args.brand || 'JENNIE',
     _source: 'scripts/platform-test-target.json fallback',
   };
 }
@@ -138,6 +145,10 @@ async function loadProduct(env, target, args, key = env.anon, options = {}) {
     'weight_g',
     'inventory',
     'main_image',
+    'extra_images',
+    'description',
+    'joom_category_id',
+    'shopee_brand_name',
     'joom_product_id',
     'joom_variant_id',
     'joom_status',
@@ -221,6 +232,10 @@ async function loadPlatformListings(env, productId, serviceKey) {
 
 function uniqueTruthy(values) {
   return [...new Set(values.map((v) => String(v || '').trim()).filter(Boolean))];
+}
+
+function isUuid(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(value || ''));
 }
 
 function pickQoo10ItemCode(args, platformListings) {
@@ -310,10 +325,14 @@ async function ebayPolicy(env, product, args, internalToken) {
 
 async function joomDelete(env, product, args, internalToken, serviceKey) {
   const live = args.live === true;
-  const productId = String(args.joomProductId || product.joom_product_id || product.sku || '').trim();
+  const productId = String(args.joomProductId || args.joomSku || product.joom_product_id || product.sku || '').trim();
   if (!productId) return { ok: false, skipped: true, reason: 'No Joom product id or SKU available' };
+  const productIds = args.productIds
+    ? String(args.productIds).split(',').map((id) => id.trim()).filter(isUuid)
+    : (args.joomSku ? [] : (isUuid(product.id) ? [product.id] : []));
   const result = await edgePost(env, 'joom-bridge', 'delete', {
     productId,
+    product_ids: productIds,
     dry_run: !live,
     confirm: live ? CONFIRM.joomDelete : undefined,
   }, internalToken);
@@ -333,6 +352,104 @@ async function joomDelete(env, product, args, internalToken, serviceKey) {
     result.local_reset = { skipped: true, reason: 'SUPABASE_SERVICE_ROLE_KEY not set' };
   }
   return result;
+}
+
+function safeTestSku(baseSku, suffix = '') {
+  const base = String(baseSku || 'SDV2-TEST')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 42) || 'SDV2-TEST';
+  const cleanSuffix = String(suffix || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, '')
+    .slice(0, 18);
+  return cleanSuffix ? `${base}-${cleanSuffix}`.slice(0, 64) : base.slice(0, 64);
+}
+
+function uniqueJoomTestSku(product, args) {
+  if (args.joomSku) return safeTestSku(args.joomSku);
+  const stamp = new Date().toISOString().replace(/\D/g, '').slice(2, 14);
+  return safeTestSku(product.sku || 'SDV2-JOOM', `JOOM${stamp}`);
+}
+
+function joomPublishBody(product, args = {}) {
+  const sku = uniqueJoomTestSku(product, args);
+  const name = String(args.joomTitle || product.product_name || product.sku || sku).trim();
+  const mainImage = String(args.mainImage || product.main_image || DEFAULT_TEST_IMAGE).trim();
+  const extraImages = Array.isArray(product.extra_images) ? product.extra_images : [];
+  const detailImages = [
+    ...extraImages,
+    args.detailImage || DEFAULT_TEST_DETAIL_IMAGE,
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+
+  return {
+    row: {
+      sku,
+      cost: Number(args.costKrw || product.cost_krw || 16000),
+      weight: Number(args.weightG || product.weight_g || 150),
+    },
+    scrapedAssets: {
+      mainImage,
+      name,
+      detailImages,
+      extraImages: [],
+    },
+    variantsConfig: [{
+      name: String(args.optionName || product.option_name || 'DEFAULT').trim() || 'DEFAULT',
+      sku,
+      inventory: Number(args.inventory || product.inventory || 1),
+      enabled: true,
+      weight: Number(args.weightG || product.weight_g || 150),
+      image: mainImage,
+    }],
+    categoryId: String(args.joomCategoryId || product.joom_category_id || 'music_albums').trim(),
+    enabled: true,
+    namePrefix: '',
+    artist: String(args.artist || product.shopee_brand_name || 'JENNIE').trim(),
+    album: String(args.album || 'Ruby').trim(),
+    contents: String(args.description || product.description || 'API registration smoke-test product for starphotocard.').trim(),
+    brand: String(args.brand || product.shopee_brand_name || 'JENNIE').trim(),
+  };
+}
+
+async function joomRegister(env, product, args, internalToken) {
+  const live = args.live === true;
+  const body = joomPublishBody(product, args);
+  return edgePost(env, 'joom-bridge', live ? 'publish' : 'dryrun', body, internalToken);
+}
+
+async function joomCycle(env, product, args, internalToken, serviceKey) {
+  const live = args.live === true;
+  const joomSku = uniqueJoomTestSku(product, args);
+  const register = await joomRegister(env, product, { ...args, joomSku }, internalToken);
+  if (!live) {
+    return {
+      ok: register.ok !== false,
+      live: false,
+      joom_sku: joomSku,
+      register,
+      delete: await joomDelete(env, product, { ...args, live: false, joomSku }, internalToken, serviceKey),
+    };
+  }
+  if (!register?.ok || !register?.joom_product_id) {
+    return { ok: false, live: true, joom_sku: joomSku, register, delete: { skipped: true, reason: 'Joom register failed or returned no product id' } };
+  }
+  const cleanup = await joomDelete(env, product, {
+    ...args,
+    live: true,
+    joomSku,
+    joomProductId: register.joom_product_id,
+    productIds: '',
+  }, internalToken, serviceKey);
+  return {
+    ok: register.ok !== false && cleanup.ok !== false,
+    live: true,
+    joom_sku: joomSku,
+    register,
+    delete: cleanup,
+  };
 }
 
 async function qoo10Delete(env, product, args, internalToken, platformListings, serviceKey) {
@@ -408,6 +525,8 @@ async function run() {
     'ebay-register-dry-run': () => ebayRegisterDryRun(env, product, internalToken),
     'ebay-policy': () => ebayPolicy(env, product, args, internalToken),
     'ebay-withdraw': () => ebayWithdraw(env, product, args, internalToken),
+    'joom-register': () => joomRegister(env, product, args, internalToken),
+    'joom-cycle': () => joomCycle(env, product, args, internalToken, serviceKey),
     'joom-delete': () => joomDelete(env, product, args, internalToken, serviceKey),
     'qoo10-delete': () => qoo10Delete(env, product, args, internalToken, platformListings, serviceKey),
     'shopee-delete': () => shopeeDelete(env, product, args, internalToken, shopeeRows),
@@ -417,6 +536,7 @@ async function run() {
       ebay_register: await ebayRegisterDryRun(env, product, internalToken),
       ebay_policy: await ebayPolicy(env, product, { ...args, live: false }, internalToken),
       ebay_withdraw: await ebayWithdraw(env, product, { ...args, live: false }, internalToken),
+      joom_register: await joomRegister(env, product, { ...args, live: false }, internalToken),
       joom_delete: await joomDelete(env, product, { ...args, live: false }, internalToken, serviceKey),
       qoo10_delete: await qoo10Delete(env, product, { ...args, live: false }, internalToken, platformListings, serviceKey),
       shopee_delete: await shopeeDelete(env, product, { ...args, live: false }, internalToken, shopeeRows),
@@ -435,7 +555,7 @@ async function run() {
   };
 
   if (!commands[command]) {
-    throw new Error(`Unknown command '${command}'. Use inspect, ensure-product, dry-run-all, ebay-register, ebay-register-dry-run, ebay-policy, ebay-withdraw, joom-delete, qoo10-delete, shopee-delete, cleanup-all.`);
+    throw new Error(`Unknown command '${command}'. Use inspect, ensure-product, dry-run-all, ebay-register, ebay-register-dry-run, ebay-policy, ebay-withdraw, joom-register, joom-cycle, joom-delete, qoo10-delete, shopee-delete, cleanup-all.`);
   }
 
   const result = await commands[command]();

@@ -228,4 +228,72 @@ assert.doesNotMatch(
   'eBay variation option builder must not fall back to stale persisted platform option values',
 );
 
+const productListRenderBlock = sliceBetween(
+  html,
+  'function renderProductGroup(group) {',
+  'function mountMasterRegisterPanel() {',
+);
+const renderProductGroup = new Function(
+  'state',
+  'text',
+  'plParentSku',
+  'plProductName',
+  'productLifecycleBadge',
+  'plNumberRange',
+  'plIsGroupedVariant',
+  'plOptionDisplay',
+  'stripNonMarketplaceText',
+  `${optionHelpers}\n${productListRenderBlock}\nreturn renderProductGroup;`,
+)(
+  { productListExpandedGroups: new Set(['g1']), productListSelectedIds: new Set() },
+  (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])),
+  () => 'M4-BTS-ARIRA-PHO',
+  (row) => row.product_name || '',
+  () => '<span>READY STOCK</span>',
+  (rows, field) => rows.map((row) => Number(row[field] || 0)).join('-'),
+  (row) => !!row.product_group_id,
+  (row) => (Array.isArray(row.variation_option_names) && row.variation_option_names.length ? row.variation_option_names.join(' / ') : String(row.option_name || '').trim()),
+  (value) => String(value || '').replace(/[^\x20-\x7E]/g, '').trim(),
+);
+const productListHtml = renderProductGroup({
+  key: 'g1',
+  rows: [
+    { id: 'ar1', product_group_id: 'g1', sku: 'M4-BTS-ARIRA-PHO-ROOTED-IN-KOREA', product_name: '[READY STOCK] (BTS) ARIRANG Rooted in Korea ver. / Rooted in Music ver.', option_name: 'ROOTED IN KOREA VER', variation_tier_names: ['Version', 'Member'], variation_option_names: ['ROOTED IN KOREA VER', 'ROOTED IN KOREA'], cost_krw: 10400, weight_g: 360 },
+    { id: 'ar2', product_group_id: 'g1', sku: 'M4-BTS-ARIRA-PHO-ROOTED-IN-MUSIC', product_name: '[READY STOCK] (BTS) ARIRANG Rooted in Korea ver. / Rooted in Music ver.', option_name: 'ROOTED IN MUSIC VER', variation_tier_names: ['Version', 'Member'], variation_option_names: ['ROOTED IN MUSIC VER', 'ROOTED IN MUSIC'], cost_krw: 10400, weight_g: 560 },
+    { id: 'ar3', product_group_id: 'g1', sku: 'M4-BTS-ARIRA-PHO-SET', product_name: '[READY STOCK] (BTS) ARIRANG Rooted in Korea ver. / Rooted in Music ver.', option_name: '2 VER SET', variation_tier_names: ['Version', 'Member'], variation_option_names: ['2 VER SET', 'SET'], cost_krw: 20800, weight_g: 900 },
+  ],
+});
+assert.match(productListHtml, /ROOTED IN KOREA VER/);
+assert.match(productListHtml, /ROOTED IN MUSIC VER/);
+assert.match(productListHtml, /2 VER SET/);
+assert.doesNotMatch(productListHtml, /ROOTED IN KOREA VER \/ ROOTED IN KOREA/);
+assert.doesNotMatch(productListHtml, /ROOTED IN MUSIC VER \/ ROOTED IN MUSIC/);
+assert.doesNotMatch(productListHtml, /2 VER SET \/ SET/);
+
+const qoo10OptionValueBlock = sliceBetween(
+  html,
+  'function mrQoo10OptionValue(row) {',
+  'function mrQoo10FormatTitle(row) {',
+);
+const qoo10Rows = [
+  { id: 'ar1', sku: 'M4-BTS-ARIRA-PHO-ROOTED-IN-KOREA', option_name: 'ROOTED IN KOREA VER', variation_tier_names: ['Version', 'Member'], variation_option_names: ['ROOTED IN KOREA VER', 'ROOTED IN KOREA'] },
+  { id: 'ar2', sku: 'M4-BTS-ARIRA-PHO-ROOTED-IN-MUSIC', option_name: 'ROOTED IN MUSIC VER', variation_tier_names: ['Version', 'Member'], variation_option_names: ['ROOTED IN MUSIC VER', 'ROOTED IN MUSIC'] },
+  { id: 'ar3', sku: 'M4-BTS-ARIRA-PHO-SET', option_name: '2 VER SET', variation_tier_names: ['Version', 'Member'], variation_option_names: ['2 VER SET', 'SET'] },
+];
+const qoo10OptionValue = new Function(
+  '_mrQoo10',
+  'plOptionDisplay',
+  'stripNonMarketplaceText',
+  `${optionHelpers}\n${qoo10OptionValueBlock}\nreturn mrQoo10OptionValue;`,
+)(
+  { rows: qoo10Rows },
+  (row) => (Array.isArray(row.variation_option_names) && row.variation_option_names.length ? row.variation_option_names.join(' / ') : String(row.option_name || '').trim()),
+  (value) => String(value || '').replace(/[^\x20-\x7E]/g, '').trim(),
+);
+assert.deepEqual(
+  qoo10Rows.map((row) => qoo10OptionValue(row)),
+  ['ROOTED IN KOREA VER', 'ROOTED IN MUSIC VER', '2 VER SET'],
+  'Qoo10 option values should use normalized master option names',
+);
+
 console.log('v2 master option sync checks passed');

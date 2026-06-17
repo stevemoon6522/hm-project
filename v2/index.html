@@ -6084,6 +6084,13 @@ LEGACY END -->
     };
   }
 
+  function plEffectiveOptionDisplay(row, optionSpec, rowIndex = 0, fallback = '') {
+    const optionNames = optionSpec && typeof optionSpec.optionNamesForRow === 'function'
+      ? optionSpec.optionNamesForRow(row, rowIndex)
+      : [];
+    return (optionNames.join(' / ') || fallback || '').trim();
+  }
+
   function plMasterEditNormalizeOptionPatches(rows, optionPatches) {
     const patches = optionPatches || [];
     const patchById = new Map(patches.map((item) => [String(item.id), item.patch || {}]));
@@ -6361,7 +6368,8 @@ LEGACY END -->
     const rows = group.rows;
     const first = rows[0] || {};
     const collapsed = !state.productListExpandedGroups.has(group.key);
-    const options = rows.map(plOptionDisplay).filter(Boolean);
+    const optionSpec = plEffectiveVariationSpec(rows, 'Version');
+    const options = rows.map((row, idx) => plEffectiveOptionDisplay(row, optionSpec, idx, plOptionDisplay(row))).filter(Boolean);
     const shownOptions = options.slice(0, 4).map(text).join(', ');
     const more = options.length > 4 ? ` 외 ${options.length - 4}개` : '';
     const productName = plProductName(first);
@@ -6393,7 +6401,7 @@ LEGACY END -->
         </td>
       </tr>`;
     if (collapsed) return groupHtml;
-    return groupHtml + rows.map((row) => renderProductOptionRow(row, group.key, true)).join('');
+    return groupHtml + rows.map((row, idx) => renderProductOptionRow(row, group.key, true, optionSpec, idx)).join('');
   }
 
   function plMasterEditTargetKey(product) {
@@ -6401,8 +6409,12 @@ LEGACY END -->
   }
 
   function renderProductOptionRow(p, groupKey, isGroupChild) {
+    const optionSpec = arguments.length > 3 ? arguments[3] : null;
+    const rowIndex = arguments.length > 4 ? arguments[4] : 0;
     const isVariantRow = plIsGroupedVariant(p);
-    const optionDisplay = plOptionDisplay(p);
+    const optionDisplay = optionSpec
+      ? plEffectiveOptionDisplay(p, optionSpec, rowIndex, plOptionDisplay(p))
+      : plOptionDisplay(p);
     const productName = plProductName(p);
     const editButton = !isGroupChild
       ? `<button type="button" class="pl-master-edit" data-edit-master="${text(plMasterEditTargetKey(p))}" title="마스터 상품 데이터 수정">수정</button>`
@@ -8152,6 +8164,7 @@ LEGACY END -->
   function plMasterEditRenderOptions(rows) {
     const optionsEl = document.getElementById('pl-master-edit-options');
     if (!optionsEl) return;
+    const optionSpec = plEffectiveVariationSpec(rows, 'Version');
     optionsEl.innerHTML = `
       <table style="width:100%;border-collapse:collapse;font-size:12px;min-width:760px;">
         <thead>
@@ -8164,16 +8177,17 @@ LEGACY END -->
           </tr>
         </thead>
         <tbody>
-          ${rows.map((row) => {
+          ${rows.map((row, idx) => {
             const optionImageUrl = plMasterEditOptionImageUrl(row);
-            const autoSku = plMasterEditAutoSku(row, plOptionDisplay(row) || row.option_name || '');
+            const optionDisplay = plEffectiveOptionDisplay(row, optionSpec, idx, plOptionDisplay(row) || row.option_name || '');
+            const autoSku = plMasterEditAutoSku(row, optionDisplay);
             const currentSku = String(row.sku || '').trim();
             const skuValue = currentSku || autoSku;
             const skuMode = currentSku ? 'manual' : 'auto';
             return `
               <tr data-product-id="${text(row.id)}">
                 <td style="padding:6px;border-bottom:1px solid var(--border);">
-                  <input data-field="option_name" type="text" value="${text(plOptionDisplay(row) || row.option_name || '')}" style="width:120px;font-size:12px;padding:4px 6px;">
+                  <input data-field="option_name" type="text" value="${text(optionDisplay)}" style="width:120px;font-size:12px;padding:4px 6px;">
                 </td>
                 <td style="padding:6px;border-bottom:1px solid var(--border);">
                   <div style="display:flex;gap:4px;align-items:center;">
@@ -13729,6 +13743,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   function rshReadVariantInputs(products = _rsh.products) {
     const rows = rshSortedProducts(products || []);
+    const optionSpec = plEffectiveVariationSpec(rows, 'VERSION');
     return rows.map((p, index) => {
       const sourcingEl = document.getElementById(rshVariantInputId('sourcing', index));
       const priceEl = document.getElementById(rshVariantInputId('price', index));
@@ -13740,7 +13755,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const sku = stripNonMarketplaceText(skuEl?.value || p.sku || '').trim();
       return {
         product: p,
-        option: rshOptionName(p),
+        option: plEffectiveOptionDisplay(p, optionSpec, index, rshOptionName(p)),
         sku,
         sourcing_price: Number.isFinite(sourcing) ? sourcing : 0,
         price: Number.isFinite(price) ? price : 0,
@@ -13804,8 +13819,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const applyBtn = document.getElementById('rsh-apply-variants');
     if (applyBtn) applyBtn.onclick = rshApplyVariantBulkInputs;
 
+    const optionSpec = plEffectiveVariationSpec(rows, 'VERSION');
     body.innerHTML = rows.map((p, index) => {
-      const option = rshOptionName(p);
+      const option = plEffectiveOptionDisplay(p, optionSpec, index, rshOptionName(p));
       const sourcing = rshDefaultSourcingPrice(p);
       const price = rshDefaultSettlementPrice(p);
       const stock = rshDefaultVariantStock(p);
@@ -14144,6 +14160,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function mrQoo10OptionValue(row) {
+    const rows = Array.isArray(_mrQoo10.rows) ? _mrQoo10.rows : [];
+    if (rows.length > 1) {
+      const idx = Math.max(0, rows.findIndex((candidate) => String(candidate?.id || '') === String(row?.id || '')));
+      const optionSpec = plEffectiveVariationSpec(rows, 'Type');
+      const value = plEffectiveOptionDisplay(row, optionSpec, idx, plOptionDisplay(row));
+      if (value) return value;
+    }
     return plOptionDisplay(row) || row.option_name || row.sku || 'Default';
   }
 
@@ -18638,7 +18661,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const first = rows[0] || {};
     const collapsed = !state.priceSyncExpandedGroups.has(group.key);
     const productIds = rows.map(function(p) { return String(p.id || ''); }).filter(Boolean);
-    const options = rows.map(plOptionDisplay).filter(Boolean);
+    const optionSpec = plEffectiveVariationSpec(rows, 'Version');
+    const options = rows.map(function(row, idx) {
+      return plEffectiveOptionDisplay(row, optionSpec, idx, plOptionDisplay(row));
+    }).filter(Boolean);
     const shownOptions = options.slice(0, 4).map(esc).join(', ');
     const more = options.length > 4 ? ' 외 ' + (options.length - 4) + '개' : '';
     const regionResult = catRegionSummaryCells(rows, listingIdx);
@@ -18665,6 +18691,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function catRenderProductRow(p, listingIdx, isGroupChild) {
+    const optionSpec = arguments.length > 3 ? arguments[3] : null;
+    const rowIndex = arguments.length > 4 ? arguments[4] : 0;
     const pid = String(p.id);
     const byRegion = listingIdx.get(pid) || new Map();
     const effectiveCost = catEffectiveCost(p);
@@ -18675,7 +18703,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const regionResult = catBuildRegionCells(byRegion, effectiveCost, effectiveWeight, p);
     const maxDelta = regionResult.maxDeltaPct;
     const isStale = catIsStale(p);
-    const optionLabel = plOptionDisplay(p);
+    const optionLabel = optionSpec
+      ? plEffectiveOptionDisplay(p, optionSpec, rowIndex, plOptionDisplay(p))
+      : plOptionDisplay(p);
     const rowClass = (isGroupChild ? 'pl-option-row ' : 'pl-single-product-row ') + (isLargeChange ? 'cat-row-warn' : '');
     const skuCell = '<td><div style="font-size:13px;font-weight:500;">' + esc(p.sku || '—') + '</div>'
       + (isGroupChild ? '<div class="muted" style="font-size:11px;">' + esc(optionLabel || '옵션') + '</div>' : (p.option_name ? '<div class="muted" style="font-size:11px;">' + esc(p.option_name) + '</div>' : ''))
@@ -18915,9 +18945,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const groups = catBuildProductGroups(rows);
     tbody.innerHTML = groups.map(function(group) {
       if (!group.isGrouped) return catRenderProductRow(group.rows[0], listingIdx, false);
+      const optionSpec = plEffectiveVariationSpec(group.rows, 'Version');
       const groupHtml = catRenderGroupRow(group, listingIdx);
       if (!state.priceSyncExpandedGroups.has(group.key)) return groupHtml;
-      return groupHtml + group.rows.map(function(row) { return catRenderProductRow(row, listingIdx, true); }).join('');
+      return groupHtml + group.rows.map(function(row, idx) { return catRenderProductRow(row, listingIdx, true, optionSpec, idx); }).join('');
     }).join('');
 
     tbody.querySelectorAll('.cat-group-cb[data-partial="1"]').forEach(function(cb) {

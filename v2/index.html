@@ -13416,6 +13416,121 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return 'VERSION';
   }
 
+  function rshStoredTierNames(products = _rsh.products) {
+    const rows = rshSortedProducts(products || []);
+    const source = rows.find((row) => Array.isArray(row?.variation_tier_names) && row.variation_tier_names.length);
+    return Array.isArray(source?.variation_tier_names)
+      ? source.variation_tier_names.map((v) => stripNonMarketplaceText(v || '').trim()).filter(Boolean)
+      : [];
+  }
+
+  function rshRawOptionValue(row, axisIndex) {
+    const names = Array.isArray(row?.variation_option_names) ? row.variation_option_names : [];
+    const raw = axisIndex < names.length ? names[axisIndex] : (axisIndex === 0 ? rshOptionName(row) : '');
+    return String(raw || '').trim();
+  }
+
+  function rshAxisSignature(row, axes) {
+    return axes.map((axis) => stripNonMarketplaceText(rshRawOptionValue(row, axis.sourceAxis)).trim().toLowerCase()).join('\u001f');
+  }
+
+  function rshAxisIsRedundant(rows, keptAxes, axis) {
+    if (!keptAxes.length || axis.values.length <= 1) return false;
+    const valueBySignature = new Map();
+    const signatureByValue = new Map();
+    for (const row of rows) {
+      const signature = rshAxisSignature(row, keptAxes);
+      const value = stripNonMarketplaceText(rshRawOptionValue(row, axis.sourceAxis)).trim().toLowerCase();
+      if (!signature || !value) return false;
+      const existingValue = valueBySignature.get(signature);
+      if (existingValue && existingValue !== value) return false;
+      valueBySignature.set(signature, value);
+      const existingSignature = signatureByValue.get(value);
+      if (existingSignature && existingSignature !== signature) return false;
+      signatureByValue.set(value, signature);
+    }
+    return signatureByValue.size === axis.values.length;
+  }
+
+  function rshBuildVariationSpec(products) {
+    const rows = rshSortedProducts(products || []);
+    if (!rows.length) {
+      return {
+        tierVariation: [],
+        tierIndexForProduct: () => [],
+      };
+    }
+
+    const storedTierNames = rshStoredTierNames(rows);
+    const maxOptionAxes = rows.reduce((max, row) => {
+      const optionLen = Array.isArray(row?.variation_option_names) ? row.variation_option_names.length : 0;
+      const indexLen = Array.isArray(row?.variation_tier_index) ? row.variation_tier_index.length : 0;
+      return Math.max(max, optionLen, indexLen);
+    }, 0);
+    const rawAxisCount = Math.max(1, storedTierNames.length, maxOptionAxes);
+    const rawAxes = Array.from({ length: rawAxisCount }, (_, axisIndex) => {
+      const values = [];
+      const firstRowByKey = new Map();
+      rows.forEach((row) => {
+        const source = rshRawOptionValue(row, axisIndex);
+        if (hasNonMarketplaceText(source)) {
+          throw new Error(`Shopee option name must be English before registration: ${source}`);
+        }
+        const value = stripNonMarketplaceText(source).trim();
+        const key = value.toLowerCase();
+        if (!value || firstRowByKey.has(key)) return;
+        firstRowByKey.set(key, row);
+        values.push(value);
+      });
+      return {
+        sourceAxis: axisIndex,
+        name: (storedTierNames[axisIndex] || (axisIndex === 0 ? rshReadVariationName(rows) : `OPTION ${axisIndex + 1}`)).slice(0, 14),
+        values,
+        firstRowByKey,
+      };
+    }).filter((axis) => axis.values.length > 0);
+
+    const multiAxes = rawAxes.filter((axis) => axis.values.length > 1);
+    const candidateAxes = multiAxes.length ? multiAxes : rawAxes.slice(0, 1);
+    const effectiveAxes = [];
+    for (const axis of candidateAxes) {
+      if (rshAxisIsRedundant(rows, effectiveAxes, axis)) continue;
+      effectiveAxes.push(axis);
+      if (effectiveAxes.length >= 2) break;
+    }
+    if (!effectiveAxes.length && rawAxes.length) effectiveAxes.push(rawAxes[0]);
+    const includeOptionImages = effectiveAxes.length === 1;
+    const tierVariation = effectiveAxes.map((axis) => ({
+      name: axis.name || 'VERSION',
+      option_list: axis.values.map((value) => {
+        const entry = { option: value };
+        if (includeOptionImages) {
+          const row = axis.firstRowByKey.get(value.toLowerCase());
+          const sku = String(row?.sku || '').trim();
+          const optionImageId = sku ? _rsh.globalOptionImageIds?.[sku] : '';
+          if (optionImageId) entry.image = { image_id: optionImageId };
+        }
+        return entry;
+      }),
+    }));
+
+    const tierIndexForProduct = (product, fallbackIndex = 0) => {
+      if (!tierVariation.length) return [];
+      return effectiveAxes.map((axis, axisPosition) => {
+        const value = stripNonMarketplaceText(rshRawOptionValue(product, axis.sourceAxis)).trim();
+        const index = axis.values.findIndex((candidate) => candidate.toLowerCase() === value.toLowerCase());
+        if (index >= 0) return index;
+        const stored = Array.isArray(product?.variation_tier_index)
+          ? Number(product.variation_tier_index[axis.sourceAxis])
+          : NaN;
+        if (Number.isInteger(stored) && stored >= 0 && stored < tierVariation[axisPosition].option_list.length) return stored;
+        return Math.min(Math.max(Number(fallbackIndex) || 0, 0), tierVariation[axisPosition].option_list.length - 1);
+      });
+    };
+
+    return { tierVariation, tierIndexForProduct };
+  }
+
   function rshVariantInputId(prefix, index) {
     return `rsh-var-${prefix}-${index}`;
   }
@@ -15286,23 +15401,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function rshBuildTierVariation(products) {
-    const rows = rshSortedProducts(products);
-    const seen = new Set();
-    const optionList = [];
-    rows.forEach((row) => {
-      const source = rshOptionName(row);
-      if (hasNonMarketplaceText(source)) throw new Error(`Shopee option name must be English before registration: ${source}`);
-      const raw = stripNonMarketplaceText(source).trim();
-      const key = raw.toLowerCase();
-      if (!raw || seen.has(key)) return;
-      seen.add(key);
-      const sku = String(row.sku || '').trim();
-      const optionImageId = sku ? _rsh.globalOptionImageIds?.[sku] : '';
-      const entry = { option: raw };
-      if (optionImageId) entry.image = { image_id: optionImageId };
-      optionList.push(entry);
-    });
-    return optionList.length ? [{ name: rshReadVariationName(rows), option_list: optionList }] : [];
+    return rshBuildVariationSpec(products).tierVariation;
   }
 
   function rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKeyOverride) {
@@ -15329,13 +15428,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       ? _rsh.regionImageIds.SG.filter(Boolean)
       : [imageId].concat(_rsh.cachedExtraIds || master.shopee_extra_image_ids || []).filter(Boolean);
     const brandObj = rshReadBrandObject();
-    const tierVariation = rshBuildTierVariation(products);
+    const variationSpec = rshBuildVariationSpec(products);
+    const tierVariation = variationSpec.tierVariation;
 
     const model = variantInputs.map((v, index) => {
       const p = v.product || {};
       const price = Number(v.price || basePrice);
       return {
-        tier_index: Array.isArray(p.variation_tier_index) && p.variation_tier_index.length ? p.variation_tier_index : [index],
+        tier_index: variationSpec.tierIndexForProduct(p, index),
         global_model_sku: String(v.sku || p.sku || '').trim(),
         model_sku: String(v.sku || p.sku || '').trim(),
         original_price: price,
@@ -15357,7 +15457,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         throw new Error(`${region} ${v.sku || p.sku || index + 1} 가격 계산 실패: 정산가/무게/country_settings를 확인하세요.`);
       }
       return {
-        tier_index: Array.isArray(p.variation_tier_index) && p.variation_tier_index.length ? p.variation_tier_index : [index],
+        tier_index: variationSpec.tierIndexForProduct(p, index),
         global_model_sku: String(v.sku || p.sku || '').trim(),
         model_sku: String(v.sku || p.sku || '').trim(),
         original_price: calc.originalPrice,

@@ -80,7 +80,7 @@ assert(
   'group modal must load variation metadata from products',
 );
 assert(
-  rshModal.includes('async function rshUseMasterImages(master)')
+  rshModal.includes('async function rshUseMasterImages(master')
     && rshModal.includes('function rshMasterDetailImageRefs(master)')
     && rshModal.includes('function rshActiveDetailImageSources()')
     && rshModal.includes('function rshRenderImageRolePreview()')

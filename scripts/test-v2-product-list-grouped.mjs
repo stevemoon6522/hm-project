@@ -36,7 +36,7 @@ const bulkDeleteUi = sliceBetween(
 assert(productView.includes('<table class="pl-table">'), 'product list table must use wrapping table class');
 assert(html.includes('.pl-group-row'), 'group row styling must exist');
 assert(html.includes('.pl-option-row'), 'option row styling must exist');
-assert(html.includes('productListCollapsedGroups: new Set()'), 'collapsed group state must be tracked');
+assert(html.includes('productListExpandedGroups: new Set()'), 'expanded group state must be tracked');
 assert(html.includes('productListSelectedIds: new Set()'), 'product list selected IDs must be tracked outside the DOM');
 
 for (const token of [
@@ -72,8 +72,9 @@ assert(
   'group detection must keep Shopee Global option rows grouped even when Shopee omits tier metadata',
 );
 assert(
-  productList.includes("state.productListCollapsedGroups.has(group.key)")
-    && productList.includes('state.productListCollapsedGroups.add(groupKey)'),
+  productList.includes("!state.productListExpandedGroups.has(group.key)")
+    && productList.includes('state.productListExpandedGroups.add(groupKey)')
+    && productList.includes('state.productListExpandedGroups.delete(groupKey)'),
   'group rows must be expandable/collapsible',
 );
 assert(

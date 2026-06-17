@@ -98,7 +98,8 @@ for (const token of [
 
 for (const token of [
   'normalizeVariation(target.variation || body.variation)',
-  'item.tier_variation = publishVariation.tier_variation',
+  'buildStandardiseTierVariation(publishVariation.tier_variation)',
+  'item.standardise_tier_variation = standardiseTierVariation',
   'item.model = buildPublishModels(publishVariation, price)',
   "const description = String(target.description ?? body.description ?? '').trim()",
   'description,',

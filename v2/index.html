@@ -5962,6 +5962,199 @@ LEGACY END -->
     return String(product?.option_name || '').trim();
   }
 
+  function plCanonicalOptionParts(value) {
+    const clean = stripNonMarketplaceText(value || '').replace(/\s+/g, ' ').trim();
+    if (!clean) return [];
+    return clean
+      .split(/\s*\/\s*/)
+      .map((part) => stripNonMarketplaceText(part || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+  }
+
+  function plMasterOptionName(product, fallback = '') {
+    if (Array.isArray(product?.variation_option_names)) {
+      const values = product.variation_option_names.map((v) => String(v || '').trim()).filter(Boolean);
+      if (values.length) return values.join(' / ');
+    }
+    return String(product?.option_name || fallback || '').trim();
+  }
+
+  function plMasterEditOptionNamesFromInput(existing, rawOptionName) {
+    const parts = plCanonicalOptionParts(rawOptionName);
+    if (parts.length) return parts;
+    if (Array.isArray(existing?.variation_option_names)) {
+      return existing.variation_option_names.map((v) => stripNonMarketplaceText(v || '').trim()).filter(Boolean);
+    }
+    const optionName = stripNonMarketplaceText(existing?.option_name || '').trim();
+    return optionName ? [optionName] : [];
+  }
+
+  function plMasterEditAxisValue(row, axisIndex) {
+    const names = Array.isArray(row?.variation_option_names) ? row.variation_option_names : [];
+    const raw = axisIndex < names.length ? names[axisIndex] : (axisIndex === 0 ? row?.option_name : '');
+    return stripNonMarketplaceText(raw || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function plMasterEditAxisSignature(row, axes) {
+    return axes.map((axis) => plMasterEditAxisValue(row, axis.sourceAxis).toLowerCase()).join('\u001f');
+  }
+
+  function plMasterEditAxisIsRedundant(rows, keptAxes, axis) {
+    if (!keptAxes.length || axis.values.length <= 1) return false;
+    const valueBySignature = new Map();
+    const signatureByValue = new Map();
+    for (const row of rows) {
+      const signature = plMasterEditAxisSignature(row, keptAxes);
+      const value = plMasterEditAxisValue(row, axis.sourceAxis).toLowerCase();
+      if (!signature || !value) return false;
+      const existingValue = valueBySignature.get(signature);
+      if (existingValue && existingValue !== value) return false;
+      valueBySignature.set(signature, value);
+      const existingSignature = signatureByValue.get(value);
+      if (existingSignature && existingSignature !== signature) return false;
+      signatureByValue.set(value, signature);
+    }
+    return signatureByValue.size === axis.values.length;
+  }
+
+  function plEffectiveVariationSpec(rows, defaultTierName = 'Version') {
+    const sourceRows = (rows || []).filter(Boolean);
+    const emptySpec = {
+      axes: [],
+      tierNames: [],
+      twoAxis: false,
+      optionNamesForRow: () => [],
+      primaryOptionName: (_row, _index, fallback = '') => String(fallback || '').trim(),
+    };
+    if (!sourceRows.length) return emptySpec;
+
+    const storedTierNames = (sourceRows.find((row) => Array.isArray(row?.variation_tier_names) && row.variation_tier_names.length)?.variation_tier_names || [])
+      .map((v) => stripNonMarketplaceText(v || '').trim())
+      .filter(Boolean);
+    const maxOptionAxes = sourceRows.reduce((max, row) => {
+      const optionLen = Array.isArray(row?.variation_option_names) ? row.variation_option_names.filter((v) => String(v || '').trim()).length : 0;
+      const indexLen = Array.isArray(row?.variation_tier_index) ? row.variation_tier_index.length : 0;
+      return Math.max(max, optionLen, indexLen);
+    }, 0);
+    const rawAxisCount = Math.max(1, storedTierNames.length, maxOptionAxes);
+    const rawAxes = Array.from({ length: rawAxisCount }, (_, axisIndex) => {
+      const values = [];
+      const keys = new Set();
+      sourceRows.forEach((row) => {
+        const value = plMasterEditAxisValue(row, axisIndex);
+        const key = value.toLowerCase();
+        if (!value || keys.has(key)) return;
+        keys.add(key);
+        values.push(value);
+      });
+      return {
+        sourceAxis: axisIndex,
+        name: (storedTierNames[axisIndex] || (axisIndex === 0 ? defaultTierName : `OPTION ${axisIndex + 1}`)).slice(0, 14),
+        values,
+      };
+    }).filter((axis) => axis.values.length > 0);
+    if (!rawAxes.length) return emptySpec;
+
+    const multiAxes = rawAxes.filter((axis) => axis.values.length > 1);
+    const candidateAxes = multiAxes.length ? multiAxes : rawAxes.slice(0, 1);
+    const effectiveAxes = [];
+    for (const axis of candidateAxes) {
+      if (plMasterEditAxisIsRedundant(sourceRows, effectiveAxes, axis)) continue;
+      effectiveAxes.push(axis);
+      if (effectiveAxes.length >= 2) break;
+    }
+    if (!effectiveAxes.length) effectiveAxes.push(rawAxes[0]);
+
+    const tierNames = effectiveAxes.map((axis) => axis.name || defaultTierName);
+    const optionNamesForRow = (row, rowIndex = 0) => effectiveAxes.map((axis) => {
+      const value = plMasterEditAxisValue(row, axis.sourceAxis).toLowerCase();
+      const idx = axis.values.findIndex((candidate) => candidate.toLowerCase() === value);
+      if (idx >= 0) return axis.values[idx];
+      const stored = Array.isArray(row?.variation_tier_index) ? Number(row.variation_tier_index[axis.sourceAxis]) : NaN;
+      if (Number.isInteger(stored) && stored >= 0 && stored < axis.values.length) return axis.values[stored];
+      return axis.values[Math.min(Math.max(Number(rowIndex) || 0, 0), axis.values.length - 1)] || '';
+    }).filter(Boolean);
+
+    return {
+      axes: effectiveAxes,
+      tierNames,
+      twoAxis: effectiveAxes.length > 1,
+      optionNamesForRow,
+      primaryOptionName: (row, rowIndex = 0, fallback = '') => (optionNamesForRow(row, rowIndex).join(' / ') || fallback || '').trim(),
+    };
+  }
+
+  function plMasterEditNormalizeOptionPatches(rows, optionPatches) {
+    const patches = optionPatches || [];
+    const patchById = new Map(patches.map((item) => [String(item.id), item.patch || {}]));
+    const draftRows = (rows || []).map((row) => ({
+      ...row,
+      ...(patchById.get(String(row.id)) || {}),
+    }));
+    const hasAnyOptions = draftRows.some((row) => {
+      const names = Array.isArray(row?.variation_option_names) ? row.variation_option_names : [];
+      return names.some((v) => String(v || '').trim()) || !!String(row?.option_name || '').trim();
+    });
+    if (!draftRows.length || !hasAnyOptions) return patches;
+
+    const storedTierNames = (draftRows.find((row) => Array.isArray(row?.variation_tier_names) && row.variation_tier_names.length)?.variation_tier_names || [])
+      .map((v) => stripNonMarketplaceText(v || '').trim())
+      .filter(Boolean);
+    const maxOptionAxes = draftRows.reduce((max, row) => {
+      const optionLen = Array.isArray(row?.variation_option_names) ? row.variation_option_names.filter((v) => String(v || '').trim()).length : 0;
+      const indexLen = Array.isArray(row?.variation_tier_index) ? row.variation_tier_index.length : 0;
+      return Math.max(max, optionLen, indexLen);
+    }, 0);
+    const rawAxisCount = Math.max(1, storedTierNames.length, maxOptionAxes);
+    const rawAxes = Array.from({ length: rawAxisCount }, (_, axisIndex) => {
+      const values = [];
+      const keys = new Set();
+      draftRows.forEach((row) => {
+        const value = plMasterEditAxisValue(row, axisIndex);
+        const key = value.toLowerCase();
+        if (!value || keys.has(key)) return;
+        keys.add(key);
+        values.push(value);
+      });
+      return {
+        sourceAxis: axisIndex,
+        name: (storedTierNames[axisIndex] || (axisIndex === 0 ? 'Version' : `OPTION ${axisIndex + 1}`)).slice(0, 14),
+        values,
+      };
+    }).filter((axis) => axis.values.length > 0);
+    if (!rawAxes.length) return patches;
+
+    const multiAxes = rawAxes.filter((axis) => axis.values.length > 1);
+    const candidateAxes = multiAxes.length ? multiAxes : rawAxes.slice(0, 1);
+    const effectiveAxes = [];
+    for (const axis of candidateAxes) {
+      if (plMasterEditAxisIsRedundant(draftRows, effectiveAxes, axis)) continue;
+      effectiveAxes.push(axis);
+      if (effectiveAxes.length >= 2) break;
+    }
+    if (!effectiveAxes.length) effectiveAxes.push(rawAxes[0]);
+
+    const effectiveTierNames = effectiveAxes.map((axis) => axis.name || 'Version');
+    draftRows.forEach((row, rowIndex) => {
+      const patch = patchById.get(String(row.id));
+      if (!patch) return;
+      const tierIndex = effectiveAxes.map((axis) => {
+        const value = plMasterEditAxisValue(row, axis.sourceAxis).toLowerCase();
+        const idx = axis.values.findIndex((candidate) => candidate.toLowerCase() === value);
+        if (idx >= 0) return idx;
+        return Math.min(Math.max(rowIndex, 0), axis.values.length - 1);
+      });
+      const optionNames = tierIndex
+        .map((idx, axisPosition) => effectiveAxes[axisPosition]?.values[idx] || '')
+        .filter(Boolean);
+      patch.option_name = optionNames[0] || null;
+      patch.variation_tier_names = optionNames.length ? effectiveTierNames : null;
+      patch.variation_option_names = optionNames.length ? optionNames : null;
+      patch.variation_tier_index = optionNames.length ? tierIndex : null;
+    });
+    return patches;
+  }
+
   function plProductName(product) {
     return normalizeMasterProductNameForLifecycle(product?.product_name, product?.lifecycle_state, product?.sku || '');
   }
@@ -8328,7 +8521,7 @@ LEGACY END -->
   function plMasterEditReadOptionPatches(rows) {
     const byId = new Map(rows.map((row) => [String(row.id), row]));
     const seenSkus = new Set();
-    return Array.from(document.querySelectorAll('#pl-master-edit-options tr[data-product-id]')).map((tr) => {
+    const patches = Array.from(document.querySelectorAll('#pl-master-edit-options tr[data-product-id]')).map((tr) => {
       const id = String(tr.dataset.productId || '');
       const existing = byId.get(id) || {};
       const field = (name) => tr.querySelector(`[data-field="${name}"]`);
@@ -8339,26 +8532,25 @@ LEGACY END -->
       seenSkus.add(sku);
       const rawOptionName = String(field('option_name')?.value || '').trim();
       if (hasNonMarketplaceText(rawOptionName)) throw new Error(`Option name must be English: ${rawOptionName}`);
-      const optionName = stripNonMarketplaceText(rawOptionName).trim();
+      const optionNames = plMasterEditOptionNamesFromInput(existing, rawOptionName);
+      const optionName = optionNames[0] || '';
       const cost = Number(field('cost_krw')?.value || 0);
       const weight = Number(field('weight_g')?.value || 0);
       if (!(cost >= 0)) throw new Error(`${sku} 매입가가 올바르지 않습니다.`);
       if (!(weight > 0)) throw new Error(`${sku} 무게는 1g 이상이어야 합니다.`);
-      const prevNames = Array.isArray(existing.variation_option_names) ? existing.variation_option_names.slice() : [];
-      const nextNames = prevNames.length ? prevNames : [optionName || existing.option_name || ''];
-      if (optionName) nextNames[0] = optionName;
       return {
         id,
         patch: {
           sku,
           option_name: optionName || null,
-          variation_option_names: nextNames.filter(Boolean),
+          variation_option_names: optionNames.length ? optionNames : null,
           cost_krw: cost,
           weight_g: weight,
           shopee_option_image_url: String(field('shopee_option_image_url')?.value || '').trim() || null,
         },
       };
     });
+    return plMasterEditNormalizeOptionPatches(rows, patches);
   }
 
   async function saveProductMasterEditModal() {
@@ -13778,14 +13970,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const variantRows = allRows.filter(plIsGroupedVariant);
     const sortedRows = variantRows.length ? variantRows : allRows;
     const first = sortedRows[0] || {};
-    const tierNames = Array.isArray(first.variation_tier_names) && first.variation_tier_names.length
-      ? first.variation_tier_names
-      : ['옵션'];
-    const twoAxis = tierNames.length > 1 || sortedRows.some((row) => Array.isArray(row.variation_option_names) && row.variation_option_names.length > 1);
-    const adaptedRows = sortedRows.map((row) => {
-      const optionNames = Array.isArray(row.variation_option_names) && row.variation_option_names.length
-        ? row.variation_option_names
-        : [plOptionDisplay(row) || row.option_name || 'ONE SIZE'];
+    const optionSpec = plEffectiveVariationSpec(sortedRows, 'Option');
+    const tierNames = optionSpec.tierNames.length ? optionSpec.tierNames : ['Option'];
+    const twoAxis = optionSpec.twoAxis;
+    const adaptedRows = sortedRows.map((row, idx) => {
+      const optionNames = optionSpec.optionNamesForRow(row, idx);
+      const masterOptionName = optionNames.join(' / ') || plMasterOptionName(row, plOptionDisplay(row) || row.option_name || 'ONE SIZE') || 'ONE SIZE';
       const derived = typeof window.mrDeriveFromTitle === 'function'
         ? window.mrDeriveFromTitle(row.product_name || '')
         : { artist: '', album: '' };
@@ -13802,7 +13992,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         artist,
         album,
         _sku: row.sku || '',
-        _opt0: optionNames[0] || row.option_name || 'ONE SIZE',
+        _opt0: optionNames[0] || masterOptionName || row.option_name || 'ONE SIZE',
         _opt1: optionNames[1] || '',
         _cost_krw: Number(row.cost_krw || row.sourcing_price || 0),
         _weight_g: Number(row.weight_g || 0),
@@ -13831,21 +14021,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const variantRows = allRows.filter(plIsGroupedVariant);
     const sortedRows = variantRows.length ? variantRows : allRows;
     const first = sortedRows[0] || {};
-    const tierNames = Array.isArray(first.variation_tier_names) && first.variation_tier_names.length
-      ? first.variation_tier_names
-      : ['Version'];
-    const twoAxis = tierNames.length > 1 || sortedRows.some((row) => Array.isArray(row.variation_option_names) && row.variation_option_names.length > 1);
+    const optionSpec = plEffectiveVariationSpec(sortedRows, 'Version');
+    const tierNames = optionSpec.tierNames.length ? optionSpec.tierNames : ['Version'];
+    const twoAxis = optionSpec.twoAxis;
     const parentSku = plParentSku(sortedRows);
     const adaptedRows = sortedRows.map((row, idx) => {
-      const optionNames = Array.isArray(row.variation_option_names) && row.variation_option_names.length
-        ? row.variation_option_names
-        : [plOptionDisplay(row) || row.option_name || 'CD Digipack'];
+      const optionNames = optionSpec.optionNamesForRow(row, idx);
+      const masterOptionName = optionNames.join(' / ') || plMasterOptionName(row, plOptionDisplay(row) || row.option_name || `Option ${idx + 1}`) || `Option ${idx + 1}`;
       const derived = typeof window.mrDeriveFromTitle === 'function'
         ? window.mrDeriveFromTitle(row.product_name || '')
         : { artist: '', album: '', version: '' };
       const artist = row.artist || derived.artist || '';
       const album = row.album || derived.album || '';
-      const version = row.ebay_variation_value || derived.version || optionNames[0] || `Option ${idx + 1}`;
+      const version = masterOptionName || derived.version || optionNames[0] || `Option ${idx + 1}`;
       const mainImage = row.shopee_option_image_url || row.main_image || '';
       const quantity = Number(row.inventory || row.stock || row.quantity || 0);
       return Object.assign({}, row, {
@@ -13859,7 +14047,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         artist,
         album,
         _sku: row.ebay_sku || row.sku || '',
-        _opt0: version || optionNames[0] || row.option_name || 'CD Digipack',
+        _opt0: masterOptionName || version || optionNames[0] || row.option_name || 'CD Digipack',
         _opt1: optionNames[1] || '',
         _cost_krw: Number(row.cost_krw || row.sourcing_price || 0),
         _weight_g: Number(row.weight_g || 0),
@@ -13871,7 +14059,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         _ebayCategory: String(row.ebay_category_id || (productKindIsGoods(row) ? '' : PLATFORM_EBAY_DEFAULT_CATEGORY_ID) || ''),
         _ebayInventoryGroupKey: row.ebay_inventory_group_key || '',
         _ebayVariationAxis: row.ebay_variation_axis || 'Version',
-        _ebayVariationValue: row.ebay_variation_value || version || '',
+        _ebayVariationValue: masterOptionName || version || '',
         _ebayOptionImageUrl: row.ebay_variation_image_url || row.shopee_option_image_url || row.main_image || '',
         _ebayMainImage: row.main_image || mainImage,
         _ebayPriceUsd: Number(row.ebay_last_synced_price || 0),
@@ -27948,7 +28136,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return activeRows.map((row, idx) => {
         const optionName = mrJoomOptionName(group, row);
         const sku = mrEbayRowSku(row);
-        const savedVariationValue = String(row?._ebayVariationValue || row?.ebay_variation_value || '').trim();
+        const savedVariationValue = String(row?._ebayVariationValue || '').trim();
         const parent = mrPreviewParentSku(group);
         const usableSavedVariationValue = mrEbayIsSkuLikeVariationValue(savedVariationValue, sku, parent) ? '' : savedVariationValue;
         const preservePublishedVariationValue = usableSavedVariationValue && (

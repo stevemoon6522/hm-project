@@ -1408,21 +1408,23 @@ async function runV2MutationAction(action: string, body: any) {
     const days_to_ship = Number(body.days_to_ship ?? body?.pre_order?.days_to_ship);
     const weight = Number(body.weight);
     const imageIdList = stringArray(body?.image?.image_id_list || body?.image_id_list);
+    const attribute_list = normalizeAttributeList(body.attribute_list);
     if (global_item_sku) requestPayload.global_item_sku = global_item_sku;
     if (item_name) requestPayload.global_item_name = item_name;
     if (description) requestPayload.description = description;
     if (Number.isFinite(days_to_ship) && days_to_ship > 0) requestPayload.pre_order = { days_to_ship };
     if (Number.isFinite(weight) && weight > 0) requestPayload.weight = weight;
     if (imageIdList.length) requestPayload.image = { image_id_list: imageIdList };
+    if (attribute_list.length) requestPayload.attribute_list = attribute_list;
     if (!global_item_id) return { ok: false, error: 'global_item_id required' };
-    if (!global_item_sku && !item_name && !description && !requestPayload.pre_order && !requestPayload.weight) {
-      return { ok: false, error: 'at least one of global_item_sku, global_item_name, description, days_to_ship, weight required' };
+    if (!global_item_sku && !item_name && !description && !requestPayload.pre_order && !requestPayload.weight && !attribute_list.length) {
+      return { ok: false, error: 'at least one of global_item_sku, global_item_name, description, days_to_ship, weight, attribute_list required' };
     }
 
     const preflight = await enforceV2ProbePreflight(action, requestPayload, body);
     if (!preflight.ok) return { ok: false, ...preflight };
     const finalPayload = await hydrateUpdateGlobalItemPayload(r, preflight.requestPayload, accountKey);
-    if (!finalPayload.global_item_sku && !finalPayload.global_item_name && !finalPayload.item_name && !finalPayload.description && !finalPayload.pre_order && !finalPayload.weight) {
+    if (!finalPayload.global_item_sku && !finalPayload.global_item_name && !finalPayload.item_name && !finalPayload.description && !finalPayload.pre_order && !finalPayload.weight && !finalPayload.attribute_list) {
       return { ok: false, error: 'v2_degraded_payload_empty', message: 'All requested fields were blocked by probe preflight.' };
     }
     const response = await executeLoggedMutation(action, r, finalPayload, body, payload =>
@@ -1596,13 +1598,54 @@ function normalizeTierVariation(variation: any) {
   })).filter((t: any) => t.name && t.option_list.length > 0);
 }
 
+function validateVariationTierIndexes(tier_variation: any[], model: any[]) {
+  if (!tier_variation.length || !model.length) return;
+  model.forEach((m: any) => {
+    const tierIndex = Array.isArray(m?.tier_index) ? m.tier_index.map((x: any) => Number(x)) : [];
+    const display = `[${tierIndex.join(' ')}]`;
+    if (tierIndex.length !== tier_variation.length) {
+      throw new Error(`tier_index length mismatch for model in position ${display}: expected ${tier_variation.length}, got ${tierIndex.length}`);
+    }
+    tierIndex.forEach((idx: number, axisIndex: number) => {
+      const optionCount = Array.isArray(tier_variation[axisIndex]?.option_list)
+        ? tier_variation[axisIndex].option_list.length
+        : 0;
+      if (!Number.isInteger(idx) || idx < 0 || idx >= optionCount) {
+        throw new Error(`tier_index out of range for model in position ${display}: axis ${axisIndex} has ${optionCount} options`);
+      }
+    });
+  });
+}
+
 function normalizeVariation(variation: any) {
   const tier_variation = normalizeTierVariation(variation);
   const model = Array.isArray(variation?.model) ? variation.model : [];
   if (!tier_variation.length || !model.length) return null;
   if (tier_variation.length > 2) throw new Error('variation tiers must be <= 2');
   if (model.length > 50) throw new Error('variation combinations must be <= 50');
+  validateVariationTierIndexes(tier_variation, model);
   return { tier_variation, model };
+}
+
+function buildStandardiseTierVariation(tierVariation: any[]) {
+  if (!Array.isArray(tierVariation) || !tierVariation.length) return [];
+  return tierVariation.map((tier: any, tierIndex: number) => {
+    const variation: any = {
+      variation_id: tierIndex,
+      variation_name: String(tier?.name || `Variation ${tierIndex + 1}`).trim(),
+      variation_option_list: [],
+    };
+    const options = Array.isArray(tier?.option_list) ? tier.option_list : [];
+    variation.variation_option_list = options.map((option: any, optionIndex: number) => {
+      const entry: any = {
+        variation_option_id: optionIndex,
+        variation_option_name: String(option?.option || '').trim(),
+      };
+      if (option?.image?.image_id) entry.image_id = String(option.image.image_id);
+      return entry;
+    }).filter((option: any) => option.variation_option_name);
+    return variation;
+  }).filter((tier: any) => tier.variation_name && tier.variation_option_list.length);
 }
 
 // buildGlobalModels — v44: migrated from normal_stock (sunset 2024-10-23) to seller_stock.
@@ -1724,8 +1767,9 @@ function asAttrOptions(a: any): AttrOption[] {
   }));
 }
 
-function flattenGlobalAttributes(raw: any): GlobalAttr[] {
+function flattenGlobalAttributes(raw: any, region = ''): GlobalAttr[] {
   const src = raw?.response || raw || {};
+  const regionCode = String(region || '').toUpperCase();
   // Production get_attribute_tree (category_id_list form) wraps the tree as:
   //   response.list[<n>].attribute_tree[]  — each item is one requested category.
   // Older sandbox / legacy shapes used flat attribute_list / attributes at the root.
@@ -1749,7 +1793,11 @@ function flattenGlobalAttributes(raw: any): GlobalAttr[] {
     if (!node || typeof node !== 'object') return;
     const id = Number(node.attribute_id ?? node.id ?? 0);
     const name = asAttrName(node);
-    const mandatory = !!(node.is_mandatory ?? node.mandatory ?? node.required);
+    const mandatoryRegions = Array.isArray(node?.attribute_info?.mandatory_region)
+      ? node.attribute_info.mandatory_region.map((r: any) => String(r || '').toUpperCase())
+      : [];
+    const mandatory = !!(node.is_mandatory ?? node.mandatory ?? node.required)
+      || (!!regionCode && mandatoryRegions.includes(regionCode));
     if (id > 0 && name) out.push({ attribute_id: id, name, is_mandatory: mandatory, options: asAttrOptions(node) });
     const children = [
       ...(Array.isArray(node.children) ? node.children : []),
@@ -1785,6 +1833,9 @@ function defaultForMandatoryAttr(attr: GlobalAttr, categoryId: number): AttrOpti
   }
   if (name.includes('shelf life')) {
     return pickOptionByKeywords(opts, ['no expiry', 'no expiration', 'not applicable', 'n/a', '12', '24']);
+  }
+  if (name.includes('adult')) {
+    return pickOptionByKeywords(opts, ['no', 'not applicable', 'n/a', 'na']);
   }
   if (kpopAlbumCategory && (name.includes('media') || name.includes('format') || name.includes('type'))) {
     return pickOptionByKeywords(opts, ['cd', 'album', 'regular']);
@@ -1835,7 +1886,7 @@ async function buildCategoryAttributeList(region: string, categoryId: number, in
   // category_id_list (CSV/array), not category_id. Single-value category_id returns
   // an empty response{}; passing the list form fills attribute_list correctly.
   const attrTreeRes = await merchantApiCall(region, '/api/v2/global_product/get_attribute_tree', { query: { category_id_list: String(categoryId), language: 'en' }, account_key: accountKey });
-  const treeAttrs = flattenGlobalAttributes(attrTreeRes);
+  const treeAttrs = flattenGlobalAttributes(attrTreeRes, region);
   const missing: any[] = [];
   for (const attr of treeAttrs.filter((a) => a.is_mandatory)) {
     const existing = byId.get(attr.attribute_id);
@@ -1913,9 +1964,12 @@ function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
     logistic: logistics,
     pre_order: { is_pre_order: isPreOrder, days_to_ship: dts },
   };
+  const attributeList = normalizeAttributeList(target.attribute_list || body.attribute_list);
+  if (attributeList.length) item.attribute_list = attributeList;
   const publishVariation = normalizeVariation(target.variation || body.variation);
   if (publishVariation) {
-    item.tier_variation = publishVariation.tier_variation;
+    const standardiseTierVariation = buildStandardiseTierVariation(publishVariation.tier_variation);
+    if (standardiseTierVariation.length) item.standardise_tier_variation = standardiseTierVariation;
     item.model = buildPublishModels(publishVariation, price);
   }
   return item;
@@ -1946,6 +2000,95 @@ function parsePublishOutcome(region: string, shopId: number, publishTaskId: numb
     error: ok ? null : (failedReason || (isPublishPending(task) ? 'publish still pending' : 'publish failed')),
     task,
   };
+}
+
+async function verifyPublishedListOutcome(region: string, shopId: number, globalItemId: number, publishTaskId: number, task: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const retries = (region === 'BR' || region === 'TW') ? 4 : 3;
+  const sleepMs = 5000;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    if (attempt > 0) await new Promise(s => setTimeout(s, sleepMs));
+    const publishedRes = await merchantApiCall(region, '/api/v2/global_product/get_published_list', { query: { global_item_id: globalItemId }, account_key: accountKey });
+    const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
+    const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shopId));
+    if (hit && hit.item_id) {
+      return {
+        ok: true,
+        region,
+        shop_id: shopId,
+        publish_task_id: publishTaskId,
+        item_id: Number(hit.item_id),
+        publish_status: 'verified_via_published_list_retry_' + attempt,
+        error: null,
+        task,
+      };
+    }
+  }
+  return null;
+}
+
+async function syncShopModelPricesAfterPublish(region: string, itemId: number, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const variation = normalizeVariation(target?.variation || body?.variation);
+  const priceList: any[] = [];
+  if (variation) {
+    const modelsResult = await shopApiCall(region, '/api/v2/product/get_model_list', { query: { item_id: itemId }, account_key: accountKey });
+    const shopModels = Array.isArray(modelsResult?.response?.model) ? modelsResult.response.model : [];
+    if (modelsResult.error || !shopModels.length) {
+      return { ok: false, stage: 'get_model_list', error: modelsResult.error || 'shop models not found', raw: modelsResult };
+    }
+    for (const sourceModel of variation.model) {
+      const sku = String(sourceModel?.model_sku || sourceModel?.global_model_sku || '').trim();
+      const tierKey = JSON.stringify(Array.isArray(sourceModel?.tier_index) ? sourceModel.tier_index.map((x: any) => Number(x)) : []);
+      const shopModel = shopModels.find((m: any) => String(m?.model_sku || '').trim() === sku)
+        || shopModels.find((m: any) => JSON.stringify(Array.isArray(m?.tier_index) ? m.tier_index.map((x: any) => Number(x)) : []) === tierKey);
+      const price = Number(sourceModel?.original_price ?? target?.price ?? body?.price);
+      const modelId = Number(shopModel?.model_id || 0);
+      if (modelId > 0 && Number.isFinite(price) && price > 0) priceList.push({ model_id: modelId, original_price: price });
+    }
+  } else {
+    const price = Number(target?.price ?? body?.price);
+    if (Number.isFinite(price) && price > 0) priceList.push({ original_price: price });
+  }
+  if (!priceList.length) return { ok: false, stage: 'build_price_list', error: 'price_list empty' };
+  const result = await shopApiCall(region, '/api/v2/product/update_price', { method: 'POST', body: { item_id: itemId, price_list: priceList }, account_key: accountKey });
+  const failureList = Array.isArray(result?.response?.failure_list) ? result.response.failure_list : [];
+  return { ok: !result.error && failureList.length === 0, sent_price_list: priceList, failure_list: failureList, raw: result };
+}
+
+async function retryTwMinimalPublish(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const region = String(target?.region || '').toUpperCase();
+  if (region !== 'TW') return null;
+  const retryBody = { global_item_id: globalItemId, shop_id: shopId, shop_region: region, item: { logistic: logistics } };
+  const retryCreate = await merchantApiCall(region, '/api/v2/global_product/create_publish_task', { method: 'POST', body: retryBody, account_key: accountKey });
+  if (retryCreate.error || !retryCreate.response?.publish_task_id) {
+    return { ok: false, region, shop_id: shopId, stage: 'tw_minimal_publish_create', error: retryCreate.error || 'publish_task_id missing', message: retryCreate.message, raw_retry_create: retryCreate };
+  }
+  const retryTaskId = Number(retryCreate.response.publish_task_id);
+  let retryTask: any = null;
+  let retryPollAttempts = 0;
+  for (let i = 0; i < 8; i += 1) {
+    await new Promise(s => setTimeout(s, 2000));
+    const taskRes = await merchantApiCall(region, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id: retryTaskId }, account_key: accountKey });
+    retryTask = taskRes;
+    retryPollAttempts = i + 1;
+    if (taskRes.error || !isPublishPending(taskRes)) break;
+  }
+  let retryOutcome: any = parsePublishOutcome(region, shopId, retryTaskId, retryTask);
+  if (!retryOutcome.ok) {
+    const verified = await verifyPublishedListOutcome(region, shopId, globalItemId, retryTaskId, retryTask, accountKey);
+    if (verified) retryOutcome = verified;
+  }
+  retryOutcome.tw_minimal_item_retry = true;
+  retryOutcome.raw_retry_create = retryCreate;
+  retryOutcome.raw_retry_task = retryTask;
+  retryOutcome.retry_poll_attempts = retryPollAttempts;
+  if (retryOutcome.ok && retryOutcome.item_id) {
+    try {
+      retryOutcome.price_sync = await syncShopModelPricesAfterPublish(region, Number(retryOutcome.item_id), target, body, accountKey);
+    } catch (e: any) {
+      retryOutcome.price_sync = { ok: false, error: String(e?.message || e) };
+    }
+  }
+  return retryOutcome;
 }
 
 // /list_items ??paginated get_item_list + batch get_item_base_info + per-item get_model_list (when has_model=true).
@@ -2273,6 +2416,78 @@ async function markShopeeGlobalItemDeleted(globalItemId: number, body: any, raw:
   return { ok: true, rows: data || [], raw };
 }
 
+async function recordRegistrationMapping(req: Request): Promise<Response> {
+  const denied = requireInternalBridge(req);
+  if (denied) return denied;
+  const body = await req.json().catch(() => ({}));
+  const accountKey = normalizeAccountKey(body.account_key || body.accountKey || DEFAULT_SHOPEE_ACCOUNT_KEY);
+  const globalItemId = Number(body.global_item_id || body.globalItemId || 0) || null;
+  const productUpdates = Array.isArray(body.product_updates) ? body.product_updates : [];
+  const listings = Array.isArray(body.listings) ? body.listings : [];
+  const now = new Date().toISOString();
+  const productResults: any[] = [];
+  const listingResults: any[] = [];
+
+  for (const row of productUpdates) {
+    const productId = String(row?.product_id || row?.id || '').trim();
+    if (!productId) {
+      productResults.push({ ok: false, error: 'product_id required' });
+      continue;
+    }
+    const update: Record<string, unknown> = {
+      shopee_item_id: row.global_item_id ? Number(row.global_item_id) : globalItemId,
+      shopee_publish_state: row.shopee_publish_state || body.shopee_publish_state || 'partial_published',
+    };
+    if (row.global_model_id != null) update.global_model_id = Number(row.global_model_id) || null;
+    if (row.shopee_global_model_sku || row.global_model_sku) update.shopee_global_model_sku = String(row.shopee_global_model_sku || row.global_model_sku);
+    const { data, error } = await supabase
+      .from('products')
+      .update(update)
+      .eq('id', productId)
+      .select('id,sku,shopee_item_id,shopee_publish_state,global_model_id,shopee_global_model_sku')
+      .maybeSingle();
+    productResults.push(error ? { ok: false, product_id: productId, error: error.message } : { ok: true, row: data });
+  }
+
+  if (listings.length) {
+    const payload = listings.map((row: any) => {
+      const status = String(row?.status || '').trim() || (row?.shop_item_id ? 'mapped' : 'failed');
+      return {
+        product_id: String(row?.product_id || '').trim(),
+        account_key: normalizeAccountKey(row?.account_key || accountKey),
+        region: String(row?.region || '').trim().toUpperCase(),
+        global_item_id: row?.global_item_id != null ? Number(row.global_item_id) : globalItemId,
+        global_model_id: row?.global_model_id != null ? Number(row.global_model_id) : null,
+        shop_id: row?.shop_id != null ? Number(row.shop_id) : null,
+        shop_item_id: row?.shop_item_id != null ? Number(row.shop_item_id) : null,
+        shop_model_id: row?.shop_model_id != null ? Number(row.shop_model_id) : null,
+        status,
+        published_at: row?.published_at || (status === 'mapped' ? now : null),
+        last_error: row?.last_error || null,
+        last_synced_price: row?.last_synced_price != null ? Number(row.last_synced_price) : null,
+        last_synced_at: row?.last_synced_at || now,
+        days_to_ship: row?.days_to_ship != null ? Number(row.days_to_ship) : null,
+        raw_payload: row?.raw_payload || null,
+        updated_at: now,
+      };
+    }).filter((row: any) => row.product_id && row.region);
+    if (payload.length) {
+      const { data, error } = await supabase
+        .from('product_shopee_listings')
+        .upsert(payload, { onConflict: 'product_id,account_key,region' })
+        .select('product_id,account_key,region,global_item_id,global_model_id,shop_id,shop_item_id,shop_model_id,status,last_error');
+      listingResults.push(error ? { ok: false, error: error.message } : { ok: true, rows: data || [] });
+    }
+  }
+
+  return jsonResp({
+    ok: productResults.every((row) => row.ok) && listingResults.every((row) => row.ok !== false),
+    account_key: accountKey,
+    product_results: productResults,
+    listing_results: listingResults,
+  });
+}
+
 async function handleHeadlessDeleteGlobalItem(req: Request, url: URL): Promise<Response> {
   const denied = await requireBridgeTokenOrAuthenticatedUser(req);
   if (denied) return denied;
@@ -2352,6 +2567,10 @@ Deno.serve(async (req) => {
 
   if (action === 'delete_global_item_headless' && req.method === 'POST') {
     return await handleHeadlessDeleteGlobalItem(req, url);
+  }
+
+  if (action === 'record_registration_mapping' && req.method === 'POST') {
+    return await recordRegistrationMapping(req);
   }
 
   // Step 0 auth gate (plan v2.2): mutating routes require a signed-in user or
@@ -2783,7 +3002,12 @@ Deno.serve(async (req) => {
       body.account_key = reqAccountKey;
       const r = body.region || 'SG';
       const global_item_id = Number(body.global_item_id);
-      const variation = normalizeVariation(body.variation);
+      let variation: any = null;
+      try {
+        variation = normalizeVariation(body.variation);
+      } catch (e: any) {
+        return jsonResp({ ok: false, account_key: reqAccountKey, region: r, stage: 'variation_preflight', error: 'invalid_variation', message: String(e?.message || e) }, 400);
+      }
       if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
       if (!variation) return jsonResp({ ok: false, error: 'variation required' }, 400);
       const models = buildGlobalModels(variation, Number(body.global_price ?? body.price), Number(body.stock || 0));
@@ -2804,7 +3028,12 @@ Deno.serve(async (req) => {
       body.account_key = reqAccountKey;
       const r = body.region || 'SG';
       const global_item_id = Number(body.global_item_id);
-      const model_list = Array.isArray(body.model_list) ? body.model_list : buildGlobalModels(body.variation, Number(body.global_price ?? body.price), Number(body.stock || 0));
+      let model_list: any[] = [];
+      try {
+        model_list = Array.isArray(body.model_list) ? body.model_list : buildGlobalModels(body.variation, Number(body.global_price ?? body.price), Number(body.stock || 0));
+      } catch (e: any) {
+        return jsonResp({ ok: false, account_key: reqAccountKey, region: r, stage: 'variation_preflight', error: 'invalid_variation', message: String(e?.message || e) }, 400);
+      }
       if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
       if (!model_list.length) return jsonResp({ ok: false, error: 'model_list required' }, 400);
       return withPublishRequestId(action, `${reqAccountKey}:${r}`, null, body, async () => {
@@ -2918,6 +3147,15 @@ Deno.serve(async (req) => {
                 }
               } catch (_) {}
             }
+          }
+          if (!outcome.ok) {
+            const verified = await verifyPublishedListOutcome(targetRegion, shop_id, global_item_id, publish_task_id, task, reqAccountKey).catch(() => null);
+            if (verified) outcome = verified;
+          }
+          if (!outcome.ok && targetRegion === 'TW') {
+            const retryOutcome = await retryTwMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'tw_minimal_publish_exception', error: String(e?.message || e) }));
+            if (retryOutcome?.ok) outcome = retryOutcome;
+            else (outcome as any).tw_minimal_item_retry = retryOutcome;
           }
           // BR-only: if still failing after fallback, re-issue create_publish_task once more
           if (!outcome.ok && targetRegion === 'BR') {
@@ -3167,6 +3405,23 @@ Deno.serve(async (req) => {
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
 
+      let preflightVariation: any = null;
+      try {
+        const variationCandidates = [body.variation, ...targetInputs.map((t: any) => t.variation)].filter(Boolean);
+        for (const candidate of variationCandidates) {
+          const normalized = normalizeVariation(candidate);
+          if (normalized && !preflightVariation) preflightVariation = normalized;
+        }
+      } catch (e: any) {
+        return jsonResp({
+          ok: false,
+          region: r,
+          stage: 'variation_preflight',
+          error: 'invalid_variation',
+          message: String(e?.message || e),
+        }, 400);
+      }
+
       return withPublishRequestId(action, `${accountKey}:${r}`, _cbscIdempotencyToken, body, async () => {
       const stage_logs: string[] = [];
       const catAttrs = await buildCategoryAttributeList(r, Number(body.category_id), Array.isArray(body.attribute_list) ? body.attribute_list : [], accountKey);
@@ -3250,7 +3505,7 @@ Deno.serve(async (req) => {
       // §6-1 failure state machine: variation setup with explicit stage tracking.
       // init_tier_variation failure → auto delete_global_item (cleanup orphan).
       // add_global_model partial failure → no auto cleanup (dangerous), return partial_published.
-      const baseVariation = normalizeVariation(body.variation || targetInputs.find((t: any) => t.variation)?.variation);
+      const baseVariation = preflightVariation;
       if (baseVariation) {
         const globalModels = buildGlobalModels(baseVariation, Number(body.global_price ?? body.price ?? targetInputs[0]?.price), Number(body.stock ?? 0));
         const initRes = await merchantApiCall(r, '/api/v2/global_product/init_tier_variation', {
@@ -3443,6 +3698,15 @@ Deno.serve(async (req) => {
                 }
               } catch (_) { /* ignore — keep original parsePublishOutcome verdict */ }
             }
+          }
+          if (!outcome.ok) {
+            const verified = await verifyPublishedListOutcome(targetRegion, shop_id, global_item_id, publish_task_id, task, accountKey).catch(() => null);
+            if (verified) outcome = verified;
+          }
+          if (!outcome.ok && targetRegion === 'TW') {
+            const retryOutcome = await retryTwMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'tw_minimal_publish_exception', error: String(e?.message || e) }));
+            if (retryOutcome?.ok) outcome = retryOutcome;
+            else (outcome as any).tw_minimal_item_retry = retryOutcome;
           }
           // BR-only: if still failing after fallback retries, re-issue create_publish_task once more
           if (!outcome.ok && targetRegion === 'BR') {

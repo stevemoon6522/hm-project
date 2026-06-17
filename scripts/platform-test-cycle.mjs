@@ -8,6 +8,7 @@ const targetPath = join(__dirname, 'platform-test-target.json');
 const indexPath = join(root, 'v2', 'index.html');
 
 const CONFIRM = {
+  ebayPublish: 'PUBLISH_EBAY_LISTING',
   ebayPolicy: 'UPDATE_EBAY_FULFILLMENT_POLICY',
   ebayWithdraw: 'WITHDRAW_EBAY_LISTING',
   joomDelete: 'DELETE_JOOM_PRODUCT',
@@ -272,9 +273,16 @@ async function inspect(env, target, args, serviceKey) {
 }
 
 async function ebayRegisterDryRun(env, product, internalToken) {
+  return ebayRegister(env, product, { live: false }, internalToken);
+}
+
+async function ebayRegister(env, product, args, internalToken) {
+  const live = args.live === true;
   return edgePost(env, 'ebay-bridge', 'register-product', {
     product_id: product.id,
-    dry_run: true,
+    dry_run: !live,
+    confirm: live ? CONFIRM.ebayPublish : undefined,
+    force: args.force === true,
   }, internalToken);
 }
 
@@ -396,6 +404,7 @@ async function run() {
   const platformListings = await loadPlatformListings(env, product.id, serviceKey);
 
   const commands = {
+    'ebay-register': () => ebayRegister(env, product, args, internalToken),
     'ebay-register-dry-run': () => ebayRegisterDryRun(env, product, internalToken),
     'ebay-policy': () => ebayPolicy(env, product, args, internalToken),
     'ebay-withdraw': () => ebayWithdraw(env, product, args, internalToken),
@@ -426,7 +435,7 @@ async function run() {
   };
 
   if (!commands[command]) {
-    throw new Error(`Unknown command '${command}'. Use inspect, ensure-product, dry-run-all, ebay-register-dry-run, ebay-policy, ebay-withdraw, joom-delete, qoo10-delete, shopee-delete, cleanup-all.`);
+    throw new Error(`Unknown command '${command}'. Use inspect, ensure-product, dry-run-all, ebay-register, ebay-register-dry-run, ebay-policy, ebay-withdraw, joom-delete, qoo10-delete, shopee-delete, cleanup-all.`);
   }
 
   const result = await commands[command]();

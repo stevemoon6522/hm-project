@@ -14,12 +14,14 @@ node scripts/platform-test-cycle.mjs ensure-product
 node scripts/platform-test-cycle.mjs inspect
 node scripts/platform-test-cycle.mjs ebay-policy
 node scripts/platform-test-cycle.mjs dry-run-all
+node scripts/platform-test-cycle.mjs ebay-register
 ```
 
 Live cleanup or policy repair calls require `PLATFORM_BRIDGE_INTERNAL_TOKEN` in the environment.
 
 ```powershell
 $env:PLATFORM_BRIDGE_INTERNAL_TOKEN = '<server-only-token>'
+node scripts/platform-test-cycle.mjs ebay-register --live
 node scripts/platform-test-cycle.mjs ebay-policy --live
 node scripts/platform-test-cycle.mjs ebay-withdraw --live
 node scripts/platform-test-cycle.mjs joom-delete --live

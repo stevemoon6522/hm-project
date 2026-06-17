@@ -63,7 +63,8 @@ test('platform tab buttons keep selection and route registration through the pro
   assert.match(platformBinding, /platform-master-check[\s\S]*sel\.add\(key\)[\s\S]*renderPlatformWorkbench\(platform\)/, 'row selection must enable preview actions after rerender');
   assert.match(platformPreviewExecution, /return false;/, 'platform tabs must not bypass registration modals through direct dispatcher execution');
   assert.match(platformPreviewExecution, /platformOpenExistingModal\(platform, group\)/, 'preview execution must open the existing platform registration modal');
-  assert.match(html, /async function platformOpenAction\(platform, action, explicitKeys = null\)[\s\S]*platform === 'ebay'[\s\S]*await platformOpenExistingModal\(platform, groups\[0\]\)/, 'eBay register action should open the existing eBay modal directly for a single selected product');
+  assert.match(html, /const registerActionLabel = actionTargetCount === 1 \? '등록' : '선택 등록 확인'/, 'single platform registration should be labeled as direct registration, not preview');
+  assert.match(html, /if \(action === 'register' \|\| action === 'retry'\)[\s\S]*if \(groups\.length > 1\)[\s\S]*platformOpenPreview\(platform, action, explicitKeys\)[\s\S]*await platformOpenExistingModal\(platform, groups\[0\]\)/, 'single register/retry actions should open existing platform modals directly while multi-selection keeps confirmation');
   assert.match(html, /if \(platform === 'shopee'\)[\s\S]*openRegisterShopeeSingleModal\(group\.rows\[0\]\.id\)/, 'Shopee single registration must use the existing single modal');
   assert.match(html, /if \(platform === 'joom'\) return openRegisterJoomGroupModal\(targetId\)/, 'Joom registration must use the existing Joom modal');
   assert.match(html, /if \(platform === 'qoo10'\) return openRegisterQoo10GroupModal\(targetId\)/, 'Qoo10 registration must use the existing Qoo10 modal');

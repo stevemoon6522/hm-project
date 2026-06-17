@@ -217,14 +217,17 @@ const ebayPublishGroupBuilderFn = new Function(
 assert(
   platformRender.includes('const visibleGroups = platformVisibleGroups(platform);')
     && platformRender.includes('const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;')
-    && platformRender.includes("const registerActionLabel = platform === 'ebay' ? '등록' : '등록 미리보기';")
+    && platformRender.includes('const actionTargetCount = selectedCount || (canUseVisibleSingle ? 1 : 0);')
+    && platformRender.includes("const registerActionLabel = actionTargetCount === 1 ? '등록' : '선택 등록 확인';")
     && platformRender.includes('${text(registerActionLabel)}'),
-  'Platform registration preview must be enabled when search/filter leaves one visible product even without a checkbox selection',
+  'Platform registration button must become direct registration when search/filter leaves one visible product even without a checkbox selection',
 );
 assert(
-  platformAction.includes("platform === 'ebay' && (action === 'register' || action === 'retry')")
+  platformAction.includes("if (action === 'register' || action === 'retry')")
+    && platformAction.includes('if (groups.length > 1)')
+    && platformAction.includes('platformOpenPreview(platform, action, explicitKeys);')
     && platformAction.includes('await platformOpenExistingModal(platform, groups[0]);'),
-  'eBay register action must open the existing eBay registration modal directly for one selected product',
+  'Single platform register/retry actions must open the existing registration modal directly while multi-selection keeps confirmation',
 );
 assert(
   platformPreview.includes('if (!groups.length && !explicitKeys)')
@@ -309,10 +312,12 @@ const platformOpenPreviewFn = new Function(
 
 const platformOpenActionFn = new Function(
   'state',
+  'platformActionGroups',
   'platformSelectedGroups',
   'platformVisibleGroups',
   'platformOpenPreview',
   'platformOpenExistingModal',
+  'PLATFORM_LABELS',
   'showToast',
   'renderPlatformWorkbench',
   `${extractFunctionBlock(html, 'platformOpenAction')}; return platformOpenAction;`,
@@ -355,9 +360,11 @@ const platformOpenActionFn = new Function(
   const openAction = platformOpenActionFn(
     state,
     () => [{ key: 'single:jennie-ruby', rows: [{ id: 'jennie-ruby' }] }],
+    () => [{ key: 'single:jennie-ruby', rows: [{ id: 'jennie-ruby' }] }],
     () => [],
     (...args) => calls.previews.push(args),
     async (platform, group) => { calls.modals.push({ platform, group }); },
+    { ebay: 'eBay' },
     (message, kind) => calls.toasts.push({ message, kind }),
     (platform) => calls.renders.push(platform),
   );
@@ -379,9 +386,14 @@ const platformOpenActionFn = new Function(
       { key: 'single:jennie-ruby-a', rows: [{ id: 'a' }] },
       { key: 'single:jennie-ruby-b', rows: [{ id: 'b' }] },
     ],
+    () => [
+      { key: 'single:jennie-ruby-a', rows: [{ id: 'a' }] },
+      { key: 'single:jennie-ruby-b', rows: [{ id: 'b' }] },
+    ],
     () => [],
     (...args) => calls.previews.push(args),
     async (platform, group) => { calls.modals.push({ platform, group }); },
+    { ebay: 'eBay' },
     (message, kind) => calls.toasts.push({ message, kind }),
     () => {},
   );

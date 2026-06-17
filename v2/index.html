@@ -6671,7 +6671,8 @@ LEGACY END -->
     const visibleGroups = platformVisibleGroups(platform);
     const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;
     const canRunSelectionAction = selectedCount > 0 || canUseVisibleSingle;
-    const registerActionLabel = platform === 'ebay' ? '등록' : '등록 미리보기';
+    const actionTargetCount = selectedCount || (canUseVisibleSingle ? 1 : 0);
+    const registerActionLabel = actionTargetCount === 1 ? '등록' : '선택 등록 확인';
     const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
       `<button type="button" class="platform-status-tab${filter.status === key ? ' is-active' : ''}" data-platform-status="${key}" aria-pressed="${filter.status === key ? 'true' : 'false'}">${PLATFORM_STATUS_LABELS[key]} ${counts[key] || 0}</button>`
     )).join('');
@@ -7033,19 +7034,15 @@ LEGACY END -->
       await platformOpenEditFlow(platform, productIds);
       return;
     }
-    if (platform === 'ebay' && (action === 'register' || action === 'retry')) {
-      let groups = platformSelectedGroups(platform, explicitKeys);
-      if (!groups.length && !explicitKeys) {
-        const visibleGroups = platformVisibleGroups(platform);
-        if (visibleGroups.length === 1) groups = visibleGroups;
-      }
+    if (action === 'register' || action === 'retry') {
+      const groups = platformActionGroups(platform, explicitKeys);
       if (!groups.length) {
         showToast('선택한 마스터 상품이 없습니다.', 'err');
         return;
       }
       if (groups.length > 1) {
         platformOpenPreview(platform, action, explicitKeys);
-        showToast('eBay 등록은 모달에서 1개씩 확인합니다. 미리보기에서 실행할 상품을 확인하세요.', 'ok');
+        showToast(`${PLATFORM_LABELS[platform] || platform} ${action === 'retry' ? '재시도' : '등록'} 대상이 여러 개입니다. 선택 확인 후 1개씩 실행하세요.`, 'ok');
         return;
       }
       try {
@@ -7053,8 +7050,8 @@ LEGACY END -->
         renderPlatformWorkbench(platform);
         await platformOpenExistingModal(platform, groups[0]);
       } catch (e) {
-        console.error('[platformOpenAction] eBay modal open failed:', e);
-        showToast(`eBay 등록 모달 열기 실패: ${e.message || e}`, 'err');
+        console.error('[platformOpenAction] platform modal open failed:', e);
+        showToast(`${PLATFORM_LABELS[platform] || platform} ${action === 'retry' ? '재시도' : '등록'} 모달 열기 실패: ${e.message || e}`, 'err');
       }
       return;
     }

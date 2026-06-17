@@ -4,6 +4,7 @@
 
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
 import { resolveEbayFulfillmentPolicy } from '../_shared/fulfillment.ts';
+import { buildVariationItems, inferKpopArtistName, parentSku, publishableGroupRows } from '../_shared/grouping.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
@@ -122,7 +123,8 @@ async function ebayPriceUsd(master: Record<string, unknown>): Promise<string> {
 }
 
 function aspectsFrom(master: Record<string, unknown>) {
-  const artist = s(master.artist || master.brand || master.shopee_brand_name || '').trim();
+  const existingArtist = s(master.artist || master.brand || master.shopee_brand_name || '').trim();
+  const artist = existingArtist && !/^no brand$/i.test(existingArtist) ? existingArtist : inferKpopArtistName(master);
   const title = stripLifecycleTags(master.album || master.release_title || master.product_name || master.sku);
   const aspects: Record<string, string[]> = {
     Type: ['Album'],
@@ -140,19 +142,98 @@ function aspectsFrom(master: Record<string, unknown>) {
   return aspects;
 }
 
+function descriptionFrom(master: Record<string, unknown>): string {
+  const description = s(master.description || master.shopee_description || master.components_extracted_en).trim();
+  if (description) return description;
+  const title = lifecycleProductName(master.product_name, lifecycleOf(master), s(master.sku));
+  return `${title}\n\n100% Official & Authentic K-POP Album\nShips from Korea.`;
+}
+
+function inventoryGroupKey(master: Record<string, unknown>, rows: Record<string, unknown>[]): string {
+  const saved = s(master.ebay_inventory_group_key).trim();
+  if (saved) return saved.slice(0, 50);
+  return (parentSku(rows) || s(master.sku) || 'EBAY-GROUP')
+    .replace(/[^A-Za-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 50) || 'EBAY-GROUP';
+}
+
 async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   const userToken = s(ctx.userAuthToken);
   if (!userToken) return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_AUTH_FAILED', errorMsg: 'Authenticated user token is required for eBay publish' };
   const master = ctx.masterProduct as Record<string, unknown>;
+  const groupRows = publishableGroupRows(master, (ctx as any).groupProducts || []);
+  const variationBundle = groupRows.length > 1 ? buildVariationItems(groupRows, 'Version') : null;
   const sku = s(master.sku).trim();
   const images = imagesFrom(master);
   const goods = isGoodsMaster(master);
   const categoryId = s(master.ebay_category_id, goods ? '' : EBAY_DEFAULT_CATEGORY_ID).trim() || (goods ? '' : EBAY_DEFAULT_CATEGORY_ID);
-  const description = s(master.description || master.shopee_description).trim();
+  const description = descriptionFrom(master);
   const priceUsd = await ebayPriceUsd(master);
   const weightG = n(master.weight_g, 0);
   const lifecycleState = lifecycleOf(master);
   const fulfillmentPolicy = resolveEbayFulfillmentPolicy(lifecycleState);
+  if (variationBundle) {
+    const variationRows = await Promise.all(variationBundle.items.map(async (item: any) => {
+      const row = item.row || {};
+      const rowImages = imagesFrom(row).length ? imagesFrom(row) : images;
+      return {
+        productId: row.id || null,
+        sku: s(row.ebay_sku || row.sku).trim(),
+        optionName: item.optionValue,
+        variationValue: item.optionValue,
+        priceUsd: await ebayPriceUsd(row),
+        quantity: Math.max(1, Math.floor(n(row.inventory, 0))),
+        weightG: n(row.weight_g || weightG, 0),
+        imageUrls: rowImages.slice(0, 12),
+      };
+    }));
+    if (!categoryId || !description || images.length === 0 || variationRows.some((row) => !row.sku || row.sku.length > 50 || !row.priceUsd || row.weightG <= 0 || !row.imageUrls.length)) {
+      return {
+        ok: false,
+        listingStatus: 'not_listed',
+        errorCode: 'PLATFORM_VALIDATION_ERROR',
+        errorMsg: 'eBay variation create_listing requires categoryId, description, image, sku<=50, price/cost and weight_g for every option',
+      };
+    }
+    const body = {
+      listingMode: 'variation',
+      productGroupId: master.product_group_id || '',
+      inventoryGroupKey: inventoryGroupKey(master, groupRows),
+      title: lifecycleProductName(master.product_name, lifecycleState, sku).slice(0, 80),
+      description: description.slice(0, 4000),
+      imageUrls: images,
+      aspects: aspectsFrom(master),
+      condition: 'NEW',
+      lifecycleState,
+      categoryId,
+      storeCategoryNames: ['/K-pop'],
+      variationAxis: 'Version',
+      variations: variationRows,
+      marketplaceId: s(ctx.country || master.ebay_marketplace_id || 'EBAY_US'),
+    };
+    if (ctx.dryRun) {
+      return { ok: true, listingStatus: 'draft', platformItemId: undefined, rawResponse: { dry_run: true, payload: body, option_products: variationRows.map((row) => ({ product_id: row.productId, sku: row.sku, option_value: row.variationValue })) } };
+    }
+    const { status, raw } = await bridgePost('publish-variation', body, userToken);
+    if (status >= 200 && status < 300 && raw?.ok) {
+      return {
+        ok: true,
+        platformItemId: s(raw.ebay_item_id),
+        listingStatus: raw.listingStatus === 'PUBLISHED' ? 'listed' : 'draft',
+        rawResponse: {
+          ...raw,
+          option_products: variationRows.map((row) => ({
+            product_id: row.productId,
+            sku: row.sku,
+            option_value: row.variationValue,
+            offer_id: raw.offers_by_sku?.[row.sku]?.offerId || null,
+          })),
+        },
+      };
+    }
+    return { ok: false, listingStatus: 'error', errorCode: mapBridgeError(status, raw), errorMsg: `ebay-bridge publish-variation failed (${status})`, rawResponse: raw };
+  }
   if (!sku || sku.length > 50 || !categoryId || !description || images.length === 0 || !priceUsd || weightG <= 0) {
     return {
       ok: false,

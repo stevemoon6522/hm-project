@@ -24,6 +24,7 @@
 
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
 import { resolveShopeeDaysToShip } from '../_shared/fulfillment.ts';
+import { buildVariationItems, parentSku, publishableGroupRows } from '../_shared/grouping.ts';
 import { createClient as _createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 // ---------------------------------------------------------------------------
@@ -203,6 +204,30 @@ function shopeeLifecycleProductName(value: unknown, lifecycle: string, fallback 
   return `${shopeeLifecyclePrefix(lifecycle)} ${body}`.replace(/\s+/g, ' ').trim();
 }
 
+function normalizeShopeeAttributeList(input: any[]): any[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((attr: any) => {
+      const values = (Array.isArray(attr?.attribute_value_list) ? attr.attribute_value_list : [])
+        .map((value: any) => {
+          const rawValueId = Number(value?.value_id);
+          const originalValueName = String(value?.original_value_name || value?.display_value_name || value?.value_name || value?.name || '').trim();
+          const entry: Record<string, unknown> = {};
+          if (Number.isFinite(rawValueId) && rawValueId >= 0) entry.value_id = rawValueId;
+          else if (originalValueName) entry.value_id = 0;
+          if (originalValueName) entry.original_value_name = originalValueName;
+          if (value?.value_unit) entry.value_unit = String(value.value_unit);
+          return entry;
+        })
+        .filter((value: any) => Number.isFinite(Number(value.value_id)));
+      return {
+        attribute_id: Number(attr?.attribute_id),
+        attribute_value_list: values,
+      };
+    })
+    .filter((attr: any) => attr.attribute_id > 0 && attr.attribute_value_list.length > 0);
+}
+
 // HMAC helper (mirrors index.ts; both files use @ts-nocheck so duplication is acceptable).
 async function _hmacSha256Hex(secret: string, message: string): Promise<string> {
   const key = await crypto.subtle.importKey(
@@ -251,6 +276,109 @@ function makeSvcClient() {
   return _createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+  return btoa(binary);
+}
+
+function imageMimeFromUrl(url: string): string {
+  const path = url.split('?')[0].toLowerCase();
+  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
+  return 'image/png';
+}
+
+async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function fetchShopeeImageResponse(imageUrl: string): Promise<Response> {
+  let normalized = String(imageUrl || '').trim();
+  if (normalized.startsWith('//')) normalized = 'https:' + normalized;
+  const candidates = Array.from(new Set([
+    normalized,
+    normalized.replace(/^https:\/\//i, 'http://'),
+    normalized.replace(/^http:\/\//i, 'https://'),
+  ])).filter(Boolean);
+
+  let lastErr = 'image fetch failed';
+  for (const candidate of candidates) {
+    let upstream: URL;
+    try { upstream = new URL(candidate); } catch { continue; }
+    const referers = Array.from(new Set([
+      `${upstream.protocol}//${upstream.hostname}/`,
+      'https://www.staronemall.com/',
+    ]));
+    for (const referer of referers) {
+      try {
+        const res = await fetch(candidate, {
+          redirect: 'manual',
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'image/avif,image/webp,image/apng,image/jpeg,image/png,image/*;q=0.8',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Referer': referer,
+          },
+        });
+        if (res.status >= 300 && res.status < 400) {
+          lastErr = `image fetch redirected: HTTP ${res.status}`;
+          continue;
+        }
+        if (res.ok) return res;
+        lastErr = `image fetch failed: HTTP ${res.status}`;
+      } catch (e) {
+        lastErr = String((e as any)?.message || e || 'image fetch failed');
+      }
+    }
+  }
+  throw new Error(lastErr);
+}
+
+async function fetchShopeeImageDataUrl(imageUrl: string): Promise<{ image_base64: string; output_hash: string }> {
+  const url = String(imageUrl || '').trim();
+  if (!url) throw new Error('main_image URL is empty');
+  const res = await fetchShopeeImageResponse(url);
+  const contentType = String(res.headers.get('content-type') || '').split(';')[0].toLowerCase();
+  const mime = /^image\/(png|jpe?g)$/.test(contentType) ? contentType.replace('image/jpg', 'image/jpeg') : imageMimeFromUrl(url);
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  const output_hash = await sha256HexBytes(bytes);
+  return {
+    image_base64: `data:${mime};base64,${bytesToBase64(bytes)}`,
+    output_hash,
+  };
+}
+
+async function uploadShopeeImageFromUrl(args: {
+  account_key: string;
+  region: string;
+  imageUrl: string;
+  imageData?: { image_base64: string; output_hash: string };
+  userToken: string;
+}): Promise<string> {
+  const imageData = args.imageData || await fetchShopeeImageDataUrl(args.imageUrl);
+  const raw = await bridgePost('upload_image', {
+    account_key: args.account_key,
+    region: args.region,
+    image_base64: imageData.image_base64,
+    source_url: args.imageUrl,
+    main_image_url: args.imageUrl,
+    layer_version: 'platform-publish-main-image-v1',
+    output_hash: imageData.output_hash,
+  }, args.userToken) as any;
+  const imageId = String(raw?.image_id || '').trim();
+  if (!raw?.ok || !imageId) {
+    throw new Error(String(raw?.message || raw?.error || 'upload_image failed'));
+  }
+  return imageId;
 }
 
 async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
@@ -335,7 +463,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   // category" if brand appears in attribute_list. Strip any 100012 entry that
   // upstream might have stored, and emit a separate brand object below.
   const extraAttrs: any[] = Array.isArray(master.shopee_extra_attributes) ? master.shopee_extra_attributes : [];
-  const attribute_list = extraAttrs.filter((a: any) => Number(a.attribute_id) !== 100012);
+  const attribute_list = normalizeShopeeAttributeList(extraAttrs.filter((a: any) => Number(a.attribute_id) !== 100012));
   const brand_obj = master.shopee_brand_id === 0 || master.shopee_brand_id == null
     ? { brand_id: 0, original_brand_name: 'No Brand' }
     : { brand_id: Number(master.shopee_brand_id), original_brand_name: master.shopee_brand_name || 'No Brand' };
@@ -345,8 +473,49 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   // least 2 images. If ctx.region_image_ids is missing for a region we fall
   // back to master.shopee_image_id (still works for SG-style same-region
   // upload) but BR will fail at publish_task if only 1 image provided.
-  const regionImageIds: Record<string, string[]> = (ctx as any).region_image_ids || {};
+  let regionImageIds: Record<string, string[]> = { ...((ctx as any).region_image_ids || {}) };
   const regionPrices: Record<string, number> = (ctx as any).region_prices || {};
+  const cachedMasterImageIds = [
+    master.shopee_image_id,
+    ...(Array.isArray(master.shopee_extra_image_ids) ? master.shopee_extra_image_ids : []),
+  ].map((id: unknown) => String(id || '').trim()).filter(Boolean);
+  if (!ctx.dryRun && !cachedMasterImageIds.length && master.main_image) {
+    try {
+      const imageData = await fetchShopeeImageDataUrl(String(master.main_image));
+      const uploadedEntries = await Promise.all(regions.map(async (region) => {
+        const existingIds = Array.isArray(regionImageIds[region]) ? regionImageIds[region].map((id: unknown) => String(id || '').trim()).filter(Boolean) : [];
+        if (existingIds.length) return [region, existingIds] as const;
+        const imageId = await uploadShopeeImageFromUrl({
+          account_key,
+          region,
+          imageUrl: String(master.main_image),
+          imageData,
+          userToken: ctx.userAuthToken || '',
+        });
+        return [region, [imageId]] as const;
+      }));
+      regionImageIds = {
+        ...regionImageIds,
+        ...Object.fromEntries(uploadedEntries),
+      };
+    } catch (e) {
+      const errorMsg = String((e as any)?.message || e || 'Shopee image upload failed');
+      console.log(JSON.stringify({
+        service: 'platform-publish/shopee-adapter',
+        event: 'create_listing_multi_region_image_upload_error',
+        master_product_id: master.id,
+        account_key,
+        error: errorMsg,
+        ts: new Date().toISOString(),
+      }));
+      return {
+        ok: false,
+        listingStatus: 'error',
+        errorCode: 'SHOPEE_IMAGE_UPLOAD_FAILED',
+        errorMsg,
+      };
+    }
+  }
   // Bridge `register_cbsc` derives the Global Product base context from
   // body.region. Use the first requested region, with SG as the empty-list
   // fallback, then reuse that region's uploaded image list for add_global_item.
@@ -357,10 +526,6 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
       ? regionImageIds[baseRegion]
       : (firstRegionWithImages ? regionImageIds[firstRegionWithImages] : [])
   ).map((id: unknown) => String(id || '').trim()).filter(Boolean);
-  const cachedMasterImageIds = [
-    master.shopee_image_id,
-    ...(Array.isArray(master.shopee_extra_image_ids) ? master.shopee_extra_image_ids : []),
-  ].map((id: unknown) => String(id || '').trim()).filter(Boolean);
   const baseImageIds = (uploadedBaseImageIds.length ? uploadedBaseImageIds : cachedMasterImageIds)
     .slice(0, SHOPEE_MAX_PRODUCT_IMAGES);
   const targets = regions.map((r: string) => {
@@ -396,16 +561,42 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     || master.sku
     || ''
   ).trim();
+  const variationRows = publishableGroupRows(master, (ctx as any).groupProducts || []);
+  const variationBundle = variationRows.length > 1 ? buildVariationItems(variationRows, 'Version') : null;
   const stockOverride = Number((ctx as any).stock_override);
+  const groupedInventory = variationRows.length > 1
+    ? variationRows.reduce((sum: number, row: any) => sum + Math.max(0, Math.floor(Number(row.inventory || 0))), 0)
+    : Math.max(0, Math.floor(Number(master.inventory) || 0));
   const registerStock = Number.isFinite(stockOverride) && stockOverride > 0
     ? Math.floor(stockOverride)
-    : Math.max(0, Math.floor(Number(master.inventory) || 0));
+    : groupedInventory;
+  const bridgeParentSku = variationBundle
+    ? (parentSku(variationRows) || `${master.sku}-P`).slice(0, 100)
+    : master.sku;
+  const shopeeVariation = variationBundle
+    ? {
+      tier_variation: variationBundle.spec.axes.map((axis: any, axisIndex: number) => ({
+        name: (axisIndex === 0 && /^member$/i.test(String(axis.name || '')) ? 'Version' : String(axis.name || `Version ${axisIndex + 1}`)).slice(0, 14),
+        option_list: axis.values.map((option: string) => ({ option })),
+      })),
+      model: variationBundle.items.map((item: any) => {
+        const row = item.row || {};
+        return {
+          tier_index: item.tierIndex,
+          global_model_sku: String(row.shopee_global_model_sku || row.sku || '').trim(),
+          original_price: Number(row.cost_krw || cost_krw),
+          seller_stock: [{ stock: Math.max(0, Math.floor(Number(row.inventory || 0))) }],
+          weight_g: Number(row.weight_g || master.weight_g || 0),
+        };
+      }).filter((model: any) => model.global_model_sku),
+    }
+    : null;
 
   const bridgeBody: Record<string, unknown> = {
     account_key,
     region: baseRegion,
     name: registerName,
-    sku: master.sku,
+    sku: bridgeParentSku,
     category_id: Number(master.shopee_category_id),
     brand: brand_obj,
     image_id: baseImageIds[0] || master.shopee_image_id || undefined,
@@ -421,6 +612,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     is_pre_order,               // explicit boolean for buildPublishItemPayload
     publish_request_id: ctx.publishRequestId,
     dry_run: ctx.dryRun ? true : undefined,
+    variation: shopeeVariation || undefined,
   };
 
   console.log(JSON.stringify({
@@ -515,33 +707,36 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     }
 
     // Upsert product_shopee_listings (primary key: product_id + account_key + region).
-    const upsertPayload: Record<string, unknown> = {
-      product_id: master.id,
-      account_key,
-      region: regionCode,
-      shop_id: shopId || null,
-      global_item_id: global_item_id ? Number(global_item_id) : null,
-      shop_item_id: shopItemId ? Number(shopItemId) : null,
-      status: regionOk ? 'mapped' : 'failed',
-      last_error: errorMsg || null,
-      last_synced_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    };
-
-    const { error: upsertErr } = await svc
-      .from('product_shopee_listings')
-      .upsert(upsertPayload, { onConflict: SHOPEE_LISTING_CONFLICT });
-
-    if (upsertErr) {
-      console.log(JSON.stringify({
-        service: 'platform-publish/shopee-adapter',
-        event: 'create_listing_multi_region_listing_upsert_failed',
-        master_product_id: master.id,
+    const listingProducts = variationRows.length > 1 ? variationRows : [master];
+    for (const listingProduct of listingProducts) {
+      const upsertPayload: Record<string, unknown> = {
+        product_id: listingProduct.id || master.id,
         account_key,
         region: regionCode,
-        error: upsertErr.message,
-        ts: new Date().toISOString(),
-      }));
+        shop_id: shopId || null,
+        global_item_id: global_item_id ? Number(global_item_id) : null,
+        shop_item_id: shopItemId ? Number(shopItemId) : null,
+        status: regionOk ? 'mapped' : 'failed',
+        last_error: errorMsg || null,
+        last_synced_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: upsertErr } = await svc
+        .from('product_shopee_listings')
+        .upsert(upsertPayload, { onConflict: SHOPEE_LISTING_CONFLICT });
+
+      if (upsertErr) {
+        console.log(JSON.stringify({
+          service: 'platform-publish/shopee-adapter',
+          event: 'create_listing_multi_region_listing_upsert_failed',
+          master_product_id: listingProduct.id || master.id,
+          account_key,
+          region: regionCode,
+          error: upsertErr.message,
+          ts: new Date().toISOString(),
+        }));
+      }
     }
 
     regionSummary.push({
@@ -561,30 +756,33 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   for (const reqRegion of regions) {
     const regionCode = reqRegion.toUpperCase();
     if (!regionSummary.find((s) => s.region === regionCode)) {
-      const upsertPayload: Record<string, unknown> = {
-        product_id: master.id,
-        account_key,
-        region: regionCode,
-        global_item_id: global_item_id ? Number(global_item_id) : null,
-        shop_item_id: null,
-        status: 'failed',
-        last_error: 'no result from bridge',
-        last_synced_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      };
-      const { error: upsertErr } = await svc
-        .from('product_shopee_listings')
-        .upsert(upsertPayload, { onConflict: SHOPEE_LISTING_CONFLICT });
-      if (upsertErr) {
-        console.log(JSON.stringify({
-          service: 'platform-publish/shopee-adapter',
-          event: 'create_listing_multi_region_missing_region_upsert_failed',
-          master_product_id: master.id,
+      const listingProducts = variationRows.length > 1 ? variationRows : [master];
+      for (const listingProduct of listingProducts) {
+        const upsertPayload: Record<string, unknown> = {
+          product_id: listingProduct.id || master.id,
           account_key,
           region: regionCode,
-          error: upsertErr.message,
-          ts: new Date().toISOString(),
-        }));
+          global_item_id: global_item_id ? Number(global_item_id) : null,
+          shop_item_id: null,
+          status: 'failed',
+          last_error: 'no result from bridge',
+          last_synced_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        };
+        const { error: upsertErr } = await svc
+          .from('product_shopee_listings')
+          .upsert(upsertPayload, { onConflict: SHOPEE_LISTING_CONFLICT });
+        if (upsertErr) {
+          console.log(JSON.stringify({
+            service: 'platform-publish/shopee-adapter',
+            event: 'create_listing_multi_region_missing_region_upsert_failed',
+            master_product_id: listingProduct.id || master.id,
+            account_key,
+            region: regionCode,
+            error: upsertErr.message,
+            ts: new Date().toISOString(),
+          }));
+        }
       }
       regionSummary.push({ region: regionCode, status: 'failed', error: 'no result from bridge' });
     }
@@ -651,10 +849,17 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   }));
 
   const overallOk = successCount > 0;
+  const failedSummary = regionSummary
+    .filter((s) => s.status !== 'mapped')
+    .map((s) => `${s.region}: ${s.error || s.status}`)
+    .join('; ')
+    .slice(0, 1200);
   return {
     ok: overallOk,
     listingStatus: overallOk ? 'listed' : 'error',
     platformItemId: global_item_id ? String(global_item_id) : undefined,
+    errorCode: overallOk ? undefined : 'PLATFORM_VALIDATION_ERROR',
+    errorMsg: overallOk ? undefined : (failedSummary || 'Shopee multi-region publish failed'),
     rawResponse: { account_key, global_item_id, results: regionSummary },
   };
 }

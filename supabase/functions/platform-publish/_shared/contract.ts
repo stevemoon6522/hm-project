@@ -79,6 +79,7 @@ export type AdapterContext = {
     qoo10_category_id: string | null;
     [key: string]: unknown;
   };
+  groupProducts?: Array<Record<string, unknown>>;
   shopId?: string;
   country?: string;
   capability: AdapterCapability;

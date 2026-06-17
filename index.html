@@ -1145,6 +1145,7 @@
 
     <div class="field">
       <label>K-pop 카테고리</label>
+      <button class="btn" id="sp-category-refresh" type="button" style="margin-bottom:6px;padding:4px 8px;font-size:10px;">Refresh</button>
       <select id="sp-category" style="width:100%;background:#fafafc;color:#0a0a0c;border:1px solid #d8d8e0;padding:8px 10px;border-radius:3px;font-size:13px;">
         <option value="301390">Idol Collectibles (응원봉/포카/굿즈)</option>
         <option value="300740">CD, DVD &amp; Bluray (앨범)</option>
@@ -2539,6 +2540,8 @@ const SHOPEE_OAUTH_HELPER = SUPABASE_URL + '/functions/v1/shopee-oauth-helper';
 const SHOPEE_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
 let _shopeeTokens = null;  // 캐시
 let _shopeeCurrentRow = null;
+let _shopeeCatalogCategories = [];
+let _shopeeCatalogBrandsByCategory = {};
 
 function renderShopeeCell(row) {
   const listings = row.shopeeListings || {};
@@ -2567,6 +2570,57 @@ async function _shopeeFetchTokens() {
   } catch (e) {
     console.warn('Shopee tokens 로드 실패', e);
     return [];
+  }
+}
+
+function _shopeeCatalogList(payload, key) {
+  const root = payload?.result?.response || payload?.result || payload?.response || payload || {};
+  return root[key] || root.list || root.items || root.data || [];
+}
+
+function _shopeeCategoryLabel(category) {
+  const id = category?.category_id ?? category?.id ?? category?.value ?? '';
+  const name = category?.display_category_name || category?.category_name || category?.name || category?.label || id;
+  return { id: String(id || ''), name: String(name || id || '') };
+}
+
+async function _shopeeLoadCategories(force = false) {
+  const select = document.getElementById('sp-category');
+  if (!force && _shopeeCatalogCategories.length > 0) return _shopeeCatalogCategories;
+  try {
+    const headers = await _joomAuthHeaders();
+    const r = await fetch(SHOPEE_MERCHANT + '/global_categories', { headers });
+    const j = await r.json();
+    if (!r.ok || j.ok === false) throw new Error(j.error || j.message || `HTTP ${r.status}`);
+    const categories = _shopeeCatalogList(j, 'category_list').map(_shopeeCategoryLabel).filter(c => c.id && c.name);
+    _shopeeCatalogCategories = categories;
+    if (select && categories.length > 0) {
+      const selected = select.value;
+      select.innerHTML = categories.map(c => `<option value="${_shpAttrEsc(c.id)}">${_shpAttrEsc(c.name)}</option>`).join('');
+      if (selected && categories.some(c => c.id === selected)) select.value = selected;
+    }
+    return categories;
+  } catch (e) {
+    console.warn('Shopee catalog categories load failed', e);
+    return _shopeeCatalogCategories;
+  }
+}
+
+async function _shopeeLoadBrands(categoryId, force = false) {
+  const key = String(categoryId || '');
+  if (!key) return [];
+  if (!force && _shopeeCatalogBrandsByCategory[key]) return _shopeeCatalogBrandsByCategory[key];
+  try {
+    const headers = await _joomAuthHeaders();
+    const r = await fetch(SHOPEE_MERCHANT + '/global_brands?category_id=' + encodeURIComponent(key), { headers });
+    const j = await r.json();
+    if (!r.ok || j.ok === false) throw new Error(j.error || j.message || `HTTP ${r.status}`);
+    const brands = _shopeeCatalogList(j, 'brand_list');
+    _shopeeCatalogBrandsByCategory[key] = brands;
+    return brands;
+  } catch (e) {
+    console.warn('Shopee catalog brands load failed', e);
+    return _shopeeCatalogBrandsByCategory[key] || [];
   }
 }
 
@@ -3575,6 +3629,7 @@ async function _shopeeBulkSync() {
     const testImg = document.getElementById('sp-test-image');
     const updatePrices = document.getElementById('sp-update-prices');
     const syncPreOrderDts = document.getElementById('sp-sync-preorder-dts');
+    const catRefresh = document.getElementById('sp-category-refresh');
     const modal = document.getElementById('shopee-modal');
     if (!cancel || !testImg || !updatePrices || !syncPreOrderDts) { document.addEventListener('DOMContentLoaded', init); return; }
     if (cancel.dataset.bound) return;
@@ -3583,6 +3638,15 @@ async function _shopeeBulkSync() {
     testImg.addEventListener('click', _shopeeTestImage);
     updatePrices.addEventListener('click', _shopeeUpdatePrices);
     syncPreOrderDts.addEventListener('click', _shopeeSyncPreOrderDts);
+    catRefresh?.addEventListener('click', async () => {
+      await _shopeeLoadCategories(true);
+      const selectedCategory = document.getElementById('sp-category')?.value;
+      if (selectedCategory) await _shopeeLoadBrands(selectedCategory, true);
+    });
+    document.getElementById('sp-category')?.addEventListener('change', (e) => {
+      _shopeeLoadBrands(e.target.value, false);
+    });
+    _shopeeLoadCategories(false);
   };
   init();
 })();

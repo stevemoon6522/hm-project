@@ -56,6 +56,7 @@ const ALERT_HMAC_SECRET = (Deno as any)['env']['get']('ALERT_HMAC_SECRET') || ''
 // ---------------------------------------------------------------------------
 const VALID_PLATFORMS = new Set(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba']);
 const QOO10_GOODS_CATEGORY_ID = '300002855';
+const PRODUCT_SELECT = 'id, sku, product_kind, product_name, option_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, shopee_option_image_url, components_extracted_en, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, joom_category_id, ebay_sku, ebay_category_id, ebay_inventory_group_key, ebay_listing_mode, ebay_variation_axis, ebay_variation_value, ebay_variation_image_url, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, shopee_global_model_sku, alibaba_category_id, alibaba_attributes, alibaba_group_id, alibaba_freight_template_id, alibaba_moq, alibaba_unit, alibaba_price_usd';
 
 // §A.2 gate 6: banned Shopee shop IDs.
 // 1002269093 = legacy BR shop permanently banned 2026-05.
@@ -535,7 +536,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // =========================================================================
   const { data: product, error: productErr } = await svc
     .from('products')
-    .select('id, sku, product_kind, product_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, joom_category_id, ebay_category_id, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, alibaba_category_id, alibaba_attributes, alibaba_group_id, alibaba_freight_template_id, alibaba_moq, alibaba_unit, alibaba_price_usd')
+    .select(PRODUCT_SELECT)
     .eq('id', master_product_id)
     .maybeSingle();
 
@@ -549,6 +550,20 @@ Deno.serve(async (req: Request): Promise<Response> => {
       error_code: 'INPUT_INVALID',
       error_msg: `master_product_id='${master_product_id}' not found`,
     });
+  }
+
+  let groupProducts: any[] = [];
+  if ((capability === 'create_listing' || capability === 'create_listing_multi_region') && product.product_group_id) {
+    const { data: groupRows, error: groupErr } = await svc
+      .from('products')
+      .select(PRODUCT_SELECT)
+      .eq('product_group_id', product.product_group_id)
+      .order('sku', { ascending: true });
+    if (groupErr) {
+      audit('group_products_fetch_failed', { product_group_id: product.product_group_id, error: groupErr.message });
+    } else {
+      groupProducts = Array.isArray(groupRows) ? groupRows : [];
+    }
   }
 
   // SKU_ASCII_ONLY — all platforms.
@@ -756,6 +771,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     try {
       adapterResult = await adapter.execute({
         masterProduct: product,
+        groupProducts,
         shopId: shop_id,
         country,
         capability,
@@ -861,10 +877,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
       }
     }
 
-    // Qoo10 SetNewGoods creates one goods_no with option seller codes. Mirror
-    // that goods_no into each selected option product so product-list LEDs roll
-    // up correctly for grouped registrations.
-    if (adapterResult.ok && platform === 'qoo10' && capability === 'create_listing') {
+    // Grouped create flows create one marketplace listing with several option
+    // SKUs. Mirror that parent listing into each option product so rollups and
+    // follow-up syncs can address the individual SKU rows.
+    if (adapterResult.ok && ['qoo10', 'joom', 'ebay'].includes(platform) && capability === 'create_listing') {
       const optionProducts = Array.isArray((raw as any).option_products) ? (raw as any).option_products : [];
       for (const option of optionProducts) {
         const optionProductId = String(option?.product_id || '').trim();
@@ -875,13 +891,13 @@ Deno.serve(async (req: Request): Promise<Response> => {
           p_platform: platform,
           p_external_sku: optionSku,
           p_platform_item_id: adapterResult.platformItemId ?? (raw as any).platform_item_id ?? null,
-          p_external_variant_id: optionSku,
+          p_external_variant_id: option?.variant_id ?? option?.offer_id ?? optionSku,
           p_country: country ?? null,
           p_shop_id: shop_id ?? null,
           p_listing_status: adapterResult.listingStatus,
           p_raw_payload: { capability, publish_request_id, platform_item_id: adapterResult.platformItemId, option },
         });
-        if (absorbErr) audit('qoo10_option_absorb_failed', { product_id: optionProductId, sku: optionSku, error: absorbErr.message });
+        if (absorbErr) audit('group_option_absorb_failed', { platform, product_id: optionProductId, sku: optionSku, error: absorbErr.message });
       }
     }
   }

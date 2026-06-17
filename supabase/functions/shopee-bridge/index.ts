@@ -1345,7 +1345,9 @@ async function executeLoggedMutation(action: string, region: string, requestPayl
     return { ok: true, skipped: true, previous_log_id: previous.id, account_key: accountKey, region, action, payload_hash: payloadHash, rollback_policy: V2_ROLLBACK_POLICY };
   }
 
-  const tokenRefresh = await forceRefreshForMutation(region, action, accountKey);
+  const tokenRefresh = accountKey === DEFAULT_SHOPEE_ACCOUNT_KEY
+    ? await forceRefreshForMutation(region, action)
+    : await forceRefreshForMutation(region, action, accountKey);
   const started = Date.now();
   const result = await executor(requestPayload);
   const durationMs = Date.now() - started;
@@ -1843,13 +1845,36 @@ function defaultForMandatoryAttr(attr: GlobalAttr, categoryId: number): AttrOpti
   return null;
 }
 
+function pickOptionForExistingValue(options: AttrOption[], valueName: string): AttrOption | null {
+  const normalized = String(valueName || '').trim().toLowerCase();
+  if (!normalized) return null;
+  const keywords = [normalized];
+  if (normalized.includes('south korea') || normalized === 'kr') keywords.push('korea');
+  if (normalized === 'no') keywords.push('not applicable', 'n/a', 'na');
+  return pickOptionByKeywords(options, keywords);
+}
+
 function normalizeAttributeList(input: any[]): any[] {
   if (!Array.isArray(input)) return [];
   return input
-    .map((a: any) => ({
-      attribute_id: Number(a?.attribute_id),
-      attribute_value_list: Array.isArray(a?.attribute_value_list) ? a.attribute_value_list : [],
-    }))
+    .map((a: any) => {
+      const valueList = (Array.isArray(a?.attribute_value_list) ? a.attribute_value_list : [])
+        .map((v: any) => {
+          const rawValueId = Number(v?.value_id);
+          const originalValueName = String(v?.original_value_name || v?.display_value_name || v?.value_name || v?.name || '').trim();
+          const entry: any = {};
+          if (Number.isFinite(rawValueId) && rawValueId >= 0) entry.value_id = rawValueId;
+          else if (originalValueName) entry.value_id = 0;
+          if (originalValueName) entry.original_value_name = originalValueName;
+          if (v?.value_unit) entry.value_unit = String(v.value_unit);
+          return entry;
+        })
+        .filter((v: any) => Number.isFinite(Number(v.value_id)));
+      return {
+        attribute_id: Number(a?.attribute_id),
+        attribute_value_list: valueList,
+      };
+    })
     .filter((a: any) => a.attribute_id > 0 && a.attribute_value_list.length > 0);
 }
 
@@ -1888,6 +1913,23 @@ async function buildCategoryAttributeList(region: string, categoryId: number, in
   const attrTreeRes = await merchantApiCall(region, '/api/v2/global_product/get_attribute_tree', { query: { category_id_list: String(categoryId), language: 'en' }, account_key: accountKey });
   const treeAttrs = flattenGlobalAttributes(attrTreeRes, region);
   const missing: any[] = [];
+  for (const attr of treeAttrs) {
+    const existing = byId.get(attr.attribute_id);
+    if (!existing || !Array.isArray(existing.attribute_value_list) || !attr.options?.length) continue;
+    const patchedValues = existing.attribute_value_list.map((value: any) => {
+      const valueId = Number(value?.value_id);
+      if (Number.isFinite(valueId) && valueId > 0) return value;
+      const valueName = String(value?.original_value_name || value?.display_value_name || value?.value_name || value?.name || '').trim();
+      const picked = pickOptionForExistingValue(attr.options, valueName);
+      if (!picked?.value_id) return value;
+      return {
+        value_id: Number(picked.value_id),
+        original_value_name: picked.original_value_name || picked.display_value_name || picked.value_name || valueName,
+        ...(value?.value_unit ? { value_unit: String(value.value_unit) } : {}),
+      };
+    });
+    byId.set(attr.attribute_id, { ...existing, attribute_value_list: patchedValues });
+  }
   for (const attr of treeAttrs.filter((a) => a.is_mandatory)) {
     const existing = byId.get(attr.attribute_id);
     const hasValue = !!(existing && Array.isArray(existing.attribute_value_list) && existing.attribute_value_list.length > 0);
@@ -1897,7 +1939,7 @@ async function buildCategoryAttributeList(region: string, categoryId: number, in
       byId.set(attr.attribute_id, {
         attribute_id: attr.attribute_id,
         attribute_value_list: [{
-          ...(picked.value_id ? { value_id: picked.value_id } : {}),
+          value_id: Number.isFinite(Number(picked.value_id)) ? Number(picked.value_id) : 0,
           original_value_name: picked.original_value_name || picked.display_value_name || picked.value_name || '',
         }],
       });
@@ -1913,6 +1955,28 @@ async function buildCategoryAttributeList(region: string, categoryId: number, in
     });
   }
   return { attribute_list: Array.from(byId.values()), missing, attr_tree_raw: attrTreeRes };
+}
+
+async function buildCategoryAttributeListForRegions(baseRegion: string, regions: string[], categoryId: number, inputAttrs: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const uniqueRegions = Array.from(new Set([baseRegion, ...regions].map((x) => String(x || '').toUpperCase()).filter(Boolean)));
+  let attributeList = normalizeAttributeList(inputAttrs);
+  const missingByKey = new Map<string, any>();
+  const attrTrees: any[] = [];
+  for (const region of uniqueRegions) {
+    const result = await buildCategoryAttributeList(region, categoryId, attributeList, accountKey);
+    attrTrees.push({ region, raw: result.attr_tree_raw });
+    attributeList = result.attribute_list;
+    for (const missing of result.missing || []) {
+      const key = `${missing.attribute_id || ''}:${missing.attribute_name || ''}`;
+      missingByKey.set(key, { ...missing, region });
+    }
+    for (const attr of attributeList) {
+      for (const key of Array.from(missingByKey.keys())) {
+        if (key.startsWith(`${Number(attr.attribute_id)}:`)) missingByKey.delete(key);
+      }
+    }
+  }
+  return { attribute_list: attributeList, missing: Array.from(missingByKey.values()), attr_tree_raw: attrTrees };
 }
 
 async function getRegionShopId(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<number> {
@@ -1978,6 +2042,15 @@ function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
 function isPublishPending(task: any): boolean {
   const status = String(task?.response?.publish_status || task?.response?.status || task?.status || '');
   return /processing|pending|in_process|in progress/i.test(status);
+}
+
+function isTransientPublishTaskLookup(task: any): boolean {
+  const text = `${task?.error || ''} ${task?.message || ''} ${task?.debug_message || ''}`.toLowerCase();
+  return /task not found|cannot_get_publish_result|taking some time|system busy|try later/.test(text);
+}
+
+function shouldContinuePublishPolling(task: any): boolean {
+  return isPublishPending(task) || isTransientPublishTaskLookup(task);
 }
 
 function parsePublishOutcome(region: string, shopId: number, publishTaskId: number, task: any) {
@@ -2070,7 +2143,7 @@ async function retryTwMinimalPublish(globalItemId: number, shopId: number, targe
     const taskRes = await merchantApiCall(region, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id: retryTaskId }, account_key: accountKey });
     retryTask = taskRes;
     retryPollAttempts = i + 1;
-    if (taskRes.error || !isPublishPending(taskRes)) break;
+    if (!shouldContinuePublishPolling(taskRes)) break;
   }
   let retryOutcome: any = parsePublishOutcome(region, shopId, retryTaskId, retryTask);
   if (!retryOutcome.ok) {
@@ -3128,7 +3201,7 @@ Deno.serve(async (req) => {
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id }, account_key: reqAccountKey });
             task = taskRes;
             pollAttempts = i + 1;
-            if (taskRes.error || !isPublishPending(taskRes)) break;
+            if (!shouldContinuePublishPolling(taskRes)) break;
           }
           let outcome = parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
           // Fallback verification: query published_list — BR gets 3 retries (5s apart), others get 1
@@ -3424,7 +3497,7 @@ Deno.serve(async (req) => {
 
       return withPublishRequestId(action, `${accountKey}:${r}`, _cbscIdempotencyToken, body, async () => {
       const stage_logs: string[] = [];
-      const catAttrs = await buildCategoryAttributeList(r, Number(body.category_id), Array.isArray(body.attribute_list) ? body.attribute_list : [], accountKey);
+      const catAttrs = await buildCategoryAttributeListForRegions(r, targetInputs.map((target: any) => target.region), Number(body.category_id), Array.isArray(body.attribute_list) ? body.attribute_list : [], accountKey);
       if (catAttrs.missing.length > 0) {
         return jsonResp({
           ok: false,
@@ -3468,7 +3541,7 @@ Deno.serve(async (req) => {
             if (!p.attribute_id || existingIds.has(Number(p.attribute_id))) return;
             const v = fallbackAttrValueByName(p.attribute_name);
             if (!v) return;
-            fallbackAttrs.push({ attribute_id: Number(p.attribute_id), attribute_value_list: [{ original_value_name: v }] });
+            fallbackAttrs.push({ attribute_id: Number(p.attribute_id), attribute_value_list: [{ value_id: 0, original_value_name: v }] });
           });
           if (fallbackAttrs.length !== (catAttrs.attribute_list || []).length) {
             const retryPayload = { ...addPayload, attribute_list: fallbackAttrs };
@@ -3663,7 +3736,7 @@ Deno.serve(async (req) => {
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id }, account_key: accountKey });
             task = taskRes;
             pollAttempts = i + 1;
-            if (taskRes.error || !isPublishPending(taskRes)) break;
+            if (!shouldContinuePublishPolling(taskRes)) break;
           }
           console.log(`[register_cbsc] region=${targetRegion} publish_task_id=${publish_task_id} poll_attempts=${pollAttempts} final_task=${JSON.stringify(task).slice(0, 1200)}`);
           let outcome = parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);

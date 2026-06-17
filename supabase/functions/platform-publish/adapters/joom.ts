@@ -3,6 +3,7 @@
 // Routes create/sync through the existing joom-bridge instead of direct Joom API calls.
 
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
+import { buildVariationItems, inferKpopBrandName, parentSku, publishableGroupRows } from '../_shared/grouping.ts';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
@@ -72,7 +73,11 @@ function brandFrom(master: Record<string, unknown>): string {
     master.shopee_brand_name,
     master.qoo10_brand_name,
     master.artist,
-  ].map(usableBrand).find(Boolean) || '';
+  ].map(usableBrand).find(Boolean) || inferKpopBrandName(master);
+}
+
+function calcListingUSD(costKrw: number): number {
+  return Math.round((costKrw / 1380 / (1 - 0.15)) * 100) / 100;
 }
 
 function mapBridgeError(status: number, raw: any): AdapterErrorCode {
@@ -138,7 +143,9 @@ async function bridgeGet(action: string, params: Record<string, string>, userTok
 
 function buildCreateBody(ctx: BridgeContext): Record<string, unknown> | AdapterResult {
   const master = ctx.masterProduct as Record<string, unknown>;
-  const sku = s(master.sku).trim();
+  const groupRows = publishableGroupRows(master, (ctx as any).groupProducts || []);
+  const variationBundle = groupRows.length > 1 ? buildVariationItems(groupRows, 'Option') : null;
+  const sku = variationBundle ? (parentSku(groupRows) || s(master.sku).trim()) : s(master.sku).trim();
   const imgs = imagesFrom(master);
   const cost = n(master.cost_krw);
   const weight = n(master.weight_g);
@@ -154,6 +161,21 @@ function buildCreateBody(ctx: BridgeContext): Record<string, unknown> | AdapterR
     };
   }
   const inventory = Math.max(0, Math.floor(n(master.inventory, 0)));
+  const variantsConfig = variationBundle
+    ? variationBundle.items.map((item: any) => {
+      const row = item.row || {};
+      return {
+        name: item.optionValue || s(row.option_name) || s(row.sku),
+        sku: s(row.sku).trim(),
+        inventory: Math.max(0, Math.floor(n(row.inventory, 0))),
+        enabled: true,
+        weight: n(row.weight_g || weight),
+        image: s(row.shopee_option_image_url || row.main_image || imgs[0]),
+        price: calcListingUSD(n(row.cost_krw || cost)),
+        product_id: row.id || null,
+      };
+    }).filter((row: any) => row.sku)
+    : [{ name: 'DEFAULT', sku, inventory, enabled: true, weight, image: imgs[0] }];
   return {
     row: { sku, cost, weight },
     scrapedAssets: {
@@ -162,7 +184,7 @@ function buildCreateBody(ctx: BridgeContext): Record<string, unknown> | AdapterR
       detailImages: imgs.slice(1),
       extraImages: [],
     },
-    variantsConfig: [{ name: 'DEFAULT', sku, inventory, enabled: true, weight, image: imgs[0] }],
+    variantsConfig,
     categoryId,
     enabled: true,
     namePrefix: '',
@@ -178,11 +200,19 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   if ('ok' in body && body.ok === false) return body as AdapterResult;
   const { status, raw } = await bridgePost(ctx.dryRun ? 'dryrun' : 'publish', body as Record<string, unknown>, userToken);
   if (status >= 200 && status < 300 && raw?.ok !== false) {
+    const groupRows = publishableGroupRows(ctx.masterProduct as Record<string, unknown>, (ctx as any).groupProducts || []);
+    const variationBundle = groupRows.length > 1 ? buildVariationItems(groupRows, 'Option') : null;
+    const optionProducts = variationBundle
+      ? variationBundle.items.map((item: any) => {
+        const variant = Array.isArray(raw?.variants) ? raw.variants.find((row: any) => s(row?.sku) === s(item.row?.sku)) : null;
+        return { product_id: item.row?.id || null, sku: item.row?.sku || '', option_value: item.optionValue, variant_id: variant?.id || variant?.sku || item.row?.sku || '' };
+      })
+      : [];
     return {
       ok: true,
       platformItemId: s(raw?.joom_product_id || raw?.id),
       listingStatus: ctx.dryRun ? 'draft' : mapJoomStatus(raw),
-      rawResponse: raw,
+      rawResponse: { ...raw, option_products: optionProducts },
     };
   }
   return {

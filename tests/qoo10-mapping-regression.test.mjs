@@ -73,7 +73,9 @@ test('Qoo10 create listing contract includes official registration side fields',
   }
   assert.match(adapter, /supports:\s*new Set\(\['create_listing', 'sync'\]\)/, 'Qoo10 adapter should support create_listing and sync');
   assert.match(adapter, /header_html/, 'Qoo10 create payload should forward header HTML for EditGoodsHeaderFooter');
-  assert.match(adapter, /Qoo10 BrandNo is required/, 'Qoo10 create payload should require an operator-selected BrandNo');
+  assert.match(adapter, /brand_no:\s*brandNo/, 'Qoo10 create payload should forward BrandNo when selected');
+  assert.doesNotMatch(adapter, /Qoo10 BrandNo is required/, 'Qoo10 BrandNo is optional in SetNewGoods and must not block create');
+  assert.match(adapter, /const QOO10_DEFAULT_SHIPPING_NO = '715009'/, 'Qoo10 create payload should fall back to the configured default ShippingNo');
   assert.match(adapter, /production_place:\s*norm\(qoo10\.production_place \|\| 'KR'\)/, 'Qoo10 create payload should default overseas origin to South Korea');
   assert.match(adapter, /force_options:\s*options\.length > 1/, 'Qoo10 grouped create payload should force ItemType option creation');
   assert.match(adapter, /option_products/, 'Qoo10 create result should expose option products for platform_listings fan-out');

@@ -3,11 +3,26 @@
 
 import type { AdapterContext, AdapterResult, PlatformAdapter } from '../_shared/contract.ts';
 import { resolveQoo10AvailableDate } from '../_shared/fulfillment.ts';
+import { buildVariationItems, parentSku, publishableGroupRows } from '../_shared/grouping.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const SUPABASE_URL = (Deno as any).env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = (Deno as any).env.get('SUPABASE_ANON_KEY') || '';
+const SUPABASE_SERVICE_ROLE_KEY = (Deno as any).env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const QOO10_BRIDGE_URL = (Deno as any).env.get('QOO10_BRIDGE_URL') || (SUPABASE_URL ? `${SUPABASE_URL}/functions/v1/qoo10-bridge` : '');
 const QOO10_GOODS_CATEGORY_ID = '300002855';
+const QOO10_DEFAULT_SHIPPING_NO = '715009';
+const QOO10_SHIPPING_FEE_TABLE_JPY = Object.freeze([
+  { maxWeightG: 100, feeJpy: 450 },
+  { maxWeightG: 250, feeJpy: 525 },
+  { maxWeightG: 500, feeJpy: 590 },
+  { maxWeightG: 750, feeJpy: 680 },
+  { maxWeightG: 1000, feeJpy: 720 },
+  { maxWeightG: 1250, feeJpy: 760 },
+  { maxWeightG: 1500, feeJpy: 810 },
+  { maxWeightG: 1750, feeJpy: 860 },
+  { maxWeightG: 2000, feeJpy: 910 },
+]);
 
 function norm(value: unknown): string {
   return String(value || '').trim();
@@ -19,6 +34,41 @@ function normalizeQoo10PriceEnding90(value: unknown): number {
   const whole = Math.ceil(n);
   const sameHundred90 = Math.floor(whole / 100) * 100 + 90;
   return whole <= sameHundred90 ? sameHundred90 : sameHundred90 + 100;
+}
+
+function qoo10ShippingFeeJpy(weightG: unknown): number {
+  const grams = Number(weightG || 0);
+  if (!Number.isFinite(grams) || grams <= 0) return 0;
+  const bracket = QOO10_SHIPPING_FEE_TABLE_JPY.find((row) => grams <= row.maxWeightG);
+  return bracket ? bracket.feeJpy : QOO10_SHIPPING_FEE_TABLE_JPY[QOO10_SHIPPING_FEE_TABLE_JPY.length - 1].feeJpy;
+}
+
+async function qoo10CountrySettings(): Promise<Record<string, any>> {
+  const fallback = { exchange_rate: 9.1, sales_fee: 11, fsp_fee: 2, other_fee: 1, pg_fee: 0, fsp_ccb: 0, fixed_service_fee: 0, purchase_vat: 0 };
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return fallback;
+  try {
+    const svc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+    const { data } = await svc.from('country_settings').select('exchange_rate,sales_fee,fsp_fee,other_fee,pg_fee,fsp_ccb,fixed_service_fee,purchase_vat').eq('country_code', 'Q10').maybeSingle();
+    return data || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function qoo10PriceFromCost(row: Record<string, any>, settings: Record<string, any>): number {
+  const cost = Number(row.cost_krw || 0);
+  const exchangeRate = Number(settings.exchange_rate || 9.1);
+  if (!cost || cost <= 0 || !exchangeRate || exchangeRate <= 0) return 0;
+  const totalFeePct = Number(settings.pg_fee || 0)
+    + Number(settings.sales_fee || 0)
+    + Number(settings.fsp_fee || 0)
+    + Number(settings.other_fee || 0)
+    + Number(settings.fsp_ccb || 0);
+  const denom = 1 - (totalFeePct / 100);
+  if (denom <= 0) return 0;
+  const effectiveCost = cost * (1 - (Number(settings.purchase_vat || 0) / 100));
+  const raw = ((effectiveCost / exchangeRate) + qoo10ShippingFeeJpy(row.weight_g) + Number(settings.fixed_service_fee || 0)) / denom;
+  return normalizeQoo10PriceEnding90(raw);
 }
 
 function sameSku(a: unknown, b: unknown): boolean {
@@ -61,7 +111,7 @@ function categoryFrom(ctx: AdapterContext, qoo10: Record<string, any>): string {
 }
 
 function shippingNoFrom(ctx: AdapterContext, qoo10: Record<string, any>): string {
-  return norm(qoo10.shipping_no || ctx.masterProduct?.qoo10_shipping_no);
+  return norm(qoo10.shipping_no || ctx.masterProduct?.qoo10_shipping_no || QOO10_DEFAULT_SHIPPING_NO);
 }
 
 function brandNoFrom(ctx: AdapterContext, qoo10: Record<string, any>): string {
@@ -85,10 +135,21 @@ function defaultDescription(ctx: AdapterContext, qoo10: Record<string, any>): st
   return norm(qoo10.description || ctx.masterProduct?.description || ctx.masterProduct?.components_extracted_en || '');
 }
 
-function normalizeOptions(ctx: AdapterContext, qoo10: Record<string, any>, basePrice: number) {
+function normalizeOptions(ctx: AdapterContext, qoo10: Record<string, any>, basePrice: number, settings: Record<string, any>) {
+  const groupRows = publishableGroupRows(ctx.masterProduct || {}, (ctx as any).groupProducts || []);
+  const variationBundle = groupRows.length > 1 ? buildVariationItems(groupRows, 'Type') : null;
   const rows = Array.isArray(qoo10.options) && qoo10.options.length
     ? qoo10.options
-    : [{
+    : variationBundle
+      ? variationBundle.items.map((item: any) => ({
+        product_id: item.row?.id,
+        sku: item.row?.sku,
+        option_name: 'Type',
+        option_value: item.optionValue,
+        price_jpy: qoo10PriceFromCost(item.row || {}, settings) || basePrice,
+        stock: item.row?.inventory || 0,
+      }))
+      : [{
       product_id: ctx.masterProduct?.id,
       sku: ctx.masterProduct?.sku,
       option_value: ctx.masterProduct?.option_name || 'Default',
@@ -181,21 +242,22 @@ async function executeSync(ctx: AdapterContext): Promise<AdapterResult> {
 
 async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
   const qoo10 = qoo10Payload(ctx);
+  const settings = await qoo10CountrySettings();
+  const groupRows = publishableGroupRows(ctx.masterProduct || {}, (ctx as any).groupProducts || []);
   const title = titleFrom(ctx, qoo10);
   const categoryId = categoryFrom(ctx, qoo10);
   const shippingNo = shippingNoFrom(ctx, qoo10);
   const brandNo = brandNoFrom(ctx, qoo10);
-  const sellerCode = norm(qoo10.seller_code || qoo10.parent_sku || ctx.masterProduct?.sku);
-  const basePrice = normalizeQoo10PriceEnding90(qoo10.base_price_jpy || qoo10.item_price_jpy || qoo10.price_jpy);
+  const sellerCode = norm(qoo10.seller_code || qoo10.parent_sku || (groupRows.length > 1 ? parentSku(groupRows) : '') || ctx.masterProduct?.sku);
+  const basePrice = normalizeQoo10PriceEnding90(qoo10.base_price_jpy || qoo10.item_price_jpy || qoo10.price_jpy || qoo10PriceFromCost(ctx.masterProduct || {}, settings));
   const available = availableDateFrom(ctx, qoo10);
-  const options = normalizeOptions(ctx, qoo10, basePrice);
+  const options = normalizeOptions(ctx, qoo10, basePrice, settings);
   const userAuthToken = norm((ctx as any).userAuthToken);
 
   if (!userAuthToken) return { ok: false, listingStatus: 'not_listed', errorCode: 'AUTH_NOT_VERIFIED', errorMsg: 'Missing authenticated user token for qoo10-bridge create-listing' };
   if (!categoryId) return { ok: false, listingStatus: 'not_listed', errorCode: 'QOO10_CATEGORY_UNMAPPED', errorMsg: 'Qoo10 category_id is required' };
   if (!title) return { ok: false, listingStatus: 'not_listed', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'Qoo10 item title is required' };
   if (!sellerCode) return { ok: false, listingStatus: 'not_listed', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'Qoo10 seller_code is required' };
-  if (!brandNo) return { ok: false, listingStatus: 'not_listed', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'Qoo10 BrandNo is required; search and select a registered Qoo10 brand' };
   if (!shippingNo) return { ok: false, listingStatus: 'not_listed', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'Qoo10 ShippingNo is required; select a registered delivery template' };
   if (!basePrice) return { ok: false, listingStatus: 'not_listed', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'Qoo10 base_price_jpy is required' };
   if (available.type === '2' && !/^\d{4}[/-]\d{2}[/-]\d{2}$/.test(available.value)) {
@@ -221,6 +283,18 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
     options,
     force_options: options.length > 1,
   };
+
+  if (ctx.dryRun) {
+    return {
+      ok: true,
+      listingStatus: 'draft',
+      rawResponse: {
+        dry_run: true,
+        payload,
+        option_products: options.map((row) => ({ product_id: row.product_id, sku: row.sku, option_value: row.option_value })),
+      },
+    };
+  }
 
   const result = await bridgeFetch('/create-listing', {
     method: 'POST',

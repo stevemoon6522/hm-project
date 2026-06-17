@@ -1936,6 +1936,10 @@
         <span class="nav-label">Alibaba</span>
         <span class="nav-meta">등록 / 동기화</span>
       </button>
+      <button class="nav-tab" onclick="showView('view-daily-close')">
+        <span class="nav-label">Daily Close</span>
+        <span class="nav-meta">?쇱씪 留덇컧</span>
+      </button>
       <button class="nav-tab" onclick="showView('view-fee-settings')">
         <span class="nav-label">수수료 설정</span>
         <span class="nav-meta">정산 기준</span>
@@ -6369,6 +6373,8 @@ LEGACY END -->
     const first = rows[0] || {};
     const collapsed = !state.productListExpandedGroups.has(group.key);
     const optionSpec = plEffectiveVariationSpec(rows, 'Version');
+    state.productListOptionSpecs = state.productListOptionSpecs || new Map();
+    state.productListOptionSpecs.set(group.key, { rows, optionSpec });
     const options = rows.map((row, idx) => plEffectiveOptionDisplay(row, optionSpec, idx, plOptionDisplay(row))).filter(Boolean);
     const shownOptions = options.slice(0, 4).map(text).join(', ');
     const more = options.length > 4 ? ` 외 ${options.length - 4}개` : '';
@@ -6401,7 +6407,7 @@ LEGACY END -->
         </td>
       </tr>`;
     if (collapsed) return groupHtml;
-    return groupHtml + rows.map((row, idx) => renderProductOptionRow(row, group.key, true, optionSpec, idx)).join('');
+    return groupHtml + rows.map((row) => renderProductOptionRow(row, group.key, true)).join('');
   }
 
   function plMasterEditTargetKey(product) {
@@ -6409,8 +6415,20 @@ LEGACY END -->
   }
 
   function renderProductOptionRow(p, groupKey, isGroupChild) {
-    const optionSpec = arguments.length > 3 ? arguments[3] : null;
-    const rowIndex = arguments.length > 4 ? arguments[4] : 0;
+    let optionSpec = arguments.length > 3 ? arguments[3] : null;
+    let rowIndex = arguments.length > 4 ? arguments[4] : 0;
+    if (isGroupChild && !optionSpec) {
+      const cached = state.productListOptionSpecs?.get(groupKey);
+      const groupId = String(groupKey || '').replace(/^group:/, '');
+      const groupRows = cached?.rows || (state.products || [])
+        .filter((row) => String(row?.product_group_id || '') === groupId)
+        .sort((a, b) => plTierSortKey(a).localeCompare(plTierSortKey(b)));
+      if (groupRows.length) {
+        optionSpec = cached?.optionSpec || plEffectiveVariationSpec(groupRows, 'Version');
+        const foundIndex = groupRows.findIndex((row) => String(row?.id || '') === String(p?.id || ''));
+        rowIndex = foundIndex >= 0 ? foundIndex : 0;
+      }
+    }
     const isVariantRow = plIsGroupedVariant(p);
     const optionDisplay = optionSpec
       ? plEffectiveOptionDisplay(p, optionSpec, rowIndex, plOptionDisplay(p))
@@ -19393,7 +19411,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
   }
 
-  /**
+/**
    * Execute dry-run:
    * 1. Insert dry_run row into shopee_mutation_log via Supabase (if table exists)
    * 2. Write updated cost_krw + cost_updated_at to products table

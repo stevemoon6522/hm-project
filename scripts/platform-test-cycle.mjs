@@ -131,6 +131,17 @@ async function edgePost(env, functionName, action, body, internalToken) {
   });
 }
 
+async function fetchImageDataUrl(imageUrl) {
+  const resp = await fetch(imageUrl);
+  if (!resp.ok) throw new Error(`Image fetch failed HTTP ${resp.status}: ${imageUrl}`);
+  const contentType = String(resp.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const mime = /^image\/(png|jpeg|jpg)$/.test(contentType)
+    ? contentType.replace('image/jpg', 'image/jpeg')
+    : (/\.png(?:\?|$)/i.test(imageUrl) ? 'image/png' : 'image/jpeg');
+  const bytes = Buffer.from(await resp.arrayBuffer());
+  return `data:${mime};base64,${bytes.toString('base64')}`;
+}
+
 async function loadProduct(env, target, args, key = env.anon, options = {}) {
   const productId = String(args.productId || target.product_id || '').trim();
   const sku = String(args.sku || target.sku || '').trim();
@@ -293,12 +304,14 @@ async function ebayRegisterDryRun(env, product, internalToken) {
 
 async function ebayRegister(env, product, args, internalToken) {
   const live = args.live === true;
-  return edgePost(env, 'ebay-bridge', 'register-product', {
+  const body = {
     product_id: product.id,
     dry_run: !live,
     confirm: live ? CONFIRM.ebayPublish : undefined,
     force: args.force === true,
-  }, internalToken);
+  };
+  if (args.ebaySku) body.sku = args.ebaySku;
+  return edgePost(env, 'ebay-bridge', 'register-product', body, internalToken);
 }
 
 async function ebayWithdraw(env, product, args, internalToken) {
@@ -309,6 +322,82 @@ async function ebayWithdraw(env, product, args, internalToken) {
     confirm: live ? CONFIRM.ebayWithdraw : undefined,
     reset_local: args.resetLocal !== false,
   }, internalToken);
+}
+
+function uniqueEbayTestSku(product, args) {
+  if (args.ebaySku) return safeTestSku(args.ebaySku);
+  const stamp = new Date().toISOString().replace(/\D/g, '').slice(2, 14);
+  return safeTestSku(product.sku || 'SDV2-EBAY', `EBAY${stamp}`);
+}
+
+async function ebayWithdrawSku(env, args, internalToken) {
+  const live = args.live === true;
+  const ebaySku = String(args.ebaySku || args.sku || '').trim();
+  return edgePost(env, 'ebay-bridge', 'withdraw-sku', {
+    sku: ebaySku,
+    offer_id: args.offerId || args.ebayOfferId || undefined,
+    marketplace_id: args.marketplaceId || 'EBAY_US',
+    dry_run: !live,
+    confirm: live ? CONFIRM.ebayWithdraw : undefined,
+  }, internalToken);
+}
+
+async function ebayCycle(env, product, args, internalToken) {
+  const live = args.live === true;
+  const ebaySku = uniqueEbayTestSku(product, args);
+  let preview;
+  try {
+    preview = await ebayRegister(env, product, { ...args, live: false, ebaySku }, internalToken);
+  } catch (error) {
+    preview = {
+      ok: false,
+      error: error.message || String(error),
+      status: error.status || null,
+      detail: error.json || null,
+    };
+  }
+  if (!preview?.ok || !preview?.payload) {
+    return { ok: false, live, ebay_sku: ebaySku, register_preview: preview, delete: { skipped: true, reason: 'register dry-run returned no payload' } };
+  }
+  const payload = { ...preview.payload, sku: ebaySku, dry_run: !live };
+  if (!live) {
+    return {
+      ok: true,
+      live: false,
+      ebay_sku: ebaySku,
+      register: await edgePost(env, 'ebay-bridge', 'publish-headless', payload, internalToken),
+      delete: await ebayWithdrawSku(env, { ...args, live: false, ebaySku }, internalToken),
+    };
+  }
+
+  let register;
+  try {
+    register = await edgePost(env, 'ebay-bridge', 'publish-headless', {
+      ...payload,
+      dry_run: false,
+      confirm: CONFIRM.ebayPublish,
+    }, internalToken);
+  } catch (error) {
+    register = {
+      ok: false,
+      error: error.message || String(error),
+      status: error.status || null,
+      detail: error.json || null,
+    };
+  }
+  const offerId = String(register?.ebay_offer_id || register?.offerId || '').trim();
+  const cleanup = offerId
+    ? await ebayWithdrawSku(env, { ...args, live: true, ebaySku, offerId }, internalToken)
+    : { skipped: true, reason: 'register returned no ebay_offer_id' };
+  return {
+    ok: register?.ok !== false && cleanup?.ok !== false,
+    live: true,
+    ebay_sku: ebaySku,
+    ebay_offer_id: offerId || null,
+    ebay_item_id: register?.ebay_item_id || null,
+    register,
+    delete: cleanup,
+  };
 }
 
 async function ebayPolicy(env, product, args, internalToken) {
@@ -480,6 +569,77 @@ async function qoo10Delete(env, product, args, internalToken, platformListings, 
   return result;
 }
 
+function uniqueQoo10SellerCode(product, args) {
+  if (args.sellerCode) return safeTestSku(args.sellerCode);
+  if (args.qoo10SellerCode) return safeTestSku(args.qoo10SellerCode);
+  const stamp = new Date().toISOString().replace(/\D/g, '').slice(2, 14);
+  return safeTestSku(product.sku || 'SDV2-QOO10', `Q10${stamp}`);
+}
+
+function qoo10RegisterBody(product, args = {}) {
+  const sellerCode = uniqueQoo10SellerCode(product, args);
+  const title = String(args.qoo10Title || product.product_name || product.sku || sellerCode).trim().slice(0, 100);
+  const imageUrl = String(args.mainImage || product.main_image || DEFAULT_TEST_IMAGE).trim();
+  return {
+    category_id: String(args.qoo10CategoryId || product.qoo10_category_id || '300002851').trim(),
+    title,
+    seller_code: sellerCode,
+    shipping_no: String(args.shippingNo || product.qoo10_shipping_no || '715009').trim(),
+    main_image: imageUrl,
+    description: String(args.description || product.description || 'API registration smoke-test product for starphotocard.').trim(),
+    base_price_jpy: Number(args.priceJpy || args.basePriceJpy || 1290),
+    stock: Number(args.inventory || product.inventory || 3),
+    weight_kg: Number(args.weightKg || ((Number(args.weightG || product.weight_g || 150) || 150) / 1000)),
+    production_place: 'KR',
+    header_html: String(args.headerHtml || `<img src="${imageUrl}">`).trim(),
+    keyword: 'KPOP,JENNIE,Ruby',
+  };
+}
+
+async function qoo10Register(env, product, args, internalToken) {
+  const live = args.live === true;
+  const body = qoo10RegisterBody(product, args);
+  if (!live) return { ok: true, dry_run: true, payload: body };
+  return edgePost(env, 'qoo10-bridge', 'create-listing', body, internalToken);
+}
+
+async function qoo10Cycle(env, product, args, internalToken, platformListings, serviceKey) {
+  const live = args.live === true;
+  const sellerCode = uniqueQoo10SellerCode(product, args);
+  let register;
+  try {
+    register = await qoo10Register(env, product, { ...args, sellerCode }, internalToken);
+  } catch (error) {
+    register = {
+      ok: false,
+      error: error.message || String(error),
+      status: error.status || null,
+      detail: error.json || null,
+    };
+  }
+  if (!live) {
+    return {
+      ok: true,
+      live: false,
+      seller_code: sellerCode,
+      register,
+      delete: { skipped: true, reason: 'dry_run_payload_only' },
+    };
+  }
+  const itemCode = String(register?.goods_no || register?.platform_item_id || register?.detail?.goods_no || register?.detail?.platform_item_id || '').trim();
+  const cleanup = itemCode
+    ? await qoo10Delete(env, product, { ...args, live: true, itemCode, sellerCode }, internalToken, platformListings, serviceKey)
+    : { skipped: true, reason: 'register returned no item code' };
+  return {
+    ok: register?.ok !== false && cleanup?.ok !== false,
+    live: true,
+    seller_code: sellerCode,
+    item_code: itemCode || null,
+    register,
+    delete: cleanup,
+  };
+}
+
 async function shopeeDelete(env, product, args, internalToken, shopeeRows) {
   const globalItemId = pickShopeeGlobalItemId(args, shopeeRows);
   if (!globalItemId && !args.productId && !product.id) {
@@ -494,6 +654,132 @@ async function shopeeDelete(env, product, args, internalToken, shopeeRows) {
     confirm: live ? CONFIRM.shopeeDelete : undefined,
     reset_local: args.resetLocal !== false,
   }, internalToken);
+}
+
+function uniqueShopeeTestSku(product, args) {
+  if (args.shopeeSku) return safeTestSku(args.shopeeSku);
+  const stamp = new Date().toISOString().replace(/\D/g, '').slice(2, 14);
+  return safeTestSku(product.sku || 'SDV2-SHOPEE', `SHP${stamp}`);
+}
+
+function shopeeRegisterBody(product, args = {}) {
+  const sku = uniqueShopeeTestSku(product, args);
+  const region = String(args.region || 'SG').trim().toUpperCase();
+  const price = Number(args.costKrw || product.cost_krw || 16000);
+  const stock = Number(args.inventory || product.inventory || 3);
+  const imageUrl = String(args.mainImage || product.main_image || DEFAULT_TEST_IMAGE).trim();
+  const name = String(args.shopeeTitle || product.product_name || product.sku || sku).trim().slice(0, 120);
+  const categoryId = Number(args.shopeeCategoryId || product.shopee_category_id || 100740);
+  const brandId = Number(args.shopeeBrandId || product.shopee_brand_id || 0);
+  const brandName = brandId > 0
+    ? String(args.brand || product.shopee_brand_name || 'No Brand').trim()
+    : 'No Brand';
+  const imageId = String(args.shopeeImageId || '').trim();
+  const body = {
+    account_key: args.accountKey || 'starphotocard',
+    region,
+    name,
+    sku,
+    category_id: categoryId,
+    brand: { brand_id: brandId, original_brand_name: brandName },
+    image_url: imageUrl,
+    weight_g: Number(args.weightG || product.weight_g || 150),
+    price,
+    stock,
+    description: String(args.description || product.description || 'API registration smoke-test product for starphotocard.').trim(),
+    targets: [{
+      region,
+      price,
+      stock,
+      days_to_ship: Number(args.daysToShip || 3),
+      image_url: imageUrl,
+    }],
+    lifecycle_state: 'ready_stock',
+    is_pre_order: false,
+  };
+  if (imageId) {
+    body.image_id = imageId;
+    body.image_id_list = [imageId];
+    body.targets = body.targets.map((target) => ({ ...target, image_id: imageId, image_id_list: [imageId] }));
+  }
+  return body;
+}
+
+function shopeeGlobalItemId(result) {
+  return Number(result?.global_item_id || result?.response?.global_item_id || result?.detail?.global_item_id || result?.detail?.response?.global_item_id || 0) || null;
+}
+
+async function shopeeRegister(env, product, args, internalToken) {
+  const live = args.live === true;
+  const body = shopeeRegisterBody(product, args);
+  if (!live) return { ok: true, dry_run: true, payload: body };
+  if (!args.shopeeImageId) {
+    const imageDataUrl = await fetchImageDataUrl(body.image_url);
+    const upload = await edgePost(env, 'shopee-bridge', 'upload_image', {
+      account_key: body.account_key,
+      region: body.region,
+      image_base64: imageDataUrl,
+      source_url: body.image_url,
+      main_image_url: body.image_url,
+      layer_version: 'platform-test-cycle',
+      output_hash: safeTestSku(body.sku, 'IMG'),
+    }, internalToken);
+    if (!upload?.ok || !upload?.image_id) {
+      return { ok: false, stage: 'upload_image', upload };
+    }
+    body.image_id = upload.image_id;
+    body.image_id_list = [upload.image_id];
+    body.targets = body.targets.map((target) => ({ ...target, image_id: upload.image_id, image_id_list: [upload.image_id] }));
+  }
+  return edgePost(env, 'shopee-bridge', 'register_cbsc', body, internalToken);
+}
+
+async function shopeeCycle(env, product, args, internalToken) {
+  const live = args.live === true;
+  const shopeeSku = uniqueShopeeTestSku(product, args);
+  let register;
+  try {
+    register = await shopeeRegister(env, product, { ...args, shopeeSku }, internalToken);
+  } catch (error) {
+    register = {
+      ok: false,
+      error: error.message || String(error),
+      status: error.status || null,
+      detail: error.json || null,
+    };
+  }
+  if (!live) {
+    return {
+      ok: true,
+      live: false,
+      shopee_sku: shopeeSku,
+      register,
+      delete: { skipped: true, reason: 'dry_run_payload_only' },
+    };
+  }
+  const globalItemId = shopeeGlobalItemId(register);
+  let cleanup = { skipped: true, reason: 'register returned no global_item_id' };
+  if (globalItemId) {
+    cleanup = await edgePost(env, 'shopee-bridge', 'delete_global_item_headless', {
+      account_key: args.accountKey || 'starphotocard',
+      region: args.region || 'SG',
+      global_item_id: globalItemId,
+      dry_run: false,
+      reset_local: false,
+      confirm: CONFIRM.shopeeDelete,
+    }, internalToken);
+  }
+  const publishOk = register?.ok !== false
+    && Array.isArray(register?.results)
+    && register.results.some((row) => row?.ok === true);
+  return {
+    ok: publishOk && cleanup?.ok !== false,
+    live: true,
+    shopee_sku: shopeeSku,
+    global_item_id: globalItemId,
+    register,
+    delete: cleanup,
+  };
 }
 
 async function run() {
@@ -523,24 +809,36 @@ async function run() {
   const commands = {
     'ebay-register': () => ebayRegister(env, product, args, internalToken),
     'ebay-register-dry-run': () => ebayRegisterDryRun(env, product, internalToken),
+    'ebay-cycle': () => ebayCycle(env, product, args, internalToken),
+    'ebay-withdraw-sku': () => ebayWithdrawSku(env, args, internalToken),
     'ebay-policy': () => ebayPolicy(env, product, args, internalToken),
     'ebay-withdraw': () => ebayWithdraw(env, product, args, internalToken),
     'joom-register': () => joomRegister(env, product, args, internalToken),
     'joom-cycle': () => joomCycle(env, product, args, internalToken, serviceKey),
     'joom-delete': () => joomDelete(env, product, args, internalToken, serviceKey),
+    'qoo10-register': () => qoo10Register(env, product, args, internalToken),
+    'qoo10-cycle': () => qoo10Cycle(env, product, args, internalToken, platformListings, serviceKey),
     'qoo10-delete': () => qoo10Delete(env, product, args, internalToken, platformListings, serviceKey),
+    'shopee-register': () => shopeeRegister(env, product, args, internalToken),
+    'shopee-cycle': () => shopeeCycle(env, product, args, internalToken),
     'shopee-delete': () => shopeeDelete(env, product, args, internalToken, shopeeRows),
-    'dry-run-all': async () => ({
-      ok: true,
-      live: false,
-      ebay_register: await ebayRegisterDryRun(env, product, internalToken),
-      ebay_policy: await ebayPolicy(env, product, { ...args, live: false }, internalToken),
-      ebay_withdraw: await ebayWithdraw(env, product, { ...args, live: false }, internalToken),
-      joom_register: await joomRegister(env, product, { ...args, live: false }, internalToken),
-      joom_delete: await joomDelete(env, product, { ...args, live: false }, internalToken, serviceKey),
-      qoo10_delete: await qoo10Delete(env, product, { ...args, live: false }, internalToken, platformListings, serviceKey),
-      shopee_delete: await shopeeDelete(env, product, { ...args, live: false }, internalToken, shopeeRows),
-    }),
+    'dry-run-all': async () => {
+      const qoo10DrySellerCode = uniqueQoo10SellerCode(product, args);
+      return {
+        ok: true,
+        live: false,
+        ebay_register: await ebayRegisterDryRun(env, product, internalToken),
+        ebay_cycle: await ebayCycle(env, product, { ...args, live: false }, internalToken),
+        ebay_policy: await ebayPolicy(env, product, { ...args, live: false }, internalToken),
+        ebay_withdraw: await ebayWithdraw(env, product, { ...args, live: false }, internalToken),
+        joom_register: await joomRegister(env, product, { ...args, live: false }, internalToken),
+        joom_delete: await joomDelete(env, product, { ...args, live: false }, internalToken, serviceKey),
+        qoo10_register: await qoo10Register(env, product, { ...args, live: false, sellerCode: qoo10DrySellerCode }, internalToken),
+        qoo10_delete: await qoo10Delete(env, product, { ...args, live: false, itemCode: args.itemCode || '1234567890', sellerCode: qoo10DrySellerCode }, internalToken, platformListings, serviceKey),
+        shopee_register: await shopeeRegister(env, product, { ...args, live: false }, internalToken),
+        shopee_delete: await shopeeDelete(env, product, { ...args, live: false }, internalToken, shopeeRows),
+      };
+    },
     'cleanup-all': async () => {
       if (!args.live) throw new Error('cleanup-all requires --live');
       return {
@@ -555,7 +853,7 @@ async function run() {
   };
 
   if (!commands[command]) {
-    throw new Error(`Unknown command '${command}'. Use inspect, ensure-product, dry-run-all, ebay-register, ebay-register-dry-run, ebay-policy, ebay-withdraw, joom-register, joom-cycle, joom-delete, qoo10-delete, shopee-delete, cleanup-all.`);
+    throw new Error(`Unknown command '${command}'. Use inspect, ensure-product, dry-run-all, ebay-register, ebay-register-dry-run, ebay-cycle, ebay-withdraw-sku, ebay-policy, ebay-withdraw, joom-register, joom-cycle, joom-delete, qoo10-register, qoo10-cycle, qoo10-delete, shopee-register, shopee-cycle, shopee-delete, cleanup-all.`);
   }
 
   const result = await commands[command]();

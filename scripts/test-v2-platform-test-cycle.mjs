@@ -39,6 +39,12 @@ for (const token of [
   'action === "withdraw-product" && req.method === "POST"',
   'requireBridgeTokenOrAuthenticatedUser(req)',
   '/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/withdraw',
+  'async function handleHeadlessPublishPayload',
+  'action === "publish-headless" && req.method === "POST"',
+  'return await handleHeadlessPublishPayload(body)',
+  'async function handleWithdrawSku',
+  'action === "withdraw-sku" && req.method === "POST"',
+  'return await handleWithdrawSku(body)',
   '/sell/inventory/v1/offer/withdraw_by_inventory_item_group',
   'ebay_status: "WITHDRAWN"',
   'markEbayPlatformListingsWithdrawn',
@@ -83,6 +89,12 @@ for (const token of [
   'ensure-product',
   'async function ensureProduct',
   'ebay-register',
+  'function uniqueEbayTestSku',
+  'function ebayCycle',
+  'ebay-cycle',
+  'ebay-withdraw-sku',
+  "'publish-headless'",
+  "'withdraw-sku'",
   "confirm: live ? CONFIRM.ebayPublish : undefined",
   'DEFAULT_TEST_IMAGE',
   'function joomPublishBody',
@@ -91,6 +103,19 @@ for (const token of [
   'joom-register',
   'joom-cycle',
   "live ? 'publish' : 'dryrun'",
+  'function qoo10RegisterBody',
+  'function qoo10Cycle',
+  'qoo10-register',
+  'qoo10-cycle',
+  'qoo10_register: await qoo10Register',
+  'function shopeeRegisterBody',
+  'function shopeeCycle',
+  'function fetchImageDataUrl',
+  "'upload_image'",
+  'shopee-register',
+  'shopee-cycle',
+  'detail?.global_item_id',
+  'reset_local: false',
   'ebay-policy',
   "confirm: live ? CONFIRM.ebayPolicy : undefined",
   'dry-run-all',
@@ -109,7 +134,11 @@ for (const token of [
 for (const pathToken of [
   'C:\\dev\\api-refs\\marketplaces\\ebay\\sell\\inventory.yaml',
   'C:\\dev\\api-refs\\marketplaces\\joom\\openapi.yaml',
+  'C:\\dev\\api-refs\\marketplaces\\qoo10\\api-pages\\상품-등록\\10009-SetNewGoods.md',
   'C:\\dev\\api-refs\\marketplaces\\qoo10\\api-pages\\상품-수정\\10013-EditGoodsStatus.md',
+  'C:\\dev\\api-refs\\marketplaces\\shopee\\docs_ai\\apis\\global_product\\v2.global_product.add_global_item.json',
+  'C:\\dev\\api-refs\\marketplaces\\shopee\\docs_ai\\apis\\global_product\\v2.global_product.create_publish_task.json',
+  'C:\\dev\\api-refs\\marketplaces\\shopee\\docs_ai\\apis\\global_product\\v2.global_product.get_publish_task_result.json',
   'C:\\dev\\api-refs\\marketplaces\\shopee\\docs_ai\\apis\\global_product\\v2.global_product.delete_global_item.json',
 ]) {
   assert(docs.includes(pathToken), `test cycle docs must cite local API doc path: ${pathToken}`);
@@ -117,6 +146,18 @@ for (const pathToken of [
 
 for (const token of ['joom-cycle --live', 'POST /products/create', 'POST /products/update', 'POST /products/remove']) {
   assert(docs.includes(token), `test cycle docs must describe Joom disposable cycle token: ${token}`);
+}
+
+for (const token of ['ebay-cycle --live', 'publish-headless', 'withdraw-sku', 'sell\\inventory.yaml']) {
+  assert(docs.includes(token), `test cycle docs must describe eBay disposable cycle token: ${token}`);
+}
+
+for (const token of ['qoo10-cycle --live', '10009-SetNewGoods.md', '10013-EditGoodsStatus.md', 'Status=3']) {
+  assert(docs.includes(token), `test cycle docs must describe Qoo10 disposable cycle token: ${token}`);
+}
+
+for (const token of ['shopee-cycle --live', 'v2.global_product.add_global_item.json', 'v2.global_product.create_publish_task.json', 'v2.global_product.get_publish_task_result.json']) {
+  assert(docs.includes(token), `test cycle docs must describe Shopee disposable cycle token: ${token}`);
 }
 
 console.log('v2 platform test cycle static checks passed');

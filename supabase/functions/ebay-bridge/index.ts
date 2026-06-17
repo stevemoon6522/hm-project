@@ -1198,6 +1198,44 @@ async function handlePublish(body: any): Promise<Response> {
   return await withEbayPublishRun("single", body, () => handlePublishSingle(body));
 }
 
+async function handleHeadlessPublishPayload(body: any): Promise<Response> {
+  const dryRun = body?.dry_run !== false && body?.dryRun !== false;
+  const validation = validateHeadlessSinglePayload(body || {});
+
+  if (!validation.ok) {
+    return jsonResp({
+      ok: false,
+      dry_run: dryRun,
+      error: "validation_failed",
+      validation,
+      sku: body?.sku || null,
+      payload: body || {},
+    }, 400);
+  }
+
+  if (dryRun) {
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      sku: body?.sku || null,
+      validation,
+      payload: body || {},
+    });
+  }
+
+  const confirmed = body?.confirm === EBAY_HEADLESS_CONFIRM_PHRASE || body?.confirm_publish === true;
+  if (!confirmed) {
+    return jsonResp({
+      ok: false,
+      error: "confirm_required",
+      message: `Set dry_run=false and confirm="${EBAY_HEADLESS_CONFIRM_PHRASE}" to publish.`,
+      sku: body?.sku || null,
+    }, 400);
+  }
+
+  return await handlePublish(body);
+}
+
 // ---------------------------------------------------------------------------
 // /update-price handler — price-only revision of a single published offer
 // Citation: sell/inventory.yaml bulkUpdatePriceQuantity :484-543
@@ -2519,6 +2557,105 @@ async function handleWithdrawProduct(body: any): Promise<Response> {
   });
 }
 
+async function handleWithdrawSku(body: any): Promise<Response> {
+  const dryRun = body?.dry_run !== false && body?.dryRun !== false;
+  const marketplaceId = s(body?.marketplaceId || body?.marketplace_id || "EBAY_US", "EBAY_US").trim() || "EBAY_US";
+  const sku = s(body?.sku || body?.ebay_sku).trim();
+  const preferredOfferId = s(body?.offerId || body?.offer_id).trim();
+  try { validateSku(sku); } catch (e: any) {
+    return jsonResp({ ok: false, error: e.message }, 400);
+  }
+
+  const offersRes = await ebayFetch(
+    `/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`
+  );
+  if (offersRes.status !== 200 && offersRes.status !== 404) {
+    const passthroughStatus = (offersRes.status === 401 || offersRes.status === 403 || offersRes.status === 429)
+      ? offersRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_offer_lookup_failed",
+      upstream_status: offersRes.status,
+      upstream: formatEbayErrorBody(offersRes.body),
+      sku,
+      marketplace_id: marketplaceId,
+    }, passthroughStatus);
+  }
+
+  const offers = offersRes.status === 200 ? (offersRes.body?.offers || []) : [];
+  const targetOffer = pickPublishedSingleOffer(offers, preferredOfferId);
+  const publishedOfferIds = offers
+    .filter((offer: any) => String(offer?.status || "").toUpperCase() === "PUBLISHED")
+    .map((offer: any) => String(offer?.offerId || ""))
+    .filter(Boolean);
+
+  if (dryRun) {
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      sku,
+      marketplace_id: marketplaceId,
+      target_offer_id: targetOffer?.offerId || null,
+      target_listing_id: targetOffer?.listing?.listingId || targetOffer?.listingId || null,
+      published_offer_ids: publishedOfferIds,
+      can_withdraw: !!targetOffer,
+    });
+  }
+
+  const confirmed = body?.confirm === EBAY_HEADLESS_WITHDRAW_CONFIRM_PHRASE || body?.confirm_withdraw === true;
+  if (!confirmed) {
+    return jsonResp({
+      ok: false,
+      error: "confirm_required",
+      message: `Set dry_run=false and confirm="${EBAY_HEADLESS_WITHDRAW_CONFIRM_PHRASE}" to withdraw.`,
+      sku,
+      marketplace_id: marketplaceId,
+    }, 400);
+  }
+
+  if (!targetOffer) {
+    return jsonResp({
+      ok: false,
+      error: publishedOfferIds.length > 1 ? "ambiguous_published_offers" : "published_offer_not_found",
+      sku,
+      marketplace_id: marketplaceId,
+      published_offer_ids: publishedOfferIds,
+    }, 409);
+  }
+
+  const offerId = String(targetOffer.offerId);
+  const withdrawRes = await ebayFetch(
+    `/sell/inventory/v1/offer/${encodeURIComponent(offerId)}/withdraw`,
+    { method: "POST" }
+  );
+  if (withdrawRes.status !== 200) {
+    const passthroughStatus = (withdrawRes.status === 401 || withdrawRes.status === 403 || withdrawRes.status === 429)
+      ? withdrawRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_withdraw_failed",
+      upstream_status: withdrawRes.status,
+      upstream: formatEbayErrorBody(withdrawRes.body),
+      sku,
+      marketplace_id: marketplaceId,
+      ebay_offer_id: offerId,
+    }, passthroughStatus);
+  }
+
+  return jsonResp({
+    ok: true,
+    dry_run: false,
+    sku,
+    marketplace_id: marketplaceId,
+    ebay_offer_id: offerId,
+    ebay_item_id: targetOffer?.listing?.listingId || targetOffer?.listingId || null,
+    withdrawn: true,
+    persisted: null,
+    platform_listing_reset: null,
+    raw: withdrawRes.body || null,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // /healthz handler
 // ---------------------------------------------------------------------------
@@ -2580,6 +2717,20 @@ async function handleRequest(req: Request): Promise<Response> {
       if (internal) return internal;
       const body = await req.json().catch(() => ({}));
       return await handleRegisterProduct(body);
+    }
+
+    if (action === "publish-headless" && req.method === "POST") {
+      const internal = requireInternalBridge(req);
+      if (internal) return internal;
+      const body = await req.json().catch(() => ({}));
+      return await handleHeadlessPublishPayload(body);
+    }
+
+    if (action === "withdraw-sku" && req.method === "POST") {
+      const internal = requireInternalBridge(req);
+      if (internal) return internal;
+      const body = await req.json().catch(() => ({}));
+      return await handleWithdrawSku(body);
     }
 
     if (action === "withdraw-product" && req.method === "POST") {

@@ -158,6 +158,18 @@ test('single selected platform register uses direct modal while multi-selected s
   }
 });
 
+test('platform delete cleanup stays scoped to selected product IDs', () => {
+  const deleteTargets = extractFunctionBlock(html, 'platformDeleteTargets');
+  const deleteRemote = extractFunctionBlock(html, 'platformDeleteRemoteListing');
+
+  assert.match(deleteTargets, /const productIds = platformGroupProductIds\(group\)/, 'delete targets must be derived from the selected platform group');
+  assert.match(deleteTargets, /platform === 'joom'[\s\S]*product_ids: productIds/, 'Joom delete targets must carry only the selected master product IDs');
+  assert.match(deleteTargets, /platform === 'qoo10'[\s\S]*product_ids: productIds/, 'Qoo10 delete targets must carry only the selected master product IDs');
+  assert.match(deleteTargets, /platform === 'ebay'[\s\S]*product_ids: \[row\.id\]\.filter\(Boolean\)/, 'eBay delete targets must be narrowed per selected row');
+  assert.match(deleteRemote, /let body = \{ dry_run: false, reset_local: true, confirm: confirmPhrase \}/, 'delete execution must request local mapping cleanup with an explicit confirmation phrase');
+  assert.match(deleteRemote, /product_ids: target\.product_ids \|\| \[\]/, 'bridge delete calls must forward the scoped product_ids list');
+});
+
 test('Shopee register modal clears internal focus before aria-hidden close', () => {
   assert.match(
     shopeeRegisterClose,

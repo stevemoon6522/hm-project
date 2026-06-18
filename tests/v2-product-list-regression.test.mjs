@@ -158,6 +158,61 @@ test('single selected platform register uses direct modal while multi-selected s
   }
 });
 
+test('platform SKU mapping button syncs only the selected products for the current platform', async () => {
+  const platformSyncSelectedFactory = new Function(
+    'platformSelectedGroups',
+    'platformVisibleGroups',
+    'syncPlatformSkusForProductIds',
+    'renderPlatformWorkbenches',
+    'showToast',
+    'PLATFORM_LABELS',
+    `${extractFunctionBlock(html, 'platformSyncSelected')}; return platformSyncSelected;`,
+  );
+  const labels = { shopee: 'Shopee', joom: 'Joom', qoo10: 'Qoo10', ebay: 'eBay' };
+
+  for (const platform of Object.keys(labels)) {
+    const calls = { syncs: [], renders: [], toasts: [] };
+    const button = { textContent: `${labels[platform]} SKU mapping`, disabled: false };
+    const syncSelected = platformSyncSelectedFactory(
+      () => [{ rows: [{ id: `${platform}-one` }, { id: `${platform}-two` }] }],
+      () => [],
+      async (ids, platforms) => calls.syncs.push({ ids, platforms }),
+      () => calls.renders.push(platform),
+      (message, kind) => calls.toasts.push({ message, kind }),
+      labels,
+    );
+
+    await syncSelected(platform, button);
+
+    assert.deepEqual(calls.syncs, [{
+      ids: [`${platform}-one`, `${platform}-two`],
+      platforms: [platform],
+    }], `${platform} SKU mapping must stay scoped to the current platform and selected products`);
+    assert.deepEqual(calls.renders, [platform], `${platform} SKU mapping should rerender after sync`);
+    assert.equal(button.disabled, false, `${platform} SKU mapping button should be restored`);
+    assert.equal(button.textContent, `${labels[platform]} SKU mapping`, `${platform} SKU mapping button label should be restored`);
+  }
+
+  {
+    const calls = { syncs: [] };
+    const syncSelected = platformSyncSelectedFactory(
+      () => [],
+      () => [{ rows: [{ id: 'visible-only' }] }],
+      async (ids, platforms) => calls.syncs.push({ ids, platforms }),
+      () => {},
+      () => {},
+      labels,
+    );
+
+    await syncSelected('joom', null);
+
+    assert.deepEqual(calls.syncs, [{
+      ids: ['visible-only'],
+      platforms: ['joom'],
+    }], 'one visible filtered product should be used without widening beyond the current platform');
+  }
+});
+
 test('platform delete cleanup stays scoped to selected product IDs', () => {
   const deleteTargets = extractFunctionBlock(html, 'platformDeleteTargets');
   const deleteRemote = extractFunctionBlock(html, 'platformDeleteRemoteListing');

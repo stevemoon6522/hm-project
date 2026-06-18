@@ -13,6 +13,25 @@ function sliceBetween(source, start, end) {
   return source.slice(startIndex, endIndex);
 }
 
+function extractFunctionBlock(source, functionName) {
+  let start = source.indexOf(`function ${functionName}(`);
+  assert.notEqual(start, -1, `${functionName} must exist`);
+  const asyncStart = start - 'async '.length;
+  if (asyncStart >= 0 && source.slice(asyncStart, start) === 'async ') start = asyncStart;
+  const open = source.indexOf('{', start);
+  assert.ok(open > start, `${functionName} must have a body`);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  assert.fail(`${functionName} body must close`);
+}
+
 const nav = sliceBetween(html, '<div class="nav-tabs">', '</div>');
 const productsView = sliceBetween(html, '<div id="view-products" class="view active">', '</div><!-- /view-products -->');
 const productRender = sliceBetween(html, 'function renderProductOptionRow(p, groupKey, isGroupChild) {', 'function plGroupRowsById(productGroupId) {');
@@ -38,6 +57,7 @@ const shopeePlatformRegions = sliceBetween(html, 'const SHOPEE_PLATFORM_ACTIVE_R
 const platformSelectionFlow = sliceBetween(html, 'function platformGroupsByKeys(keys) {', 'function platformOpenPreview(platform, action, explicitKeys = null) {');
 const platformPreviewExecution = sliceBetween(html, 'function platformCanUseDispatcher(platform, action, group) {', 'async function platformPublishDirect(platform, row, action) {');
 const platformBinding = sliceBetween(html, 'function bindPlatformWorkbench(root, platform) {', 'function platformGroupsByKeys(keys) {');
+const shopeeRegisterClose = sliceBetween(html, 'function rshCloseModal() {', '// Wire up static modal button listeners once at init.');
 
 test('primary marketplace tabs render as a large left-side navigation rail', () => {
   assert.match(html, /\.app-layout[\s\S]*grid-template-columns: 276px minmax\(0, 1fr\)/, 'app shell should reserve a visible left rail for marketplace tabs');
@@ -70,6 +90,80 @@ test('platform tab buttons keep selection and route registration through the pro
   assert.match(html, /if \(platform === 'joom'\) return openRegisterJoomGroupModal\(targetId\)/, 'Joom registration must use the existing Joom modal');
   assert.match(html, /if \(platform === 'qoo10'\) return openRegisterQoo10GroupModal\(targetId\)/, 'Qoo10 registration must use the existing Qoo10 modal');
   assert.match(html, /if \(platform === 'ebay'\) return openRegisterEbayGroupModal\(targetId\)/, 'eBay registration must use the existing eBay modal');
+});
+
+test('single selected platform register uses direct modal while multi-selected stays confirm-first', async () => {
+  const platformOpenActionFactory = new Function(
+    'state',
+    'platformActionGroups',
+    'platformSelectedGroups',
+    'platformVisibleGroups',
+    'platformOpenPreview',
+    'platformOpenExistingModal',
+    'PLATFORM_LABELS',
+    'showToast',
+    'renderPlatformWorkbench',
+    `${extractFunctionBlock(html, 'platformOpenAction')}; return platformOpenAction;`,
+  );
+  const labels = { shopee: 'Shopee', joom: 'Joom', qoo10: 'Qoo10', ebay: 'eBay' };
+
+  for (const platform of Object.keys(labels)) {
+    const state = { platformPreview: { platform, action: 'register', keys: ['stale'] } };
+    const calls = { modals: [], previews: [], toasts: [], renders: [] };
+    const openAction = platformOpenActionFactory(
+      state,
+      () => [{ key: `single:${platform}-one`, rows: [{ id: `${platform}-one` }] }],
+      () => [],
+      () => [],
+      (...args) => calls.previews.push(args),
+      async (targetPlatform, group) => calls.modals.push({ targetPlatform, group }),
+      labels,
+      (message, kind) => calls.toasts.push({ message, kind }),
+      (targetPlatform) => calls.renders.push(targetPlatform),
+    );
+
+    await openAction(platform, 'register');
+
+    assert.equal(state.platformPreview, null, `${platform} single selected register must clear stale preview state`);
+    assert.deepEqual(calls.renders, [platform], `${platform} single selected register must rerender before modal open`);
+    assert.equal(calls.modals.length, 1, `${platform} single selected register must open exactly one modal`);
+    assert.equal(calls.modals[0].targetPlatform, platform, `${platform} single selected register must use the current platform`);
+    assert.equal(calls.previews.length, 0, `${platform} single selected register must not open the bulk preview`);
+    assert.equal(calls.toasts.length, 0, `${platform} single selected register must not show a confirmation toast`);
+  }
+
+  {
+    const state = { platformPreview: null };
+    const calls = { modals: [], previews: [], toasts: [] };
+    const openAction = platformOpenActionFactory(
+      state,
+      () => [
+        { key: 'single:one', rows: [{ id: 'one' }] },
+        { key: 'single:two', rows: [{ id: 'two' }] },
+      ],
+      () => [],
+      () => [],
+      (...args) => calls.previews.push(args),
+      async (targetPlatform, group) => calls.modals.push({ targetPlatform, group }),
+      labels,
+      (message, kind) => calls.toasts.push({ message, kind }),
+      () => {},
+    );
+
+    await openAction('shopee', 'register');
+
+    assert.equal(calls.modals.length, 0, 'multi-selected register must not open multiple modals at once');
+    assert.equal(calls.previews.length, 1, 'multi-selected register must keep the confirm-first preview');
+    assert.equal(calls.toasts.length, 1, 'multi-selected register must explain the confirmation step');
+  }
+});
+
+test('Shopee register modal clears internal focus before aria-hidden close', () => {
+  assert.match(
+    shopeeRegisterClose,
+    /overlay\.contains\(document\.activeElement\)[\s\S]*document\.activeElement\.blur\(\)[\s\S]*overlay\.setAttribute\('aria-hidden', 'true'\)/,
+    'Shopee register modal must blur focused modal controls before hiding the overlay',
+  );
 });
 
 test('standalone products have master edit button and master tab stays platform-neutral', () => {

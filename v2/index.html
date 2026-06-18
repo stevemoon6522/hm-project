@@ -16945,7 +16945,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return;
     }
     const overlay = document.getElementById('register-shopee-modal');
-    if (overlay) { overlay.classList.remove('show'); overlay.setAttribute('aria-hidden', 'true'); }
+    if (overlay) {
+      if (overlay.contains(document.activeElement)) document.activeElement.blur();
+      overlay.classList.remove('show');
+      overlay.setAttribute('aria-hidden', 'true');
+    }
   }
 
   // Wire up static modal button listeners once at init.

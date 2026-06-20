@@ -14,6 +14,7 @@
 //     write_to_source_records?: bool   // default true (writes one row per url
 //                                      // for the operator preview path).
 //     discover?: {                 // optional category discovery mode
+//       keyword?: string,           // optional StarOneMall keyword search
 //       url?: string,               // defaults to StarOneMall ALBUM list
 //       pages?: number,             // default 1, max 5
 //       limit?: number              // default 20, max 100
@@ -583,8 +584,26 @@ function discoveryPageUrl(baseUrl: string, page: number): string {
   return u.href;
 }
 
-async function discoverStaronemallProducts(discover, supabase, actor: string, crawl_run_id: string) {
-  const baseUrl = normalizeUrl(discover?.url || DEFAULT_DISCOVERY_URL, STARONEMALL_BASE);
+function discoveryBaseUrl(discover): string {
+  const keyword = String(discover?.keyword || "").trim();
+  if (keyword) {
+    const u = new URL(`${STARONEMALL_BASE}/shop/search_result.php`);
+    u.searchParams.set("search_str", keyword);
+    u.searchParams.set("withsoldout", "Y");
+    return u.href;
+  }
+  return normalizeUrl(discover?.url || DEFAULT_DISCOVERY_URL, STARONEMALL_BASE);
+}
+
+async function discoverStaronemallProducts(
+  discover,
+  supabase,
+  actor: string,
+  crawl_run_id: string,
+  options = { writeToSourceRecords: true },
+) {
+  const writeToSourceRecords = options?.writeToSourceRecords !== false;
+  const baseUrl = discoveryBaseUrl(discover);
   if (!baseUrl || !/staronemall\.com/i.test(baseUrl)) {
     return { ok: false, error: "invalid_discovery_url", status: 400 };
   }
@@ -614,6 +633,37 @@ async function discoverStaronemallProducts(discover, supabase, actor: string, cr
       continue;
     }
 
+    const raw_payload = {
+      discovery_url: baseUrl,
+      page_url: item.page_url,
+      url: item.url,
+      pno,
+      title: item.title,
+      thumbnail_url: item.thumbnail_url,
+      retail_price_krw: item.retail_price_krw,
+      sold_out: item.sold_out,
+    };
+    const observed_values = {
+      title: item.title,
+      pno,
+      main_image_urls: item.thumbnail_url ? [item.thumbnail_url] : [],
+      retail_price_krw: item.retail_price_krw || 0,
+      discovery_url: baseUrl,
+      discovery_page_url: item.page_url,
+      sold_out: Boolean(item.sold_out),
+    };
+    if (!writeToSourceRecords) {
+      results.push({
+        ...item,
+        pno,
+        observed_values,
+        raw_payload,
+        deduped: false,
+        preview_only: true,
+      });
+      continue;
+    }
+
     const existingProduct = await supabase
       .from("products")
       .select("id, sku, lifecycle_state")
@@ -638,25 +688,6 @@ async function discoverStaronemallProducts(discover, supabase, actor: string, cr
       continue;
     }
 
-    const raw_payload = {
-      discovery_url: baseUrl,
-      page_url: item.page_url,
-      url: item.url,
-      pno,
-      title: item.title,
-      thumbnail_url: item.thumbnail_url,
-      retail_price_krw: item.retail_price_krw,
-      sold_out: item.sold_out,
-    };
-    const observed_values = {
-      title: item.title,
-      pno,
-      main_image_urls: item.thumbnail_url ? [item.thumbnail_url] : [],
-      retail_price_krw: item.retail_price_krw || 0,
-      discovery_url: baseUrl,
-      discovery_page_url: item.page_url,
-      sold_out: Boolean(item.sold_out),
-    };
     const raw_payload_hash = await sha256Hex(JSON.stringify(raw_payload));
     const { data, error } = await supabase
       .from("source_records")
@@ -842,6 +873,7 @@ Deno.serve(async (req) => {
       supabase,
       isCron ? userEmail : `user:${userEmail}`,
       crawl_run_id,
+      { writeToSourceRecords },
     );
     if (!discovery.ok) return jsonResp(discovery.status || 500, discovery);
     audit("discovery_done", { crawl_run_id, summary: discovery.summary });

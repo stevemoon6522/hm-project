@@ -1554,6 +1554,98 @@
     }
 
     /* ── Probe view (plan §5-6, §3-3) ── */
+    .b2b-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+    .b2b-title { font-size: 20px; margin: 0 0 4px; color: #111827; }
+    .b2b-subtitle { color: #475467; font-size: 12px; }
+    .b2b-toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+    .b2b-toolbar input[type="search"] { min-width: 220px; max-width: 360px; }
+    .b2b-status { font-size: 12px; color: var(--muted); }
+    .b2b-table-wrap { overflow-x: auto; margin-bottom: 14px; }
+    .b2b-table { table-layout: auto; min-width: 1120px; }
+    .b2b-table th, .b2b-table td {
+      padding: 7px 8px;
+      border-bottom: 1px solid #ead8e8;
+      vertical-align: middle;
+      font-size: 12px;
+    }
+    .b2b-table th { background: #f8ecff; color: #3c1d57; font-size: 11px; white-space: nowrap; }
+    .b2b-thumb {
+      width: 48px;
+      height: 48px;
+      object-fit: cover;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: #f7f8fa;
+      display: block;
+    }
+    .b2b-input, .b2b-select {
+      width: 100%;
+      min-width: 110px;
+      padding: 5px 7px;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #fff;
+    }
+    .b2b-input.price { min-width: 92px; text-align: right; }
+    .b2b-chip {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      border: 1px solid #d0d5dd;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      white-space: nowrap;
+      background: #fff;
+    }
+    .b2b-chip.linked, .b2b-chip.found { color: #15803d; border-color: #bbf7d0; background: #f0fdf4; }
+    .b2b-chip.missing { color: #9f1239; border-color: #fecdd3; background: #fff1f2; }
+    .b2b-chip.review { color: #92400e; border-color: #fde68a; background: #fffbeb; }
+    .b2b-modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 90;
+      background: rgba(15,23,42,.48);
+      align-items: flex-start;
+      justify-content: center;
+      padding: 28px 16px;
+      overflow: auto;
+    }
+    .b2b-modal-overlay.show { display: flex; }
+    .b2b-modal {
+      width: min(980px, 100%);
+      background: #fff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 24px 70px rgba(15,23,42,.22);
+      overflow: hidden;
+    }
+    .b2b-modal-header, .b2b-modal-footer {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+    .b2b-modal-footer { border-top: 1px solid var(--border); border-bottom: none; justify-content: flex-end; }
+    .b2b-modal-body { padding: 16px; max-height: 70vh; overflow-y: auto; }
+
     #view-probe .panel { margin-bottom: 14px; }
 
     /* ── History view status badges (plan §5-5) ── */
@@ -1939,6 +2031,10 @@
       <button class="nav-tab" onclick="showView('view-daily-close')">
         <span class="nav-label">Daily Close</span>
         <span class="nav-meta">?쇱씪 留덇컧</span>
+      </button>
+      <button class="nav-tab" onclick="showView('view-b2b-catalog')">
+        <span class="nav-label">B2B Catalog</span>
+        <span class="nav-meta">StarOneMall source</span>
       </button>
       <button class="nav-tab" onclick="showView('view-fee-settings')">
         <span class="nav-label">수수료 설정</span>
@@ -3612,6 +3708,74 @@
       </div>
     </div><!-- /view-ingest -->
 
+    <div id="view-b2b-catalog" class="view">
+      <div class="b2b-head">
+        <div>
+          <h2 class="b2b-title">B2B Catalog</h2>
+          <div class="b2b-subtitle">DB source-of-truth, fixed Google Sheet mirror. StarOneMall URL/pno stay internal.</div>
+        </div>
+        <button type="button" id="b2b-sync-sheet" class="primary">Sync to Google Sheet</button>
+      </div>
+
+      <div class="panel" style="padding:14px;margin-bottom:14px;">
+        <div class="b2b-toolbar">
+          <input type="search" id="b2b-artist-keyword" placeholder="Artist keyword, e.g. CORTIS">
+          <button type="button" id="b2b-crawl-staronemall" class="primary">Crawl StarOneMall</button>
+          <button type="button" id="b2b-save-selected">Save selected</button>
+          <button type="button" id="b2b-refresh-catalog">Refresh catalog</button>
+          <span id="b2b-status" class="b2b-status"></span>
+        </div>
+        <div class="b2b-table-wrap">
+          <table class="b2b-table" id="b2b-preview-table">
+            <thead>
+              <tr>
+                <th style="width:42px;">Use</th>
+                <th style="width:64px;">Image</th>
+                <th style="min-width:260px;">Title</th>
+                <th style="min-width:120px;">Artist</th>
+                <th style="min-width:170px;">Release Title</th>
+                <th style="min-width:130px;">Edition</th>
+                <th style="width:120px;">Category</th>
+                <th style="width:140px;">Availability</th>
+                <th style="width:120px;">Retail Price</th>
+              </tr>
+            </thead>
+            <tbody id="b2b-preview-body">
+              <tr><td colspan="9" class="cat-empty">Crawl an artist keyword to preview rows.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel" style="padding:14px;">
+        <div class="b2b-toolbar" style="justify-content:space-between;">
+          <strong>Stored catalog</strong>
+          <span id="b2b-catalog-summary" class="b2b-status"></span>
+        </div>
+        <div class="b2b-table-wrap">
+          <table class="b2b-table" id="b2b-catalog-table">
+            <thead>
+              <tr>
+                <th style="width:64px;">Image</th>
+                <th>Artist</th>
+                <th>Release Title</th>
+                <th>Edition</th>
+                <th>Category</th>
+                <th>Availability</th>
+                <th>Retail Price</th>
+                <th>Master</th>
+                <th>WMS</th>
+                <th>Supply Note</th>
+              </tr>
+            </thead>
+            <tbody id="b2b-catalog-body">
+              <tr><td colspan="10" class="cat-empty">Catalog not loaded.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- /view-b2b-catalog -->
+
     <!-- ═══════════════════════════════════════════════
          VIEW: 수수료 / 환율 설정
          country_settings 테이블의 각 국가 행을 직접 편집한다.
@@ -3759,6 +3923,23 @@
     <div class="modal-footer">
       <button type="button" id="pl-master-edit-cancel">취소</button>
       <button type="button" id="pl-master-edit-save" class="primary">저장</button>
+    </div>
+  </div>
+</div>
+
+<div class="b2b-modal-overlay" id="b2b-conflict-modal" aria-hidden="true">
+  <div class="b2b-modal" role="dialog" aria-modal="true" aria-labelledby="b2b-conflict-title">
+    <div class="b2b-modal-header">
+      <div>
+        <h2 id="b2b-conflict-title" style="font-size:16px;margin:0;">Existing StarOneMall pno</h2>
+        <div class="b2b-subtitle">Review existing vs new values before overwriting.</div>
+      </div>
+      <button type="button" id="b2b-conflict-close">Close</button>
+    </div>
+    <div class="b2b-modal-body" id="b2b-conflict-body"></div>
+    <div class="b2b-modal-footer">
+      <button type="button" id="b2b-conflict-cancel">Cancel</button>
+      <button type="button" id="b2b-conflict-confirm" class="primary">Overwrite checked</button>
     </div>
   </div>
 </div>
@@ -20890,10 +21071,531 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   // ── Boot ────────────────────────────────────────────────────────
 
+  const B2B_CATEGORIES = ['Album', 'Photocard', 'MD'];
+  const B2B_AVAILABILITY = ['Available', 'Restock Watch', 'Inquiry Only'];
+  const b2bCatalogState = {
+    loaded: false,
+    loading: false,
+    previewRows: [],
+    catalogRows: [],
+    conflicts: [],
+    masterPnos: new Set(),
+    wmsRows: [],
+  };
+
+  function b2bEl(id) { return document.getElementById(id); }
+
+  function b2bSetStatus(message, isError = false) {
+    const el = b2bEl('b2b-status');
+    if (!el) return;
+    el.textContent = message || '';
+    el.style.color = isError ? 'var(--red)' : 'var(--muted)';
+  }
+
+  function b2bKrw(value) {
+    const n = Number(value || 0);
+    return Number.isFinite(n) && n > 0 ? n.toLocaleString() + ' KRW' : '';
+  }
+
+  function b2bNormalize(value) {
+    return String(value || '')
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9]+/g, '')
+      .toLowerCase();
+  }
+
+  function b2bPnoFromUrl(url) {
+    try { return new URL(String(url || '')).searchParams.get('pno') || ''; }
+    catch (_) { return ''; }
+  }
+
+  function b2bCleanEdition(value) {
+    const raw = String(value || '');
+    return raw
+      .replace(/\bver\.?\b/ig, '')
+      .replace(/\balbums?\b/ig, function(m) { return /weverse/i.test(raw) ? m : ''; })
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function b2bInferCategory(title) {
+    const t = String(title || '').toLowerCase();
+    if (/photo\s*card|photocard|poca|trading card|card holder/.test(t)) return 'Photocard';
+    if (/light\s*stick|keyring|key ring|md|merch|doll|plush|binder|poster|pick|acrylic|badge/.test(t)) return 'MD';
+    return 'Album';
+  }
+
+  function b2bParseTitle(title, keyword) {
+    const artistKeyword = String(keyword || '').trim();
+    let clean = String(title || '').replace(/^\[[^\]]+\]\s*/, '').replace(/\s+/g, ' ').trim();
+    let artist = artistKeyword;
+    let rest = clean;
+    const dash = clean.match(/^(.{2,40}?)\s*[-–]\s*(.+)$/);
+    if (dash) {
+      const maybeArtist = dash[1].replace(/^\[[^\]]+\]\s*/, '').trim();
+      if (maybeArtist && maybeArtist.length <= 40) artist = artist || maybeArtist;
+      rest = dash[2].trim();
+    } else if (artistKeyword) {
+      rest = clean.replace(new RegExp('^' + artistKeyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[-:–]?\\s*', 'i'), '').trim();
+    }
+    const parens = Array.from(rest.matchAll(/\(([^)]+)\)/g)).map((m) => m[1].trim()).filter(Boolean);
+    const edition = b2bCleanEdition(parens[parens.length - 1] || '') || 'Standard';
+    const bracket = rest.match(/\[([^\]]+)\]/);
+    let releaseTitle = bracket ? bracket[1].trim() : rest.replace(/\([^)]*\)/g, '').replace(/\[[^\]]*\]/g, '').trim();
+    releaseTitle = releaseTitle.replace(/\s+[-–]\s*$/, '').replace(/\s+/g, ' ').trim() || clean;
+    return { artist: artist || '', release_title: releaseTitle, edition };
+  }
+
+  function b2bCandidateToRow(candidate, keyword) {
+    const observed = candidate?.observed_values || {};
+    const raw = candidate?.raw_payload || {};
+    const title = String(observed.title || candidate?.title || raw.title || '').trim();
+    const parsed = b2bParseTitle(title, keyword);
+    const image = (Array.isArray(observed.main_image_urls) && observed.main_image_urls[0])
+      || candidate?.thumbnail_url
+      || raw.thumbnail_url
+      || '';
+    const retail = Number(observed.retail_price_krw || candidate?.retail_price_krw || raw.retail_price_krw || 0);
+    const soldOut = Boolean(observed.sold_out || candidate?.sold_out || raw.sold_out);
+    const url = String(candidate?.url || raw.url || '').trim();
+    return {
+      tempId: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(),
+      selected: true,
+      raw_title: title,
+      artist: parsed.artist || String(keyword || '').trim(),
+      release_title: parsed.release_title,
+      edition: parsed.edition,
+      category: b2bInferCategory(title),
+      availability_status: soldOut ? 'Restock Watch' : 'Available',
+      retail_price_krw: Number.isFinite(retail) && retail > 0 ? retail : 0,
+      supply_note: '',
+      main_image_url: image,
+      staronemall_url: url,
+      staronemall_pno: String(observed.pno || candidate?.pno || raw.pno || b2bPnoFromUrl(url)).trim(),
+      source_option_key: '',
+      raw_payload: raw && Object.keys(raw).length ? raw : candidate,
+    };
+  }
+
+  function b2bOptions(values, selected) {
+    return values.map(function(value) {
+      return '<option value="' + esc(value) + '"' + (value === selected ? ' selected' : '') + '>' + esc(value) + '</option>';
+    }).join('');
+  }
+
+  function b2bRenderPreview() {
+    const body = b2bEl('b2b-preview-body');
+    if (!body) return;
+    if (!b2bCatalogState.previewRows.length) {
+      body.innerHTML = '<tr><td colspan="9" class="cat-empty">Crawl an artist keyword to preview rows.</td></tr>';
+      return;
+    }
+    body.innerHTML = b2bCatalogState.previewRows.map(function(row) {
+      return '<tr data-b2b-preview-row="' + esc(row.tempId) + '">'
+        + '<td><input type="checkbox" class="b2b-preview-select" data-id="' + esc(row.tempId) + '"' + (row.selected ? ' checked' : '') + '></td>'
+        + '<td>' + (row.main_image_url ? '<img class="b2b-thumb" src="' + esc(row.main_image_url) + '" alt="">' : '') + '</td>'
+        + '<td>' + esc(row.raw_title || '') + '<div class="b2b-status">pno ' + esc(row.staronemall_pno || '-') + '</div></td>'
+        + '<td><input class="b2b-input" data-id="' + esc(row.tempId) + '" data-field="artist" value="' + esc(row.artist) + '"></td>'
+        + '<td><input class="b2b-input" data-id="' + esc(row.tempId) + '" data-field="release_title" value="' + esc(row.release_title) + '"></td>'
+        + '<td><input class="b2b-input" data-id="' + esc(row.tempId) + '" data-field="edition" value="' + esc(row.edition) + '"></td>'
+        + '<td><select class="b2b-select" data-id="' + esc(row.tempId) + '" data-field="category">' + b2bOptions(B2B_CATEGORIES, row.category) + '</select></td>'
+        + '<td><select class="b2b-select" data-id="' + esc(row.tempId) + '" data-field="availability_status">' + b2bOptions(B2B_AVAILABILITY, row.availability_status) + '</select></td>'
+        + '<td><input class="b2b-input price" data-id="' + esc(row.tempId) + '" data-field="retail_price_krw" type="number" min="0" step="1" value="' + esc(String(row.retail_price_krw || 0)) + '"></td>'
+        + '</tr>';
+    }).join('');
+    body.querySelectorAll('[data-field]').forEach(function(input) {
+      input.addEventListener('input', b2bHandlePreviewEdit);
+      input.addEventListener('change', b2bHandlePreviewEdit);
+    });
+    body.querySelectorAll('.b2b-preview-select').forEach(function(cb) {
+      cb.addEventListener('change', function() {
+        const row = b2bCatalogState.previewRows.find(function(r) { return r.tempId === cb.dataset.id; });
+        if (row) row.selected = cb.checked;
+      });
+    });
+  }
+
+  function b2bHandlePreviewEdit(e) {
+    const input = e.currentTarget;
+    const row = b2bCatalogState.previewRows.find(function(r) { return r.tempId === input.dataset.id; });
+    if (!row) return;
+    const field = input.dataset.field;
+    row[field] = field === 'retail_price_krw' ? Math.max(0, Math.round(Number(input.value || 0))) : input.value;
+  }
+
+  async function b2bCrawlStaronemall() {
+    const keyword = String(b2bEl('b2b-artist-keyword')?.value || '').trim();
+    if (!keyword) {
+      b2bSetStatus('Artist keyword is required.', true);
+      return;
+    }
+    const session = (await db.auth.getSession()).data.session;
+    if (!session) {
+      b2bSetStatus('Login session expired. Please sign in again.', true);
+      return;
+    }
+    const btn = b2bEl('b2b-crawl-staronemall');
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Crawling...'; }
+    b2bSetStatus('Crawling StarOneMall keyword "' + keyword + '"...');
+    try {
+      const resp = await fetch(STARONE_CRAWL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token, apikey: SUPABASE_ANON },
+        body: JSON.stringify({ discover: { keyword: keyword, pages: 3, limit: 100 }, write_to_source_records: false }),
+      });
+      const text = await resp.text();
+      let body;
+      try { body = JSON.parse(text); } catch (_) { body = { ok: false, error: text }; }
+      if (!resp.ok || body?.ok === false) throw new Error(body?.error || body?.message || 'StarOneMall crawl failed');
+      const rows = (Array.isArray(body.results) ? body.results : [])
+        .filter(function(item) { return item && item.ok !== false && (item.pno || item.url || item.observed_values?.pno); })
+        .map(function(item) { return b2bCandidateToRow(item, keyword); })
+        .filter(function(row) { return row.staronemall_pno && row.raw_title; });
+      b2bCatalogState.previewRows = rows;
+      b2bRenderPreview();
+      b2bSetStatus('Preview ready: ' + rows.length + ' rows.');
+    } catch (e) {
+      b2bSetStatus('Crawl failed: ' + (e.message || e), true);
+      showToast('B2B catalog crawl failed: ' + (e.message || e), 'err');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = old; }
+    }
+  }
+
+  function b2bPayload(row) {
+    return {
+      artist: String(row.artist || '').trim(),
+      release_title: String(row.release_title || '').trim(),
+      edition: String(row.edition || '').trim() || 'Standard',
+      category: B2B_CATEGORIES.includes(row.category) ? row.category : 'Album',
+      availability_status: B2B_AVAILABILITY.includes(row.availability_status) ? row.availability_status : 'Available',
+      retail_price_krw: Math.max(0, Math.round(Number(row.retail_price_krw || 0))),
+      supply_note: String(row.supply_note || '').trim(),
+      main_image_url: String(row.main_image_url || '').trim() || null,
+      staronemall_url: String(row.staronemall_url || '').trim(),
+      staronemall_pno: String(row.staronemall_pno || '').trim(),
+      source_option_key: String(row.source_option_key || ''),
+      raw_title: String(row.raw_title || '').trim(),
+      raw_payload: row.raw_payload || {},
+      last_crawled_at: new Date().toISOString(),
+    };
+  }
+
+  function b2bValidatePayload(payload) {
+    const missing = [];
+    ['artist', 'release_title', 'edition', 'category', 'availability_status', 'staronemall_url', 'staronemall_pno'].forEach(function(field) {
+      if (!String(payload[field] || '').trim()) missing.push(field);
+    });
+    return missing;
+  }
+
+  async function b2bSaveSelectedRows() {
+    const selected = b2bCatalogState.previewRows.filter(function(row) { return row.selected; });
+    if (!selected.length) {
+      b2bSetStatus('No selected preview rows.', true);
+      return;
+    }
+    const payloads = selected.map(b2bPayload);
+    const invalid = payloads.map(function(payload, idx) { return { payload, idx, missing: b2bValidatePayload(payload) }; }).filter(function(x) { return x.missing.length; });
+    if (invalid.length) {
+      b2bSetStatus('Required fields missing: row ' + (invalid[0].idx + 1) + ' ' + invalid[0].missing.join(', '), true);
+      return;
+    }
+    const pnos = Array.from(new Set(payloads.map(function(p) { return p.staronemall_pno; })));
+    b2bSetStatus('Checking existing pno rows...');
+    const { data: existing, error: existingError } = await db
+      .from('catalog_items')
+      .select('*')
+      .in('staronemall_pno', pnos);
+    if (existingError) {
+      b2bSetStatus('Existing check failed: ' + existingError.message, true);
+      return;
+    }
+    const existingByPno = new Map((existing || []).map(function(row) { return [String(row.staronemall_pno || ''), row]; }));
+    const newRows = payloads.filter(function(payload) { return !existingByPno.has(payload.staronemall_pno); });
+    const conflictRows = payloads.filter(function(payload) { return existingByPno.has(payload.staronemall_pno); });
+    let inserted = 0;
+    if (newRows.length) {
+      const { error } = await db.from('catalog_items').insert(newRows);
+      if (error) {
+        b2bSetStatus('Insert failed: ' + error.message, true);
+        return;
+      }
+      inserted = newRows.length;
+    }
+    if (conflictRows.length) {
+      b2bCatalogState.conflicts = conflictRows.map(function(payload) {
+        return { existing: existingByPno.get(payload.staronemall_pno), incoming: payload, selected: false };
+      });
+      b2bRenderConflictModal();
+      b2bOpenConflictModal();
+      b2bSetStatus('Saved new rows: ' + inserted + '. Review conflicts: ' + conflictRows.length + '.');
+    } else {
+      b2bSetStatus('Saved new rows: ' + inserted + '.');
+      showToast('B2B catalog saved: ' + inserted + ' rows', 'ok');
+      b2bCatalogState.previewRows = [];
+      b2bRenderPreview();
+      await renderB2bCatalogView(true);
+    }
+  }
+
+  function b2bConflictDiffHtml(conflict, idx) {
+    const fields = [
+      ['artist', 'Artist'],
+      ['release_title', 'Release Title'],
+      ['edition', 'Edition'],
+      ['category', 'Category'],
+      ['availability_status', 'Availability'],
+      ['retail_price_krw', 'Retail Price'],
+      ['main_image_url', 'Main Image'],
+      ['supply_note', 'Supply Note'],
+    ];
+    const rows = fields.map(function(pair) {
+      const field = pair[0];
+      const label = pair[1];
+      const before = conflict.existing?.[field] ?? '';
+      const after = conflict.incoming?.[field] ?? '';
+      const changed = String(before ?? '') !== String(after ?? '');
+      return '<tr' + (changed ? ' class="cat-row-warn"' : '') + '>'
+        + '<td>' + esc(label) + '</td>'
+        + '<td>' + esc(field === 'retail_price_krw' ? b2bKrw(before) : before) + '</td>'
+        + '<td>' + esc(field === 'retail_price_krw' ? b2bKrw(after) : after) + '</td>'
+        + '</tr>';
+    }).join('');
+    return '<section class="panel" style="padding:12px;margin-bottom:12px;">'
+      + '<label style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'
+      + '<input type="checkbox" data-b2b-conflict="' + idx + '"> '
+      + '<strong>Overwrite pno ' + esc(conflict.incoming.staronemall_pno) + '</strong>'
+      + '</label>'
+      + '<div class="b2b-status" style="margin-bottom:8px;">Internal URL: ' + esc(conflict.incoming.staronemall_url) + '</div>'
+      + '<div class="b2b-table-wrap"><table class="b2b-table" style="min-width:720px;"><thead><tr><th>Field</th><th>Existing</th><th>New</th></tr></thead><tbody>'
+      + rows
+      + '</tbody></table></div></section>';
+  }
+
+  function b2bRenderConflictModal() {
+    const body = b2bEl('b2b-conflict-body');
+    if (!body) return;
+    if (!b2bCatalogState.conflicts.length) {
+      body.innerHTML = '<div class="cat-empty">No conflicts.</div>';
+      return;
+    }
+    body.innerHTML = b2bCatalogState.conflicts.map(b2bConflictDiffHtml).join('');
+    body.querySelectorAll('[data-b2b-conflict]').forEach(function(cb) {
+      cb.addEventListener('change', function() {
+        const idx = Number(cb.dataset.b2bConflict);
+        if (b2bCatalogState.conflicts[idx]) b2bCatalogState.conflicts[idx].selected = cb.checked;
+      });
+    });
+  }
+
+  function b2bOpenConflictModal() {
+    const modal = b2bEl('b2b-conflict-modal');
+    if (modal) modal.classList.add('show');
+  }
+
+  function b2bCloseConflictModal() {
+    const modal = b2bEl('b2b-conflict-modal');
+    if (modal) modal.classList.remove('show');
+  }
+
+  async function b2bConfirmConflictOverwrite() {
+    const selected = b2bCatalogState.conflicts.filter(function(c) { return c.selected; });
+    if (!selected.length) {
+      b2bSetStatus('No conflict rows selected for overwrite.', true);
+      return;
+    }
+    let updated = 0;
+    for (const conflict of selected) {
+      const { error } = await db
+        .from('catalog_items')
+        .update(conflict.incoming)
+        .eq('id', conflict.existing.id);
+      if (error) {
+        b2bSetStatus('Overwrite failed for pno ' + conflict.incoming.staronemall_pno + ': ' + error.message, true);
+        return;
+      }
+      updated++;
+    }
+    b2bCloseConflictModal();
+    b2bCatalogState.conflicts = [];
+    b2bCatalogState.previewRows = [];
+    b2bRenderPreview();
+    await renderB2bCatalogView(true);
+    b2bSetStatus('Overwrite complete: ' + updated + ' rows.');
+    showToast('B2B conflict overwrite complete: ' + updated + ' rows', 'ok');
+  }
+
+  async function b2bFetchProductsPnos() {
+    const { data, error } = await db
+      .from('products')
+      .select('id,staronemall_url')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    return new Set((data || []).map(function(row) { return b2bPnoFromUrl(row.staronemall_url); }).filter(Boolean));
+  }
+
+  async function b2bFetchWmsInventory(artists) {
+    const out = [];
+    for (const artist of artists) {
+      const token = String(artist || '').trim().replace(/[%*(),]/g, ' ');
+      if (token.length < 2) continue;
+      const params = new URLSearchParams();
+      params.set('select', 'id,sku,idol,album,version,member');
+      params.set('idol', 'ilike.*' + token + '*');
+      params.set('limit', '1000');
+      const resp = await fetch(WMS_SUPABASE_URL + '/rest/v1/inventory?' + params.toString(), {
+        headers: { apikey: WMS_SUPABASE_ANON, Authorization: 'Bearer ' + WMS_SUPABASE_ANON },
+      });
+      if (!resp.ok) continue;
+      const rows = await resp.json().catch(function() { return []; });
+      if (Array.isArray(rows)) out.push.apply(out, rows);
+    }
+    return out;
+  }
+
+  function b2bMasterStatus(row) {
+    return b2bCatalogState.masterPnos.has(String(row.staronemall_pno || '').trim()) ? 'Linked' : 'Missing';
+  }
+
+  function b2bWmsStatus(row) {
+    const artist = b2bNormalize(row.artist);
+    const release = b2bNormalize(row.release_title);
+    const edition = b2bNormalize(row.edition);
+    const hits = (b2bCatalogState.wmsRows || []).filter(function(wms) {
+      const idol = b2bNormalize(wms.idol);
+      const album = b2bNormalize(wms.album);
+      if (artist && idol && !idol.includes(artist) && !artist.includes(idol)) return false;
+      if (release && album && !album.includes(release) && !release.includes(album)) return false;
+      return true;
+    });
+    if (!hits.length) return 'Missing';
+    if (!edition || edition === 'standard') return 'Found';
+    return hits.some(function(wms) {
+      const version = b2bNormalize(wms.version);
+      const member = b2bNormalize(wms.member);
+      return (version && (version.includes(edition) || edition.includes(version)))
+        || (member && (member.includes(edition) || edition.includes(member)));
+    }) ? 'Found' : 'Review';
+  }
+
+  function b2bChip(value) {
+    const cls = String(value || '').toLowerCase().replace(/\s+/g, '-');
+    return '<span class="b2b-chip ' + esc(cls) + '">' + esc(value || '-') + '</span>';
+  }
+
+  function b2bRenderCatalogRows() {
+    const body = b2bEl('b2b-catalog-body');
+    const summary = b2bEl('b2b-catalog-summary');
+    if (!body) return;
+    const rows = b2bCatalogState.catalogRows || [];
+    if (summary) {
+      const masterMissing = rows.filter(function(row) { return b2bMasterStatus(row) === 'Missing'; }).length;
+      const wmsMissing = rows.filter(function(row) { return b2bWmsStatus(row) === 'Missing'; }).length;
+      summary.textContent = rows.length + ' rows | Master missing ' + masterMissing + ' | WMS missing ' + wmsMissing;
+    }
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="10" class="cat-empty">No stored catalog rows.</td></tr>';
+      return;
+    }
+    body.innerHTML = rows.map(function(row) {
+      const master = b2bMasterStatus(row);
+      const wms = b2bWmsStatus(row);
+      return '<tr>'
+        + '<td>' + (row.main_image_url ? '<img class="b2b-thumb" src="' + esc(row.main_image_url) + '" alt="">' : '') + '</td>'
+        + '<td>' + esc(row.artist || '') + '</td>'
+        + '<td>' + esc(row.release_title || '') + '</td>'
+        + '<td>' + esc(row.edition || '') + '</td>'
+        + '<td>' + esc(row.category || '') + '</td>'
+        + '<td>' + esc(row.availability_status || '') + '</td>'
+        + '<td class="mono">' + esc(b2bKrw(row.retail_price_krw)) + '</td>'
+        + '<td>' + b2bChip(master) + '</td>'
+        + '<td>' + b2bChip(wms) + '</td>'
+        + '<td>' + esc(row.supply_note || '') + '</td>'
+        + '</tr>';
+    }).join('');
+  }
+
+  async function renderB2bCatalogView(forceRefresh) {
+    if (b2bCatalogState.loading) return;
+    if (b2bCatalogState.loaded && !forceRefresh) {
+      b2bRenderCatalogRows();
+      return;
+    }
+    b2bCatalogState.loading = true;
+    b2bSetStatus('Loading stored catalog...');
+    try {
+      const { data, error } = await db
+        .from('catalog_items')
+        .select('*')
+        .order('artist', { ascending: true })
+        .order('release_title', { ascending: true })
+        .order('edition', { ascending: true });
+      if (error) throw error;
+      b2bCatalogState.catalogRows = data || [];
+      b2bCatalogState.masterPnos = await b2bFetchProductsPnos();
+      const artists = Array.from(new Set(b2bCatalogState.catalogRows.map(function(row) { return row.artist; }).filter(Boolean)));
+      b2bCatalogState.wmsRows = await b2bFetchWmsInventory(artists);
+      b2bCatalogState.loaded = true;
+      b2bRenderCatalogRows();
+      b2bSetStatus('Catalog loaded: ' + b2bCatalogState.catalogRows.length + ' rows.');
+    } catch (e) {
+      b2bSetStatus('Catalog load failed: ' + (e.message || e), true);
+      const body = b2bEl('b2b-catalog-body');
+      if (body) body.innerHTML = '<tr><td colspan="10" class="cat-empty">Catalog load failed: ' + esc(e.message || e) + '</td></tr>';
+    } finally {
+      b2bCatalogState.loading = false;
+    }
+  }
+
+  async function b2bSyncGoogleSheet() {
+    const session = (await db.auth.getSession()).data.session;
+    if (!session) {
+      b2bSetStatus('Login session expired. Please sign in again.', true);
+      return;
+    }
+    const btn = b2bEl('b2b-sync-sheet');
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Syncing...'; }
+    b2bSetStatus('Syncing fixed Google Sheet...');
+    try {
+      const resp = await fetch('/api/b2b-catalog-sheet-sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token },
+        body: JSON.stringify({ source: 'v2-b2b-catalog' }),
+      });
+      const body = await resp.json().catch(function() { return null; });
+      if (!resp.ok || !body?.ok) throw new Error(body?.error || 'Sheet sync failed');
+      b2bSetStatus('Google Sheet synced: ' + body.rows + ' rows.');
+      showToast('B2B Google Sheet synced: ' + body.rows + ' rows', 'ok');
+    } catch (e) {
+      b2bSetStatus('Google Sheet sync failed: ' + (e.message || e), true);
+      showToast('B2B Google Sheet sync failed: ' + (e.message || e), 'err');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = old; }
+    }
+  }
+
+  function initB2bCatalogListeners() {
+    b2bEl('b2b-crawl-staronemall')?.addEventListener('click', b2bCrawlStaronemall);
+    b2bEl('b2b-save-selected')?.addEventListener('click', b2bSaveSelectedRows);
+    b2bEl('b2b-refresh-catalog')?.addEventListener('click', function() { renderB2bCatalogView(true); });
+    b2bEl('b2b-sync-sheet')?.addEventListener('click', b2bSyncGoogleSheet);
+    b2bEl('b2b-conflict-close')?.addEventListener('click', b2bCloseConflictModal);
+    b2bEl('b2b-conflict-cancel')?.addEventListener('click', b2bCloseConflictModal);
+    b2bEl('b2b-conflict-confirm')?.addEventListener('click', b2bConfirmConflictOverwrite);
+    b2bEl('b2b-conflict-modal')?.addEventListener('click', function(e) {
+      if (e.target === b2bEl('b2b-conflict-modal')) b2bCloseConflictModal();
+    });
+  }
+
   initCatRegionFilters();
   initCatPlatformTabs();
   catSyncPlatformActions();
   initCatalogListeners();
+  initB2bCatalogListeners();
   initDailyCloseListeners();
   initPoRegionFilters();
   initPoListeners();
@@ -20907,6 +21609,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (viewId === 'view-price-sync') renderCatalogView(false);
       if (viewId === 'view-coverage') renderCoverageView(false);
       if (viewId === 'view-daily-close') renderDailyClose(false);
+      if (viewId === 'view-b2b-catalog') renderB2bCatalogView(false);
       if (viewId === 'view-probe')   renderProbeView();
       if (viewId === 'view-history') renderHistoryView(false);
       if (viewId === 'view-ingest')  renderIngestView(false);

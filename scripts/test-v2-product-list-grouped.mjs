@@ -118,6 +118,7 @@ assert(
   productList.includes("optionDisplay || '옵션'")
     && productList.includes("'<span class=\"pl-cell-label\">Variation</span>'")
     && productList.includes("SP Barcode")
+    && productList.includes("const spBarcode = typeLabel === 'SET' ? ''")
     && productList.includes("plDisplayCostCell(p, groupRowsForDisplay)")
     && productList.includes("plDisplayWeightCell(p, groupRowsForDisplay)"),
   'grouped child option rows must display variation-only operational fields with auto cost/weight helpers',

@@ -1433,6 +1433,8 @@ async function handlePublishVariationCore(body: any): Promise<Response> {
   if (!Array.isArray(variations) || variations.length < 2) throw new Error("variations 는 최소 2개 필요합니다");
   if (variations.length > 25) throw new Error("variations 는 한 번에 최대 25개까지 지원합니다");
 
+  // Local doc: C:\dev\api-refs\marketplaces\ebay\sell\inventory.yaml lines 8808-8814.
+  // eBay keeps a variation in the group and grays it out when sellers set that variation's quantity to 0.
   const normalizedVariations = variations.map((v: any, idx: number) => {
     const sku = String(v?.sku || "").trim();
     const variationValue = String(v?.variationValue || v?.optionName || "").trim().slice(0, 50);
@@ -1443,7 +1445,7 @@ async function handlePublishVariationCore(body: any): Promise<Response> {
     const weightG = Number(v?.weightG || 0);
     const optionImages = normalizeImageUrls(v?.imageUrls, 12);
     if (priceUsd <= 0) throw new Error(`variation ${idx + 1}: priceUsd > 0 필요`);
-    if (quantity <= 0) throw new Error(`variation ${idx + 1}: quantity > 0 필요`);
+    if (!Number.isFinite(quantity) || quantity < 0) throw new Error(`variation ${idx + 1}: quantity >= 0 필요`);
     if (weightG <= 0) throw new Error(`variation ${idx + 1}: weightG > 0 필요`);
     if (!optionImages.length) throw new Error(`variation ${idx + 1}: option image is required`);
     return { sku, variationValue, priceUsd, quantity, weightG, imageUrls: optionImages };

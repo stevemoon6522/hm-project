@@ -1658,7 +1658,7 @@ function buildGlobalModels(variation: any, fallbackPrice: number, fallbackStock:
   const normalized = normalizeVariation(variation);
   if (!normalized) return [];
   return normalized.model.map((m: any) => {
-    const stock = Number(m?.stock ?? fallbackStock ?? 0);
+    const stock = Number(m?.seller_stock?.[0]?.stock ?? m?.stock ?? fallbackStock ?? 0);
     const model: any = {
       tier_index: Array.isArray(m?.tier_index) ? m.tier_index.map((x: any) => Number(x)) : [],
       global_model_sku: String(m?.global_model_sku || m?.model_sku || '').trim(),
@@ -4687,7 +4687,7 @@ Deno.serve(async (req) => {
           tier_index: Array.isArray(m?.tier_index) ? m.tier_index.map((x: any) => Number(x)) : [],
           model_sku: String(m?.model_sku || '').trim(),
           original_price: Number(m?.original_price ?? price),
-          seller_stock: [{ stock: Number(m?.stock ?? stock) }],
+          seller_stock: [{ stock: Number(m?.seller_stock?.[0]?.stock ?? m?.stock ?? stock) }],
         }));
       }
 

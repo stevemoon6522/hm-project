@@ -103,12 +103,20 @@ async function fetchHtml(url: string): Promise<{ ok: boolean; html?: string; err
       // looks garbled, retry with explicit decode.
       const buf = await r.arrayBuffer();
       let text = new TextDecoder("utf-8").decode(buf);
-      // Heuristic: if too many replacement chars OR Korean chars are <10%
-      // when a Korean page is expected, retry with euc-kr.
-      const replacementRatio = (text.match(/�/g) || []).length / Math.max(text.length, 1);
-      if (replacementRatio > 0.01) {
+      const textLen = Math.max(text.length, 1);
+      const replacementRatio = (text.match(/\uFFFD/g) || []).length / textLen;
+      const koreanRatio = (text.match(/[가-힣]/g) || []).length / textLen;
+      const mojibakeRatio = (text.match(/(?:Ã|Â|ì|í|î|ï|ë|ê|ð|챙|혔|쨍|쩌|占)/g) || []).length / textLen;
+      const declaresKoreanLegacy = /charset\s*=\s*["']?(?:euc-kr|ks_c_5601-1987|cp949)/i.test(text);
+      if (replacementRatio > 0.005 || mojibakeRatio > 0.002 || declaresKoreanLegacy || (textLen > 1000 && koreanRatio < 0.01 && /staronemall|big_section|shop\/detail/i.test(text))) {
         try {
-          text = new TextDecoder("euc-kr").decode(buf);
+          const eucText = new TextDecoder("euc-kr").decode(buf);
+          const eucLen = Math.max(eucText.length, 1);
+          const eucKoreanRatio = (eucText.match(/[가-힣]/g) || []).length / eucLen;
+          const eucReplacementRatio = (eucText.match(/\uFFFD/g) || []).length / eucLen;
+          if (eucKoreanRatio >= koreanRatio || eucReplacementRatio < replacementRatio) {
+            text = eucText;
+          }
         } catch {
           // stay with utf-8
         }

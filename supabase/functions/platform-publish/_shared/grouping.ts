@@ -68,6 +68,12 @@ function rowHasPublishableStock(row: ProductRow, master: ProductRow): boolean {
   return Number.isFinite(inventory) && inventory > 0;
 }
 
+function rowIsSetOption(row: ProductRow): boolean {
+  const optionNames = Array.isArray(row.variation_option_names) ? row.variation_option_names : [];
+  const haystack = [row.option_name, row.sku, ...optionNames].map(text).join(' ').toUpperCase();
+  return /(^|[^A-Z0-9])(?:FULL\s*)?SET(?:\s*VER(?:SION)?\.?)?([^A-Z0-9]|$)/.test(haystack);
+}
+
 export function publishableGroupRows(master: ProductRow = {}, groupProducts: ProductRow[] = []): ProductRow[] {
   const groupId = text(master.product_group_id);
   if (!groupId || !Array.isArray(groupProducts) || groupProducts.length < 2) return [];
@@ -75,8 +81,8 @@ export function publishableGroupRows(master: ProductRow = {}, groupProducts: Pro
     text(row?.product_group_id) === groupId && isGroupedVariant(row)
   )));
   if (candidates.length < 2) return [];
-  const inStock = candidates.filter((row) => rowHasPublishableStock(row, master));
-  return inStock.length >= 2 ? inStock : candidates;
+  const publishable = candidates.filter((row) => rowHasPublishableStock(row, master) || rowIsSetOption(row));
+  return publishable.length >= 2 ? publishable : candidates;
 }
 
 function masterEditAxisSignature(row: ProductRow, axes: any[]): string {

@@ -25,6 +25,159 @@ function n(value: unknown, fallback = 0): number {
   return Number.isFinite(num) ? num : fallback;
 }
 
+const EBAY_US_DIRECT_SHIPPING_RATES_KRW: Record<number, number> = {
+  100: 7200,
+  200: 8900,
+  300: 10500,
+  400: 12300,
+  500: 14400,
+  600: 15800,
+  700: 17200,
+  800: 18500,
+  900: 19900,
+  1000: 20700,
+};
+
+const EBAY_FALLBACK_EX_COUNTRY: Record<string, number> = {
+  exchangeRate: 1380,
+  pgFee: 1.45,
+  salesFee: 15.3,
+  fspFee: 0,
+  otherFee: 0,
+  settlementFee: 0,
+  gst: 0,
+  fspCcb: 0,
+  importDuty: 0,
+  fixedServiceFee: 0.40,
+  purchaseVat: 0,
+};
+
+let ebayExCountrySettingsPromise: Promise<Record<string, number>> | null = null;
+const ebayShippingSurchargeCache = new Map<string, Promise<any[]>>();
+
+function ebayShippingWeightBucketG(weightG: unknown): number {
+  const w = Number(weightG) || 0;
+  if (w <= 0) return 0;
+  if (w <= 1000) return Math.ceil(w / 100) * 100;
+  return 1000;
+}
+
+function ebayGetUsShippingRateKrw(weightG: unknown): number {
+  const bucket = ebayShippingWeightBucketG(weightG);
+  return bucket ? EBAY_US_DIRECT_SHIPPING_RATES_KRW[bucket] || 0 : 0;
+}
+
+async function loadEbayExCountrySettings(): Promise<Record<string, number>> {
+  if (ebayExCountrySettingsPromise) return ebayExCountrySettingsPromise;
+  ebayExCountrySettingsPromise = (async () => {
+    try {
+      if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return EBAY_FALLBACK_EX_COUNTRY;
+      const svc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+      const { data, error } = await svc
+        .from('country_settings')
+        .select('exchange_rate,pg_fee,sales_fee,fsp_fee,other_fee,settlement_fee,gst,fsp_ccb,import_duty,fixed_service_fee,purchase_vat')
+        .eq('country_code', 'EX')
+        .maybeSingle();
+      if (error || !data) return EBAY_FALLBACK_EX_COUNTRY;
+      const nf = (value: unknown, defaultValue: number) =>
+        value === null || value === undefined || value === '' ? defaultValue : n(value, defaultValue);
+      return {
+        exchangeRate: nf(data.exchange_rate, EBAY_FALLBACK_EX_COUNTRY.exchangeRate),
+        pgFee: nf(data.pg_fee, EBAY_FALLBACK_EX_COUNTRY.pgFee),
+        salesFee: nf(data.sales_fee, EBAY_FALLBACK_EX_COUNTRY.salesFee),
+        fspFee: nf(data.fsp_fee, EBAY_FALLBACK_EX_COUNTRY.fspFee),
+        otherFee: nf(data.other_fee, EBAY_FALLBACK_EX_COUNTRY.otherFee),
+        settlementFee: nf(data.settlement_fee, EBAY_FALLBACK_EX_COUNTRY.settlementFee),
+        gst: nf(data.gst, EBAY_FALLBACK_EX_COUNTRY.gst),
+        fspCcb: nf(data.fsp_ccb, EBAY_FALLBACK_EX_COUNTRY.fspCcb),
+        importDuty: nf(data.import_duty, EBAY_FALLBACK_EX_COUNTRY.importDuty),
+        fixedServiceFee: nf(data.fixed_service_fee, EBAY_FALLBACK_EX_COUNTRY.fixedServiceFee),
+        purchaseVat: nf(data.purchase_vat, EBAY_FALLBACK_EX_COUNTRY.purchaseVat),
+      };
+    } catch {
+      return EBAY_FALLBACK_EX_COUNTRY;
+    }
+  })();
+  return ebayExCountrySettingsPromise;
+}
+
+function calcEbayUsdListing(costKrw: number, weightG: number, c: Record<string, number>): number {
+  if (!costKrw || costKrw <= 0) return 0;
+  const exchangeRate = Number(c.exchangeRate || 0);
+  if (!exchangeRate || exchangeRate <= 0) return 0;
+  const usShippingKrw = ebayGetUsShippingRateKrw(weightG);
+  if (!usShippingKrw) return 0;
+  const shipping = usShippingKrw / exchangeRate;
+  const effectiveCost = costKrw * (1 - (c.purchaseVat || 0) / 100);
+  const settlementLocal = effectiveCost / exchangeRate;
+  const cr = (c.salesFee || 0) / 100;
+  const vr = (c.gst || 0) / 100;
+  const salesPg = (c.pgFee || 0) / 100;
+  const salesFsp = (c.fspFee || 0) / 100;
+  const salesOther = (c.otherFee || 0) / 100;
+  const salesCcb = (c.fspCcb || 0) / 100;
+  const settlePct = (c.settlementFee || 0) / 100;
+  const fixedFee = c.fixedServiceFee || 0;
+  const sf = salesPg + salesFsp + salesOther + salesCcb;
+  if (settlePct >= 1) return 0;
+  const incomeTarget = settlementLocal / (1 - settlePct);
+  const denom = (1 + vr) * (1 - sf) - (cr + vr);
+  const raw = denom > 0 ? (incomeTarget + shipping + fixedFee) / denom : 0;
+  return Math.round(raw * 100) / 100;
+}
+
+async function loadEbayShippingSurchargeRows(weightG: number, exchangeRate: number): Promise<any[]> {
+  const bucket = ebayShippingWeightBucketG(weightG);
+  if (!bucket || !exchangeRate || exchangeRate <= 0 || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return [];
+  const cacheKey = `${bucket}:${exchangeRate}`;
+  if (!ebayShippingSurchargeCache.has(cacheKey)) {
+    ebayShippingSurchargeCache.set(cacheKey, (async () => {
+      try {
+        const svc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+        const { data, error } = await svc
+          .from('ebay_shipping_country_rates')
+          .select('country_code,country_name,weight_g,baseline_krw,standard_krw,delta_krw,surcharge_usd')
+          .eq('weight_g', bucket)
+          .gt('delta_krw', 0)
+          .order('country_code', { ascending: true });
+        if (error || !Array.isArray(data)) return [];
+        return data
+          .map((row: any) => {
+            const deltaKrw = n(row.delta_krw, 0);
+            const extraUsd = deltaKrw > 0 ? Math.ceil((deltaKrw / exchangeRate) * 100) / 100 : n(row.surcharge_usd, 0);
+            return extraUsd > 0 ? {
+              countryCode: s(row.country_code).toUpperCase(),
+              countryName: s(row.country_name),
+              weightBucketG: bucket,
+              baselineKrw: n(row.baseline_krw, 0),
+              standardKrw: n(row.standard_krw, 0),
+              deltaKrw,
+              extraShippingUsd: Number(extraUsd.toFixed(2)),
+            } : null;
+          })
+          .filter(Boolean)
+          .slice(0, 80);
+      } catch {
+        return [];
+      }
+    })());
+  }
+  return await ebayShippingSurchargeCache.get(cacheKey)!;
+}
+
+async function ebayPricingContext(master: Record<string, unknown>): Promise<any> {
+  const costKrw = n(master.cost_krw, 0);
+  const weightG = n(master.weight_g, 0);
+  const exCountry = await loadEbayExCountrySettings();
+  const exchangeRate = n(exCountry.exchangeRate, 0);
+  const weightBucketG = ebayShippingWeightBucketG(weightG);
+  const usShippingKrw = ebayGetUsShippingRateKrw(weightG);
+  const usShippingUsd = exchangeRate > 0 ? usShippingKrw / exchangeRate : 0;
+  const shippingSurchargesUsd = await loadEbayShippingSurchargeRows(weightG, exchangeRate);
+  const priceUsd = calcEbayUsdListing(costKrw, weightG, exCountry);
+  return { exCountry, priceUsd, weightBucketG, usShippingKrw, usShippingUsd, shippingSurchargesUsd };
+}
+
 function isGoodsMaster(master: Record<string, unknown>): boolean {
   return s(master.product_kind).trim().toLowerCase() === 'goods';
 }
@@ -104,22 +257,8 @@ async function bridgeGet(action: string, params: Record<string, string>, userTok
 async function ebayPriceUsd(master: Record<string, unknown>): Promise<string> {
   const direct = n(master.ebay_price_usd || master.price_usd, 0);
   if (direct > 0) return direct.toFixed(2);
-  const cost = n(master.cost_krw, 0);
-  if (cost <= 0) return '';
-  let exchangeRate = 1380;
-  let salesFee = 13;
-  let pgFee = 2.7;
-  try {
-    if (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
-      const svc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-      const { data } = await svc.from('country_settings').select('exchange_rate,sales_fee,pg_fee').eq('country_code', 'EX').maybeSingle();
-      exchangeRate = n(data?.exchange_rate, exchangeRate);
-      salesFee = n(data?.sales_fee, salesFee);
-      pgFee = n(data?.pg_fee, pgFee);
-    }
-  } catch { /* use fallback */ }
-  const feeRate = Math.min(0.95, Math.max(0, (salesFee + pgFee) / 100));
-  return (Math.ceil((cost / exchangeRate / (1 - feeRate)) * 100) / 100).toFixed(2);
+  const pricing = await ebayPricingContext(master);
+  return pricing.priceUsd > 0 ? Number(pricing.priceUsd).toFixed(2) : '';
 }
 
 function aspectsFrom(master: Record<string, unknown>) {
@@ -170,6 +309,7 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   const categoryId = s(master.ebay_category_id, goods ? '' : EBAY_DEFAULT_CATEGORY_ID).trim() || (goods ? '' : EBAY_DEFAULT_CATEGORY_ID);
   const description = descriptionFrom(master);
   const priceUsd = await ebayPriceUsd(master);
+  const pricing = await ebayPricingContext(master);
   const weightG = n(master.weight_g, 0);
   const lifecycleState = lifecycleOf(master);
   const fulfillmentPolicy = resolveEbayFulfillmentPolicy(lifecycleState);
@@ -177,14 +317,18 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
     const variationRows = await Promise.all(variationBundle.items.map(async (item: any) => {
       const row = item.row || {};
       const rowImages = imagesFrom(row).length ? imagesFrom(row) : images;
+      const rowPricing = await ebayPricingContext(row);
       return {
         productId: row.id || null,
         sku: s(row.ebay_sku || row.sku).trim(),
         optionName: item.optionValue,
         variationValue: item.optionValue,
         priceUsd: await ebayPriceUsd(row),
-        quantity: Math.max(1, Math.floor(n(row.inventory, 0))),
+        quantity: Math.max(0, Math.floor(n(row.inventory, 0))),
         weightG: n(row.weight_g || weightG, 0),
+        weightBucketG: rowPricing.weightBucketG,
+        usShippingKrw: rowPricing.usShippingKrw,
+        usShippingUsd: Number(n(rowPricing.usShippingUsd, 0).toFixed(2)),
         imageUrls: rowImages.slice(0, 12),
       };
     }));
@@ -196,6 +340,9 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
         errorMsg: 'eBay variation create_listing requires categoryId, description, image, sku<=50, price/cost and weight_g for every option',
       };
     }
+    const maxCostKrw = Math.max(0, ...variationBundle.items.map((item: any) => n(item.row?.cost_krw, 0)));
+    const maxWeightG = Math.max(0, ...variationRows.map((row: any) => n(row.weightG, 0)));
+    const maxPricing = await ebayPricingContext({ cost_krw: maxCostKrw, weight_g: maxWeightG });
     const body = {
       listingMode: 'variation',
       productGroupId: master.product_group_id || '',
@@ -210,6 +357,11 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
       storeCategoryNames: ['/K-pop'],
       variationAxis: 'Version',
       variations: variationRows,
+      weightBucketG: maxPricing.weightBucketG,
+      usShippingKrw: maxPricing.usShippingKrw,
+      usShippingUsd: Number(n(maxPricing.usShippingUsd, 0).toFixed(2)),
+      shippingSurchargePolicy: 'delta_vs_us_baseline',
+      shippingSurchargesUsd: maxPricing.shippingSurchargesUsd,
       marketplaceId: s(ctx.country || master.ebay_marketplace_id || 'EBAY_US'),
     };
     if (ctx.dryRun) {
@@ -256,6 +408,11 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
     quantity: Math.max(1, Math.floor(n(master.inventory, 50) || 50)),
     categoryId,
     weightG,
+    weightBucketG: pricing.weightBucketG,
+    usShippingKrw: pricing.usShippingKrw,
+    usShippingUsd: Number(n(pricing.usShippingUsd, 0).toFixed(2)),
+    shippingSurchargePolicy: 'delta_vs_us_baseline',
+    shippingSurchargesUsd: pricing.shippingSurchargesUsd,
     marketplaceId: s(ctx.country || master.ebay_marketplace_id || 'EBAY_US'),
   };
   if (ctx.dryRun) {

@@ -185,6 +185,11 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '
 const ALERT_BOT_URL = Deno.env.get('ALERT_BOT_URL') || '';
 const ALERT_HMAC_SECRET = Deno.env.get('ALERT_HMAC_SECRET') || '';
 const SHOPEE_MAX_PRODUCT_IMAGES = 9;
+const SHOP_LAYER_CANVAS_SIZE = 1000;
+const SHOP_LAYER_IMAGE_SIZE = 850;
+const SHOP_LAYER_IMAGE_INSET = 75;
+const DEFAULT_SHOP_LAYER_BASE_URL = 'https://shopee-dashboard-kohl.vercel.app/v2/';
+const DEFAULT_SHOP_LAYER_ASSET = 'shop-overlay-layer.png';
 
 function shopeeLifecycleOf(master: Record<string, unknown> = {}, override: unknown = ''): string {
   const lifecycle = String(override || (master as any).lifecycle_state || '').toLowerCase();
@@ -357,6 +362,54 @@ async function fetchShopeeImageDataUrl(imageUrl: string): Promise<{ image_base64
   };
 }
 
+function shopeeLayerUrl(): string {
+  const direct = String(Deno.env.get('SHOPEE_LAYER_URL') || '').trim();
+  if (direct) return direct;
+  const base = String(Deno.env.get('SHOPEE_DASHBOARD_V2_BASE_URL') || DEFAULT_SHOP_LAYER_BASE_URL).trim().replace(/\/?$/, '/');
+  const asset = String(Deno.env.get('SHOPEE_LAYER_ASSET') || DEFAULT_SHOP_LAYER_ASSET).trim().replace(/^\/+/, '');
+  return new URL(asset || DEFAULT_SHOP_LAYER_ASSET, base).toString();
+}
+
+async function responseBytes(res: Response): Promise<Uint8Array> {
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+async function fetchShopeeLayeredImageDataUrl(imageUrl: string): Promise<{ image_base64: string; output_hash: string }> {
+  const url = String(imageUrl || '').trim();
+  if (!url) throw new Error('main_image URL is empty');
+  const layerUrl = shopeeLayerUrl();
+  const [mainRes, layerRes] = await Promise.all([
+    fetchShopeeImageResponse(url),
+    fetchShopeeImageResponse(layerUrl),
+  ]);
+  const [mainBytes, layerBytes] = await Promise.all([
+    responseBytes(mainRes),
+    responseBytes(layerRes),
+  ]);
+
+  // @ts-ignore ImageScript is Deno-compatible and already used by Joom image processing.
+  const { Image } = await import('https://deno.land/x/imagescript@1.3.0/mod.ts');
+  const [mainImage, rawLayerImage] = await Promise.all([
+    Image.decode(mainBytes),
+    Image.decode(layerBytes),
+  ]);
+  const cover = mainImage.cover(SHOP_LAYER_IMAGE_SIZE, SHOP_LAYER_IMAGE_SIZE);
+  const layerImage = rawLayerImage.width === SHOP_LAYER_CANVAS_SIZE && rawLayerImage.height === SHOP_LAYER_CANVAS_SIZE
+    ? rawLayerImage
+    : rawLayerImage.cover(SHOP_LAYER_CANVAS_SIZE, SHOP_LAYER_CANVAS_SIZE);
+  const output = new Image(SHOP_LAYER_CANVAS_SIZE, SHOP_LAYER_CANVAS_SIZE);
+  output.fill(0xFFFFFFFF);
+  output.composite(cover, SHOP_LAYER_IMAGE_INSET, SHOP_LAYER_IMAGE_INSET);
+  output.composite(layerImage, 0, 0);
+
+  const encoded: Uint8Array = await output.encode(1);
+  const output_hash = await sha256HexBytes(encoded);
+  return {
+    image_base64: `data:image/png;base64,${bytesToBase64(encoded)}`,
+    output_hash,
+  };
+}
+
 async function uploadShopeeImageFromUrl(args: {
   account_key: string;
   region: string;
@@ -371,7 +424,7 @@ async function uploadShopeeImageFromUrl(args: {
     image_base64: imageData.image_base64,
     source_url: args.imageUrl,
     main_image_url: args.imageUrl,
-    layer_version: 'platform-publish-main-image-v1',
+    layer_version: 'platform-publish-shop-layer-v1',
     output_hash: imageData.output_hash,
   }, args.userToken) as any;
   const imageId = String(raw?.image_id || '').trim();
@@ -481,7 +534,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   ].map((id: unknown) => String(id || '').trim()).filter(Boolean);
   if (!ctx.dryRun && !cachedMasterImageIds.length && master.main_image) {
     try {
-      const imageData = await fetchShopeeImageDataUrl(String(master.main_image));
+      const imageData = await fetchShopeeLayeredImageDataUrl(String(master.main_image));
       const uploadedEntries = await Promise.all(regions.map(async (region) => {
         const existingIds = Array.isArray(regionImageIds[region]) ? regionImageIds[region].map((id: unknown) => String(id || '').trim()).filter(Boolean) : [];
         if (existingIds.length) return [region, existingIds] as const;

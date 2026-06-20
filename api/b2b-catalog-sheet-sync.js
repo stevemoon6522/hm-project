@@ -29,6 +29,7 @@ const INTERNAL_HEADERS = [
 ];
 const PUBLIC_TABS = ['Catalog', 'Restock Watch', 'Inquiry Only'];
 const INTERNAL_TAB = 'Internal Coverage';
+const MANAGED_TABS = new Set([...PUBLIC_TABS, INTERNAL_TAB]);
 
 function json(res, body, status = 200) {
   res.status(status).setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -250,6 +251,11 @@ async function ensureSheets(accessToken, spreadsheetId) {
       requests.push({ updateSheetProperties: { properties: { sheetId: existing.get(title).sheetId, hidden: true }, fields: 'hidden' } });
     } else if (title !== INTERNAL_TAB && existing.get(title).hidden === true) {
       requests.push({ updateSheetProperties: { properties: { sheetId: existing.get(title).sheetId, hidden: false }, fields: 'hidden' } });
+    }
+  }
+  for (const [title, properties] of existing.entries()) {
+    if (!MANAGED_TABS.has(title) && properties.hidden !== true) {
+      requests.push({ updateSheetProperties: { properties: { sheetId: properties.sheetId, hidden: true }, fields: 'hidden' } });
     }
   }
   if (requests.length) {

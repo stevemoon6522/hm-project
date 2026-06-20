@@ -23,6 +23,9 @@ const authGate = edge.indexOf('const authResult = await requireAuthenticatedUser
 assert(handleStart >= 0, 'handleRequest must exist');
 assert(registerRoute > handleStart, 'register-product route must exist in handleRequest');
 assert(authGate > registerRoute, 'headless register-product must run before browser-session auth gate');
+assert(edge.slice(registerRoute, authGate).includes('action === "lookup-item" && req.method === "GET"'), 'lookup-item must accept internal bridge verification before browser-session auth gate');
+assert(edge.slice(registerRoute, authGate).includes('action === "lookup-group" && req.method === "GET"'), 'lookup-group must accept internal bridge verification before browser-session auth gate');
+assert(edge.slice(registerRoute, authGate).includes('requireBridgeTokenOrAuthenticatedUser(req)'), 'read-only eBay lookup routes must allow either internal bridge token or browser auth');
 assert(edge.slice(registerRoute, authGate).includes('requireInternalBridge(req)'), 'register-product route must require internal bridge token');
 assert(!edge.slice(registerRoute, authGate).includes('requireAuthenticatedUser(req)'), 'register-product route must not require a Supabase browser session');
 assert(policyRoute > registerRoute && policyRoute < authGate, 'ensure-fulfillment-policy route must exist before browser-session auth gate');

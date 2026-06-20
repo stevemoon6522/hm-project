@@ -74,7 +74,7 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 // v51: treat CBSC publish task "permission"/empty failed results as async-pending until published_list proves final state.
-const SOURCE_VERSION = 51;
+const SOURCE_VERSION = 52;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -1098,13 +1098,6 @@ function stripFieldsForDegradedPayload(action: string, requestPayload: any, bloc
     if (blockedFields.includes('description')) delete payload.description;
     if (blockedFields.includes('weight')) delete payload.weight;
   }
-  if (action === 'update_global_model' && blockedFields.includes('weight')) {
-    payload.global_model = (payload.global_model || []).map((m: any) => {
-      const next = { ...m };
-      delete next.weight;
-      return next;
-    });
-  }
   return payload;
 }
 
@@ -1116,11 +1109,8 @@ async function enforceV2ProbePreflight(action: string, requestPayload: any, body
     if (requestPayload.description !== undefined && !flags.probe_item_name_ok) blockedFields.push('description');
     if (requestPayload.weight !== undefined && !flags.probe_model_weight_ok) blockedFields.push('weight');
   }
-  if (action === 'update_global_model') {
-    const hasWeight = Array.isArray(requestPayload.global_model)
-      && requestPayload.global_model.some((m: any) => m?.weight !== undefined);
-    if (hasWeight && !flags.probe_model_weight_ok) blockedFields.push('weight');
-  }
+  // Shopee Global Product update_global_model documents model-level `weight`
+  // as a supported field. Keep the probe gate only for update_global_item.weight.
   if (blockedFields.length === 0) {
     return { ok: true, requestPayload, blockedFields, degraded: false, flags };
   }
@@ -1446,9 +1436,9 @@ async function runV2MutationAction(action: string, body: any) {
         if (m?.weight !== undefined && m?.weight !== null && m?.weight !== '') next.weight = Number(m.weight);
         return next;
       })
-      .filter((m: any) => Number.isFinite(m.global_model_id) && m.global_model_id > 0 && (m.global_model_sku || Number.isFinite(m.weight)));
+      .filter((m: any) => Number.isFinite(m.global_model_id) && m.global_model_id > 0 && m.global_model_sku);
     if (!global_item_id) return { ok: false, error: 'global_item_id required' };
-    if (cleaned.length === 0) return { ok: false, error: 'global_model[] required (global_model_id + global_model_sku or weight)' };
+    if (cleaned.length === 0) return { ok: false, error: 'global_model[] required (global_model_id + global_model_sku, plus optional weight)' };
 
     const requestPayload = { global_item_id, global_model: cleaned };
     const preflight = await enforceV2ProbePreflight(action, requestPayload, body);
@@ -1456,7 +1446,7 @@ async function runV2MutationAction(action: string, body: any) {
     const finalPayload = {
       ...preflight.requestPayload,
       global_model: (preflight.requestPayload.global_model || [])
-        .filter((m: any) => m.global_model_sku || Number.isFinite(m.weight)),
+        .filter((m: any) => m.global_model_sku),
     };
     if (!finalPayload.global_model.length) {
       return { ok: false, error: 'v2_degraded_payload_empty', message: 'All requested model fields were blocked by probe preflight.' };
@@ -1692,6 +1682,11 @@ function normalizeGlobalModelForAdd(model: any) {
   };
   const sku = String(model?.global_model_sku || model?.model_sku || '').trim();
   if (sku) out.global_model_sku = sku;
+  if (model?.weight_g != null && Number(model.weight_g) > 0) {
+    out.weight = Number(model.weight_g) / 1000;
+  } else if (model?.weight != null && Number(model.weight) > 0) {
+    out.weight = Number(model.weight);
+  }
   if (model?.image_id) out.image_id = String(model.image_id);
   return out;
 }
@@ -2121,6 +2116,37 @@ async function verifyPublishedListOutcome(region: string, shopId: number, global
   return null;
 }
 
+async function verifyPublishedSkuOutcome(region: string, shopId: number, publishTaskId: number, task: any, sku: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const needle = shopeeSkuValue(sku);
+  if (!needle) return null;
+  const retries = (region === 'BR' || region === 'TW') ? 8 : 5;
+  const sleepMs = 5000;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    if (attempt > 0) await new Promise(s => setTimeout(s, sleepMs));
+    const searchResult = await shopApiCall(region, '/api/v2/product/search_item', {
+      query: { item_sku: needle, offset: 0, page_size: 20 },
+      account_key: accountKey,
+    });
+    if (searchResult.error) continue;
+    const searchIds = shopeeSearchItemIds(searchResult);
+    const searched = await shopeeSkuHitFromItemIds(region, needle, searchIds, 'post_publish_search_item', shopId, accountKey);
+    if (searched.hit?.shop_item_id) {
+      return {
+        ok: true,
+        region,
+        shop_id: shopId,
+        publish_task_id: publishTaskId,
+        item_id: Number(searched.hit.shop_item_id),
+        publish_status: 'verified_via_sku_search_retry_' + attempt,
+        error: null,
+        task,
+        sku_verification: searched.hit,
+      };
+    }
+  }
+  return null;
+}
+
 async function syncShopModelPricesAfterPublish(region: string, itemId: number, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   const variation = normalizeVariation(target?.variation || body?.variation);
   const priceList: any[] = [];
@@ -2170,6 +2196,10 @@ async function retryTwMinimalPublish(globalItemId: number, shopId: number, targe
   let retryOutcome: any = parsePublishOutcome(region, shopId, retryTaskId, retryTask);
   if (!retryOutcome.ok) {
     const verified = await verifyPublishedListOutcome(region, shopId, globalItemId, retryTaskId, retryTask, accountKey);
+    if (verified) retryOutcome = verified;
+  }
+  if (!retryOutcome.ok) {
+    const verified = await verifyPublishedSkuOutcome(region, shopId, retryTaskId, retryTask, body?.sku || target?.sku || '', accountKey);
     if (verified) retryOutcome = verified;
   }
   retryOutcome.tw_minimal_item_retry = true;
@@ -3247,6 +3277,10 @@ Deno.serve(async (req) => {
             const verified = await verifyPublishedListOutcome(targetRegion, shop_id, global_item_id, publish_task_id, task, reqAccountKey).catch(() => null);
             if (verified) outcome = verified;
           }
+          if (!outcome.ok) {
+            const verified = await verifyPublishedSkuOutcome(targetRegion, shop_id, publish_task_id, task, body?.sku || target?.sku || '', reqAccountKey).catch(() => null);
+            if (verified) outcome = verified;
+          }
           if (!outcome.ok && targetRegion === 'TW') {
             const retryOutcome = await retryTwMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'tw_minimal_publish_exception', error: String(e?.message || e) }));
             if (retryOutcome?.ok) outcome = retryOutcome;
@@ -3805,6 +3839,10 @@ Deno.serve(async (req) => {
           }
           if (!outcome.ok) {
             const verified = await verifyPublishedListOutcome(targetRegion, shop_id, global_item_id, publish_task_id, task, accountKey).catch(() => null);
+            if (verified) outcome = verified;
+          }
+          if (!outcome.ok) {
+            const verified = await verifyPublishedSkuOutcome(targetRegion, shop_id, publish_task_id, task, body?.sku || target?.sku || '', accountKey).catch(() => null);
             if (verified) outcome = verified;
           }
           if (!outcome.ok && targetRegion === 'TW') {
@@ -4397,13 +4435,16 @@ Deno.serve(async (req) => {
       const global_item_id = parseInt(body.global_item_id);
       const global_model = Array.isArray(body.global_model) ? body.global_model : [];
       const cleaned = global_model
-        .map((m: any) => ({
-          global_model_id: parseInt(m?.global_model_id),
-          global_model_sku: typeof m?.global_model_sku === 'string' ? m.global_model_sku.trim() : '',
-        }))
-        .filter((m: any) => Number.isFinite(m.global_model_id) && m.global_model_id > 0 && m.global_model_sku !== '');
+        .map((m: any) => {
+          const next: Record<string, any> = { global_model_id: parseInt(m?.global_model_id) };
+          const global_model_sku = typeof m?.global_model_sku === 'string' ? m.global_model_sku.trim() : '';
+          if (global_model_sku) next.global_model_sku = global_model_sku;
+          if (m?.weight !== undefined && m?.weight !== null && m?.weight !== '') next.weight = Number(m.weight);
+          return next;
+        })
+        .filter((m: any) => Number.isFinite(m.global_model_id) && m.global_model_id > 0 && m.global_model_sku);
       if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
-      if (cleaned.length === 0) return jsonResp({ ok: false, error: 'global_model[] required (global_model_id + global_model_sku)' }, 400);
+      if (cleaned.length === 0) return jsonResp({ ok: false, error: 'global_model[] required (global_model_id + global_model_sku, plus optional weight)' }, 400);
       return withPublishRequestId(action, `${reqAccountKey}:${r}`, null, body, async () => {
         const result = await merchantApiCall(r, '/api/v2/global_product/update_global_model', {
           method: 'POST',

@@ -14562,7 +14562,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       weightG: Number(row.weight_g || 0),
       countrySettings: settings,
     }).qoo10Price).filter(Boolean);
-    return prices.length ? Math.max(1, Math.min(...prices)) : 2990;
+    return prices.length ? Math.max(1, Math.max(...prices)) : 2990;
+  }
+
+  function mrQoo10ClampOptionPriceForBase(price, basePrice) {
+    const normalizedBase = normalizeQoo10PriceEnding90(basePrice);
+    const normalizedPrice = normalizeQoo10PriceEnding90(price || normalizedBase);
+    if (!normalizedBase) return normalizedPrice;
+    const floor = Math.ceil(normalizedBase * 0.5);
+    const ceiling = Math.floor(normalizedBase * 2);
+    return normalizeQoo10PriceEnding90(Math.min(ceiling, Math.max(floor, normalizedPrice)));
   }
 
   function mrQoo10OptionValue(row) {
@@ -14724,7 +14733,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         countrySettings: settings,
       });
       const defaultPrice = calc.qoo10Price || basePrice;
-      const price = Math.max(basePrice, defaultPrice);
+      const price = mrQoo10ClampOptionPriceForBase(defaultPrice, basePrice);
       return `
         <tr>
           <td class="mono">${text(row.sku || '')}</td>
@@ -14911,7 +14920,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       sku: row.sku,
       option_name: 'Type',
       option_value: mrQoo10OptionValue(row),
-      price_jpy: normalizeQoo10PriceEnding90(mrQoo10ReadNumber(`mr-qoo10-price-${idx}`, basePrice)),
+      price_jpy: mrQoo10ClampOptionPriceForBase(mrQoo10ReadNumber(`mr-qoo10-price-${idx}`, basePrice), basePrice),
       stock: Math.max(0, Math.floor(mrQoo10ReadNumber(`mr-qoo10-stock-${idx}`, 0))),
     }));
     return {

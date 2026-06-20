@@ -16,6 +16,7 @@ const JOOM_V3 = "https://api-merchant.joom.com/api/v3";
 const EXCHANGE_RATE = 1380;
 const SALES_FEE = 0.15;
 const JOOM_DELETE_CONFIRM_PHRASE = "DELETE_JOOM_PRODUCT";
+const JOOM_REVIEW_FIELDS_CONFIRM_PHRASE = "UPDATE_JOOM_REVIEW_FIELDS";
 
 // Fallback hardcoded categories (used if Joom /categories API fails)
 const FALLBACK_CATEGORIES: Record<string, string> = {
@@ -803,9 +804,9 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === "health" && req.method === "GET") {
       try {
         const token = await getValidAccessToken();
-        return jsonResp({ ok: true, service: "joom-bridge", version: 13, token_ok: !!token });
+        return jsonResp({ ok: true, service: "joom-bridge", version: 14, token_ok: !!token });
       } catch (e: any) {
-        return jsonResp({ ok: false, service: "joom-bridge", version: 13, error: "joom_auth_unavailable", message: String(e?.message || e) }, 503);
+        return jsonResp({ ok: false, service: "joom-bridge", version: 14, error: "joom_auth_unavailable", message: String(e?.message || e) }, 503);
       }
     }
 
@@ -939,6 +940,11 @@ async function handleRequest(req: Request): Promise<Response> {
           hasActiveVersion: product?.hasActiveVersion ?? null,
           listing_status: joomProductListingStatus(product),
           product_name: product?.name || "",
+          infractions: ((product?.review || {}).infractions || []).map((i: any) => ({
+            code: i.code, kind: i.kind, note: i.note, description: i.description,
+            where: i.where, isPermanent: i.isPermanent, regions: i.regions,
+            variantSku: i.variantSku, variantId: i.variantId,
+          })),
           image_audit: {
             mainImage: imageBundleSummary(product?.mainImage),
             extraImages: (Array.isArray(product?.extraImages) ? product.extraImages : []).map(imageBundleSummary),
@@ -963,6 +969,26 @@ async function handleRequest(req: Request): Promise<Response> {
       const body = await req.json();
       const sku = String(body.sku || "").trim();
       if (!sku) return jsonResp({ ok: false, error: "sku required" }, 400);
+      if (body?.clear_extra_images === true || body?.clearExtraImages === true) {
+        // Official local doc: C:\dev\api-refs\marketplaces\joom\openapi.yaml
+        // products/update is PATCH-like; explicitly sending extraImages updates that field only.
+        const data = await joomFetch(`/products/update?sku=${encodeURIComponent(sku)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ extraImages: [] }),
+        });
+        return jsonResp({
+          ok: true,
+          operation: "clear-extra-images",
+          joom_product_id: data?.id || null,
+          state: data?.state || null,
+          hasActiveVersion: data?.hasActiveVersion ?? null,
+          updated_extra_images: [],
+          image_audit: {
+            extraImages: (Array.isArray(data?.extraImages) ? data.extraImages : []).map(imageBundleSummary),
+          },
+        });
+      }
 
       const processedExtras: string[] = [];
       const imageDataRows = Array.isArray(body.imageData) ? body.imageData : [];
@@ -1005,6 +1031,56 @@ async function handleRequest(req: Request): Promise<Response> {
         requested_extra_images: rawExtras,
         updated_extra_images: processedExtras,
         image_audit: {
+          extraImages: (Array.isArray(data?.extraImages) ? data.extraImages : []).map(imageBundleSummary),
+        },
+      });
+    }
+
+    if (action === "update-review-fields" && req.method === "POST") {
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
+      const body = await req.json();
+      const sku = String(body.sku || "").trim();
+      if (!sku) return jsonResp({ ok: false, error: "sku required" }, 400);
+      const confirmed = body.confirm === JOOM_REVIEW_FIELDS_CONFIRM_PHRASE || body.confirm_update === true;
+      if (!confirmed) {
+        return jsonResp({
+          ok: false,
+          error: "confirm_required",
+          message: `Set confirm="${JOOM_REVIEW_FIELDS_CONFIRM_PHRASE}" to update Joom review-recovery fields.`,
+        }, 400);
+      }
+
+      const updatePayload: Record<string, unknown> = {};
+      const reviewBrand = String(body?.brand || body?.brandName || "").trim();
+      if (reviewBrand) updatePayload.brand = reviewBrand;
+      else if (body?.clear_brand === true || body?.clearBrand === true) updatePayload.brand = null;
+      if (body?.clear_extra_images === true || body?.clearExtraImages === true) updatePayload.extraImages = [];
+      if (!Object.keys(updatePayload).length) return jsonResp({ ok: false, error: "no supported review fields requested" }, 400);
+
+      // Official local doc: C:\dev\api-refs\marketplaces\joom\openapi.yaml
+      // products/update is PATCH-like; explicit null resets optional fields such as brand.
+      const data = await joomFetch(`/products/update?sku=${encodeURIComponent(sku)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatePayload),
+      });
+      return jsonResp({
+        ok: true,
+        operation: "update-review-fields",
+        joom_product_id: data?.id || null,
+        state: data?.state || null,
+        hasActiveVersion: data?.hasActiveVersion ?? null,
+        brand_assigned: !!data?.brand,
+        brand: data?.brand || null,
+        updated_fields: Object.keys(updatePayload),
+        infractions: ((data?.review || {}).infractions || []).map((i: any) => ({
+          code: i.code, kind: i.kind, note: i.note, description: i.description,
+          where: i.where, isPermanent: i.isPermanent, regions: i.regions,
+          variantSku: i.variantSku, variantId: i.variantId,
+        })),
+        image_audit: {
+          mainImage: imageBundleSummary(data?.mainImage),
           extraImages: (Array.isArray(data?.extraImages) ? data.extraImages : []).map(imageBundleSummary),
         },
       });

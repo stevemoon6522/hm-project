@@ -28,8 +28,14 @@ assert.match(bridge, /String\(existing\.state \|\| ""\)\.toLowerCase\(\) !== "ar
 assert.match(bridge, /recovered_existing_product_id/, 'Joom publish response must expose recovered existing product id for operator/debug visibility');
 assert.match(bridge, /function imageBundleSummary/, 'Joom bridge lookup must expose a protected image audit summary for operational verification');
 assert.match(bridge, /image_audit:[\s\S]*extraImages:[\s\S]*imageBundleSummary/, 'Joom lookup must include extraImages dimensions for square-image verification');
+assert.match(bridge, /infractions:[\s\S]*product\?\.review[\s\S]*variantSku/, 'Joom lookup must expose review infractions for warning-state diagnosis');
 assert.match(bridge, /action === "update-images"[\s\S]*\/products\/update\?sku=/, 'Joom bridge must provide a protected extraImages-only recovery path for rejected products');
 assert.match(bridge, /body: JSON\.stringify\(\{ extraImages: processedExtras \}\)/, 'Joom image recovery must update only extraImages and avoid price/inventory mutation');
+assert.match(bridge, /clear_extra_images[\s\S]*body: JSON\.stringify\(\{ extraImages: \[\] \}\)/, 'Joom image recovery must allow explicit extraImages clearing for download-failed warning cleanup');
+assert.match(bridge, /products\/update is PATCH-like; explicitly sending extraImages updates that field only/, 'Joom extraImages clearing must cite the local PATCH-like update docs');
+assert.match(bridge, /JOOM_REVIEW_FIELDS_CONFIRM_PHRASE = "UPDATE_JOOM_REVIEW_FIELDS"/, 'Joom review-field recovery must require an explicit confirmation phrase');
+assert.match(bridge, /const reviewBrand = String[\s\S]*if \(reviewBrand\) updatePayload\.brand = reviewBrand[\s\S]*updatePayload\.brand = null[\s\S]*updatePayload\.extraImages = \[\]/, 'Joom review-field recovery must allow explicit brand setting/clearing and extraImages cleanup');
+assert.match(bridge, /explicit null resets optional fields such as brand/, 'Joom review-field recovery must cite the local null-reset update docs');
 assert.match(bridge, /function decodeBase64Image/, 'Joom image recovery must support client-provided square image bytes when source CDN blocks Edge fetch');
 assert.match(bridge, /imageDataRows[\s\S]*uploadTileToCloudinary\(bytes\)[\s\S]*uploadTileToProductStorage\(bytes/, 'Joom image recovery must upload provided image bytes before updating extraImages');
 
@@ -58,7 +64,10 @@ for (const source of [bridge, edgeBridge]) {
   assert.match(source, /async function createOrUpdateJoomProduct/, 'Supabase and edge Joom bridge mirrors must both recover existing SKUs');
   assert.match(source, /function joomPlainText/, 'Supabase and edge Joom bridge mirrors must both sanitize descriptions');
   assert.match(source, /function imageBundleSummary/, 'Supabase and edge Joom bridge mirrors must both expose image audit summaries');
+  assert.match(source, /infractions:[\s\S]*product\?\.review/, 'Supabase and edge Joom bridge mirrors must both expose warning infractions');
   assert.match(source, /action === "update-images"/, 'Supabase and edge Joom bridge mirrors must both support extraImages-only recovery');
+  assert.match(source, /clear_extra_images[\s\S]*extraImages: \[\]/, 'Supabase and edge Joom bridge mirrors must both support explicit extraImages clearing');
+  assert.match(source, /action === "update-review-fields"/, 'Supabase and edge Joom bridge mirrors must both support confirmed review-field recovery');
   assert.match(source, /function decodeBase64Image/, 'Supabase and edge Joom bridge mirrors must both support inline square image recovery');
   assert.doesNotMatch(source, /return \[imageUrl\];/, 'Supabase and edge Joom bridge mirrors must both avoid raw detail image fallback');
 }

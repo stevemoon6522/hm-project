@@ -44,6 +44,9 @@ assert.match(joom, /option_products/, 'Joom adapter must return option mapping h
 
 assert.match(qoo10, /QOO10_DEFAULT_SHIPPING_NO = '715009'/, 'Qoo10 adapter must apply the UI default shipping template');
 assert.match(qoo10, /qoo10PriceFromCost/, 'Qoo10 adapter must compute a base price when modal payload is absent');
+assert.match(qoo10, /reconcileQoo10BaseAndOptions/, 'Qoo10 adapter must reconcile grouped base and option prices before bridge publish');
+assert.match(qoo10, /auto_max_option_base_clamped_options/, 'Qoo10 adapter must default grouped base price to the highest option target');
+assert.match(qoo10, /qoo10ClampOptionPrice/, 'Qoo10 adapter must clamp option prices into Qoo10 delta limits');
 assert.match(qoo10, /if \(ctx\.dryRun\)[\s\S]*dry_run: true[\s\S]*payload/, 'Qoo10 adapter must stop dry-runs before qoo10-bridge create-listing');
 assert.match(qoo10, /publishableGroupRows\(ctx\.masterProduct/, 'Qoo10 adapter must build option payloads from grouped products');
 assert.doesNotMatch(qoo10, /BrandNo is required/, 'Qoo10 adapter must not require optional BrandNo from SetNewGoods docs');

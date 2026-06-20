@@ -1636,6 +1636,7 @@ async function handleLookupItem(sku: string, marketplaceId: string): Promise<Res
       status: o.status,
       sku: o.sku,
       marketplaceId: o.marketplaceId,
+      price: o.pricingSummary?.price || o.price || null,
       listingId: o.listing?.listingId || o.listingId || null,
     })),
   });
@@ -1693,6 +1694,7 @@ async function handleLookupGroup(inventoryGroupKey: string, marketplaceId: strin
       offerId: offer.offerId,
       status: offer.status,
       marketplaceId: offer.marketplaceId,
+      price: offer.pricingSummary?.price || offer.price || null,
       listingId: offer?.listing?.listingId || offer?.listingId || null,
     })),
   });
@@ -2751,6 +2753,22 @@ async function handleRequest(req: Request): Promise<Response> {
       if (internal) return internal;
       const body = await req.json().catch(() => ({}));
       return await handleEnsureFulfillmentPolicy(body);
+    }
+
+    if (action === "lookup-item" && req.method === "GET") {
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
+      const sku = url.searchParams.get("sku") || "";
+      const marketplaceId = url.searchParams.get("marketplace_id") || "EBAY_US";
+      return await handleLookupItem(sku, marketplaceId);
+    }
+
+    if (action === "lookup-group" && req.method === "GET") {
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
+      const inventoryGroupKey = url.searchParams.get("inventory_group_key") || "";
+      const marketplaceId = url.searchParams.get("marketplace_id") || "EBAY_US";
+      return await handleLookupGroup(inventoryGroupKey, marketplaceId);
     }
 
     const authResult = await requireAuthenticatedUser(req);

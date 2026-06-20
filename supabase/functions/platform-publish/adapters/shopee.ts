@@ -187,9 +187,9 @@ const ALERT_HMAC_SECRET = Deno.env.get('ALERT_HMAC_SECRET') || '';
 const SHOPEE_MAX_PRODUCT_IMAGES = 9;
 const SHOP_LAYER_CANVAS_SIZE = 1000;
 const SHOP_LAYER_IMAGE_SIZE = 850;
-const SHOP_LAYER_IMAGE_INSET = 75;
 const DEFAULT_SHOP_LAYER_BASE_URL = 'https://shopee-dashboard-kohl.vercel.app/v2/';
 const DEFAULT_SHOP_LAYER_ASSET = 'shop-overlay-layer.png';
+const DEFAULT_CLOUDINARY_CLOUD_NAME = 'dybau67eb';
 
 function shopeeLifecycleOf(master: Record<string, unknown> = {}, override: unknown = ''): string {
   const lifecycle = String(override || (master as any).lifecycle_state || '').toLowerCase();
@@ -374,38 +374,34 @@ async function responseBytes(res: Response): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer());
 }
 
+function base64UrlEncodeText(value: string): string {
+  const bytes = new TextEncoder().encode(value);
+  return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function shopeeLayeredCloudinaryUrl(imageUrl: string): string {
+  const cloudName = String(Deno.env.get('CLOUDINARY_CLOUD_NAME') || DEFAULT_CLOUDINARY_CLOUD_NAME).trim();
+  const layerFetchId = base64UrlEncodeText(shopeeLayerUrl());
+  const sourceUrl = encodeURIComponent(imageUrl);
+  const transforms = [
+    `c_fill,w_${SHOP_LAYER_IMAGE_SIZE},h_${SHOP_LAYER_IMAGE_SIZE},g_center`,
+    `c_pad,w_${SHOP_LAYER_CANVAS_SIZE},h_${SHOP_LAYER_CANVAS_SIZE},b_white`,
+    `l_fetch:${layerFetchId},w_${SHOP_LAYER_CANVAS_SIZE},h_${SHOP_LAYER_CANVAS_SIZE}`,
+    'fl_layer_apply',
+    'f_jpg,q_92',
+  ].join('/');
+  return `https://res.cloudinary.com/${encodeURIComponent(cloudName)}/image/fetch/${transforms}/${sourceUrl}`;
+}
+
 async function fetchShopeeLayeredImageDataUrl(imageUrl: string): Promise<{ image_base64: string; output_hash: string }> {
   const url = String(imageUrl || '').trim();
   if (!url) throw new Error('main_image URL is empty');
-  const layerUrl = shopeeLayerUrl();
-  const [mainRes, layerRes] = await Promise.all([
-    fetchShopeeImageResponse(url),
-    fetchShopeeImageResponse(layerUrl),
-  ]);
-  const [mainBytes, layerBytes] = await Promise.all([
-    responseBytes(mainRes),
-    responseBytes(layerRes),
-  ]);
-
-  // @ts-ignore ImageScript is Deno-compatible and already used by Joom image processing.
-  const { Image } = await import('https://deno.land/x/imagescript@1.3.0/mod.ts');
-  const [mainImage, rawLayerImage] = await Promise.all([
-    Image.decode(mainBytes),
-    Image.decode(layerBytes),
-  ]);
-  const cover = mainImage.cover(SHOP_LAYER_IMAGE_SIZE, SHOP_LAYER_IMAGE_SIZE);
-  const layerImage = rawLayerImage.width === SHOP_LAYER_CANVAS_SIZE && rawLayerImage.height === SHOP_LAYER_CANVAS_SIZE
-    ? rawLayerImage
-    : rawLayerImage.cover(SHOP_LAYER_CANVAS_SIZE, SHOP_LAYER_CANVAS_SIZE);
-  const output = new Image(SHOP_LAYER_CANVAS_SIZE, SHOP_LAYER_CANVAS_SIZE);
-  output.fill(0xFFFFFFFF);
-  output.composite(cover, SHOP_LAYER_IMAGE_INSET, SHOP_LAYER_IMAGE_INSET);
-  output.composite(layerImage, 0, 0);
-
-  const encoded: Uint8Array = await output.encode(1);
-  const output_hash = await sha256HexBytes(encoded);
+  const layeredUrl = shopeeLayeredCloudinaryUrl(url);
+  const layeredRes = await fetchShopeeImageResponse(layeredUrl);
+  const layeredBytes = await responseBytes(layeredRes);
+  const output_hash = await sha256HexBytes(layeredBytes);
   return {
-    image_base64: `data:image/png;base64,${bytesToBase64(encoded)}`,
+    image_base64: `data:image/jpeg;base64,${bytesToBase64(layeredBytes)}`,
     output_hash,
   };
 }

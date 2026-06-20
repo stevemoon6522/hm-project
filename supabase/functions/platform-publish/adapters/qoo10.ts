@@ -71,6 +71,60 @@ function qoo10PriceFromCost(row: Record<string, any>, settings: Record<string, a
   return normalizeQoo10PriceEnding90(raw);
 }
 
+function hasExplicitQoo10BasePrice(qoo10: Record<string, any>): boolean {
+  return qoo10.base_price_jpy != null || qoo10.item_price_jpy != null || qoo10.price_jpy != null;
+}
+
+function qoo10OptionPriceFloor(basePrice: number): number {
+  return Math.ceil(basePrice * 0.5);
+}
+
+function qoo10OptionPriceCeiling(basePrice: number): number {
+  return Math.floor(basePrice * 2);
+}
+
+function qoo10ClampOptionPrice(price: unknown, basePrice: number): number {
+  const normalized = normalizeQoo10PriceEnding90(price || basePrice) || basePrice;
+  if (!basePrice) return normalized;
+  const floor = qoo10OptionPriceFloor(basePrice);
+  const ceiling = qoo10OptionPriceCeiling(basePrice);
+  const clamped = Math.min(ceiling, Math.max(floor, normalized));
+  return normalizeQoo10PriceEnding90(clamped) || normalized;
+}
+
+function reconcileQoo10BaseAndOptions(basePrice: number, options: any[], explicitBasePrice = false) {
+  const targetPrices = options.map((row) => Number(row.price_jpy || 0)).filter((price) => Number.isFinite(price) && price > 0);
+  const autoBasePrice = targetPrices.length
+    ? normalizeQoo10PriceEnding90(Math.max(...targetPrices))
+    : basePrice;
+  const nextBasePrice = explicitBasePrice ? basePrice : autoBasePrice;
+  if (!nextBasePrice) return { basePrice, options, pricingStrategy: 'unchanged' };
+
+  let maxTargetIndex = 0;
+  let maxTargetPrice = 0;
+  options.forEach((row, idx) => {
+    const price = Number(row.price_jpy || 0);
+    if (price > maxTargetPrice) {
+      maxTargetPrice = price;
+      maxTargetIndex = idx;
+    }
+  });
+
+  const adjustedOptions = options.map((row, idx) => {
+    const targetPrice = Number(row.price_jpy || nextBasePrice);
+    const price = !explicitBasePrice && idx === maxTargetIndex
+      ? nextBasePrice
+      : qoo10ClampOptionPrice(targetPrice, nextBasePrice);
+    return { ...row, price_jpy: price };
+  });
+
+  return {
+    basePrice: nextBasePrice,
+    options: adjustedOptions,
+    pricingStrategy: explicitBasePrice ? 'explicit_base_clamped_options' : 'auto_max_option_base_clamped_options',
+  };
+}
+
 function sameSku(a: unknown, b: unknown): boolean {
   return norm(a) === norm(b);
 }
@@ -249,9 +303,13 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
   const shippingNo = shippingNoFrom(ctx, qoo10);
   const brandNo = brandNoFrom(ctx, qoo10);
   const sellerCode = norm(qoo10.seller_code || qoo10.parent_sku || (groupRows.length > 1 ? parentSku(groupRows) : '') || ctx.masterProduct?.sku);
-  const basePrice = normalizeQoo10PriceEnding90(qoo10.base_price_jpy || qoo10.item_price_jpy || qoo10.price_jpy || qoo10PriceFromCost(ctx.masterProduct || {}, settings));
+  const explicitBasePrice = hasExplicitQoo10BasePrice(qoo10);
+  const initialBasePrice = normalizeQoo10PriceEnding90(qoo10.base_price_jpy || qoo10.item_price_jpy || qoo10.price_jpy || qoo10PriceFromCost(ctx.masterProduct || {}, settings));
   const available = availableDateFrom(ctx, qoo10);
-  const options = normalizeOptions(ctx, qoo10, basePrice, settings);
+  const initialOptions = normalizeOptions(ctx, qoo10, initialBasePrice, settings);
+  const reconciledPricing = reconcileQoo10BaseAndOptions(initialBasePrice, initialOptions, explicitBasePrice);
+  const basePrice = reconciledPricing.basePrice;
+  const options = reconciledPricing.options;
   const userAuthToken = norm((ctx as any).userAuthToken);
 
   if (!userAuthToken) return { ok: false, listingStatus: 'not_listed', errorCode: 'AUTH_NOT_VERIFIED', errorMsg: 'Missing authenticated user token for qoo10-bridge create-listing' };
@@ -291,6 +349,7 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
       rawResponse: {
         dry_run: true,
         payload,
+        qoo10_pricing_strategy: reconciledPricing.pricingStrategy,
         option_products: options.map((row) => ({ product_id: row.product_id, sku: row.sku, option_value: row.option_value })),
       },
     };
@@ -322,6 +381,7 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
       ...result.json,
       platform_item_id: platformItemId,
       seller_code: sellerCode,
+      qoo10_pricing_strategy: reconciledPricing.pricingStrategy,
       option_products: options.map((row) => ({ product_id: row.product_id, sku: row.sku, option_value: row.option_value })),
     },
   };

@@ -24,6 +24,7 @@ function extractFunction(source, name) {
 
 const grouping = read('supabase', 'functions', 'platform-publish', '_shared', 'grouping.ts');
 const shopeeAdapter = read('supabase', 'functions', 'platform-publish', 'adapters', 'shopee.ts');
+const qoo10Adapter = read('supabase', 'functions', 'platform-publish', 'adapters', 'qoo10.ts');
 const ebayAdapter = read('supabase', 'functions', 'platform-publish', 'adapters', 'ebay.ts');
 const shopeeBridge = read('supabase', 'functions', 'shopee-bridge', 'index.ts');
 const ebayBridge = read('supabase', 'functions', 'ebay-bridge', 'index.ts');
@@ -37,7 +38,9 @@ assert.match(
   'ready-stock grouped publish must keep the zero-stock SET option while filtering other zero-stock rows',
 );
 
-assert.match(shopeeAdapter, /imagescript@1\.3\.0/, 'Shopee platform-publish must compose the shop layer server-side');
+assert.match(shopeeAdapter, /shopeeLayeredCloudinaryUrl/, 'Shopee platform-publish must compose the shop layer through a lightweight server-side URL');
+assert.match(shopeeAdapter, /l_fetch:/, 'Shopee platform-publish must overlay the shop layer through Cloudinary fetch transformations');
+assert.doesNotMatch(shopeeAdapter, /imagescript@1\.3\.0/, 'Shopee platform-publish must not use ImageScript in the Edge publish path');
 assert.match(shopeeAdapter, /shop-overlay-layer\.png/, 'Shopee platform-publish must use the V2 shop overlay layer asset');
 assert.match(shopeeAdapter, /platform-publish-shop-layer-v1/, 'Shopee image uploads must audit the layered-cover version');
 assert.doesNotMatch(
@@ -46,7 +49,15 @@ assert.doesNotMatch(
   'Shopee platform-publish must not upload the raw main image as the representative cover',
 );
 
+assert.match(qoo10Adapter, /function reconcileQoo10BaseAndOptions/, 'Qoo10 platform-publish must reconcile base and option prices together');
+assert.match(qoo10Adapter, /auto_max_option_base_clamped_options/, 'Qoo10 grouped publish must choose an auto base that can carry the highest-price option');
+assert.match(qoo10Adapter, /qoo10OptionPriceFloor\(basePrice\)/, 'Qoo10 grouped publish must clamp low option prices to the -50% option delta floor');
+assert.match(qoo10Adapter, /qoo10OptionPriceCeiling\(basePrice\)/, 'Qoo10 grouped publish must clamp high option prices to the +100% option delta ceiling');
+
 const buildGlobalModels = extractFunction(shopeeBridge, 'buildGlobalModels');
+const normalizeGlobalModelForAdd = extractFunction(shopeeBridge, 'normalizeGlobalModelForAdd');
+const enforceV2ProbePreflight = extractFunction(shopeeBridge, 'enforceV2ProbePreflight');
+const verifyPublishedSkuOutcome = extractFunction(shopeeBridge, 'verifyPublishedSkuOutcome');
 assert.match(
   buildGlobalModels,
   /m\?\.seller_stock\?\.\[0\]\?\.stock\s*\?\?/,
@@ -56,6 +67,41 @@ assert.match(
   buildGlobalModels,
   /const stock = Number\(m\?\.seller_stock\?\.\[0\]\?\.stock\s*\?\?\s*m\?\.stock\s*\?\?\s*fallbackStock/,
   'Shopee bridge must not let fallback parent stock override per-model seller_stock',
+);
+assert.match(
+  normalizeGlobalModelForAdd,
+  /model\?\.weight_g[\s\S]*out\.weight = Number\(model\.weight_g\) \/ 1000/,
+  'Shopee bridge add_global_model must preserve per-model weight_g instead of falling back to parent weight',
+);
+assert.doesNotMatch(
+  enforceV2ProbePreflight,
+  /action === 'update_global_model'[\s\S]*blockedFields\.push\('weight'\)/,
+  'Shopee bridge must not block documented update_global_model[].weight behind the stale probe gate',
+);
+assert.match(
+  shopeeBridge,
+  /global_model\[\] required \(global_model_id \+ global_model_sku, plus optional weight\)/,
+  'Shopee bridge must require global_model_sku for model weight updates because Shopee rejects weight-only updates',
+);
+assert.match(
+  shopeeBridge,
+  /next\.weight = Number\(m\.weight\)/,
+  'Shopee bridge direct update_global_model route must preserve model weight values',
+);
+assert.match(
+  verifyPublishedSkuOutcome,
+  /\/api\/v2\/product\/search_item/,
+  'Shopee bridge must verify post-publish success by SKU search when publish_task_result is misleading',
+);
+assert.match(
+  verifyPublishedSkuOutcome,
+  /post_publish_search_item/,
+  'Shopee bridge SKU verification must label the post-publish search source',
+);
+assert.match(
+  shopeeBridge,
+  /verifyPublishedSkuOutcome\(targetRegion,\s*shop_id,\s*publish_task_id,\s*task,\s*body\?\.sku/,
+  'Shopee publish_to_region/register_cbsc must call SKU-based post-publish verification',
 );
 
 const ebayPriceUsd = extractFunction(ebayAdapter, 'ebayPriceUsd');
@@ -71,6 +117,16 @@ assert.match(
   ebayBridge,
   /set that variation's quantity to 0/i,
   'eBay bridge must retain a local-doc citation for quantity-0 out-of-stock variations',
+);
+assert.match(
+  ebayBridge,
+  /price:\s*o\.pricingSummary\?\.price\s*\|\|\s*o\.price\s*\|\|\s*null/,
+  'eBay lookup-item must expose offer price so shipping-inclusive pricing can be verified remotely',
+);
+assert.match(
+  ebayBridge,
+  /price:\s*offer\.pricingSummary\?\.price\s*\|\|\s*offer\.price\s*\|\|\s*null/,
+  'eBay lookup-group must expose per-variation offer price',
 );
 
 assert.match(staroneCrawl, /koreanRatio/, 'StarOneMall crawler must inspect Korean text ratio before accepting UTF-8');

@@ -183,7 +183,7 @@
     }
     .pl-table {
       table-layout: fixed;
-      min-width: 860px;
+      min-width: 1180px;
       white-space: normal;
     }
     .pl-table th,
@@ -201,6 +201,48 @@
       line-height: 1.35;
       word-break: break-word;
     }
+    .pl-barcode-cell,
+    .pl-vars-cell,
+    .pl-wms-cell,
+    .pl-action-cell {
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .pl-barcode-cell {
+      font-family: var(--mono);
+      word-break: break-word;
+    }
+    .pl-vars-cell {
+      text-align: center;
+    }
+    .pl-count-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 28px;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 999px;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .pl-status-pill {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 7px;
+      font-size: 10px;
+      font-weight: 700;
+      line-height: 1.3;
+      white-space: nowrap;
+    }
+    .pl-status-pill.ok { background: #dcfce7; color: #166534; }
+    .pl-status-pill.warn { background: #fef3c7; color: #92400e; }
+    .pl-status-pill.empty { background: #f1f5f9; color: #475569; }
+    .pl-status-pill.info { background: #dbeafe; color: #1d4ed8; }
     .pl-product-cell {
       min-width: 0;
       line-height: 1.35;
@@ -226,6 +268,29 @@
       gap: 10px;
       min-width: 0;
     }
+    .pl-master-thumb {
+      width: 52px;
+      height: 52px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: linear-gradient(135deg, #cffafe, #fce7f3);
+      color: #0f172a;
+      flex: 0 0 auto;
+      overflow: hidden;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-align: center;
+    }
+    .pl-master-thumb img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
     .pl-product-copy {
       min-width: 0;
       display: grid;
@@ -248,6 +313,33 @@
       font-size: 11px;
       color: var(--muted);
       line-height: 1.45;
+    }
+    .pl-cell-label {
+      display: block;
+      margin-bottom: 2px;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-transform: uppercase;
+    }
+    .pl-auto-badge {
+      display: inline-flex;
+      align-items: center;
+      margin-left: 4px;
+      padding: 1px 5px;
+      border: 1px solid #cbd5e1;
+      border-radius: 999px;
+      color: #475569;
+      background: #f8fafc;
+      font-family: var(--mono);
+      font-size: 9px;
+      font-weight: 700;
+      vertical-align: 1px;
+    }
+    .pl-action-cell {
+      white-space: nowrap;
+      text-align: right;
     }
     .pl-group-led {
       display: inline-flex;
@@ -2831,12 +2923,10 @@
       <div class="master-page-head">
         <div>
           <h2>마스터 상품</h2>
-          <p>플랫폼별 등록 상태와 발행 작업은 각 플랫폼 탭에서 처리합니다.</p>
+          <p>목록에는 판단에 필요한 데이터만 표시합니다. 등록 방식은 신규 마스터 등록 안에서 선택합니다.</p>
         </div>
         <div class="master-action-bar">
           <button type="button" class="primary" data-master-register-open="global">신규 마스터 등록</button>
-          <button type="button" data-master-register-open="custom">커스텀 등록</button>
-          <button type="button" data-master-register-open="url">URL 일괄 등록</button>
         </div>
       </div>
       <div id="master-register-panel" class="master-register-panel" hidden>
@@ -2848,7 +2938,7 @@
       </div>
       <div class="toolbar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         <div class="pl-search-stack">
-          <input id="search" type="search" placeholder="SKU or product name">
+          <input id="search" type="search" placeholder="상품명 / Official Barcode / SP Barcode / SKU 검색">
           <input id="pl-lifecycle-filter" type="hidden" value="all">
           <div class="pl-lifecycle-buttons" role="group" aria-label="상품 lifecycle 필터">
             <button type="button" class="pl-lifecycle-btn is-active" data-pl-lifecycle="all" aria-pressed="true">전체</button>
@@ -2867,16 +2957,18 @@
           <thead>
             <tr>
               <th style="width:34px;"><input type="checkbox" id="pl-check-all"></th>
-              <th style="width:240px;">SKU</th>
-              <th style="width:330px;">Product</th>
-              <th style="width:104px;">Lifecycle</th>
-              <th style="width:82px;">Cost</th>
-              <th style="width:58px;">Wt g</th>
-              <th style="width:92px;"></th>
+              <th style="width:420px;">상품</th>
+              <th style="width:170px;">Official Barcode</th>
+              <th style="width:70px;text-align:center;">Vars</th>
+              <th style="width:108px;">WMS</th>
+              <th style="width:112px;">Lifecycle</th>
+              <th style="width:110px;">Cost</th>
+              <th style="width:90px;">Weight</th>
+              <th style="width:92px;text-align:right;">Actions</th>
             </tr>
           </thead>
           <tbody id="product-body">
-            <tr><td colspan="7" class="empty">Loading products...</td></tr>
+            <tr><td colspan="9" class="empty">Loading products...</td></tr>
           </tbody>
         </table>
       </div>
@@ -4796,6 +4888,7 @@ LEGACY END -->
     platformFilters: {},
     platformPreview: null,
     platformLastResults: {},
+    wmsInventoryBySku: new Map(),
     shopeeNameSync: null,
     pendingPriceSyncSelectedIds: null,
     priceSyncExpandedGroups: new Set(),
@@ -5906,6 +5999,49 @@ LEGACY END -->
       .join('');
   }
 
+  function plPostgrestInValue(value) {
+    return `"${String(value || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+  }
+
+  async function plLoadWmsInventoryForProducts(products) {
+    const skus = Array.from(new Set(
+      (products || [])
+        .map((product) => String(product?.sku || '').trim())
+        .filter(Boolean)
+    ));
+    const next = new Map();
+    if (!skus.length) {
+      state.wmsInventoryBySku = next;
+      return;
+    }
+    const chunkSize = 60;
+    for (let i = 0; i < skus.length; i += chunkSize) {
+      const chunk = skus.slice(i, i + chunkSize);
+      const params = new URLSearchParams();
+      params.set('select', 'sku,barcode,weight,stock_kr,bundle_components');
+      params.set('sku', `in.(${chunk.map(plPostgrestInValue).join(',')})`);
+      const resp = await fetch(`${WMS_SUPABASE_URL}/rest/v1/inventory?${params.toString()}`, {
+        headers: {
+          apikey: WMS_SUPABASE_ANON,
+          Authorization: `Bearer ${WMS_SUPABASE_ANON}`,
+        },
+      });
+      const bodyText = await resp.text();
+      let rows = [];
+      try { rows = bodyText ? JSON.parse(bodyText) : []; } catch { rows = []; }
+      if (!resp.ok) {
+        const message = rows?.message || rows?.error || bodyText || `WMS HTTP ${resp.status}`;
+        throw new Error(message);
+      }
+      (Array.isArray(rows) ? rows : []).forEach((row) => {
+        const sku = String(row?.sku || '').trim();
+        if (!sku || next.has(sku)) return;
+        next.set(sku, row);
+      });
+    }
+    state.wmsInventoryBySku = next;
+  }
+
   async function pingBridge() {
     try {
       const r = await fetch(`${SHOPEE_BRIDGE}/tokens?region=SG&account_key=${encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)}`, { headers: AUTH_HEADERS });
@@ -5917,7 +6053,7 @@ LEGACY END -->
 
   async function loadData() {
     showApp();
-    els.productBody.innerHTML = '<tr><td colspan="7" class="empty">Loading products...</td></tr>';
+    els.productBody.innerHTML = '<tr><td colspan="9" class="empty">Loading products...</td></tr>';
     // 2026-05-20 (operator msg #501): newest products at the top. Position
     // is still respected for legacy ordering, but created_at flips to DESC
     // so the bulk-register flow's latest rows always show up first.
@@ -5943,6 +6079,12 @@ LEGACY END -->
     if (listingsRes.error) throw listingsRes.error;
     state.products = productsRes.data || [];
     state.listings = listingsRes.data || [];
+    try {
+      await plLoadWmsInventoryForProducts(state.products);
+    } catch (e) {
+      console.warn('[v2] WMS inventory match fetch failed:', e);
+      state.wmsInventoryBySku = new Map();
+    }
     {
       const liveIds = new Set(state.products.map((p) => String(p.id)));
       state.productListSelectedIds = new Set(
@@ -6012,13 +6154,13 @@ LEGACY END -->
       return lifecycleFilter === 'all' || lifecycle === lifecycleFilter;
     }).filter((p) => {
       if (!q) return true;
-      return `${p.sku || ''} ${p.product_name || ''} ${plProductName(p)} ${p.option_name || ''}`.toLowerCase().includes(q);
+      return `${p.sku || ''} ${p.product_name || ''} ${plProductName(p)} ${p.option_name || ''} ${plWmsSearchText(p)}`.toLowerCase().includes(q);
     });
     if (!rows.length) {
       const emptyLabel = lifecycleFilter === 'pre_order'
         ? 'PRE ORDER 상품이 없습니다.'
         : (lifecycleFilter === 'ready_stock' ? 'READY STOCK 상품이 없습니다.' : '마스터 상품이 없습니다.');
-      els.productBody.innerHTML = `<tr><td colspan="7" class="empty">${text(emptyLabel)}</td></tr>`;
+      els.productBody.innerHTML = `<tr><td colspan="9" class="empty">${text(emptyLabel)}</td></tr>`;
       updateBulkDeleteUi();
       return;
     }
@@ -6479,6 +6621,123 @@ LEGACY END -->
     return `${values[0].toLocaleString()}-${values[values.length - 1].toLocaleString()}`;
   }
 
+  function plWmsInventoryRow(product) {
+    const sku = String(product?.sku || '').trim();
+    if (!sku) return null;
+    return state.wmsInventoryBySku?.get(sku) || null;
+  }
+
+  function plWmsSearchText(product) {
+    const wms = plWmsInventoryRow(product);
+    return `${wms?.sku || ''} ${wms?.barcode || ''}`;
+  }
+
+  function plUniqueNonEmpty(values) {
+    return Array.from(new Set(
+      (values || []).map((value) => String(value || '').trim()).filter(Boolean)
+    ));
+  }
+
+  function plOfficialBarcodeValues(rows) {
+    return plUniqueNonEmpty((rows || []).map((row) => plWmsInventoryRow(row)?.barcode));
+  }
+
+  function plOfficialBarcodeLabel(rows) {
+    const values = plOfficialBarcodeValues(rows);
+    if (!values.length) return '-';
+    if (values.length === 1) return values[0];
+    return 'Mixed';
+  }
+
+  function plOfficialBarcodeCell(rows) {
+    const values = plOfficialBarcodeValues(rows);
+    if (!values.length) return '<span class="muted">-</span>';
+    if (values.length === 1) return text(values[0]);
+    return `<span title="${text(values.join(', '))}">Mixed</span>`;
+  }
+
+  function plWmsStatus(rows) {
+    const total = (rows || []).length;
+    const found = (rows || []).filter((row) => !!plWmsInventoryRow(row)).length;
+    if (!total) return { found: 0, total: 0, key: 'empty', label: 'Missing' };
+    if (found === total) return { found, total, key: 'ok', label: total === 1 ? 'Found' : `${found}/${total} Found` };
+    if (found > 0) return { found, total, key: 'warn', label: `${found}/${total} Found` };
+    return { found, total, key: 'empty', label: total === 1 ? 'Missing' : `0/${total} Found` };
+  }
+
+  function plWmsStatusCell(rows) {
+    const status = plWmsStatus(rows);
+    return `<span class="pl-status-pill ${text(status.key)}">${text(status.label)}</span>`;
+  }
+
+  function plMainImage(product) {
+    return String(product?.main_image || product?.shopee_option_image_url || '').trim();
+  }
+
+  function plArtistInitial(product) {
+    const name = plProductName(product) || product?.product_name || product?.sku || '';
+    const clean = String(name).replace(/^\[[^\]]+\]\s*/, '').trim();
+    return (clean.split(/\s+/)[0] || 'SPC').slice(0, 6).toUpperCase();
+  }
+
+  function plProductThumb(product) {
+    const src = plMainImage(product);
+    if (src) {
+      return `<span class="pl-master-thumb"><img src="${text(src)}" alt="" loading="lazy" onerror="this.remove();"></span>`;
+    }
+    return `<span class="pl-master-thumb">${text(plArtistInitial(product))}</span>`;
+  }
+
+  function plIsSetVariation(product) {
+    const haystack = [
+      product?.sku,
+      product?.option_name,
+      ...(Array.isArray(product?.variation_option_names) ? product.variation_option_names : []),
+    ].join(' ');
+    const wms = plWmsInventoryRow(product);
+    const components = wms?.bundle_components;
+    const hasComponents = Array.isArray(components) ? components.length > 0 : !!components;
+    return hasComponents || /\b(set|bundle)\b/i.test(haystack);
+  }
+
+  function plVariantTypeLabel(product) {
+    return plIsSetVariation(product) ? 'SET' : 'Single';
+  }
+
+  function plComputedSetNumber(row, groupRows, field) {
+    if (!plIsSetVariation(row)) return { value: Number(row?.[field] || 0), auto: false };
+    const components = (groupRows || []).filter((candidate) => (
+      String(candidate?.id || '') !== String(row?.id || '') && !plIsSetVariation(candidate)
+    ));
+    if (!components.length) return { value: Number(row?.[field] || 0), auto: false };
+    const value = components.reduce((sum, candidate) => sum + (Number(candidate?.[field] || 0) || 0), 0);
+    return value > 0 ? { value, auto: true } : { value: Number(row?.[field] || 0), auto: false };
+  }
+
+  function plDisplayNumber(value) {
+    const n = Number(value || 0);
+    return Number.isFinite(n) ? n.toLocaleString() : '0';
+  }
+
+  function plDisplayCostCell(row, groupRows) {
+    const computed = plComputedSetNumber(row, groupRows, 'cost_krw');
+    return `${plDisplayNumber(computed.value)}${computed.auto ? '<span class="pl-auto-badge">auto</span>' : ''}`;
+  }
+
+  function plDisplayWeightCell(row, groupRows) {
+    const computed = plComputedSetNumber(row, groupRows, 'weight_g');
+    return `${plDisplayNumber(computed.value)}${computed.auto ? '<span class="pl-auto-badge">auto</span>' : ''}`;
+  }
+
+  function plGroupNumberRange(rows, field) {
+    const values = Array.from(new Set(
+      (rows || []).map((row) => plComputedSetNumber(row, rows, field).value).filter((n) => Number.isFinite(Number(n)))
+    )).map(Number).sort((a, b) => a - b);
+    if (!values.length) return '0';
+    if (values.length === 1) return values[0].toLocaleString();
+    return `${values[0].toLocaleString()}-${values[values.length - 1].toLocaleString()}`;
+  }
+
   function plGroupPlatformCell(rows, platform) {
     let totalTargets = 0;
     let listedTargets = 0;
@@ -6538,30 +6797,33 @@ LEGACY END -->
     const more = options.length > 4 ? ` 외 ${options.length - 4}개` : '';
     const productName = plProductName(first);
     const productIds = rows.map((p) => String(p.id || '')).filter(Boolean);
+    const barcodeLabel = plOfficialBarcodeLabel(rows);
+    const barcodeSummary = barcodeLabel && barcodeLabel !== '-'
+      ? 'Official barcode 기준 1 master'
+      : 'Master group';
     const groupHtml = `
       <tr class="pl-group-row" data-product-group-key="${text(group.key)}">
         <td><input type="checkbox" class="pl-group-check" data-group-key="${text(group.key)}" data-product-ids="${text(productIds.join(','))}" title="이 묶음 옵션 전체 선택"></td>
-        <td class="pl-sku-cell">
-          <div>${text(plParentSku(rows))}</div>
-          <div class="muted">${rows.length} options</div>
-        </td>
         <td class="pl-product-cell">
           <div class="pl-group-main">
             <button type="button" class="pl-group-toggle" data-group-toggle="1" data-group-key="${text(group.key)}" title="${collapsed ? '옵션 펼치기' : '옵션 접기'}">${collapsed ? '▸' : '▾'}</button>
+            ${plProductThumb(first)}
             <div class="pl-product-copy">
               <div class="pl-master-title-row">
                 <span class="pl-master-title">${text(productName)}</span>
-                <button type="button" class="pl-master-edit" data-edit-master="${text(first.product_group_id || '')}" title="마스터 상품 데이터 수정">수정</button>
               </div>
-              <div class="pl-option-summary">옵션 묶음 · ${text(rows.length)}개${shownOptions ? ` · ${shownOptions}${text(more)}` : ''}</div>
+              <div class="pl-option-summary">${text(barcodeSummary)} · SP/SKU 기준 ${text(rows.length)} variations${shownOptions ? ` · ${shownOptions}${text(more)}` : ''}</div>
             </div>
           </div>
         </td>
+        <td class="pl-barcode-cell">${plOfficialBarcodeCell(rows)}</td>
+        <td class="pl-vars-cell"><span class="pl-count-badge">${text(rows.length)}</span></td>
+        <td class="pl-wms-cell">${plWmsStatusCell(rows)}</td>
         <td>${productLifecycleBadge(first)}</td>
-        <td class="mono">${plNumberRange(rows, 'cost_krw')}</td>
-        <td class="mono">${plNumberRange(rows, 'weight_g')}</td>
-        <td style="white-space:nowrap;">
-          <span class="muted" style="font-size:11px;">마스터</span>
+        <td class="mono">${plGroupNumberRange(rows, 'cost_krw')}</td>
+        <td class="mono">${plGroupNumberRange(rows, 'weight_g')}g</td>
+        <td class="pl-action-cell">
+          <button type="button" class="pl-master-edit" data-edit-master="${text(first.product_group_id || '')}" title="마스터 상품 데이터 수정">수정</button>
         </td>
       </tr>`;
     if (collapsed) return groupHtml;
@@ -6575,6 +6837,7 @@ LEGACY END -->
   function renderProductOptionRow(p, groupKey, isGroupChild) {
     let optionSpec = arguments.length > 3 ? arguments[3] : null;
     let rowIndex = arguments.length > 4 ? arguments[4] : 0;
+    let groupRowsForDisplay = [p];
     if (isGroupChild && !optionSpec) {
       const cached = state.productListOptionSpecs?.get(groupKey);
       const groupId = String(groupKey || '').replace(/^group:/, '');
@@ -6582,10 +6845,14 @@ LEGACY END -->
         .filter((row) => String(row?.product_group_id || '') === groupId)
         .sort((a, b) => plTierSortKey(a).localeCompare(plTierSortKey(b)));
       if (groupRows.length) {
+        groupRowsForDisplay = groupRows;
         optionSpec = cached?.optionSpec || plEffectiveVariationSpec(groupRows, 'Version');
         const foundIndex = groupRows.findIndex((row) => String(row?.id || '') === String(p?.id || ''));
         rowIndex = foundIndex >= 0 ? foundIndex : 0;
       }
+    } else if (isGroupChild) {
+      const cached = state.productListOptionSpecs?.get(groupKey);
+      groupRowsForDisplay = cached?.rows || [p];
     }
     const isVariantRow = plIsGroupedVariant(p);
     const optionDisplay = optionSpec
@@ -6601,21 +6868,34 @@ LEGACY END -->
         ? `<span class="pl-master-title-row"><span><span class="pl-product-title">${text(productName)}</span><span class="muted" style="font-size:11px;">옵션: ${text(optionDisplay)}</span></span>${editButton}</span>`
         : `<span class="pl-master-title-row"><span class="pl-product-title">${text(productName)}</span>${editButton}</span>`);
     const rowClass = isGroupChild ? 'pl-option-row' : 'pl-single-product-row';
+    const spBarcode = plWmsInventoryRow(p)?.sku || p.sku || '';
+    const typeLabel = plVariantTypeLabel(p);
     return `
       <tr class="${rowClass}" data-product-id="${text(p.id)}" data-product-group-key="${text(groupKey)}">
         <td><input type="checkbox" class="pl-row-check" data-id="${text(p.id)}" data-sku="${text(p.sku || '')}" data-group-key="${text(groupKey)}" ${state.productListSelectedIds?.has(String(p.id)) ? 'checked' : ''}></td>
-        <td class="pl-sku-cell pl-edit" data-field="sku" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;">${text(p.sku || '')}</td>
         <td class="pl-product-cell">
-          <div class="${isVariantRow ? '' : 'pl-edit'}" data-field="product_name" data-id="${text(p.id)}" title="${isVariantRow ? '옵션 묶음 상품 - 새 등록 화면에서 편집' : '더블클릭하여 편집'}" style="cursor:${isVariantRow ? 'default' : 'text'};">${nameDisplay}${isGroupChild ? '' : productLifecycleBadge(p)}</div>
+          <div class="${isVariantRow ? '' : 'pl-edit'}" data-field="product_name" data-id="${text(p.id)}" title="${isVariantRow ? '옵션 묶음 상품 - 새 등록 화면에서 편집' : '더블클릭하여 편집'}" style="cursor:${isVariantRow ? 'default' : 'text'};">
+            ${isGroupChild ? '<span class="pl-cell-label">Variation</span>' : ''}
+            <div class="pl-group-main">
+              ${isGroupChild ? '' : plProductThumb(p)}
+              <div class="pl-product-copy">
+                ${nameDisplay}
+                ${!isGroupChild && !isVariantRow ? `<div class="pl-option-summary">${text(p.sku || '')}${p.option_name ? ` · ${text(p.option_name)}` : ''}</div>` : ''}
+              </div>
+            </div>
+          </div>
           ${isVariantRow
             ? ''
             : `<div class="muted pl-edit" data-field="option_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;font-size:11px;">${text(p.option_name || '') || '<i style="color:#cbd5e1;">(no option)</i>'}</div>`}
         </td>
-        <td>${isGroupChild ? '<span class="muted" style="font-size:11px;">옵션</span>' : productLifecycleBadge(p)}</td>
-        <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.cost_krw || 0).toLocaleString()}</td>
-        <td class="mono pl-edit" data-field="weight_g" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${Number(p.weight_g || 0).toLocaleString()}</td>
-        <td style="white-space:nowrap;">
-          ${isVariantRow ? '<span class="muted" style="font-size:11px;">옵션</span>' : '<span class="muted" style="font-size:11px;">단품</span>'}
+        <td class="pl-barcode-cell"><span class="pl-cell-label">${isGroupChild ? 'SP Barcode' : 'Official Barcode'}</span>${isGroupChild ? text(spBarcode || '-') : plOfficialBarcodeCell([p])}</td>
+        <td class="pl-sku-cell"><span class="pl-cell-label">${isGroupChild ? 'SKU' : 'Vars'}</span>${isGroupChild ? text(p.sku || '-') : '<span class="pl-count-badge">1</span>'}</td>
+        <td class="pl-wms-cell">${plWmsStatusCell([p])}</td>
+        <td>${isGroupChild ? `<span class="pl-status-pill ${typeLabel === 'SET' ? 'info' : 'empty'}">${text(typeLabel)}</span>` : productLifecycleBadge(p)}</td>
+        <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${plDisplayCostCell(p, groupRowsForDisplay)}</td>
+        <td class="mono pl-edit" data-field="weight_g" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${plDisplayWeightCell(p, groupRowsForDisplay)}g</td>
+        <td class="pl-action-cell">
+          ${isGroupChild ? '<span class="muted" style="font-size:11px;">옵션</span>' : ''}
           <button type="button" data-delete="${text(p.id)}" data-sku="${text(p.sku || '')}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">🗑</button>
         </td>
       </tr>
@@ -11263,7 +11543,7 @@ LEGACY END -->
   });
   els.refresh.addEventListener('click', async () => {
     try { await loadData(); }
-    catch (e) { els.productBody.innerHTML = `<tr><td colspan="7" class="empty">${text(e.message || e)}</td></tr>`; }
+    catch (e) { els.productBody.innerHTML = `<tr><td colspan="9" class="empty">${text(e.message || e)}</td></tr>`; }
   });
   els.sgSearchBtn?.addEventListener('click', () => searchShopeeGlobalProducts({ staleWhileRevalidate: true }));
   els.sgRefreshBtn?.addEventListener('click', () => searchShopeeGlobalProducts({ forceRefresh: true }));

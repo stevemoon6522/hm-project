@@ -34,10 +34,17 @@ const bulkDeleteUi = sliceBetween(
 );
 
 assert(productView.includes('<table class="pl-table">'), 'product list table must use wrapping table class');
+assert(productView.includes('Official Barcode'), 'master table must expose official barcode after the product name');
+assert(productView.includes('Vars'), 'master table must expose variation count');
+assert(productView.includes('WMS'), 'master table must expose WMS match status');
+assert(!productView.includes('data-master-register-open="custom"'), 'custom registration must live inside the new master registration panel');
+assert(!productView.includes('data-master-register-open="url"'), 'URL bulk registration must live inside the new master registration panel');
 assert(html.includes('.pl-group-row'), 'group row styling must exist');
 assert(html.includes('.pl-option-row'), 'option row styling must exist');
 assert(html.includes('productListExpandedGroups: new Set()'), 'expanded group state must be tracked');
 assert(html.includes('productListSelectedIds: new Set()'), 'product list selected IDs must be tracked outside the DOM');
+assert(html.includes('wmsInventoryBySku: new Map()'), 'product list must keep WMS inventory matches outside the DOM');
+assert(html.includes('function plLoadWmsInventoryForProducts(products)'), 'product list must load WMS inventory matches by SKU');
 
 for (const token of [
   'function plBuildProductGroups(rows)',
@@ -48,6 +55,10 @@ for (const token of [
   'function plSetProductSelected(productId, selected)',
   'function plVisibleRenderedProductIds()',
   'function plGroupPlatformCell(rows, platform)',
+  'function plOfficialBarcodeCell(rows)',
+  'function plWmsStatusCell(rows)',
+  'function plComputedSetNumber(row, groupRows, field)',
+  'function plDisplayWeightCell(row, groupRows)',
   'openProductMasterEditModal',
   'data-group-toggle',
   'data-edit-master',
@@ -78,7 +89,8 @@ assert(
   'group rows must be expandable/collapsible',
 );
 assert(
-  productList.includes("isVariantRow ? '<span class=\"muted\"")
+  productList.includes("const typeLabel = plVariantTypeLabel(p)")
+    && productList.includes("pl-status-pill ${typeLabel === 'SET' ? 'info' : 'empty'}")
     && !productList.includes('data-open="${text(p.id)}"')
     && !productList.includes('data-open-shopee-single="${text(p.id)}"'),
   'variant option rows must not show legacy or platform Register buttons in the master table',
@@ -104,9 +116,11 @@ assert(
 );
 assert(
   productList.includes("optionDisplay || '옵션'")
-    && productList.includes("${isGroupChild ? '' : productLifecycleBadge(p)}")
-    && /isVariantRow\s*\?\s*''/.test(productList),
-  'grouped child option rows must display only the option name without repeated product/group metadata',
+    && productList.includes("'<span class=\"pl-cell-label\">Variation</span>'")
+    && productList.includes("SP Barcode")
+    && productList.includes("plDisplayCostCell(p, groupRowsForDisplay)")
+    && productList.includes("plDisplayWeightCell(p, groupRowsForDisplay)"),
+  'grouped child option rows must display variation-only operational fields with auto cost/weight helpers',
 );
 assert(
   html.includes('id="pl-master-edit-modal"')

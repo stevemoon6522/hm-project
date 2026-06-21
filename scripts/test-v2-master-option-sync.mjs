@@ -230,7 +230,7 @@ assert.doesNotMatch(
 
 const productListRenderBlock = sliceBetween(
   html,
-  'function renderProductGroup(group) {',
+  'function plWmsInventoryRow(product) {',
   'function mountMasterRegisterPanel() {',
 );
 const renderProductGroup = new Function(
@@ -245,7 +245,7 @@ const renderProductGroup = new Function(
   'stripNonMarketplaceText',
   `${optionHelpers}\n${productListRenderBlock}\nreturn renderProductGroup;`,
 )(
-  { productListExpandedGroups: new Set(['g1']), productListSelectedIds: new Set() },
+  { productListExpandedGroups: new Set(['g1']), productListSelectedIds: new Set(), wmsInventoryBySku: new Map() },
   (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch])),
   () => 'M4-BTS-ARIRA-PHO',
   (row) => row.product_name || '',

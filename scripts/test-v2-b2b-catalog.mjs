@@ -116,4 +116,18 @@ for (const token of [
   assert(html.includes(token), `V2 B2B catalog UI missing token: ${token}`);
 }
 
+assert(
+  !/b2bEl\('b2b-catalog-edit-modal'\)\?\.addEventListener\('click'/.test(html),
+  'B2B catalog edit modal must not close when the backdrop is clicked',
+);
+
+for (const token of [
+  "b2bEl('b2b-catalog-edit-close')?.addEventListener('click', b2bCloseCatalogEditModal)",
+  "b2bEl('b2b-catalog-edit-cancel')?.addEventListener('click', b2bCloseCatalogEditModal)",
+  "b2bEl('b2b-catalog-bulk-modal')?.addEventListener('click'",
+  "b2bEl('b2b-conflict-modal')?.addEventListener('click'",
+]) {
+  assert(html.includes(token), `B2B modal close behavior regression missing token: ${token}`);
+}
+
 console.log('v2 B2B catalog static checks passed');

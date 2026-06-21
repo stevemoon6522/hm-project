@@ -23675,9 +23675,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     b2bEl('b2b-catalog-edit-cancel')?.addEventListener('click', b2bCloseCatalogEditModal);
     b2bEl('b2b-catalog-edit-save')?.addEventListener('click', b2bSaveCatalogEdit);
     b2bEl('b2b-edit-image-url')?.addEventListener('input', b2bRefreshCatalogEditPreview);
-    b2bEl('b2b-catalog-edit-modal')?.addEventListener('click', function(e) {
-      if (e.target === b2bEl('b2b-catalog-edit-modal')) b2bCloseCatalogEditModal();
-    });
     b2bEl('b2b-catalog-bulk-close')?.addEventListener('click', b2bCloseBulkEditModal);
     b2bEl('b2b-catalog-bulk-cancel')?.addEventListener('click', b2bCloseBulkEditModal);
     b2bEl('b2b-catalog-bulk-save')?.addEventListener('click', b2bApplyBulkEdit);

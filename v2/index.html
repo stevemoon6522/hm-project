@@ -21086,19 +21086,25 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
    * renderCatalogView() — entry point.
    * Fetches data (60s cache), applies filters, renders full table.
    */
+  function catCurrentColCount() {
+    return _catActivePlatform === 'shopee'
+      ? 6
+      : 3 + CAT_REGIONS.length * 2 + 6;
+  }
+
   async function renderCatalogView(forceRefresh) {
     const errEl = document.getElementById('cat-error');
     const loadingEl = document.getElementById('cat-loading');
     const tbody = document.getElementById('cat-body');
     if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
     if (loadingEl) loadingEl.style.display = 'block';
-    if (tbody) tbody.innerHTML = '<tr><td colspan="20" class="cat-empty">로딩 중…</td></tr>';
+    if (tbody) tbody.innerHTML = '<tr><td colspan="' + catCurrentColCount() + '" class="cat-empty">로딩 중…</td></tr>';
 
     try {
       await fetchCatalogData(!!forceRefresh);
     } catch (e) {
       if (errEl) { errEl.textContent = '오류: ' + (e.message || e); errEl.style.display = ''; }
-      if (tbody) tbody.innerHTML = '<tr><td colspan="20" class="cat-empty" style="color:var(--red);">'
+      if (tbody) tbody.innerHTML = '<tr><td colspan="' + catCurrentColCount() + '" class="cat-empty" style="color:var(--red);">'
         + esc(e.message || String(e)) + '</td></tr>';
       if (loadingEl) loadingEl.style.display = 'none';
       return;
@@ -21305,7 +21311,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     if (countEl) countEl.textContent = rows.length + '건';
 
-    const colCount = 3 + CAT_REGIONS.length * 2 + 6; // rough count for empty row (incl. 도매가 col)
+    const colCount = catCurrentColCount();
 
     if (!rows.length) {
       if (tbody) tbody.innerHTML = '<tr><td colspan="' + colCount + '" class="cat-empty">상품이 없습니다.</td></tr>';
@@ -21440,8 +21446,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   // ── Select all ──────────────────────────────────────────────────
 
+  function catBindSelectAll() {
+    const selectAll = document.getElementById('cat-select-all');
+    if (!selectAll || selectAll.dataset.catBound === '1') return;
+    selectAll.dataset.catBound = '1';
+    selectAll.addEventListener('change', function() {
+      const checked = selectAll.checked;
+      document.querySelectorAll('.cat-row-cb').forEach(function(cb) {
+        cb.checked = checked;
+        const pid = cb.dataset.catSel;
+        if (pid) {
+          if (checked) catSelectedIds.add(pid);
+          else catSelectedIds.delete(pid);
+        }
+      });
+      document.querySelectorAll('.cat-group-cb').forEach(function(cb) {
+        cb.checked = checked;
+        cb.indeterminate = false;
+        catProductIdsFromDataset(cb.dataset.productIds).forEach(function(pid) {
+          if (checked) catSelectedIds.add(pid);
+          else catSelectedIds.delete(pid);
+        });
+      });
+      applyAndRenderCatalog();
+    });
+  }
+
   function catSyncSelectAll() {
     const all = document.getElementById('cat-select-all');
+    const selectedCountEl = document.getElementById('cat-selected-count');
+    if (selectedCountEl) selectedCountEl.textContent = catSelectedIds.size + '개';
     if (!all) return;
     const ids = new Set();
     document.querySelectorAll('.cat-row-cb').forEach(function(cb) {
@@ -22781,29 +22815,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const syncBtn = document.getElementById('cat-sync-btn');
     if (syncBtn) syncBtn.addEventListener('click', catExecuteSelectedSync);
 
-    const selectAll = document.getElementById('cat-select-all');
-    if (selectAll) {
-      selectAll.addEventListener('change', function() {
-        const checked = selectAll.checked;
-        document.querySelectorAll('.cat-row-cb').forEach(function(cb) {
-          cb.checked = checked;
-          const pid = cb.dataset.catSel;
-          if (pid) {
-            if (checked) catSelectedIds.add(pid);
-            else catSelectedIds.delete(pid);
-          }
-        });
-        document.querySelectorAll('.cat-group-cb').forEach(function(cb) {
-          cb.checked = checked;
-          cb.indeterminate = false;
-          catProductIdsFromDataset(cb.dataset.productIds).forEach(function(pid) {
-            if (checked) catSelectedIds.add(pid);
-            else catSelectedIds.delete(pid);
-          });
-        });
-        applyAndRenderCatalog();
-      });
-    }
+    const dryRunBtn = document.getElementById('cat-dry-run-btn');
+    if (dryRunBtn) dryRunBtn.addEventListener('click', catShowDryRunModal);
+
+    catBindSelectAll();
 
     const closeBtn = document.getElementById('cat-modal-close');
     if (closeBtn) closeBtn.addEventListener('click', catCloseModal);

@@ -4115,7 +4115,10 @@
             <span>등록/이미지 초안</span>
             <small>대표·옵션 이미지 상태</small>
           </div>
-          <div id="pl-master-edit-staronemall-image-status" class="muted" style="font-size:11px;"></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px;">
+            <div id="pl-master-edit-staronemall-image-status" class="muted" style="font-size:11px;flex:1;min-width:220px;"></div>
+            <button type="button" id="pl-master-edit-staronemall-recrawl" title="Force a fresh crawl from the current StarOneMall URL and replace the draft images." style="font-size:11px;padding:5px 9px;white-space:nowrap;">Recrawl StarOneMall</button>
+          </div>
           <label style="display:inline-flex;align-items:center;gap:6px;font-size:11px;color:#5c24b0;cursor:pointer;">
             대표 이미지 추가
             <input id="pl-master-edit-representative-image-file" type="file" accept="image/*" style="font-size:11px;max-width:210px;">
@@ -8437,6 +8440,15 @@ LEGACY END -->
     el.style.color = kind === 'err' ? '#b91c1c' : (kind === 'ok' ? '#166534' : 'var(--muted)');
   }
 
+  function plMasterEditSetRecrawlBusy(isBusy) {
+    const btn = document.getElementById('pl-master-edit-staronemall-recrawl');
+    if (!btn) return;
+    const url = String(document.getElementById('pl-master-edit-staronemall-url')?.value || '').trim();
+    btn.dataset.busy = isBusy ? '1' : '0';
+    btn.disabled = Boolean(isBusy) || !url || !isValidStaronemallUrl(url);
+    btn.textContent = isBusy ? 'Recrawling...' : 'Recrawl StarOneMall';
+  }
+
   function plMasterEditNormalizeImageList(urls, baseUrl, options = {}) {
     const seen = new Set();
     const exclude = new Set((options.exclude || [])
@@ -8591,11 +8603,17 @@ LEGACY END -->
       const result = Array.isArray(json.results) ? json.results.find((row) => row?.ok) : null;
       if (!result) throw new Error(json.results?.[0]?.error || 'No successful StarOneMall crawl result.');
 
-      const record = plMasterEditStoreCrawlRecord(groupId, url, result.observed_values || {});
-      if (record.detail_image_urls.length) plMasterEditMergeDetailImages(record.detail_image_urls, url);
       const rows = plMasterEditRowsFromModal(plMasterEditCurrentRows());
+      const record = plMasterEditStoreCrawlRecord(groupId, url, result.observed_values || {});
+      if (options.replace) {
+        plMasterEditSetDetailImageState(record.detail_image_urls, url, {
+          exclude: plMasterEditExcludeImageUrls(rows, record),
+        });
+      } else if (record.detail_image_urls.length) {
+        plMasterEditMergeDetailImages(record.detail_image_urls, url);
+      }
       const hasRepresentative = !!plMasterEditRepresentativeImage(rows);
-      const shouldApplyMain = record.main_image_urls[0] && (!options.auto || !hasRepresentative);
+      const shouldApplyMain = record.main_image_urls[0] && (options.replace || !options.auto || !hasRepresentative);
       if (shouldApplyMain) plMasterEditSetRepresentativeImage(record.main_image_urls[0]);
       plMasterEditRenderImageSummary(plMasterEditRowsFromModal(plMasterEditCurrentRows()));
       plMasterEditSetImageStatus(
@@ -8613,6 +8631,7 @@ LEGACY END -->
   function plMasterEditScheduleStaronemallCrawl(delay = 700, force = false) {
     clearTimeout(_plMasterEditCrawlTimer);
     const url = String(document.getElementById('pl-master-edit-staronemall-url')?.value || '').trim();
+    plMasterEditSetRecrawlBusy(false);
     if (!url) {
       plMasterEditSetImageStatus('');
       plMasterEditRenderImageSummary(plMasterEditRowsFromModal(plMasterEditCurrentRows()));
@@ -8623,8 +8642,30 @@ LEGACY END -->
       return;
     }
     _plMasterEditCrawlTimer = setTimeout(() => {
-      void plMasterEditCrawlStaronemallImages(url, { force });
+      void plMasterEditCrawlStaronemallImages(url, { force, replace: force });
     }, delay);
+  }
+
+  async function plMasterEditRecrawlStaronemallImages() {
+    clearTimeout(_plMasterEditCrawlTimer);
+    const url = String(document.getElementById('pl-master-edit-staronemall-url')?.value || '').trim();
+    if (!url) {
+      plMasterEditSetImageStatus('Enter a StarOneMall URL first.', 'err');
+      plMasterEditSetRecrawlBusy(false);
+      return;
+    }
+    if (!isValidStaronemallUrl(url)) {
+      plMasterEditSetImageStatus('StarOneMall URL only.', 'err');
+      plMasterEditSetRecrawlBusy(false);
+      return;
+    }
+    plMasterEditSetRecrawlBusy(true);
+    try {
+      const record = await plMasterEditCrawlStaronemallImages(url, { force: true, replace: true });
+      if (record) showToast('StarOneMall images refreshed. Save to persist.', 'ok');
+    } finally {
+      plMasterEditSetRecrawlBusy(false);
+    }
   }
 
   const SHOPEE_NAME_SYNC_REGIONS = Object.freeze(['SG', 'TW', 'TH', 'MY', 'PH', 'BR']);
@@ -9818,6 +9859,7 @@ LEGACY END -->
     plMasterEditRenderOptions(rows);
     plMasterEditBindOptionImageControls();
     plMasterEditResetNameSyncPanel();
+    plMasterEditSetRecrawlBusy(false);
     const err = document.getElementById('pl-master-edit-error');
     if (err) { err.textContent = ''; err.style.display = 'none'; }
     overlay.classList.add('show');
@@ -12062,6 +12104,9 @@ LEGACY END -->
   document.getElementById('pl-master-edit-staronemall-url')?.addEventListener('input', () => plMasterEditScheduleStaronemallCrawl(700, false));
   document.getElementById('pl-master-edit-staronemall-url')?.addEventListener('change', () => plMasterEditScheduleStaronemallCrawl(0, true));
   document.getElementById('pl-master-edit-staronemall-url')?.addEventListener('blur', () => plMasterEditScheduleStaronemallCrawl(0, false));
+  document.getElementById('pl-master-edit-staronemall-recrawl')?.addEventListener('click', () => {
+    void plMasterEditRecrawlStaronemallImages();
+  });
   document.getElementById('pl-master-edit-representative-image-file')?.addEventListener('change', (e) => {
     const file = e.target.files && e.target.files[0];
     if (!file) return;

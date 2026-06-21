@@ -20254,8 +20254,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return bits.filter(Boolean).join(' · ');
   }
 
-  function catShopeeProductThumb(product) {
-    const src = String(product?.shopee_option_image_url || product?.main_image || '').trim();
+  function catShopeeProductThumb(product, options) {
+    const mode = (options && options.mode) || 'representative';
+    const src = mode === 'option'
+      ? String(product?.shopee_option_image_url || product?.main_image || '').trim()
+      : String(product?.main_image || product?.shopee_option_image_url || '').trim();
     if (src) {
       return '<span class="pl-master-thumb"><img src="' + esc(src) + '" alt="" loading="lazy" onerror="this.remove();"></span>';
     }
@@ -20269,7 +20272,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const meta = opts.meta || catProductMeta(product, opts.optionLabel || '');
     return '<div class="pl-group-main cat-product-main">'
       + toggle
-      + catShopeeProductThumb(product || {})
+      + catShopeeProductThumb(product || {}, { mode: opts.thumbMode || 'representative' })
       + '<div class="pl-product-copy">'
       + '<div class="pl-master-title-row"><span class="pl-master-title">' + esc(title) + '</span></div>'
       + '<div class="muted" style="font-size:11px;">' + esc(meta || '') + '</div>'
@@ -20935,7 +20938,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const meta = esc(plParentSku(rows)) + ' · 옵션 묶음 ' + rows.length + '개' + (shownOptions ? ' · ' + esc(shownOptions + more) : '');
     return '<tr class="pl-group-row" data-cat-group-key="' + esc(group.key) + '">'
       + '<td><input type="checkbox" class="cat-cb cat-group-cb" data-group-key="' + esc(group.key) + '" data-product-ids="' + esc(productIds.join(',')) + '" ' + (checked ? 'checked' : '') + (partial ? ' data-partial="1"' : '') + ' title="이 묶음 옵션 전체 선택"></td>'
-      + '<td>' + catProductCellHtml(first, { toggleHtml: toggleHtml, title: catProductTitle(first), meta: meta }) + '</td>'
+      + '<td>' + catProductCellHtml(first, { toggleHtml: toggleHtml, title: catProductTitle(first), meta: meta, thumbMode: 'representative' }) + '</td>'
       + '<td>' + catLifecycleBadge(first.lifecycle_state) + '</td>'
       + '<td>' + catBaseReadonlyCell(rows) + '</td>'
       + marketResult.html
@@ -21046,7 +21049,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + '</div>';
     return '<tr class="' + rowClass + '" data-cat-pid="' + esc(pid) + '">'
       + '<td><input type="checkbox" class="cat-cb cat-row-cb" data-cat-sel="' + esc(pid) + '" ' + (catSelectedIds.has(pid) ? 'checked' : '') + '></td>'
-      + '<td>' + catProductCellHtml(p, { toggleHtml: toggleHtml, optionLabel: optionLabel, title: isGroupChild ? (optionLabel || p.option_name || p.sku || '옵션') : catProductTitle(p), meta: catProductMeta(p, optionLabel) }) + '</td>'
+      + '<td>' + catProductCellHtml(p, { toggleHtml: toggleHtml, optionLabel: optionLabel, title: isGroupChild ? (optionLabel || p.option_name || p.sku || '옵션') : catProductTitle(p), meta: catProductMeta(p, optionLabel), thumbMode: isGroupChild ? 'option' : 'representative' }) + '</td>'
       + '<td>' + catLifecycleBadge(p.lifecycle_state) + '</td>'
       + '<td>' + baseCell + '</td>'
       + marketResult.html

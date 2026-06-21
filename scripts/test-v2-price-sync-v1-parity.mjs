@@ -156,7 +156,10 @@ assert(!v2.includes('id="cat-platform-tabs"'), 'Shopee price sync must not expos
 assert(!v2.includes('class="cat-platform-row"'), 'Shopee price sync must remove the Platform selector row entirely');
 assert(v2.includes('main_image,shopee_option_image_url'), 'Shopee price sync product fetch must include saved Shopee/master image URLs');
 assert(v2.includes('function catShopeeProductThumb'), 'Shopee price sync product cell must render a Shopee image thumbnail');
-assert(v2.includes('product?.shopee_option_image_url || product?.main_image'), 'Shopee price sync thumbnails must prefer the Shopee option image before master image fallback');
+assert(v2.includes("mode === 'option'"), 'Shopee price sync thumbnails must distinguish representative rows from option rows');
+assert(v2.includes("String(product?.main_image || product?.shopee_option_image_url || '').trim()"), 'Shopee price sync representative rows must match the Shopee tab thumbnail priority');
+assert(v2.includes("String(product?.shopee_option_image_url || product?.main_image || '').trim()"), 'Shopee price sync expanded option rows may use option images first');
+assert(v2.includes("thumbMode: isGroupChild ? 'option' : 'representative'"), 'Shopee price sync must use representative thumbnails for group/standalone rows and option thumbnails only for expanded options');
 assert(v2.includes('id="cat-selected-count"'), 'Shopee price sync toolbar must show the selected row count near the action buttons');
 assert(v2.includes('id="cat-dry-run-btn"'), 'Shopee price sync toolbar must expose a dedicated dry-run action');
 assert(v2.includes('function catCurrentColCount()'), 'Shopee price sync loading/empty rows must use the compact 6-column table shape');

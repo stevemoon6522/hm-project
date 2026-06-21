@@ -626,6 +626,86 @@
     .platform-table td {
       overflow-wrap: anywhere;
     }
+    .platform-table-shopee {
+      min-width: 1180px;
+    }
+    .platform-table-shopee th,
+    .platform-table-shopee td {
+      vertical-align: middle;
+    }
+    .platform-shopee-row td {
+      background: #fff;
+      border-top: 1px solid var(--border);
+    }
+    .platform-shopee-row:nth-child(4n + 1) td {
+      background: #fffafd;
+    }
+    .platform-product-cell {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .platform-product-copy {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .platform-product-title {
+      color: #111827;
+      font-weight: 800;
+      line-height: 1.25;
+    }
+    .platform-product-meta,
+    .platform-id-stack {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .platform-id-stack {
+      display: grid;
+      gap: 3px;
+    }
+    .platform-id-line {
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr);
+      gap: 6px;
+      align-items: baseline;
+    }
+    .platform-id-label {
+      color: #7b6680;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+    }
+    .platform-id-value {
+      color: #374151;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .platform-master-cell,
+    .platform-wms-cell {
+      white-space: nowrap;
+    }
+    .platform-actions-cell {
+      justify-content: flex-end;
+    }
+    .platform-row-button {
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      background: #fff;
+      color: #2f2640;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 5px 9px;
+    }
+    .platform-row-button.sync {
+      border-color: #bfdbfe;
+      color: #1d4ed8;
+    }
     .platform-master-row td {
       background: #fff9fd;
       border-top: 1px solid var(--border);
@@ -7248,7 +7328,186 @@ LEGACY END -->
     return `<div class="platform-region-row" aria-label="Shopee regions"><span class="muted" style="font-size:12px;">Region</span>${active}${excluded}</div>`;
   }
 
+  function shopeePlatformListingRows(rows) {
+    return (rows || []).flatMap((row) => productListings(row.id));
+  }
+
+  function shopeePlatformShortValues(values, limit = 2) {
+    const clean = platformUniqueValues(values);
+    if (!clean.length) return '-';
+    if (clean.length <= limit) return clean.join(', ');
+    return `${clean.slice(0, limit).join(', ')} +${clean.length - limit}`;
+  }
+
+  function shopeePlatformIdLine(label, value, title = '') {
+    const safeValue = String(value || '-');
+    return `
+      <div class="platform-id-line" title="${text(title || safeValue)}">
+        <span class="platform-id-label">${text(label)}</span>
+        <span class="platform-id-value">${text(safeValue)}</span>
+      </div>`;
+  }
+
+  function shopeePlatformIdsCell(group) {
+    const rows = group?.rows || [];
+    const listings = shopeePlatformListingRows(rows);
+    const details = platformGroupListingDetails(group, 'shopee');
+    const globalIds = platformUniqueValues([
+      ...rows.map((row) => row.shopee_item_id),
+      ...listings.map((row) => row.global_item_id),
+      ...details.map((row) => row.global_item_id),
+    ]);
+    const modelIds = platformUniqueValues([
+      ...rows.map((row) => row.global_model_id),
+      ...listings.map((row) => row.global_model_id || row.shop_model_id),
+      ...details.map((row) => row.global_model_id || row.shop_model_id || row.model_id),
+    ]);
+    const shopItems = platformUniqueValues([
+      ...listings.map((row) => row.shop_item_id || row.item_id || row.platform_item_id),
+      ...details.map((row) => row.shop_item_id || row.item_id || row.platform_item_id),
+    ]);
+    const regions = platformUniqueValues([
+      ...listings.map((row) => row.region || row.shop_region),
+      ...details.map((row) => row.region || row.shop_region),
+    ]);
+    return `
+      <div class="platform-id-stack">
+        ${shopeePlatformIdLine('Global', shopeePlatformShortValues(globalIds, 1), globalIds.join(', '))}
+        ${shopeePlatformIdLine('Model', shopeePlatformShortValues(modelIds, 2), modelIds.join(', '))}
+        ${shopeePlatformIdLine('Shop', shopItems.length ? `${shopItems.length} mapped` : '-', shopItems.join(', '))}
+        ${shopeePlatformIdLine('Region', regions.length ? regions.join(', ') : '-', regions.join(', '))}
+      </div>`;
+  }
+
+  function shopeePlatformOptionSummary(group) {
+    const rows = group?.rows || [];
+    if (group?.isGrouped) {
+      const options = platformUniqueValues(rows.map((row) => plOptionDisplay(row) || row.option_name || row.sku));
+      const optionText = options.length
+        ? `${options.slice(0, 4).join(', ')}${options.length > 4 ? ` +${options.length - 4}` : ''}`
+        : 'options';
+      return `${rows.length} variations · ${optionText}`;
+    }
+    const first = rows[0] || {};
+    return plOptionDisplay(first) ? `Option · ${plOptionDisplay(first)}` : 'Single product';
+  }
+
+  function shopeePlatformPriceCell(rows) {
+    const value = plGroupNumberRange(rows || [], 'cost_krw');
+    if (!value || value === '0') return '<span class="muted">-</span>';
+    return `<span class="mono">${text(value)} KRW</span>`;
+  }
+
+  function shopeePlatformActionButtonsHtml(key, quickDisabled) {
+    const disabled = quickDisabled ? ' disabled' : '';
+    return `
+      <div class="pl-action-buttons platform-actions-cell">
+        <button type="button" class="platform-row-button" data-platform-quick="register" data-platform-key="${text(key)}"${disabled}>등록</button>
+        <button type="button" class="platform-row-button sync" data-platform-quick="edit" data-platform-key="${text(key)}"${disabled}>수정</button>
+        <button type="button" class="pl-delete-button" data-platform-quick="delete" data-platform-key="${text(key)}"${disabled}>삭제</button>
+      </div>`;
+  }
+
+  function shopeePlatformProductCell(group, expanded) {
+    const first = group?.rows?.[0] || {};
+    const key = platformGroupKey(group);
+    const title = platformGroupTitle(group);
+    const sku = platformGroupSku(group) || first.sku || '(no sku)';
+    return `
+      <div class="platform-product-cell">
+        <button type="button" class="pl-group-toggle" data-platform-toggle="${text(key)}" title="${expanded ? 'Collapse variations' : 'Expand variations'}">${expanded ? '▾' : '▸'}</button>
+        ${plProductThumb(first)}
+        <div class="platform-product-copy">
+          <div class="platform-product-title">${text(title)} ${productLifecycleBadge(first)}</div>
+          <div class="platform-product-meta">${text(sku)} · ${text(shopeePlatformOptionSummary(group))}</div>
+        </div>
+      </div>`;
+  }
+
+  function shopeePlatformOptionRows(group, key) {
+    return (group?.rows || []).map((row) => {
+      const status = platformStatusForGroup({ rows: [row] }, 'shopee');
+      const optionName = plOptionDisplay(row) || row.option_name || 'Option';
+      return `
+        <tr class="platform-shopee-row platform-shopee-option-row platform-option-row">
+          <td></td>
+          <td>
+            <div class="platform-product-cell">
+              <span class="pl-status-pill ${plVariantTypeLabel(row) === 'SET' ? 'info' : 'neutral'}">${text(plVariantTypeLabel(row))}</span>
+              <div class="platform-product-copy">
+                <div class="platform-product-title">${text(optionName)}</div>
+                <div class="platform-product-meta">${text(row.sku || '(no sku)')}</div>
+              </div>
+            </div>
+          </td>
+          <td>${shopeePlatformIdsCell({ rows: [row] })}</td>
+          <td>${shopeePlatformPriceCell([row])}</td>
+          <td>${platformStatusPill(status)}</td>
+          <td class="platform-master-cell"><span class="pl-status-pill ok">Linked</span></td>
+          <td class="platform-wms-cell pl-wms-cell">${plWmsStatusCell([row])}</td>
+          <td>${shopeePlatformActionButtonsHtml(key, false)}</td>
+        </tr>`;
+    }).join('');
+  }
+
+  function shopeePlatformTableRows() {
+    const groups = platformVisibleGroups('shopee');
+    const selected = platformSelection('shopee');
+    if (!groups.length) {
+      return '<tr><td colspan="8" class="empty">No Shopee products match the current filters.</td></tr>';
+    }
+    return groups.map((group) => {
+      const key = platformGroupKey(group);
+      const expanded = state.platformExpandedGroups.has(`shopee:${key}`);
+      const status = platformStatusForGroup(group, 'shopee');
+      const quickDisabled = '';
+      const master = `
+        <tr class="platform-shopee-row" data-platform-master-key="${text(key)}">
+          <td><input type="checkbox" class="platform-master-check" data-platform-key="${text(key)}" ${selected.has(key) ? 'checked' : ''}></td>
+          <td>${shopeePlatformProductCell(group, expanded)}</td>
+          <td>${shopeePlatformIdsCell(group)}</td>
+          <td>${shopeePlatformPriceCell(group.rows || [])}</td>
+          <td>${platformStatusPill(status)}<div class="muted" style="font-size:11px;margin-top:4px;">${text(status.detail || '')}</div></td>
+          <td class="platform-master-cell"><span class="pl-status-pill ok">Linked</span></td>
+          <td class="platform-wms-cell pl-wms-cell">${plWmsStatusCell(group.rows || [])}</td>
+          <td>${shopeePlatformActionButtonsHtml(key, quickDisabled)}</td>
+        </tr>`;
+      return expanded ? master + shopeePlatformOptionRows(group, key) : master;
+    }).join('');
+  }
+
+  function platformTableHeadHtml(platform) {
+    if (platform === 'shopee') {
+      return `
+        <thead>
+          <tr>
+            <th style="width:34px;"></th>
+            <th style="width:390px;">Product</th>
+            <th style="width:190px;">Shopee IDs</th>
+            <th style="width:130px;">KRW</th>
+            <th style="width:150px;">Listing</th>
+            <th style="width:110px;">Master</th>
+            <th style="width:120px;">WMS</th>
+            <th style="width:180px;">Actions</th>
+          </tr>
+        </thead>`;
+    }
+    return `
+      <thead>
+        <tr>
+          <th style="width:34px;"></th>
+          <th style="width:340px;">마스터 상품</th>
+          <th style="width:104px;">Lifecycle</th>
+          <th style="width:150px;">등록 상태</th>
+          <th style="width:110px;text-align:center;">상세</th>
+          <th style="width:150px;">옵션/SKU</th>
+          <th style="width:250px;">작업</th>
+        </tr>
+      </thead>`;
+  }
+
   function platformTableRows(platform) {
+    if (platform === 'shopee') return shopeePlatformTableRows();
     const groups = platformVisibleGroups(platform);
     const selected = platformSelection(platform);
     if (!groups.length) {
@@ -7328,6 +7587,7 @@ LEGACY END -->
     )).join('');
     const previewHtml = state.platformPreview?.platform === platform ? platformPreviewHtml() : '';
     const shopeeNameSyncHtml = platform === 'shopee' ? shopeeNameSyncPanelHtml() : '';
+    const platformTableClass = platform === 'shopee' ? 'platform-table platform-table-shopee' : 'platform-table';
     root.innerHTML = `
       <div class="platform-page-head">
         <div>
@@ -7364,18 +7624,8 @@ LEGACY END -->
       ${previewHtml}
       ${shopeeNameSyncHtml}
       <div class="panel table-scroll">
-        <table class="platform-table">
-          <thead>
-            <tr>
-              <th style="width:34px;"></th>
-              <th style="width:340px;">마스터 상품</th>
-              <th style="width:104px;">Lifecycle</th>
-              <th style="width:150px;">등록 상태</th>
-              <th style="width:110px;text-align:center;">상세</th>
-              <th style="width:150px;">옵션/SKU</th>
-              <th style="width:250px;">작업</th>
-            </tr>
-          </thead>
+        <table class="${platformTableClass}">
+          ${platformTableHeadHtml(platform)}
           <tbody>${platformTableRows(platform)}</tbody>
         </table>
       </div>

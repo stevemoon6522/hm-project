@@ -116,11 +116,24 @@ for (const token of [
   'buildStandardiseTierVariation(publishVariation.tier_variation)',
   'item.standardise_tier_variation = standardiseTierVariation',
   'item.model = buildPublishModels(publishVariation, price)',
-  "const description = String(target.description ?? body.description ?? '').trim()",
+  'const description = sanitizeShopeePlainTextDescription(target.description ?? body.description)',
   'description,',
 ]) {
   assert(publishItemBlock.includes(token), `register_cbsc publish payload missing token: ${token}`);
 }
+
+assert(
+  bridge.includes('function sanitizeShopeePlainTextDescription')
+    && bridge.includes('description: sanitizeShopeePlainTextDescription(body.description)'),
+  'register_cbsc global/publish descriptions must be normalized to plain text before calling Shopee',
+);
+
+assert(
+  bridge.includes('async function finalizePublishOutcomeAfterSuccess')
+    && bridge.includes("outcome.stage = 'post_publish_price_sync'")
+    && registerCbscBlock.includes('await finalizePublishOutcomeAfterSuccess(outcome, targetRegion, target, body, accountKey)'),
+  'register_cbsc must sync shop prices after normal publish success and fail the region when price sync cannot be confirmed',
+);
 
 for (const token of [
   'const READY_STOCK_GLOBAL_DTS = 1',

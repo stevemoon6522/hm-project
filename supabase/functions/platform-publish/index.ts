@@ -794,6 +794,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
         shopee_description: (body as any).shopee_description || '',
         shopee_product_name: (body as any).shopee_product_name || '',
         stock_override: (body as any).stock_override,
+        registration_kind: (body as any).registration_kind || '',
         // Qoo10 create_listing extras supplied by the V2 registration modal.
         qoo10: (body as any).qoo10 || {},
         // Alibaba create_listing extras supplied by the V2 registration modal.

@@ -62,6 +62,7 @@ for (const token of [
   'rshBuildTierVariation',
   'Shopee option name must be English before registration',
   'rshBuildGroupRegisterPayload',
+  'rshRegisterOptionGroupViaCbsc',
   'rshRegisterGroupViaCbsc',
   '/register_cbsc',
   'variation: {',
@@ -148,9 +149,11 @@ assert(
   'Shopee image UI must mark the representative thumbnail and exclude it from detail uploads',
 );
 assert(
-  rshModal.includes("description: document.getElementById('rsh-description')?.value")
+  rshModal.includes('description: rshDescriptionForRegistration')
+    && rshModal.includes('function rshPlainTextDescription')
+    && rshModal.includes('function rshLooksLikeHtmlDescription')
     && html.includes("shopee_description: document.getElementById('rsh-description')?.value || ''"),
-  'Shopee registration must forward the modal Product Description for group and single publish flows',
+  'Shopee registration must sanitize option-group descriptions while preserving the single publish description input path',
 );
 assert(
   rshModal.includes('name: productName || parentSku')
@@ -168,7 +171,7 @@ assert(
 );
 assert(
   rshModal.includes("if (_rsh.mode === 'group')")
-    && rshModal.includes('rshRegisterGroupViaCbsc(session, activeRegions, dtsValues, lifecycle, errorEl)'),
+    && rshModal.includes('rshRegisterOptionGroupViaCbsc(session, activeRegions, dtsValues, lifecycle, errorEl)'),
   'Stage 2 must route grouped products to the direct variation register flow',
 );
 assert(

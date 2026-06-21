@@ -736,6 +736,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     targets,
     lifecycle_state,            // 'ready_stock' | 'pre_order' — bridge consults this
     is_pre_order,               // explicit boolean for buildPublishItemPayload
+    registration_kind: (ctx as any).registration_kind || (variationBundle ? 'option_group' : 'single'),
     publish_request_id: ctx.publishRequestId,
     dry_run: ctx.dryRun ? true : undefined,
     variation: shopeeVariation || undefined,

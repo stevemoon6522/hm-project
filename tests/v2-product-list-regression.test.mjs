@@ -234,8 +234,9 @@ test('Shopee register modal clears internal focus before aria-hidden close', () 
 });
 
 test('standalone products have master edit button and master tab stays platform-neutral', () => {
-  assert.match(productRender, /data-edit-master="\$\{text\(plMasterEditTargetKey\(p\)\)\}"/, 'single row should expose master edit target');
-  assert.match(productRender, /isVariantRow && optionDisplay[\s\S]*\$\{editButton\}/, 'option-like single rows should also expose the master edit button');
+  assert.match(productRender, /plActionButtonsHtml\(plMasterEditTargetKey\(p\), \[p\.id\], p\.sku \|\| productName\)/, 'single row should expose master edit target in the Actions column');
+  assert.doesNotMatch(productRender, /const editButton = !isGroupChild/, 'single row edit button should not render inside the product title');
+  assert.match(html, /function plActionButtonsHtml\(editTarget, deleteIds, label\)/, 'product list should share one edit/delete action helper');
   assert.doesNotMatch(productRender, /data-open-shopee-single="\$\{text\(p\.id\)\}"/, 'Shopee register button should move out of the master product table');
   assert.doesNotMatch(productRender, /platformLedCell\(p\.id, 'shopee'\)/, 'platform LEDs should move out of the master product table');
   assert.doesNotMatch(productRender, /data-open="\$\{text\(p\.id\)\}"[^>]*>Register<\/button>/, 'legacy action-column Register button should be removed');

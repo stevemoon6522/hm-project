@@ -241,8 +241,13 @@
     }
     .pl-status-pill.ok { background: #dcfce7; color: #166534; }
     .pl-status-pill.warn { background: #fef3c7; color: #92400e; }
-    .pl-status-pill.empty { background: #f1f5f9; color: #475569; }
+    .pl-status-pill.missing,
+    .pl-status-pill.neutral { background: #f1f5f9; color: #475569; }
     .pl-status-pill.info { background: #dbeafe; color: #1d4ed8; }
+    .pl-wms-cell .pl-status-pill {
+      max-width: 100%;
+      justify-content: center;
+    }
     .pl-product-cell {
       min-width: 0;
       line-height: 1.35;
@@ -340,6 +345,22 @@
     .pl-action-cell {
       white-space: nowrap;
       text-align: right;
+    }
+    .pl-action-buttons {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .pl-delete-button {
+      font-size: 11px;
+      padding: 2px 7px;
+      box-shadow: none;
+      line-height: 1.2;
+      background: #fee2e2;
+      color: #991b1b;
+      border-color: #fecaca;
     }
     .pl-group-led {
       display: inline-flex;
@@ -6822,15 +6843,30 @@ LEGACY END -->
   function plWmsStatus(rows) {
     const total = (rows || []).length;
     const found = (rows || []).filter((row) => !!plWmsInventoryRow(row)).length;
-    if (!total) return { found: 0, total: 0, key: 'empty', label: 'Missing' };
+    if (!total) return { found: 0, total: 0, key: 'missing', label: 'Missing' };
     if (found === total) return { found, total, key: 'ok', label: total === 1 ? 'Found' : `${found}/${total} Found` };
     if (found > 0) return { found, total, key: 'warn', label: `${found}/${total} Found` };
-    return { found, total, key: 'empty', label: total === 1 ? 'Missing' : `0/${total} Found` };
+    return { found, total, key: 'missing', label: total === 1 ? 'Missing' : `0/${total} Found` };
   }
 
   function plWmsStatusCell(rows) {
     const status = plWmsStatus(rows);
     return `<span class="pl-status-pill ${text(status.key)}">${text(status.label)}</span>`;
+  }
+
+  function plActionButtonsHtml(editTarget, deleteIds, label) {
+    const ids = Array.isArray(deleteIds)
+      ? deleteIds.map((id) => String(id || '').trim()).filter(Boolean)
+      : plProductIdsFromDataset(deleteIds);
+    const cleanEditTarget = String(editTarget || '').trim();
+    const safeLabel = String(label || ids[0] || '').trim();
+    const editButton = cleanEditTarget
+      ? `<button type="button" class="pl-master-edit" data-edit-master="${text(cleanEditTarget)}" title="마스터 상품 데이터 수정">수정</button>`
+      : '';
+    const deleteButton = ids.length
+      ? `<button type="button" class="pl-delete-button" data-delete="${text(ids[0])}" data-delete-ids="${text(ids.join(','))}" data-sku="${text(safeLabel)}">삭제</button>`
+      : '';
+    return `<div class="pl-action-buttons">${editButton}${deleteButton}</div>`;
   }
 
   function plMainImage(product) {
@@ -6985,9 +7021,7 @@ LEGACY END -->
         <td>${productLifecycleBadge(first)}</td>
         <td class="mono">${plGroupNumberRange(rows, 'cost_krw')}</td>
         <td class="mono">${plGroupNumberRange(rows, 'weight_g')}g</td>
-        <td class="pl-action-cell">
-          <button type="button" class="pl-master-edit" data-edit-master="${text(first.product_group_id || '')}" title="마스터 상품 데이터 수정">수정</button>
-        </td>
+        <td class="pl-action-cell">${plActionButtonsHtml(first.product_group_id || first.id || '', productIds, productName)}</td>
       </tr>`;
     if (collapsed) return groupHtml;
     return groupHtml + rows.map((row) => renderProductOptionRow(row, group.key, true)).join('');
@@ -7022,14 +7056,11 @@ LEGACY END -->
       ? plEffectiveOptionDisplay(p, optionSpec, rowIndex, plOptionDisplay(p))
       : plOptionDisplay(p);
     const productName = plProductName(p);
-    const editButton = !isGroupChild
-      ? `<button type="button" class="pl-master-edit" data-edit-master="${text(plMasterEditTargetKey(p))}" title="마스터 상품 데이터 수정">수정</button>`
-      : '';
     const nameDisplay = isGroupChild
       ? `<span class="pl-option-title">${text(optionDisplay || '옵션')}</span>`
       : (isVariantRow && optionDisplay
-        ? `<span class="pl-master-title-row"><span><span class="pl-product-title">${text(productName)}</span><span class="muted" style="font-size:11px;">옵션: ${text(optionDisplay)}</span></span>${editButton}</span>`
-        : `<span class="pl-master-title-row"><span class="pl-product-title">${text(productName)}</span>${editButton}</span>`);
+        ? `<span class="pl-master-title-row"><span><span class="pl-product-title">${text(productName)}</span><span class="muted" style="font-size:11px;">옵션: ${text(optionDisplay)}</span></span></span>`
+        : `<span class="pl-master-title-row"><span class="pl-product-title">${text(productName)}</span></span>`);
     const rowClass = isGroupChild ? 'pl-option-row' : 'pl-single-product-row';
     const typeLabel = plVariantTypeLabel(p);
     const spBarcode = typeLabel === 'SET' ? '' : (plWmsInventoryRow(p)?.sku || p.sku || '');
@@ -7051,16 +7082,13 @@ LEGACY END -->
             ? ''
             : `<div class="muted pl-edit" data-field="option_name" data-id="${text(p.id)}" title="더블클릭하여 편집" style="cursor:text;font-size:11px;">${text(p.option_name || '') || '<i style="color:#cbd5e1;">(no option)</i>'}</div>`}
         </td>
-        <td class="pl-barcode-cell"><span class="pl-cell-label">${isGroupChild ? 'SP Barcode' : 'Official Barcode'}</span>${isGroupChild ? text(spBarcode || '-') : plOfficialBarcodeCell([p])}</td>
+        <td class="pl-barcode-cell">${isGroupChild ? '<span class="pl-cell-label">SP Barcode</span>' + text(spBarcode || '-') : plOfficialBarcodeCell([p])}</td>
         <td class="pl-sku-cell"><span class="pl-cell-label">${isGroupChild ? 'SKU' : 'Vars'}</span>${isGroupChild ? text(p.sku || '-') : '<span class="pl-count-badge">1</span>'}</td>
         <td class="pl-wms-cell">${plWmsStatusCell([p])}</td>
-        <td>${isGroupChild ? `<span class="pl-status-pill ${typeLabel === 'SET' ? 'info' : 'empty'}">${text(typeLabel)}</span>` : productLifecycleBadge(p)}</td>
+        <td>${isGroupChild ? `<span class="pl-status-pill ${typeLabel === 'SET' ? 'info' : 'neutral'}">${text(typeLabel)}</span>` : productLifecycleBadge(p)}</td>
         <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${plDisplayCostCell(p, groupRowsForDisplay)}</td>
         <td class="mono pl-edit" data-field="weight_g" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${plDisplayWeightCell(p, groupRowsForDisplay)}g</td>
-        <td class="pl-action-cell">
-          ${isGroupChild ? '<span class="muted" style="font-size:11px;">옵션</span>' : ''}
-          <button type="button" data-delete="${text(p.id)}" data-sku="${text(p.sku || '')}" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">🗑</button>
-        </td>
+        <td class="pl-action-cell">${plActionButtonsHtml(plMasterEditTargetKey(p), [p.id], p.sku || productName)}</td>
       </tr>
     `;
   }
@@ -9769,6 +9797,47 @@ LEGACY END -->
   }
 
   async function deleteOneMasterProduct(btn) {
+    const deleteIds = plProductIdsFromDataset(btn.dataset.deleteIds || '');
+    if (deleteIds.length) {
+      const label = btn.dataset.sku || deleteIds[0] || '(no sku)';
+      const targetLabel = deleteIds.length === 1 ? `[${label}]` : `${deleteIds.length} products in [${label}]`;
+      if (!confirm(`Delete ${targetLabel}?\n\n- products rows will be removed permanently.\n- linked platform listing rows will be removed by FK cascade.\n- linked source_records can be reset to pending_review.`)) return;
+      const oldText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '...';
+      const failed = [];
+      const succeededIds = new Set();
+      let resetCount = 0;
+      for (const productId of deleteIds) {
+        try {
+          const { data, error } = await db.rpc('delete_master_product', { p_product_id: productId });
+          if (error) throw error;
+          const result = Array.isArray(data) ? data[0] : data;
+          resetCount += Number(result?.reset_source_record_count || 0);
+          succeededIds.add(String(productId));
+        } catch (e) {
+          failed.push(`${productId}: ${e?.message || e?.details || String(e)}`);
+        }
+      }
+      succeededIds.forEach((id) => {
+        const stateIdx = state.products.findIndex((p) => String(p.id) === String(id));
+        if (stateIdx >= 0) state.products.splice(stateIdx, 1);
+        plSetProductSelected(id, false);
+        document.querySelector(`tr[data-product-id="${id}"]`)?.remove();
+      });
+      if (deleteIds.length > 1) btn.closest('tr')?.remove();
+      if (typeof window.loadData === 'function') {
+        try { await window.loadData(); } catch (e) { /* DOM already cleaned */ }
+      }
+      if (failed.length) {
+        alert(`Delete partially failed:\n${failed.slice(0, 8).join('\n')}`);
+        btn.disabled = false;
+        btn.textContent = oldText || '삭제';
+        return;
+      }
+      if (resetCount > 0) alert(`Delete complete. ${resetCount} source_record row(s) reset to pending_review.`);
+      return;
+    }
     const productId = btn.dataset.delete;
     const sku = btn.dataset.sku || '(no sku)';
     if (!confirm(`상품 [${sku}] 을 삭제하시겠습니까?\n\n- products 행이 영구 삭제됩니다.\n- 연결된 product_shopee_listings 도 함께 삭제됩니다 (FK CASCADE).\n- 연결된 source_record 는 pending_review 로 되돌아가 다시 등록 가능합니다.`)) return;

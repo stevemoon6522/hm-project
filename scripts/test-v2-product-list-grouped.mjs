@@ -57,6 +57,7 @@ for (const token of [
   'function plGroupPlatformCell(rows, platform)',
   'function plOfficialBarcodeCell(rows)',
   'function plWmsStatusCell(rows)',
+  'function plActionButtonsHtml(editTarget, deleteIds, label)',
   'function plComputedSetNumber(row, groupRows, field)',
   'function plDisplayWeightCell(row, groupRows)',
   'openProductMasterEditModal',
@@ -90,10 +91,29 @@ assert(
 );
 assert(
   productList.includes("const typeLabel = plVariantTypeLabel(p)")
-    && productList.includes("pl-status-pill ${typeLabel === 'SET' ? 'info' : 'empty'}")
+    && productList.includes("pl-status-pill ${typeLabel === 'SET' ? 'info' : 'neutral'}")
     && !productList.includes('data-open="${text(p.id)}"')
     && !productList.includes('data-open-shopee-single="${text(p.id)}"'),
   'variant option rows must not show legacy or platform Register buttons in the master table',
+);
+assert(
+  html.includes('.pl-status-pill.missing')
+    && !html.includes('.pl-status-pill.empty')
+    && productList.includes("key: 'missing'")
+    && productList.includes('data-delete-ids="${text(ids.join(\',\'))}"'),
+  'WMS status pills must use scoped status classes and action deletes must carry exact product ids',
+);
+assert(
+  productList.includes("plActionButtonsHtml(first.product_group_id || first.id || '', productIds, productName)")
+    && productList.includes("plActionButtonsHtml(plMasterEditTargetKey(p), [p.id], p.sku || productName)")
+    && !productList.includes('const editButton = !isGroupChild')
+    && !productList.includes('</span>${editButton}</span>'),
+  'master edit/delete buttons must live in the Actions column for grouped and single rows',
+);
+assert(
+  productList.includes("isGroupChild ? '<span class=\"pl-cell-label\">SP Barcode</span>' + text(spBarcode || '-') : plOfficialBarcodeCell([p])")
+    && !productList.includes("isGroupChild ? 'SP Barcode' : 'Official Barcode'"),
+  'Official Barcode cells must use one value-only format on master rows',
 );
 assert(
   html.includes('id="platform-shopee-root"')

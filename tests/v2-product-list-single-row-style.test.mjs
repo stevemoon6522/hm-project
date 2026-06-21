@@ -41,6 +41,34 @@ test('single master product rows use the same highlighted background as option g
   );
 });
 
+test('master product list uses compact cells and Actions-column controls consistently', () => {
+  assert.match(
+    html,
+    /\.pl-status-pill\.missing,/,
+    'WMS missing state should use a scoped missing class instead of the global empty class',
+  );
+  assert.doesNotMatch(
+    html,
+    /\.pl-status-pill\.empty/,
+    'WMS/variation pills must not reuse the global empty class because it expands into a large placeholder',
+  );
+  assert.match(
+    productListRender,
+    /plActionButtonsHtml\(plMasterEditTargetKey\(p\), \[p\.id\], p\.sku \|\| productName\)/,
+    'single product edit/delete controls should render in the Actions column',
+  );
+  assert.match(
+    productGroupRender,
+    /plActionButtonsHtml\(first\.product_group_id \|\| first\.id \|\| '', productIds, productName\)/,
+    'group master edit/delete controls should render in the Actions column',
+  );
+  assert.doesNotMatch(
+    productListRender,
+    /isGroupChild \? 'SP Barcode' : 'Official Barcode'/,
+    'single master barcode cells should not render a second Official Barcode label inside the cell',
+  );
+});
+
 test('master product option groups start collapsed in the product list', () => {
   assert.match(
     appState,

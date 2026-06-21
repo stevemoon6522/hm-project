@@ -10,7 +10,7 @@
 // Algorithm:
 //   1. Build bucket_key = entity_type + ':' + error_code.
 //   2. HMAC validation.
-//   3. If TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID unset → 503, no bucket touch.
+//   3. If SD_TELEGRAM_BOT_TOKEN / SD_TELEGRAM_CHAT_ID unset → 503, no bucket touch.
 //   4. Call evaluate_alert_bucket RPC (atomic SELECT FOR UPDATE inside Postgres).
 //   5. If should_send=false → suppress, write audit_log, return within_cooldown.
 //   6. If should_send=true → sendTelegram.
@@ -25,8 +25,8 @@
 //   SUPABASE_URL               — auto-populated by Supabase
 //   SUPABASE_SERVICE_ROLE_KEY  — auto-populated by Supabase
 // Optional (operator sets later):
-//   TELEGRAM_BOT_TOKEN
-//   TELEGRAM_CHAT_ID
+//   SD_TELEGRAM_BOT_TOKEN
+//   SD_TELEGRAM_CHAT_ID
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
@@ -36,8 +36,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 const ALERT_HMAC_SECRET = Deno.env.get("ALERT_HMAC_SECRET") || "";
-const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
-const TELEGRAM_CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID") || "";
+const SD_TELEGRAM_BOT_TOKEN = Deno.env.get("SD_TELEGRAM_BOT_TOKEN") || "";
+const SD_TELEGRAM_CHAT_ID = Deno.env.get("SD_TELEGRAM_CHAT_ID") || "";
 
 // ---------------------------------------------------------------------------
 // CORS headers
@@ -128,11 +128,11 @@ async function sendTelegram(
 ): Promise<{ sent: boolean; reason?: string; error?: string }> {
   try {
     const resp = await fetch(
-      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+      `https://api.telegram.org/bot${SD_TELEGRAM_BOT_TOKEN}/sendMessage`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text, parse_mode: "HTML" }),
+        body: JSON.stringify({ chat_id: SD_TELEGRAM_CHAT_ID, text, parse_mode: "HTML" }),
       },
     );
     if (!resp.ok) {
@@ -279,7 +279,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // This prevents the bucket from being poisoned during the operator-setup
   // period, so the first real alert after token is set is not suppressed.
   // ---------------------------------------------------------------------------
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+  if (!SD_TELEGRAM_BOT_TOKEN || !SD_TELEGRAM_CHAT_ID) {
     audit("telegram_not_configured");
     return jsonResp(503, { sent: false, reason: "telegram_not_configured" });
   }

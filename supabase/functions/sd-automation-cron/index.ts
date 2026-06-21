@@ -7,8 +7,8 @@ const CRON_SECRET =
   Deno.env.get("STARONE_CRON_SECRET") ||
   Deno.env.get("CRON_SECRET") ||
   "";
-const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
-const TELEGRAM_CHAT_ID = Deno.env.get("TELEGRAM_CHAT_ID") || "";
+const SD_TELEGRAM_BOT_TOKEN = Deno.env.get("SD_TELEGRAM_BOT_TOKEN") || "";
+const SD_TELEGRAM_CHAT_ID = Deno.env.get("SD_TELEGRAM_CHAT_ID") || "";
 const ALERT_BOT_URL = Deno.env.get("ALERT_BOT_URL") || "";
 const ALERT_HMAC_SECRET = Deno.env.get("ALERT_HMAC_SECRET") || "";
 
@@ -51,13 +51,13 @@ function isTransientFailure(row: any): boolean {
 }
 
 async function sendTelegram(text: string) {
-  if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+  if (!SD_TELEGRAM_BOT_TOKEN || !SD_TELEGRAM_CHAT_ID) {
     return { sent: false, reason: "telegram_not_configured" };
   }
-  const resp = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+  const resp = await fetch(`https://api.telegram.org/bot${SD_TELEGRAM_BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text }),
+    body: JSON.stringify({ chat_id: SD_TELEGRAM_CHAT_ID, text }),
   });
   if (!resp.ok) {
     return { sent: false, reason: "telegram_send_failed", status: resp.status, body: await resp.text().catch(() => "") };

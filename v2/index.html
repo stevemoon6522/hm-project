@@ -1507,7 +1507,6 @@
       margin-bottom: 12px;
     }
     .cat-filter-row,
-    .cat-platform-row,
     .cat-action-row {
       display: flex;
       align-items: center;
@@ -1523,27 +1522,18 @@
       flex: 1 1 360px;
       max-width: 560px;
     }
-    .cat-platform-tabs,
     .cat-market-filters {
       display: inline-flex;
       align-items: center;
       gap: 4px;
       flex-wrap: wrap;
     }
-    .cat-platform-tabs {
-      padding: 3px;
-      border: 1px solid #ead8e8;
-      background: #fffdfd;
-      border-radius: 8px;
-    }
-    .cat-platform-label,
     .cat-market-title {
       font-size: 12px;
       font-weight: 700;
       color: var(--muted);
       margin-right: 4px;
     }
-    .cat-platform-tab,
     .cat-market-chip {
       appearance: none;
       border: 1px solid transparent;
@@ -1559,23 +1549,11 @@
       cursor: pointer;
       white-space: nowrap;
     }
-    .cat-platform-tab.active,
     .cat-market-chip.active {
       background: #fff3fb;
       border-color: #f7b7de;
       color: #8a145f;
       box-shadow: 0 1px 0 rgba(102, 16, 212, .06);
-    }
-    .cat-platform-tab[aria-disabled="true"] {
-      color: #9b8aa5;
-      cursor: default;
-    }
-    .cat-platform-tab[aria-disabled="true"]::after {
-      content: " 준비중";
-      font-size: 10px;
-      font-weight: 600;
-      color: #9b8aa5;
-      margin-left: 3px;
     }
     .cat-market-filters {
       min-height: 34px;
@@ -3621,16 +3599,6 @@
           <button id="cat-dry-run-btn" type="button" title="선택한 행의 Shopee update_price payload를 미리 확인">Dry-run</button>
           <button id="cat-sync-btn" type="button" class="btn-live"
             title="선택한 행의 Shopee 가격을 동기화">동기화</button>
-        </div>
-        <div class="cat-platform-row" hidden aria-hidden="true">
-          <span class="cat-platform-label">Platform</span>
-          <div id="cat-platform-tabs" class="cat-platform-tabs" role="tablist" aria-label="Platform">
-            <button type="button" class="cat-platform-tab active" data-cat-platform="shopee" role="tab" aria-selected="true">Shopee</button>
-            <button type="button" class="cat-platform-tab" data-cat-platform="joom" role="tab" aria-selected="false">Joom</button>
-            <button type="button" class="cat-platform-tab" data-cat-platform="qoo10" role="tab" aria-selected="false">Qoo10</button>
-            <button type="button" class="cat-platform-tab" data-cat-platform="alibaba" role="tab" aria-selected="false" aria-disabled="true">Alibaba</button>
-            <button type="button" class="cat-platform-tab" data-cat-platform="ebay" role="tab" aria-selected="false">eBay</button>
-          </div>
         </div>
       </div>
       <div class="cat-market-strip">
@@ -8750,12 +8718,10 @@ LEGACY END -->
   }
 
   async function platformOpenEditFlow(platform, productIds = []) {
-    if (platform === 'shopee' || platform === 'joom' || platform === 'qoo10' || platform === 'ebay') {
+    if (platform === 'shopee') {
       const ids = Array.from(new Set((productIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
       if (ids.length) state.pendingPriceSyncSelectedIds = ids;
       showView('view-price-sync');
-      const btn = document.querySelector(`#cat-platform-tabs .cat-platform-tab[data-cat-platform="${platform}"]`);
-      if (btn) btn.click();
       showToast(`${PLATFORM_LABELS[platform]} 가격 수정 화면을 열었습니다. 선택 상품만 체크되어 있습니다.`, 'ok');
       return;
     }
@@ -20052,7 +20018,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let offset = 0;
     while (true) {
       const url = SUPABASE_URL + '/rest/v1/products'
-        + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id,qoo10_last_synced_price,qoo10_last_synced_at'
+        + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,main_image,shopee_option_image_url,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id,qoo10_last_synced_price,qoo10_last_synced_at'
         + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
       const res = await fetch(url, {
         headers: Object.assign({}, AUTH_HEADERS, {
@@ -20068,7 +20034,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           // Fallback query without cost_updated_at
           const res2 = await fetch(
             SUPABASE_URL + '/rest/v1/products'
-              + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id,qoo10_last_synced_price,qoo10_last_synced_at'
+              + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,main_image,shopee_option_image_url,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id,qoo10_last_synced_price,qoo10_last_synced_at'
               + '&order=lifecycle_state.asc,created_at.asc',
             {
               headers: Object.assign({}, AUTH_HEADERS, {
@@ -20288,6 +20254,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return bits.filter(Boolean).join(' · ');
   }
 
+  function catShopeeProductThumb(product) {
+    const src = String(product?.shopee_option_image_url || product?.main_image || '').trim();
+    if (src) {
+      return '<span class="pl-master-thumb"><img src="' + esc(src) + '" alt="" loading="lazy" onerror="this.remove();"></span>';
+    }
+    return '<span class="pl-master-thumb" aria-label="No Shopee image"></span>';
+  }
+
   function catProductCellHtml(product, options) {
     const opts = options || {};
     const toggle = opts.toggleHtml || '';
@@ -20295,7 +20269,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const meta = opts.meta || catProductMeta(product, opts.optionLabel || '');
     return '<div class="pl-group-main cat-product-main">'
       + toggle
-      + plProductThumb(product || {})
+      + catShopeeProductThumb(product || {})
       + '<div class="pl-product-copy">'
       + '<div class="pl-master-title-row"><span class="pl-master-title">' + esc(title) + '</span></div>'
       + '<div class="muted" style="font-size:11px;">' + esc(meta || '') + '</div>'
@@ -22713,13 +22687,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
   }
 
-  function catSyncPlatformActions() {
-    // Hide Shopee market chips for any single-global-price platform
-    const hideChips = _catActivePlatform === 'joom' || _catActivePlatform === 'ebay' || _catActivePlatform === 'qoo10';
-    const marketFilters = document.getElementById('cat-region-filters');
-    if (marketFilters) marketFilters.style.display = hideChips ? 'none' : '';
-  }
-
   // Single "동기화" button routes to the active platform's live sync.
   // SAFETY: explicit switch — unknown platform never falls through to Shopee.
   function catExecuteSelectedSync() {
@@ -22743,7 +22710,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function initCatPlatformTabs() {
-    const tabs = Array.from(document.querySelectorAll('#cat-platform-tabs .cat-platform-tab'));
+    const tabs = [];
     if (!tabs.length) return;
     tabs.forEach(function(btn) {
       btn.addEventListener('click', function() {
@@ -22759,7 +22726,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           tab.setAttribute('aria-selected', active ? 'true' : 'false');
         });
         _catActivePlatform = platform;
-        catSyncPlatformActions();
         catSyncRegionHeaders();
         applyAndRenderCatalog();
         if (platform === 'joom') {
@@ -23728,8 +23694,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   initCatRegionFilters();
-  initCatPlatformTabs();
-  catSyncPlatformActions();
   initCatalogListeners();
   initB2bCatalogListeners();
   initDailyCloseListeners();

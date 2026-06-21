@@ -151,12 +151,12 @@ assert(v2.includes('function _v2LoadJoomCountry()'), 'V2 Joom publish must load 
 assert(v2.includes('const listing = _v2JoomCalcListing(costKrw, weightG, joomCountry);'), 'V2 Joom publish variants must use the JM fee formula');
 assert(v2.includes("'JM'") && v2.includes("Joom (Global)"), 'V2 fee settings must expose the Joom global fee row');
 assert(v2.includes("'Q10'") && v2.includes("Qoo10 JP"), 'V2 fee settings must expose the Qoo10 JP fee row');
-assert(v2.includes('id="cat-platform-tabs"'), 'V2 price sync toolbar must expose platform tabs');
-for (const platform of ['shopee', 'joom', 'qoo10', 'alibaba', 'ebay']) {
-  assert(v2.includes(`data-cat-platform="${platform}"`), `V2 price sync toolbar must include ${platform} platform tab`);
-}
 assert(v2.includes("chip.className = 'cat-market-chip active'"), 'Shopee markets must render as compact chips instead of loose checkboxes');
-assert(v2.includes('<div class="cat-platform-row" hidden aria-hidden="true">'), 'Shopee price sync must hide the generic Platform selector from the main UI');
+assert(!v2.includes('id="cat-platform-tabs"'), 'Shopee price sync must not expose a generic Platform selector');
+assert(!v2.includes('class="cat-platform-row"'), 'Shopee price sync must remove the Platform selector row entirely');
+assert(v2.includes('main_image,shopee_option_image_url'), 'Shopee price sync product fetch must include saved Shopee/master image URLs');
+assert(v2.includes('function catShopeeProductThumb'), 'Shopee price sync product cell must render a Shopee image thumbnail');
+assert(v2.includes('product?.shopee_option_image_url || product?.main_image'), 'Shopee price sync thumbnails must prefer the Shopee option image before master image fallback');
 assert(v2.includes('id="cat-selected-count"'), 'Shopee price sync toolbar must show the selected row count near the action buttons');
 assert(v2.includes('id="cat-dry-run-btn"'), 'Shopee price sync toolbar must expose a dedicated dry-run action');
 assert(v2.includes('function catCurrentColCount()'), 'Shopee price sync loading/empty rows must use the compact 6-column table shape');

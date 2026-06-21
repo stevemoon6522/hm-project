@@ -88,12 +88,12 @@ for (const token of [
 }
 
 assert(
-  shopeeAdapter.includes('💿 100% Official & Authentic K-POP Album')
-    && shopeeAdapter.includes('📌 Contents')
-    && shopeeAdapter.includes('💳 COD Policy')
+  shopeeAdapter.includes('[Official & Authentic K-POP Album]')
+    && shopeeAdapter.includes('[Contents]')
+    && shopeeAdapter.includes('[COD Policy]')
     && !shopeeAdapter.includes('|| master.shopee_description')
     && !shopeeAdapter.includes('|| master.description'),
-  'Shopee adapter must generate the plain Seller Center description instead of reusing stored HTML descriptions',
+  'Shopee adapter must generate the API-safe plain Seller Center description instead of reusing stored HTML descriptions',
 );
 
 assert(

@@ -14259,21 +14259,21 @@ LEGACY END -->
     return normalizeMasterProductNameForLifecycle(raw, lifecycle, _rsh.master?.sku || fallback || '').slice(0, 180);
   }
 
-  // P1-5: Description template now mirrors the Seller Center text captured in
-  // the operator video, with optional component extraction and COD policy.
-  const READY_STOCK_DESC_TEMPLATE = (productName, components = '') => `🟣 ${productName || ''}
+  // Shopee API stores 4-byte emoji as literal "??" in item descriptions.
+  // Keep this template ASCII-safe so Seller Center never shows broken glyphs.
+  const READY_STOCK_DESC_TEMPLATE = (productName, components = '') => `[Product] ${productName || ''}
 
-💿 100% Official & Authentic K-POP Album
+[Official & Authentic K-POP Album]
 
 - Brand new, sealed, and sourced directly from the official distributor
 
-📊 Chart Certified
+[Chart Certified]
 
 - This album counts toward Hanteo and Circle (Gaon) charts
 
 - Your purchase directly supports the artist's chart performance
 
-📦 Fast & Secure Shipping
+[Fast & Secure Shipping]
 
 - Ships from Korea with tracking
 
@@ -14281,11 +14281,11 @@ LEGACY END -->
 
 - Items labeled [READY STOCK], [ON HAND], or [FAST DELIVERY] are dispatched within 1 business day
 
-📌 Contents
+[Contents]
 
 ${components || '- Album package contents vary by version.'}
 
-⚠️ Important Notice
+[Important Notice]
 
 - The outer box is for protection and may have minor dents, scratches, or creases.
 
@@ -14295,23 +14295,23 @@ ${components || '- Album package contents vary by version.'}
 
 - Please purchase only if you agree to the above conditions.
 
-💳 COD Policy
+[COD Policy]
 
 Cash on Delivery (COD) is available only for buyers with: 10 or more completed ratings or Perfect 5.0 rating score`;
 
-  const PRE_ORDER_DESC_TEMPLATE = (productName, components = '') => `🟣 ${productName || ''}
+  const PRE_ORDER_DESC_TEMPLATE = (productName, components = '') => `[Product] ${productName || ''}
 
-💿 100% Official & Authentic K-POP Album
+[Official & Authentic K-POP Album]
 
 - Brand new, sealed, and sourced directly from the official distributor
 
-📊 Chart Certified
+[Chart Certified]
 
 - This album counts toward Hanteo and Circle (Gaon) charts
 
 - Your purchase directly supports the artist's chart performance
 
-📅 Pre-Order Notice
+[Pre-Order Notice]
 
 - This is a pre-order item. Estimated shipping window: per artist's announcement.
 
@@ -14319,17 +14319,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
 - Pre-order may take 2-8 weeks depending on supply.
 
-📦 Fast & Secure Shipping
+[Fast & Secure Shipping]
 
 - Ships from Korea with tracking
 
 - Safely packed with bubble wrap and a sturdy box
 
-📌 Contents
+[Contents]
 
 ${components || '- Album package contents vary by version.'}
 
-⚠️ Important Notice
+[Important Notice]
 
 - The outer box is for protection and may have minor dents, scratches, or creases.
 
@@ -14339,7 +14339,7 @@ ${components || '- Album package contents vary by version.'}
 
 - Please purchase only if you agree to the above conditions.
 
-💳 COD Policy
+[COD Policy]
 
 Cash on Delivery (COD) is available only for buyers with: 10 or more completed ratings or Perfect 5.0 rating score`;
 
@@ -14374,10 +14374,26 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return /<\/?[a-z][\s\S]*>/i.test(String(value || ''));
   }
 
+  function rshShopeeSafeDescription(value) {
+    return rshPlainTextDescription(value)
+      .replace(/🟣/gu, '[Product]')
+      .replace(/💿/gu, '[Official Album]')
+      .replace(/📊/gu, '[Chart Certified]')
+      .replace(/📦/gu, '[Shipping]')
+      .replace(/📌/gu, '[Contents]')
+      .replace(/⚠️?/gu, '[Important Notice]')
+      .replace(/💳/gu, '[COD Policy]')
+      .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')
+      .replace(/\uFE0F/g, '')
+      .replace(/[ \t]{2,}/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
   function rshDescriptionForRegistration(productName, lifecycleState, components = '') {
-    const generated = rshDescriptionTemplate(productName, lifecycleState, components);
+    const generated = rshShopeeSafeDescription(rshDescriptionTemplate(productName, lifecycleState, components));
     const manualRaw = document.getElementById('rsh-description')?.value || '';
-    const manualPlain = rshPlainTextDescription(manualRaw);
+    const manualPlain = rshShopeeSafeDescription(manualRaw);
     if (!manualPlain || rshLooksLikeHtmlDescription(manualRaw)) return generated;
     if (!manualPlain.includes('COD Policy') || !manualPlain.includes('Contents')) return generated;
     return manualPlain;

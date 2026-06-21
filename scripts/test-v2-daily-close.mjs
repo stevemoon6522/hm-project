@@ -9,7 +9,6 @@ function assert(condition, message) {
 }
 
 for (const token of [
-  "showView('view-daily-close')",
   '일일 마감',
   'id="view-daily-close"',
   'id="dc-card-failed"',
@@ -25,6 +24,8 @@ for (const token of [
 ]) {
   assert(html.includes(token), `daily close UI missing token: ${token}`);
 }
+
+assert(!html.includes("showView('view-daily-close')"), 'daily close must stay hidden from the primary sidebar navigation');
 
 for (const mapping of [
   'dcFetchSummaryRpc',

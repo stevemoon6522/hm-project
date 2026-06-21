@@ -1859,28 +1859,6 @@ function pickOptionByKeywords(options: AttrOption[], keywords: string[]): AttrOp
   return options[0] || null;
 }
 
-function defaultForMandatoryAttr(attr: GlobalAttr, categoryId: number): AttrOption | null {
-  const name = attr.name.toLowerCase();
-  const opts = attr.options || [];
-  const kpopAlbumCategory = [300740, 100630].includes(Number(categoryId));
-  if (name.includes('cd') && name.includes('dvd') && name.includes('bluray')) {
-    return pickOptionByKeywords(opts, ['cd', 'album', 'regular']);
-  }
-  if (name.includes('country of origin') || name.includes('region of origin')) {
-    return pickOptionByKeywords(opts, ['south korea', 'korea', 'kr']);
-  }
-  if (name.includes('shelf life')) {
-    return pickOptionByKeywords(opts, ['no expiry', 'no expiration', 'not applicable', 'n/a', '12', '24']);
-  }
-  if (name.includes('adult')) {
-    return pickOptionByKeywords(opts, ['no', 'not applicable', 'n/a', 'na']);
-  }
-  if (kpopAlbumCategory && (name.includes('media') || name.includes('format') || name.includes('type'))) {
-    return pickOptionByKeywords(opts, ['cd', 'album', 'regular']);
-  }
-  return null;
-}
-
 function pickOptionForExistingValue(options: AttrOption[], valueName: string): AttrOption | null {
   const normalized = String(valueName || '').trim().toLowerCase();
   if (!normalized) return null;
@@ -1929,14 +1907,6 @@ function parseMandatoryFromDebug(debugMessage: string): Array<{ attribute_id: nu
   return out;
 }
 
-function fallbackAttrValueByName(name: string): string | null {
-  const n = String(name || '').toLowerCase();
-  if (n.includes('cd') && n.includes('dvd') && n.includes('bluray')) return 'CD';
-  if (n.includes('country of origin') || n.includes('region of origin')) return 'South Korea';
-  if (n.includes('shelf life')) return 'No Expiration';
-  return null;
-}
-
 async function buildCategoryAttributeList(region: string, categoryId: number, inputAttrs: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   const normalized = normalizeAttributeList(inputAttrs);
   const byId = new Map<number, any>();
@@ -1970,17 +1940,6 @@ async function buildCategoryAttributeList(region: string, categoryId: number, in
     const existing = byId.get(attr.attribute_id);
     const hasValue = !!(existing && Array.isArray(existing.attribute_value_list) && existing.attribute_value_list.length > 0);
     if (hasValue) continue;
-    const picked = defaultForMandatoryAttr(attr, categoryId);
-    if (picked) {
-      byId.set(attr.attribute_id, {
-        attribute_id: attr.attribute_id,
-        attribute_value_list: [{
-          value_id: Number.isFinite(Number(picked.value_id)) ? Number(picked.value_id) : 0,
-          original_value_name: picked.original_value_name || picked.display_value_name || picked.value_name || '',
-        }],
-      });
-      continue;
-    }
     missing.push({
       attribute_id: attr.attribute_id,
       attribute_name: attr.name,
@@ -3596,7 +3555,6 @@ Deno.serve(async (req) => {
         .map((t: any) => ({ ...t, region: t.region || r }))
         .filter((t: any) => t.region);
       if (!body.name) return jsonResp({ ok: false, error: 'name required' }, 400);
-      if (!body.sku) return jsonResp({ ok: false, error: 'sku required' }, 400);
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
 
@@ -3616,6 +3574,8 @@ Deno.serve(async (req) => {
           message: String(e?.message || e),
         }, 400);
       }
+      const isOptionGroupRegistration = String(body.registration_kind || '').toLowerCase() === 'option_group' || !!preflightVariation;
+      if (!body.sku && !isOptionGroupRegistration) return jsonResp({ ok: false, error: 'sku required' }, 400);
 
       return withPublishRequestId(action, `${accountKey}:${r}`, _cbscIdempotencyToken, body, async () => {
       const stage_logs: string[] = [];
@@ -3655,28 +3615,6 @@ Deno.serve(async (req) => {
             attribute_name: a.attribute_name || a.name || 'unknown',
             options: a.options || [],
           }));
-          // Retry once with name-based fallback defaults when id is known.
-          let retried = null as any;
-          const fallbackAttrs = [...(catAttrs.attribute_list || [])];
-          const existingIds = new Set<number>(fallbackAttrs.map((x: any) => Number(x.attribute_id)));
-          parsed.forEach((p) => {
-            if (!p.attribute_id || existingIds.has(Number(p.attribute_id))) return;
-            const v = fallbackAttrValueByName(p.attribute_name);
-            if (!v) return;
-            fallbackAttrs.push({ attribute_id: Number(p.attribute_id), attribute_value_list: [{ value_id: 0, original_value_name: v }] });
-          });
-          if (fallbackAttrs.length !== (catAttrs.attribute_list || []).length) {
-            const retryPayload = { ...addPayload, attribute_list: fallbackAttrs };
-            retried = await merchantApiCall(r, '/api/v2/global_product/add_global_item', { method: 'POST', body: retryPayload, account_key: accountKey });
-            if (!retried.error && retried.response?.global_item_id) {
-              stage_logs.push('add_global_item retry ok (fallback mandatory attrs)');
-              const global_item_id = retried.response.global_item_id;
-              // continue flow by replacing addRes-like result
-              addRes.error = '';
-              addRes.response = { ...(addRes.response || {}), global_item_id };
-            }
-          }
-          if (addRes.error) {
           return jsonResp({
             ok: false,
             region: r,
@@ -3685,11 +3623,8 @@ Deno.serve(async (req) => {
             message: addRes.message,
             missing_attributes: miss,
             sent: addPayload,
-            retry_attempted: !!retried,
-            retry_raw: retried,
             raw: addRes,
           }, 502);
-          }
         }
         if (addRes.error) return jsonResp({ ok: false, region: r, stage: 'add_global_item', error: addRes.error, message: addRes.message, sent: addPayload, raw: addRes }, 502);
       }

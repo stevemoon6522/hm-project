@@ -490,22 +490,64 @@ async function uploadShopeeImageFromUrl(args: {
   imageUrl: string;
   imageData?: { image_base64: string; output_hash: string };
   userToken: string;
+  layered?: boolean;
 }): Promise<string> {
   const imageData = args.imageData || await fetchShopeeImageDataUrl(args.imageUrl);
-  const raw = await bridgePost('upload_image', {
+  const body: Record<string, unknown> = {
     account_key: args.account_key,
     region: args.region,
     image_base64: imageData.image_base64,
     source_url: args.imageUrl,
-    main_image_url: args.imageUrl,
-    layer_version: 'platform-publish-shop-layer-v1',
     output_hash: imageData.output_hash,
-  }, args.userToken) as any;
+  };
+  if (args.layered) {
+    body.main_image_url = args.imageUrl;
+    body.layer_version = 'platform-publish-shop-layer-v1';
+  }
+  const raw = await bridgePost('upload_image', body, args.userToken) as any;
   const imageId = String(raw?.image_id || '').trim();
   if (!raw?.ok || !imageId) {
     throw new Error(String(raw?.message || raw?.error || 'upload_image failed'));
   }
   return imageId;
+}
+
+function shopeeImageSourceRefs(master: any): Array<{ imageUrl: string; layered: boolean }> {
+  const seen = new Set<string>();
+  const refs: Array<{ imageUrl: string; layered: boolean }> = [];
+  const add = (value: unknown, layered = false) => {
+    const imageUrl = String(value || '').trim();
+    if (!imageUrl || seen.has(imageUrl)) return;
+    seen.add(imageUrl);
+    refs.push({ imageUrl, layered });
+  };
+  add(master?.main_image, true);
+  (Array.isArray(master?.extra_images) ? master.extra_images : []).forEach((url: unknown) => add(url, false));
+  return refs.slice(0, SHOPEE_MAX_PRODUCT_IMAGES);
+}
+
+async function uploadShopeeImageRefsForRegions(args: {
+  account_key: string;
+  regions: string[];
+  refs: Array<{ imageUrl: string; layered: boolean }>;
+  userToken: string;
+}): Promise<Record<string, string[]>> {
+  const prepared = await Promise.all(args.refs.map(async (ref) => ({
+    ...ref,
+    imageData: ref.layered ? await fetchShopeeLayeredImageDataUrl(ref.imageUrl) : await fetchShopeeImageDataUrl(ref.imageUrl),
+  })));
+  const uploadedEntries = await Promise.all(args.regions.map(async (region) => {
+    const ids = await Promise.all(prepared.map((ref) => uploadShopeeImageFromUrl({
+      account_key: args.account_key,
+      region,
+      imageUrl: ref.imageUrl,
+      imageData: ref.imageData,
+      userToken: args.userToken,
+      layered: ref.layered,
+    })));
+    return [region, ids.slice(0, SHOPEE_MAX_PRODUCT_IMAGES)] as const;
+  }));
+  return Object.fromEntries(uploadedEntries);
 }
 
 async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promise<AdapterResult> {
@@ -606,24 +648,24 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     master.shopee_image_id,
     ...(Array.isArray(master.shopee_extra_image_ids) ? master.shopee_extra_image_ids : []),
   ].map((id: unknown) => String(id || '').trim()).filter(Boolean);
-  if (!ctx.dryRun && !cachedMasterImageIds.length && master.main_image) {
+  const imageRefs = shopeeImageSourceRefs(master);
+  const existingImageCounts = regions.map((region: string) => {
+    const ids = Array.isArray(regionImageIds[region]) ? regionImageIds[region] : [];
+    return ids.map((id: unknown) => String(id || '').trim()).filter(Boolean).length;
+  });
+  const bestExistingImageCount = Math.max(cachedMasterImageIds.length, ...existingImageCounts, 0);
+  const needsDetailImageUpload = imageRefs.length > bestExistingImageCount;
+  if (!ctx.dryRun && imageRefs.length && needsDetailImageUpload) {
     try {
-      const imageData = await fetchShopeeLayeredImageDataUrl(String(master.main_image));
-      const uploadedEntries = await Promise.all(regions.map(async (region) => {
-        const existingIds = Array.isArray(regionImageIds[region]) ? regionImageIds[region].map((id: unknown) => String(id || '').trim()).filter(Boolean) : [];
-        if (existingIds.length) return [region, existingIds] as const;
-        const imageId = await uploadShopeeImageFromUrl({
-          account_key,
-          region,
-          imageUrl: String(master.main_image),
-          imageData,
-          userToken: ctx.userAuthToken || '',
-        });
-        return [region, [imageId]] as const;
-      }));
+      const uploadedEntries = await uploadShopeeImageRefsForRegions({
+        account_key,
+        regions,
+        refs: imageRefs,
+        userToken: ctx.userAuthToken || '',
+      });
       regionImageIds = {
         ...regionImageIds,
-        ...Object.fromEntries(uploadedEntries),
+        ...uploadedEntries,
       };
     } catch (e) {
       const errorMsg = String((e as any)?.message || e || 'Shopee image upload failed');
@@ -732,7 +774,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     account_key,
     region: baseRegion,
     name: registerName,
-    sku: bridgeParentSku,
+    ...(variationBundle ? {} : { sku: bridgeParentSku }),
     category_id: Number(master.shopee_category_id),
     brand: brand_obj,
     image_id: baseImageIds[0] || master.shopee_image_id || undefined,

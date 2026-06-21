@@ -20,7 +20,7 @@ const adapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publi
 const bridge = readFileSync(join(root, 'supabase', 'functions', 'shopee-bridge', 'index.ts'), 'utf8');
 
 const rshDescriptionBlock = sliceBetween(html, 'const READY_STOCK_DESC_TEMPLATE', '// Pick the correct block-level template');
-const rshSafetyBlock = sliceBetween(html, 'function rshShopeeSafeDescription', '// Specification attributes per category');
+const rshSafetyBlock = sliceBetween(html, 'function rshShopeeSafeDescription', 'function rshDescriptionForRegistration');
 const adapterDescriptionBlock = sliceBetween(adapter, 'function shopeeSellerCenterDescription', 'const SUPABASE_URL');
 const bridgeSanitizerBlock = sliceBetween(bridge, 'function sanitizeShopeePlainTextDescription', 'function imageBlockFrom');
 

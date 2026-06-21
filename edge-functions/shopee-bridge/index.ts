@@ -765,6 +765,7 @@ const V2_MUTATION_ACTIONS = new Set([
   'update_global_price',
   'update_shop_days_to_ship',
   'update_shop_item_name',
+  'update_shop_item_description',
   'set_global_sync_fields',
   'set_price_sync_on',
 ]);
@@ -1106,7 +1107,6 @@ async function enforceV2ProbePreflight(action: string, requestPayload: any, body
   const blockedFields: string[] = [];
   if (action === 'update_global_item') {
     if (requestPayload.item_name !== undefined && !flags.probe_item_name_ok) blockedFields.push('item_name');
-    if (requestPayload.description !== undefined && !flags.probe_item_name_ok) blockedFields.push('description');
     if (requestPayload.weight !== undefined && !flags.probe_model_weight_ok) blockedFields.push('weight');
   }
   // Shopee Global Product update_global_model documents model-level `weight`
@@ -1513,6 +1513,19 @@ async function runV2MutationAction(action: string, body: any) {
     return { ...response, item_id, sent_item_name: item_name };
   }
 
+  if (action === 'update_shop_item_description') {
+    const item_id = parseInt(body.item_id || body.shop_item_id);
+    const description = sanitizeShopeePlainTextDescription(body.description);
+    if (!item_id) return { ok: false, error: 'shop_item_id required' };
+    if (!description) return { ok: false, error: 'description required' };
+    // Official local doc: C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\product\v2.product.update_item.json
+    const requestPayload = { item_id, description };
+    const response = await executeLoggedMutation(action, r, requestPayload, body, payload =>
+      shopApiCall(r, '/api/v2/product/update_item', { method: 'POST', body: payload, account_key: accountKey })
+    );
+    return { ...response, item_id, sent_description_length: description.length };
+  }
+
   const item_id = parseInt(body.item_id || body.shop_item_id);
   const days_to_ship = Number(body.days_to_ship);
   if (!item_id) return { ok: false, error: 'shop_item_id required' };
@@ -1556,6 +1569,34 @@ const PRE_ORDER_GLOBAL_DTS = 10;
 function resolveGlobalProductDts(body: any = {}): number {
   const isPreOrder = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
   return isPreOrder ? PRE_ORDER_GLOBAL_DTS : READY_STOCK_GLOBAL_DTS;
+}
+
+function sanitizeShopeePlainTextDescription(value: unknown): string {
+  const raw = String(value || '');
+  return raw
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\/\s*(p|div|li|tr|h[1-6]|section|article|table)\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/🟣/gu, '[Product]')
+    .replace(/💿/gu, '[Official Album]')
+    .replace(/📊/gu, '[Chart Certified]')
+    .replace(/📦/gu, '[Shipping]')
+    .replace(/📌/gu, '[Contents]')
+    .replace(/⚠️?/gu, '[Important Notice]')
+    .replace(/💳/gu, '[COD Policy]')
+    .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, '')
+    .replace(/\uFE0F/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 function imageBlockFrom(body: any) {
@@ -1717,7 +1758,7 @@ function buildPublishModels(variation: any, fallbackPrice: number) {
 function buildGlobalItemPayload(body: any) {
   return {
     global_item_name: body.name,
-    description: body.description || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`,
+    description: sanitizeShopeePlainTextDescription(body.description) || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`,
     global_item_sku: body.sku,
     category_id: Number(body.category_id),
     condition: body.condition || 'NEW',
@@ -1818,28 +1859,6 @@ function pickOptionByKeywords(options: AttrOption[], keywords: string[]): AttrOp
   return options[0] || null;
 }
 
-function defaultForMandatoryAttr(attr: GlobalAttr, categoryId: number): AttrOption | null {
-  const name = attr.name.toLowerCase();
-  const opts = attr.options || [];
-  const kpopAlbumCategory = [300740, 100630].includes(Number(categoryId));
-  if (name.includes('cd') && name.includes('dvd') && name.includes('bluray')) {
-    return pickOptionByKeywords(opts, ['cd', 'album', 'regular']);
-  }
-  if (name.includes('country of origin') || name.includes('region of origin')) {
-    return pickOptionByKeywords(opts, ['south korea', 'korea', 'kr']);
-  }
-  if (name.includes('shelf life')) {
-    return pickOptionByKeywords(opts, ['no expiry', 'no expiration', 'not applicable', 'n/a', '12', '24']);
-  }
-  if (name.includes('adult')) {
-    return pickOptionByKeywords(opts, ['no', 'not applicable', 'n/a', 'na']);
-  }
-  if (kpopAlbumCategory && (name.includes('media') || name.includes('format') || name.includes('type'))) {
-    return pickOptionByKeywords(opts, ['cd', 'album', 'regular']);
-  }
-  return null;
-}
-
 function pickOptionForExistingValue(options: AttrOption[], valueName: string): AttrOption | null {
   const normalized = String(valueName || '').trim().toLowerCase();
   if (!normalized) return null;
@@ -1888,14 +1907,6 @@ function parseMandatoryFromDebug(debugMessage: string): Array<{ attribute_id: nu
   return out;
 }
 
-function fallbackAttrValueByName(name: string): string | null {
-  const n = String(name || '').toLowerCase();
-  if (n.includes('cd') && n.includes('dvd') && n.includes('bluray')) return 'CD';
-  if (n.includes('country of origin') || n.includes('region of origin')) return 'South Korea';
-  if (n.includes('shelf life')) return 'No Expiration';
-  return null;
-}
-
 async function buildCategoryAttributeList(region: string, categoryId: number, inputAttrs: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   const normalized = normalizeAttributeList(inputAttrs);
   const byId = new Map<number, any>();
@@ -1929,17 +1940,6 @@ async function buildCategoryAttributeList(region: string, categoryId: number, in
     const existing = byId.get(attr.attribute_id);
     const hasValue = !!(existing && Array.isArray(existing.attribute_value_list) && existing.attribute_value_list.length > 0);
     if (hasValue) continue;
-    const picked = defaultForMandatoryAttr(attr, categoryId);
-    if (picked) {
-      byId.set(attr.attribute_id, {
-        attribute_id: attr.attribute_id,
-        attribute_value_list: [{
-          value_id: Number.isFinite(Number(picked.value_id)) ? Number(picked.value_id) : 0,
-          original_value_name: picked.original_value_name || picked.display_value_name || picked.value_name || '',
-        }],
-      });
-      continue;
-    }
     missing.push({
       attribute_id: attr.attribute_id,
       attribute_name: attr.name,
@@ -2011,7 +2011,7 @@ function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
   const dts = isPreOrder
     ? clampPreOrderRegionDts(dtsRaw)
     : clampReadyStockDts(dtsRaw);
-  const description = String(target.description ?? body.description ?? '').trim()
+  const description = sanitizeShopeePlainTextDescription(target.description ?? body.description)
     || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`;
   const item: any = {
     item_name: body.name,
@@ -2151,8 +2151,14 @@ async function syncShopModelPricesAfterPublish(region: string, itemId: number, t
   const variation = normalizeVariation(target?.variation || body?.variation);
   const priceList: any[] = [];
   if (variation) {
-    const modelsResult = await shopApiCall(region, '/api/v2/product/get_model_list', { query: { item_id: itemId }, account_key: accountKey });
-    const shopModels = Array.isArray(modelsResult?.response?.model) ? modelsResult.response.model : [];
+    let modelsResult: any = null;
+    let shopModels: any[] = [];
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      if (attempt > 0) await new Promise(s => setTimeout(s, 2000));
+      modelsResult = await shopApiCall(region, '/api/v2/product/get_model_list', { query: { item_id: itemId }, account_key: accountKey });
+      shopModels = Array.isArray(modelsResult?.response?.model) ? modelsResult.response.model : [];
+      if (!modelsResult.error && shopModels.length) break;
+    }
     if (modelsResult.error || !shopModels.length) {
       return { ok: false, stage: 'get_model_list', error: modelsResult.error || 'shop models not found', raw: modelsResult };
     }
@@ -2173,6 +2179,24 @@ async function syncShopModelPricesAfterPublish(region: string, itemId: number, t
   const result = await shopApiCall(region, '/api/v2/product/update_price', { method: 'POST', body: { item_id: itemId, price_list: priceList }, account_key: accountKey });
   const failureList = Array.isArray(result?.response?.failure_list) ? result.response.failure_list : [];
   return { ok: !result.error && failureList.length === 0, sent_price_list: priceList, failure_list: failureList, raw: result };
+}
+
+async function finalizePublishOutcomeAfterSuccess(outcome: any, region: string, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  if (!outcome?.ok || !outcome?.item_id) return outcome;
+  if (outcome.price_sync?.ok) return outcome;
+  try {
+    outcome.price_sync = await syncShopModelPricesAfterPublish(region, Number(outcome.item_id), target, body, accountKey);
+  } catch (e: any) {
+    outcome.price_sync = { ok: false, stage: 'price_sync_exception', error: String(e?.message || e) };
+  }
+  if (outcome.price_sync?.ok === false) {
+    const reason = outcome.price_sync.error || outcome.price_sync.stage || 'price sync failed';
+    outcome.ok = false;
+    outcome.stage = 'post_publish_price_sync';
+    outcome.error = reason;
+    outcome.price_sync_warning = reason;
+  }
+  return outcome;
 }
 
 async function retryTwMinimalPublish(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
@@ -3303,6 +3327,7 @@ Deno.serve(async (req) => {
               }
             } catch (_) {}
           }
+          outcome = await finalizePublishOutcomeAfterSuccess(outcome, targetRegion, target, body, reqAccountKey);
           outcome.raw_create = publishRes;
           outcome.raw_task = task;
           outcome.poll_attempts = pollAttempts;
@@ -3530,7 +3555,6 @@ Deno.serve(async (req) => {
         .map((t: any) => ({ ...t, region: t.region || r }))
         .filter((t: any) => t.region);
       if (!body.name) return jsonResp({ ok: false, error: 'name required' }, 400);
-      if (!body.sku) return jsonResp({ ok: false, error: 'sku required' }, 400);
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
 
@@ -3550,6 +3574,8 @@ Deno.serve(async (req) => {
           message: String(e?.message || e),
         }, 400);
       }
+      const isOptionGroupRegistration = String(body.registration_kind || '').toLowerCase() === 'option_group' || !!preflightVariation;
+      if (!body.sku && !isOptionGroupRegistration) return jsonResp({ ok: false, error: 'sku required' }, 400);
 
       return withPublishRequestId(action, `${accountKey}:${r}`, _cbscIdempotencyToken, body, async () => {
       const stage_logs: string[] = [];
@@ -3589,28 +3615,6 @@ Deno.serve(async (req) => {
             attribute_name: a.attribute_name || a.name || 'unknown',
             options: a.options || [],
           }));
-          // Retry once with name-based fallback defaults when id is known.
-          let retried = null as any;
-          const fallbackAttrs = [...(catAttrs.attribute_list || [])];
-          const existingIds = new Set<number>(fallbackAttrs.map((x: any) => Number(x.attribute_id)));
-          parsed.forEach((p) => {
-            if (!p.attribute_id || existingIds.has(Number(p.attribute_id))) return;
-            const v = fallbackAttrValueByName(p.attribute_name);
-            if (!v) return;
-            fallbackAttrs.push({ attribute_id: Number(p.attribute_id), attribute_value_list: [{ value_id: 0, original_value_name: v }] });
-          });
-          if (fallbackAttrs.length !== (catAttrs.attribute_list || []).length) {
-            const retryPayload = { ...addPayload, attribute_list: fallbackAttrs };
-            retried = await merchantApiCall(r, '/api/v2/global_product/add_global_item', { method: 'POST', body: retryPayload, account_key: accountKey });
-            if (!retried.error && retried.response?.global_item_id) {
-              stage_logs.push('add_global_item retry ok (fallback mandatory attrs)');
-              const global_item_id = retried.response.global_item_id;
-              // continue flow by replacing addRes-like result
-              addRes.error = '';
-              addRes.response = { ...(addRes.response || {}), global_item_id };
-            }
-          }
-          if (addRes.error) {
           return jsonResp({
             ok: false,
             region: r,
@@ -3619,11 +3623,8 @@ Deno.serve(async (req) => {
             message: addRes.message,
             missing_attributes: miss,
             sent: addPayload,
-            retry_attempted: !!retried,
-            retry_raw: retried,
             raw: addRes,
           }, 502);
-          }
         }
         if (addRes.error) return jsonResp({ ok: false, region: r, stage: 'add_global_item', error: addRes.error, message: addRes.message, sent: addPayload, raw: addRes }, 502);
       }
@@ -3783,7 +3784,7 @@ Deno.serve(async (req) => {
               if (verified) {
                 verified.publish_status = 'verified_via_already_published_create_error';
                 verified.raw_create = publishRes;
-                results.push(verified);
+                results.push(await finalizePublishOutcomeAfterSuccess(verified, targetRegion, target, body, accountKey));
                 return;
               }
             }
@@ -3868,6 +3869,7 @@ Deno.serve(async (req) => {
               }
             } catch (_) {}
           }
+          outcome = await finalizePublishOutcomeAfterSuccess(outcome, targetRegion, target, body, accountKey);
           results.push(outcome);
         } catch (e: any) {
           results.push({ ok: false, region: target.region || r, stage: 'publish_exception', error: String(e?.message || e) });

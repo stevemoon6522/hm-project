@@ -1501,21 +1501,27 @@
     .btn-live:hover { background: #8f1a10; }
     .cat-toolbar {
       display: grid;
-      gap: 10px;
-      align-items: stretch;
+      grid-template-columns: minmax(520px, 1fr) auto;
+      gap: 12px;
+      align-items: center;
       margin-bottom: 12px;
     }
     .cat-filter-row,
-    .cat-platform-row {
+    .cat-platform-row,
+    .cat-action-row {
       display: flex;
       align-items: center;
       gap: 8px;
       flex-wrap: wrap;
     }
+    .cat-action-row {
+      justify-content: flex-end;
+      flex-wrap: nowrap;
+    }
     .cat-filter-row input {
-      min-width: 280px;
+      min-width: 320px;
       flex: 1 1 360px;
-      max-width: 520px;
+      max-width: 560px;
     }
     .cat-platform-tabs,
     .cat-market-filters {
@@ -1573,6 +1579,40 @@
     }
     .cat-market-filters {
       min-height: 34px;
+    }
+    .cat-market-strip {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .cat-price-summary {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+    .cat-price-summary strong {
+      color: var(--accent);
+    }
+    .cat-selection-meter {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 36px;
+      padding: 0 11px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      color: #6b5a72;
+      white-space: nowrap;
+    }
+    .cat-selection-meter strong {
+      color: #2f1646;
+      font-weight: 800;
     }
     .coverage-summary {
       display: grid;
@@ -1813,8 +1853,8 @@
       line-height: 1.5; margin-bottom: 14px;
     }
     .cat-table-wrap { overflow-x: auto; }
-    .cat-table { table-layout: auto; min-width: 1100px; }
-    .cat-table th, .cat-table td { padding: 7px 9px; border-bottom: 1px solid #ead8e8; vertical-align: middle; }
+    .cat-table { table-layout: fixed; min-width: 1380px; }
+    .cat-table th, .cat-table td { padding: 10px 12px; border-bottom: 1px solid #ead8e8; vertical-align: middle; }
     .cat-table th { background: #faeef8; color: #3c1d57; font-size: 11px; font-weight: 700; white-space: nowrap; }
     .cat-cb { width: auto; }
     /* lifecycle badges */
@@ -1822,12 +1862,126 @@
     .badge-rdy  { background: #d1fae5; color: #065f46; border-radius: 4px; padding: 2px 6px; font-size: 10px; font-weight: 600; }
     .badge-none { background: #f7ebf6; color: #6a4b79; border-radius: 4px; padding: 2px 6px; font-size: 10px; }
     /* cost input */
-    .cat-cost-input {
-      width: 90px; padding: 4px 6px; font-size: 12px;
-      border: 1px solid var(--border); border-radius: 4px; text-align: right;
+    .cat-base-cell {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .cat-base-row {
+      display: grid;
+      grid-template-columns: 54px minmax(0, 1fr);
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .cat-base-row > span:first-child {
+      white-space: nowrap;
+    }
+    .cat-base-readonly {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      min-height: 31px;
+      padding: 0 8px;
+      border: 1px solid #f0ddec;
+      border-radius: 7px;
+      background: #fff;
+      color: #374151;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+    }
+    .cat-base-hint {
+      color: var(--muted);
+      font-size: 11px;
+    }
+    .cat-cost-input,
+    .cat-sourcing-input,
+    .cat-weight-input {
+      width: 100%;
+      min-width: 0;
+      height: 31px;
+      padding: 4px 7px;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      border-radius: 7px;
+      text-align: right;
+      background: #fff;
     }
     .cat-cost-input:focus { border-color: var(--accent); outline: 2px solid rgba(255,45,143,.2); }
-    .cat-cost-input.cost-warn { border-color: #e89b00; background: #fffbeb; }
+    .cat-cost-input.cost-warn,
+    .cat-sourcing-input.cost-warn,
+    .cat-weight-input.cost-warn { border-color: #e89b00; background: #fffbeb; }
+    .cat-market-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 7px;
+    }
+    .cat-market-card {
+      min-height: 52px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      background: #f8fafc;
+      padding: 7px 8px;
+      color: #334155;
+    }
+    .cat-market-card.ok {
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+    }
+    .cat-market-card.partial {
+      border-color: #fde68a;
+      background: #fffbeb;
+    }
+    .cat-market-card.missing {
+      border-color: #e2e8f0;
+      background: #f8fafc;
+      color: #64748b;
+    }
+    .cat-market-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 4px;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1;
+    }
+    .cat-market-card-head span:first-child::before {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #16a34a;
+      margin-right: 5px;
+      vertical-align: 1px;
+    }
+    .cat-market-card.partial .cat-market-card-head span:first-child::before {
+      background: #f59e0b;
+    }
+    .cat-market-card.missing .cat-market-card-head span:first-child::before {
+      background: #94a3b8;
+    }
+    .cat-market-price {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.25;
+      white-space: nowrap;
+    }
+    .cat-market-arrow {
+      color: #9f7a9d;
+      padding: 0 3px;
+    }
+    .cat-sync-note-cell {
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .cat-sync-note-cell strong {
+      color: #92400e;
+    }
     /* row warnings */
     .cat-row-warn,
     .cat-row-warn td { background: #fffbeb !important; }
@@ -3460,12 +3614,15 @@
             <option value="null">미분류</option>
           </select>
           <button id="cat-refresh" type="button">새로고침</button>
-          <span id="cat-count" style="font-size:12px;font-weight:600;color:var(--accent);white-space:nowrap;"></span>
-          <button id="cat-sync-btn" type="button" class="btn-live"
-            title="선택한 행의 가격을 현재 플랫폼(Shopee/Joom)에 동기화">🔄 동기화</button>
           <span id="cat-error" class="status err" style="display:none;font-size:12px;"></span>
         </div>
-        <div class="cat-platform-row">
+        <div class="cat-action-row">
+          <span class="cat-selection-meter">선택 <strong id="cat-selected-count">0개</strong></span>
+          <button id="cat-dry-run-btn" type="button" title="선택한 행의 Shopee update_price payload를 미리 확인">Dry-run</button>
+          <button id="cat-sync-btn" type="button" class="btn-live"
+            title="선택한 행의 Shopee 가격을 동기화">동기화</button>
+        </div>
+        <div class="cat-platform-row" hidden aria-hidden="true">
           <span class="cat-platform-label">Platform</span>
           <div id="cat-platform-tabs" class="cat-platform-tabs" role="tablist" aria-label="Platform">
             <button type="button" class="cat-platform-tab active" data-cat-platform="shopee" role="tab" aria-selected="true">Shopee</button>
@@ -3474,30 +3631,28 @@
             <button type="button" class="cat-platform-tab" data-cat-platform="alibaba" role="tab" aria-selected="false" aria-disabled="true">Alibaba</button>
             <button type="button" class="cat-platform-tab" data-cat-platform="ebay" role="tab" aria-selected="false">eBay</button>
           </div>
-          <div id="cat-region-filters" class="cat-market-filters" aria-label="Shopee markets"></div>
         </div>
+      </div>
+      <div class="cat-market-strip">
+        <div id="cat-region-filters" class="cat-market-filters" aria-label="Shopee markets"></div>
+        <div class="cat-price-summary"><strong id="cat-count"></strong><span>선택 상품 기준 계산값 미리보기</span></div>
       </div>
 
       <!-- table -->
       <div class="panel cat-table-wrap">
         <table id="cat-table" class="cat-table">
-          <thead>
+          <thead data-cat-head-mode="shopee">
             <tr>
               <th style="width:28px;"><input type="checkbox" id="cat-select-all" class="cat-cb" title="전체 선택"></th>
-              <th style="min-width:180px;">SKU / 옵션</th>
-              <th style="min-width:90px;">Lifecycle</th>
-              <th style="min-width:100px;">도매가 (₩)</th>
-              <th style="min-width:110px;">Cost (₩)</th>
-              <th style="min-width:70px;">무게(g)</th>
-              <!-- 6 region 현재가 columns — injected by renderCatalogView() -->
-              <!-- 6 region 신규가 preview columns — injected alongside -->
-              <th style="min-width:80px;">Δ 최대</th>
-              <th style="min-width:100px;">cost 갱신</th>
-              <th style="min-width:60px;">배지</th>
+              <th style="width:405px;">Product</th>
+              <th style="width:90px;">Lifecycle</th>
+              <th style="width:190px;">KRW Base</th>
+              <th style="width:520px;">Markets</th>
+              <th style="width:160px;">Sync Note</th>
             </tr>
           </thead>
           <tbody id="cat-body">
-            <tr><td colspan="10" class="cat-empty">로딩 중…</td></tr>
+            <tr><td colspan="6" class="cat-empty">로딩 중…</td></tr>
           </tbody>
         </table>
       </div>
@@ -14339,6 +14494,7 @@ LEGACY END -->
   const PLATFORM_PUBLISH_URL = `${SUPABASE_URL}/functions/v1/platform-publish`;
   let _rshCountrySettingsByRegion = new Map();
   let _rshBrandOptionsCache = new Map();
+  let _rshGlobalAttributeCache = new Map();
 
   // Per-modal state — reset on each openRegisterShopeeModal() call.
   let _rsh = {
@@ -14365,6 +14521,8 @@ LEGACY END -->
     accountPublishRequestIds: {}, // account_key -> UUID
     dtsOverrides: {},        // { region: number } — user-edited DTS values
     publishInFlight: false,  // P1-2: true while fetch is in-flight — blocks modal close
+    specLoading: false,
+    specAttributes: [],
   };
 
   /** Quick DOM helper for rsh- prefixed IDs. */
@@ -14532,6 +14690,25 @@ LEGACY END -->
     }).filter(Boolean).join('\n');
   }
 
+  function rshRawComponentsBlock(components) {
+    const lines = String(components || '')
+      .replace(/\r\n?/g, '\n')
+      .replace(/<\s*br\s*\/?>/gi, '\n')
+      .replace(/<\/\s*(div|p|li|tr|h[1-6])\s*>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&lt;/gi, '<')
+      .replace(/&gt;/gi, '>')
+      .split('\n')
+      .map((line) => stripNonMarketplaceText(line).trim())
+      .filter(Boolean);
+    return lines.map((line) => {
+      const cleaned = line.replace(/^[\s\-*•◈·]+/, '').trim();
+      return cleaned ? `- ${cleaned}` : '';
+    }).filter(Boolean).join('\n');
+  }
+
   function rshGuessBrandName(master, productName = '') {
     const existing = stripNonMarketplaceText(master?.shopee_brand_name || '').trim();
     if (existing && !/^no brand$/i.test(existing)) return existing;
@@ -14639,7 +14816,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   // Pick the correct block-level template based on lifecycle_state.
   function rshDescriptionTemplate(productName, lifecycleState, components = '') {
-    const componentBlock = rshFormatComponentsBlock(components);
+    const componentBlock = rshRawComponentsBlock(components);
     return lifecycleState === 'pre_order'
       ? PRE_ORDER_DESC_TEMPLATE(productName, componentBlock)
       : READY_STOCK_DESC_TEMPLATE(productName, componentBlock);
@@ -14691,100 +14868,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (!manualPlain || rshLooksLikeHtmlDescription(manualRaw)) return generated;
     if (!manualPlain.includes('COD Policy') || !manualPlain.includes('Contents')) return generated;
     return manualPlain;
-  }
-
-  // Specification attributes per category (static mapping, plan §D).
-  // category 100740: Brand, Region of Origin, Type, Adult products
-  // category 101390: Brand, Region of Origin only (Shopee API returns empty attribute tree)
-  function rshBuildSpecSection(categoryId, master) {
-    const grid = $rsh('spec-grid');
-    if (!grid) return;
-    grid.innerHTML = '';
-
-    const extraAttrs = Array.isArray(master.shopee_extra_attributes) ? master.shopee_extra_attributes : [];
-    function extraVal(attrId) {
-      const a = extraAttrs.find((x) => Number(x.attribute_id) === attrId);
-      return a?.attribute_value_list?.[0]?.original_value_name || '';
-    }
-
-    const productName = rshReadProductName() || rshFormatShopeeProductName(master.product_name, master.sku, master.lifecycle_state);
-    const brandName = rshGuessBrandName(master, productName);
-
-    // Brand field (attribute_id 100012) — sent via top-level brand object.
-    const brandHtml = `
-      <div class="field span-4">
-        <label>Brand</label>
-        <select id="rsh-attr-brand-select" data-current-id="${text(String(master.shopee_brand_id ?? 0))}" data-current-name="${text(brandName)}">
-          <option value="${text(String(master.shopee_brand_id ?? 0))}" selected>${text(brandName)}</option>
-        </select>
-        <button type="button" id="rsh-brand-refresh" style="margin-top:4px;font-size:11px;padding:3px 8px;">Refresh</button>
-        <div id="rsh-brand-status" class="muted" style="font-size:11px;margin-top:3px;"></div>
-        <input id="rsh-attr-brand" type="hidden" value="${text(brandName)}">
-        <input type="hidden" id="rsh-attr-brand-id" value="${text(String(master.shopee_brand_id ?? 0))}">
-      </div>`;
-
-    // Region of Origin (attribute_id 100037 on most Shopee categories)
-    let originVal = extraVal(100037) || 'Korea';
-    if (originVal === 'South Korea') originVal = 'Korea';
-    const originHtml = `
-      <div class="field span-4">
-        <label>Region of Origin</label>
-        <select id="rsh-attr-origin">
-          <option value="Korea"${originVal === 'Korea' ? ' selected' : ''}>Korea</option>
-          <option value="South Korea"${originVal === 'South Korea' ? ' selected' : ''}>South Korea</option>
-          <option value="Japan"${originVal === 'Japan' ? ' selected' : ''}>Japan</option>
-          <option value="Other"${!['South Korea','Korea','Japan'].includes(originVal) ? ' selected' : ''}>Other</option>
-        </select>
-      </div>`;
-
-    let extra100740 = '';
-    if (Number(categoryId) === 100740) {
-      // Type (attribute_id 100039 or similar — use static field)
-      const typeVal = extraVal(100039) || 'Music & Concerts';
-      extra100740 = `
-        <div class="field span-4">
-          <label>CD, DVD &amp; Bluray Type</label>
-          <select id="rsh-attr-type">
-            <option value="Music & Concerts"${typeVal === 'Music & Concerts' ? ' selected' : ''}>Music & Concerts</option>
-            <option value="Album"${typeVal === 'Album' ? ' selected' : ''}>Album</option>
-          </select>
-        </div>
-        <div class="field span-4">
-          <label>NCC</label>
-          <input id="rsh-attr-ncc" type="text" placeholder="Please input">
-        </div>
-        <div class="field span-4">
-          <label>Adult products</label>
-          <select id="rsh-attr-adult">
-            <option value="NA" selected>NA</option>
-          </select>
-        </div>
-        <div class="field span-4">
-          <label>Warranty Type</label>
-          <select id="rsh-attr-warranty">
-            <option value="No Warranty" selected>No Warranty</option>
-          </select>
-        </div>
-        <div class="field span-4">
-          <label>Condition</label>
-          <div class="rsh-readbox">New</div>
-        </div>
-        <div class="field span-4">
-          <label>Age Group</label>
-          <input id="rsh-attr-age-group" type="text" placeholder="Please select">
-        </div>
-        <div class="field span-4">
-          <label>Language</label>
-          <input id="rsh-attr-language" type="text" placeholder="Please select">
-        </div>
-        <div class="field span-4">
-          <label>Movie Genre</label>
-          <input id="rsh-attr-movie-genre" type="text" placeholder="Please select">
-        </div>`;
-    }
-
-    grid.innerHTML = brandHtml + originHtml + extra100740;
-    void rshHydrateBrandSelect(categoryId, master);
   }
 
   function rshBrandListCacheKey(categoryId, status = '1') {
@@ -14877,9 +14960,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const brands = await rshLoadBrandOptions(categoryId, forceRefresh);
       if (!select.isConnected) return;
       rshPopulateBrandSelect(brands, currentName, currentId);
+      rshWireBrandSearch();
       if (status) status.textContent = `${brands.length} brands`;
     } catch (e) {
       rshPopulateBrandSelect([], currentName, currentId);
+      rshWireBrandSearch();
       if (status) status.textContent = `Brand lookup failed: ${e.message || e}`;
     }
   }
@@ -14894,50 +14979,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // The earlier Phase B code used 100039/100040 which are *different* attributes that
   // do not exist in this category — Shopee rejected with "Attribute 'CD, DVD & Bluray Type'
   // is mandatory required" because the actual id (100693) was never sent.
-  const SHOPEE_ATTR_VALUE_MAP_100740 = {
-    region: { 'South Korea': 48, 'Korea': 48, 'Korea (generic)': 48, 'Japan': 1, 'Taiwan': 112, 'Other': 93 },
-    type: { 'Music & Concerts': 3574, 'Album': 3574, 'Movies': 3559, 'TV Series': 3596, 'Others': 3581 },
-    adult: { 'NA': 11441, 'No': 11441, 'Yes': 5788 },
-  };
-  function rshReadSpecAttributes(categoryId) {
-    const origin = document.getElementById('rsh-attr-origin')?.value || 'South Korea';
-
-    // Brand (attribute_id 100012) is sent via the top-level `brand` object in
-    // add_global_item, NOT via attribute_list. Shopee rejects with "Chocolate Type
-    // (100012) is not mapped with the category" if brand appears in attribute_list
-    // — that error message is misleading; 100012 in *this* category corresponds to
-    // the brand link, which Shopee expects only in the brand object.
-    const attrs = [
-      {
-        attribute_id: 100037,
-        attribute_value_list: [{
-          value_id: SHOPEE_ATTR_VALUE_MAP_100740.region[origin] || 48,
-          original_value_name: origin === 'Korea (generic)' ? 'Korea' : origin,
-        }],
-      },
-    ];
-
-    if (Number(categoryId) === 100740) {
-      const typeVal = document.getElementById('rsh-attr-type')?.value || 'Music & Concerts';
-      const adultVal = document.getElementById('rsh-attr-adult')?.value || 'NA';
-      attrs.push({
-        attribute_id: 100693,
-        attribute_value_list: [{
-          value_id: SHOPEE_ATTR_VALUE_MAP_100740.type[typeVal] || 3574,
-          original_value_name: typeVal,
-        }],
-      });
-      attrs.push({
-        attribute_id: 101044,
-        attribute_value_list: [{
-          value_id: SHOPEE_ATTR_VALUE_MAP_100740.adult[adultVal] || 11441,
-          original_value_name: adultVal === 'NA' ? 'No' : adultVal,
-        }],
-      });
-    }
-    return attrs;
-  }
-
   function rshReadBrandObject() {
     rshSyncBrandHidden();
     const brandName = stripNonMarketplaceText(document.getElementById('rsh-attr-brand')?.value || '').trim() || 'No Brand';
@@ -14945,6 +14986,323 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return brandId > 0
       ? { brand_id: brandId, original_brand_name: brandName }
       : { brand_id: 0, original_brand_name: brandName };
+  }
+
+  function rshWireBrandSearch() {
+    const search = document.getElementById('rsh-brand-search');
+    const select = document.getElementById('rsh-attr-brand-select');
+    if (!search || !select) return;
+    search.oninput = () => {
+      const query = stripNonMarketplaceText(search.value || '').trim().toLowerCase();
+      Array.from(select.options || []).forEach((option) => {
+        const haystack = `${option.textContent || ''} ${option.dataset?.originalName || ''}`.toLowerCase();
+        option.hidden = query.length >= 2 && !haystack.includes(query);
+      });
+    };
+  }
+
+  function rshExistingSpecAttributeMap(master) {
+    const out = new Map();
+    (Array.isArray(master?.shopee_extra_attributes) ? master.shopee_extra_attributes : []).forEach((attr) => {
+      const id = Number(attr?.attribute_id);
+      if (!id) return;
+      const value = Array.isArray(attr?.attribute_value_list) ? attr.attribute_value_list[0] : null;
+      if (value) out.set(id, value);
+    });
+    return out;
+  }
+
+  function rshAttrDisplayName(attr) {
+    return stripNonMarketplaceText(
+      attr?.display_attribute_name || attr?.original_attribute_name || attr?.attribute_name || attr?.name || ''
+    ).trim();
+  }
+
+  function rshAttrOptionName(option) {
+    return stripNonMarketplaceText(
+      option?.display_value_name || option?.original_value_name || option?.value_name || option?.name || ''
+    ).trim();
+  }
+
+  function rshNormalizeAttrOption(option) {
+    const valueId = Number(option?.value_id);
+    const name = rshAttrOptionName(option);
+    return {
+      value_id: Number.isFinite(valueId) ? valueId : 0,
+      original_value_name: stripNonMarketplaceText(option?.original_value_name || name).trim() || name,
+      display_value_name: name,
+      value_unit: option?.value_unit ? String(option.value_unit) : '',
+    };
+  }
+
+  function rshFlattenGlobalAttributeTree(json) {
+    const response = json?.result?.response || json?.response || json?.result || json || {};
+    const roots = [];
+    if (Array.isArray(response.list)) {
+      response.list.forEach((entry) => {
+        if (Array.isArray(entry?.attribute_tree)) roots.push(...entry.attribute_tree);
+        if (Array.isArray(entry?.attribute_list)) roots.push(...entry.attribute_list);
+      });
+    }
+    if (Array.isArray(response.attribute_tree)) roots.push(...response.attribute_tree);
+    if (Array.isArray(response.attribute_list)) roots.push(...response.attribute_list);
+    const out = [];
+    const walk = (node) => {
+      if (!node || typeof node !== 'object') return;
+      const id = Number(node.attribute_id ?? node.id);
+      const name = rshAttrDisplayName(node);
+      const info = node.attribute_info || {};
+      const mandatoryRegions = Array.isArray(info.mandatory_region) ? info.mandatory_region.map((r) => String(r || '').toUpperCase()) : [];
+      const mandatory = !!(node.mandatory ?? node.is_mandatory ?? node.required) || mandatoryRegions.some((region) => RSH_REGIONS.includes(region));
+      const options = (Array.isArray(node.attribute_value_list) ? node.attribute_value_list : [])
+        .map(rshNormalizeAttrOption)
+        .filter((option) => option.display_value_name || option.original_value_name);
+      if (id > 0 && name) {
+        out.push({
+          attribute_id: id,
+          name,
+          mandatory,
+          input_type: Number(info.input_type || 0),
+          max_value_count: Number(info.max_value_count || 1),
+          options,
+        });
+      }
+      const children = [
+        ...(Array.isArray(node.children) ? node.children : []),
+        ...(Array.isArray(node.attribute_list) ? node.attribute_list : []),
+        ...(Array.isArray(node.attributes) ? node.attributes : []),
+      ];
+      children.forEach(walk);
+    };
+    roots.forEach(walk);
+    const byId = new Map();
+    out.forEach((attr) => {
+      if (!byId.has(attr.attribute_id)) byId.set(attr.attribute_id, attr);
+    });
+    return Array.from(byId.values()).sort((a, b) => Number(b.mandatory) - Number(a.mandatory) || a.name.localeCompare(b.name));
+  }
+
+  async function rshLoadGlobalAttributes(categoryId, forceRefresh = false) {
+    const key = String(Number(categoryId) || 0);
+    if (!forceRefresh && _rshGlobalAttributeCache.has(key)) return _rshGlobalAttributeCache.get(key);
+    const qs = new URLSearchParams({ region: 'SG', category_id: key });
+    const resp = await fetch(`${SHOPEE_BRIDGE}/global_attributes?${qs.toString()}`, { headers: AUTH_HEADERS });
+    const json = await resp.json().catch(() => null);
+    if (!resp.ok || !json?.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
+    const attrs = rshFlattenGlobalAttributeTree(json);
+    _rshGlobalAttributeCache.set(key, attrs);
+    return attrs;
+  }
+
+  function rshDefaultSpecOption(attr, existingValue) {
+    const existingName = stripNonMarketplaceText(existingValue?.original_value_name || existingValue?.display_value_name || existingValue?.value_name || '').trim().toLowerCase();
+    const existingId = Number(existingValue?.value_id);
+    const options = Array.isArray(attr?.options) ? attr.options : [];
+    if (Number.isFinite(existingId) && existingId > 0) {
+      const byId = options.find((option) => Number(option.value_id) === existingId);
+      if (byId) return byId;
+    }
+    const find = (...needles) => options.find((option) => {
+      const haystack = `${option.display_value_name || ''} ${option.original_value_name || ''}`.toLowerCase();
+      return needles.some((needle) => haystack.includes(needle));
+    });
+    if (existingName) {
+      const exact = find(existingName);
+      if (exact) return exact;
+    }
+    const name = String(attr.name || '').toLowerCase();
+    if (name.includes('origin') || name.includes('country')) return find('korea', 'south korea') || null;
+    if (name.includes('cd') && name.includes('dvd') && name.includes('bluray')) return find('music', 'concert', 'album', 'cd') || null;
+    if (name.includes('adult')) return find('no', 'not applicable', 'n/a', 'na') || null;
+    return null;
+  }
+
+  function rshRenderSpecAttributeField(attr, existingValue) {
+    const id = Number(attr.attribute_id);
+    const required = attr.mandatory ? 'true' : 'false';
+    const label = `${attr.name}${attr.mandatory ? ' *' : ''}`;
+    if (Array.isArray(attr.options) && attr.options.length) {
+      const selected = rshDefaultSpecOption(attr, existingValue);
+      const selectedKey = selected ? `${selected.value_id}:${selected.original_value_name || selected.display_value_name}` : '';
+      const optionsHtml = [
+        '<option value="">Select value</option>',
+        ...attr.options.map((option) => {
+          const key = `${option.value_id}:${option.original_value_name || option.display_value_name}`;
+          const display = option.display_value_name || option.original_value_name || String(option.value_id || '');
+          return `<option value="${text(String(option.value_id))}" data-value-id="${text(String(option.value_id))}" data-original-value="${text(option.original_value_name || display)}" data-value-unit="${text(option.value_unit || '')}"${key === selectedKey ? ' selected' : ''}>${text(display)}</option>`;
+        }),
+      ].join('');
+      return `
+        <div class="field span-4">
+          <label>${text(label)}</label>
+          <input type="search" data-rsh-attribute-search data-rsh-attribute-id="${text(String(id))}" placeholder="Search ${text(attr.name)}" style="margin-bottom:4px;">
+          <select data-rsh-attribute-input data-rsh-attribute-id="${text(String(id))}" data-rsh-attribute-name="${text(attr.name)}" data-rsh-attribute-required="${required}">
+            ${optionsHtml}
+          </select>
+        </div>`;
+    }
+    const textValue = stripNonMarketplaceText(existingValue?.original_value_name || '').trim();
+    return `
+      <div class="field span-4">
+        <label>${text(label)}</label>
+        <input type="text" data-rsh-attribute-input data-rsh-attribute-id="${text(String(id))}" data-rsh-attribute-name="${text(attr.name)}" data-rsh-attribute-required="${required}" value="${text(textValue)}" placeholder="Input ${text(attr.name)}">
+      </div>`;
+  }
+
+  function rshFallbackGlobalAttributes(categoryId) {
+    if (Number(categoryId) !== 100740) return [];
+    return [
+      {
+        attribute_id: 100037,
+        name: 'Region of Origin',
+        mandatory: true,
+        options: [
+          { value_id: 48, original_value_name: 'Korea', display_value_name: 'Korea' },
+          { value_id: 1, original_value_name: 'Japan', display_value_name: 'Japan' },
+          { value_id: 93, original_value_name: 'Other', display_value_name: 'Other' },
+        ],
+      },
+      {
+        attribute_id: 100693,
+        name: 'CD, DVD & Bluray Type',
+        mandatory: true,
+        options: [
+          { value_id: 3574, original_value_name: 'Music & Concerts', display_value_name: 'Music & Concerts' },
+          { value_id: 3559, original_value_name: 'Movies', display_value_name: 'Movies' },
+          { value_id: 3596, original_value_name: 'TV Series', display_value_name: 'TV Series' },
+          { value_id: 3581, original_value_name: 'Others', display_value_name: 'Others' },
+        ],
+      },
+      {
+        attribute_id: 101044,
+        name: 'Adult products',
+        mandatory: true,
+        options: [
+          { value_id: 11441, original_value_name: 'No', display_value_name: 'No' },
+          { value_id: 5788, original_value_name: 'Yes', display_value_name: 'Yes' },
+        ],
+      },
+    ];
+  }
+
+  function rshFilterAttributeOptions(attributeId) {
+    const search = document.querySelector(`[data-rsh-attribute-search][data-rsh-attribute-id="${CSS.escape(String(attributeId))}"]`);
+    const select = document.querySelector(`select[data-rsh-attribute-input][data-rsh-attribute-id="${CSS.escape(String(attributeId))}"]`);
+    if (!search || !select) return;
+    const query = stripNonMarketplaceText(search.value || '').trim().toLowerCase();
+    Array.from(select.options || []).forEach((option, index) => {
+      if (index === 0) { option.hidden = false; return; }
+      const haystack = `${option.textContent || ''} ${option.dataset?.originalValue || ''}`.toLowerCase();
+      option.hidden = query.length >= 2 && !haystack.includes(query);
+    });
+  }
+
+  function rshWireSpecAttributeSearch() {
+    document.querySelectorAll('[data-rsh-attribute-search]').forEach((input) => {
+      input.oninput = () => rshFilterAttributeOptions(input.dataset.rshAttributeId);
+    });
+  }
+
+  async function rshHydrateSpecSection(categoryId, master) {
+    const status = document.getElementById('rsh-spec-status');
+    const grid = $rsh('spec-grid');
+    if (!grid) return;
+    const existing = rshExistingSpecAttributeMap(master);
+    _rsh.specLoading = true;
+    try {
+      if (status) status.textContent = 'Loading Shopee specification data...';
+      const loaded = await rshLoadGlobalAttributes(categoryId);
+      const attrs = loaded.filter((attr) => attr.mandatory && Number(attr.attribute_id) !== 100012);
+      const finalAttrs = attrs.length ? attrs : rshFallbackGlobalAttributes(categoryId);
+      const html = finalAttrs.map((attr) => rshRenderSpecAttributeField(attr, existing.get(Number(attr.attribute_id)))).join('');
+      if (status) {
+        status.outerHTML = html || '<div id="rsh-spec-status" class="field span-8"><label>Required category specifications</label><div class="rsh-muted-box" style="font-size:12px;">No required category specifications returned by Shopee.</div></div>';
+      }
+      _rsh.specAttributes = finalAttrs;
+      rshWireSpecAttributeSearch();
+      document.querySelectorAll('[data-rsh-attribute-input]').forEach((input) => input.addEventListener('change', rshCheckSubmitEnabled));
+    } catch (e) {
+      const fallback = rshFallbackGlobalAttributes(categoryId);
+      _rsh.specAttributes = fallback;
+      if (status) {
+        status.outerHTML = fallback.length
+          ? fallback.map((attr) => rshRenderSpecAttributeField(attr, existing.get(Number(attr.attribute_id)))).join('')
+          : `<div id="rsh-spec-status" class="field span-8"><label>Required category specifications</label><div class="notice error" style="font-size:12px;">Specification lookup failed: ${text(e.message || e)}</div></div>`;
+      }
+      rshWireSpecAttributeSearch();
+    }
+    document.querySelectorAll('[data-rsh-attribute-input]').forEach((input) => input.addEventListener('change', rshCheckSubmitEnabled));
+    _rsh.specLoading = false;
+    rshCheckSubmitEnabled();
+  }
+
+  function rshBuildSpecSection(categoryId, master) {
+    const grid = $rsh('spec-grid');
+    if (!grid) return;
+    const productName = rshReadProductName() || rshFormatShopeeProductName(master.product_name, master.sku, master.lifecycle_state);
+    const brandName = rshGuessBrandName(master, productName);
+    _rsh.specLoading = true;
+    _rsh.specAttributes = [];
+    grid.innerHTML = `
+      <div class="field span-4">
+        <label>Brand</label>
+        <input id="rsh-brand-search" type="search" placeholder="Type 2+ chars to filter brands" style="margin-bottom:4px;">
+        <select id="rsh-attr-brand-select" data-current-id="${text(String(master.shopee_brand_id ?? 0))}" data-current-name="${text(brandName)}">
+          <option value="${text(String(master.shopee_brand_id ?? 0))}" selected>${text(brandName)}</option>
+        </select>
+        <button type="button" id="rsh-brand-refresh" style="margin-top:4px;font-size:11px;padding:3px 8px;">Refresh</button>
+        <div id="rsh-brand-status" class="muted" style="font-size:11px;margin-top:3px;"></div>
+        <input id="rsh-attr-brand" type="hidden" value="${text(brandName)}">
+        <input type="hidden" id="rsh-attr-brand-id" value="${text(String(master.shopee_brand_id ?? 0))}">
+      </div>
+      <div id="rsh-spec-status" class="field span-8">
+        <label>Required category specifications</label>
+        <div class="rsh-muted-box" style="font-size:12px;">Loading Shopee specification data...</div>
+      </div>`;
+    void rshHydrateBrandSelect(categoryId, master);
+    void rshHydrateSpecSection(categoryId, master);
+  }
+
+  function rshReadSpecAttributes(categoryId) {
+    const attrs = [];
+    document.querySelectorAll('[data-rsh-attribute-input]').forEach((input) => {
+      const attrId = Number(input.dataset.rshAttributeId);
+      if (!attrId || attrId === 100012) return;
+      if (input.tagName === 'SELECT') {
+        const selected = input.selectedOptions?.[0];
+        const valueId = Number(selected?.dataset?.valueId || input.value || 0);
+        const original = stripNonMarketplaceText(selected?.dataset?.originalValue || selected?.textContent || '').trim();
+        if (!valueId && !original) return;
+        attrs.push({
+          attribute_id: attrId,
+          attribute_value_list: [{
+            value_id: Number.isFinite(valueId) ? valueId : 0,
+            original_value_name: original,
+            ...(selected?.dataset?.valueUnit ? { value_unit: selected.dataset.valueUnit } : {}),
+          }],
+        });
+        return;
+      }
+      const original = stripNonMarketplaceText(input.value || '').trim();
+      if (!original) return;
+      attrs.push({
+        attribute_id: attrId,
+        attribute_value_list: [{ value_id: 0, original_value_name: original }],
+      });
+    });
+    if (!attrs.length) return rshFallbackGlobalAttributes(categoryId).map((attr) => {
+      const picked = rshDefaultSpecOption(attr, null);
+      return picked ? {
+        attribute_id: attr.attribute_id,
+        attribute_value_list: [{ value_id: picked.value_id, original_value_name: picked.original_value_name || picked.display_value_name }],
+      } : null;
+    }).filter(Boolean);
+    return attrs;
+  }
+
+  function rshRequiredSpecValuesReady() {
+    const required = Array.from(document.querySelectorAll('[data-rsh-attribute-input][data-rsh-attribute-required="true"]'));
+    return required.every((input) => String(input.value || '').trim());
   }
 
   function rshReadCondition() {
@@ -15286,11 +15644,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       ? variantInputs.every((v) => String(v.sku || '').trim())
       : rows.every((p) => String(p.sku || '').trim());
     const hasProductName = !!rshReadProductName();
+    const hasRequiredSpecs = !_rsh.specLoading && rshRequiredSpecValuesReady();
 
     // P1-4a: block if staronemall URL is missing (banner already shown)
     const staronemallMissing = $rsh('no-staronemall') && $rsh('no-staronemall').style.display !== 'none';
 
-    btn.disabled = !hasImage || !hasCost || !hasStock || !hasWeight || !hasSku || !hasProductName || staronemallMissing;
+    btn.disabled = !hasImage || !hasCost || !hasStock || !hasWeight || !hasSku || !hasProductName || !hasRequiredSpecs || staronemallMissing;
   }
 
   // Show cached image preview strip.
@@ -17435,7 +17794,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       account_key: accountKey,
       region: activeRegions[0] || 'SG',
       name: productName || parentSku,
-      sku: parentSku,
       category_id: categoryId,
       brand: brandObj,
       image_id: imageId,
@@ -19819,6 +20177,140 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return '<span class="badge-none">미분류</span>';
   }
 
+  function catFormatRegionPriceRange(region, values) {
+    const clean = (values || []).filter(function(value) {
+      return Number.isFinite(Number(value));
+    }).map(Number).sort(function(a, b) { return a - b; });
+    if (!clean.length) return '—';
+    const first = clean[0];
+    const last = clean[clean.length - 1];
+    const suffix = CAT_CURRENCY[region] ? ' ' + CAT_CURRENCY[region] : '';
+    if (clean.length === 1 || first === last) return formatPriceForRegion(region, first) + suffix;
+    return formatPriceForRegion(region, first) + '-' + formatPriceForRegion(region, last) + suffix;
+  }
+
+  function catMarketCardHtml(region, mappedCount, totalCount, currentPrices, newPrices) {
+    const total = Math.max(Number(totalCount || 0), 1);
+    const mapped = Math.max(Number(mappedCount || 0), 0);
+    const stateClass = mapped <= 0 ? 'missing' : (mapped >= total ? 'ok' : 'partial');
+    const countLabel = mapped + '/' + total;
+    let priceHtml = '미등록';
+    if (mapped > 0) {
+      const currentText = catFormatRegionPriceRange(region, currentPrices);
+      const newText = catFormatRegionPriceRange(region, newPrices);
+      priceHtml = currentText + '<span class="cat-market-arrow">→</span>' + newText;
+    }
+    const dimStyle = _catRegionVisible.has(region) ? '' : 'opacity:0.35;';
+    return '<div class="cat-market-card ' + stateClass + '" data-cat-region="' + esc(region) + '" data-cat-region-new="' + esc(region) + '" style="' + dimStyle + '">'
+      + '<div class="cat-market-card-head"><span>' + esc(region) + '</span><span>' + esc(countLabel) + '</span></div>'
+      + '<div class="cat-market-price">' + priceHtml + '</div>'
+      + '</div>';
+  }
+
+  function catShopeeSyncNote(summaries) {
+    const partial = [];
+    const missing = [];
+    (summaries || []).forEach(function(row) {
+      if (!row || row.mapped >= row.total) return;
+      if (row.mapped > 0) partial.push(row.region);
+      else missing.push(row.region);
+    });
+    if (!partial.length && !missing.length) return '<span class="muted">-</span>';
+    const notes = [];
+    if (partial.length) notes.push('<strong>' + esc(partial.join(', ')) + ' 일부</strong>');
+    if (missing.length) notes.push('<strong>' + esc(missing.join(', ')) + ' 미등록</strong>');
+    return notes.join('<br>');
+  }
+
+  function catShopeeMarketsForRows(rows, listingIdx) {
+    const safeRows = rows || [];
+    let maxDeltaPct = 0;
+    const summaries = [];
+    const cards = CAT_REGIONS.map(function(region) {
+      const currentPrices = [];
+      const newPrices = [];
+      let mappedCount = 0;
+      safeRows.forEach(function(product) {
+        const pid = String(product.id);
+        const listing = (listingIdx.get(pid) || new Map()).get(region);
+        const currentPrice = listing && listing.last_synced_price != null ? Number(listing.last_synced_price) : null;
+        const newPrice = catComputeNewPrice(catEffectiveCost(product), region, catEffectiveWeight(product));
+        if (listing && (listing.shop_item_id || listing.shop_model_id || listing.status || currentPrice != null)) mappedCount += 1;
+        if (currentPrice != null && Number.isFinite(currentPrice)) currentPrices.push(currentPrice);
+        if (newPrice != null && Number.isFinite(newPrice)) newPrices.push(newPrice);
+        if (currentPrice != null && currentPrice > 0 && newPrice != null) {
+          const pct = Math.abs((newPrice - currentPrice) / currentPrice * 100);
+          if (pct > maxDeltaPct) maxDeltaPct = pct;
+        }
+      });
+      summaries.push({ region: region, mapped: mappedCount, total: safeRows.length || 1 });
+      return catMarketCardHtml(region, mappedCount, safeRows.length || 1, currentPrices, newPrices);
+    }).join('');
+    return {
+      html: '<td class="cat-markets-cell" data-cat-markets-cell="1"><div class="cat-market-grid">' + cards + '</div></td>'
+        + '<td class="cat-sync-note-cell" data-cat-sync-note="1">' + catShopeeSyncNote(summaries) + '</td>',
+      maxDeltaPct: maxDeltaPct,
+      noteHtml: catShopeeSyncNote(summaries),
+    };
+  }
+
+  function catShopeeMarketsForProduct(product, listingByRegion, effectiveCost, weightG) {
+    let maxDeltaPct = 0;
+    const summaries = [];
+    const cards = CAT_REGIONS.map(function(region) {
+      const listing = listingByRegion.get(region);
+      const currentPrice = listing && listing.last_synced_price != null ? Number(listing.last_synced_price) : null;
+      const newPrice = catComputeNewPrice(effectiveCost, region, weightG);
+      const mappedCount = listing && (listing.shop_item_id || listing.shop_model_id || listing.status || currentPrice != null) ? 1 : 0;
+      if (currentPrice != null && currentPrice > 0 && newPrice != null) {
+        const pct = Math.abs((newPrice - currentPrice) / currentPrice * 100);
+        if (pct > maxDeltaPct) maxDeltaPct = pct;
+      }
+      summaries.push({ region: region, mapped: mappedCount, total: 1 });
+      return catMarketCardHtml(region, mappedCount, 1, currentPrice != null ? [currentPrice] : [], newPrice != null ? [newPrice] : []);
+    }).join('');
+    return {
+      html: '<td class="cat-markets-cell" data-cat-markets-cell="1"><div class="cat-market-grid">' + cards + '</div></td>'
+        + '<td class="cat-sync-note-cell" data-cat-sync-note="1">' + catShopeeSyncNote(summaries) + '</td>',
+      maxDeltaPct: maxDeltaPct,
+      noteHtml: catShopeeSyncNote(summaries),
+    };
+  }
+
+  function catProductTitle(product) {
+    return plProductName(product) || product.product_name || product.sku || '상품명 없음';
+  }
+
+  function catProductMeta(product, optionLabel) {
+    const bits = [product.sku || ''];
+    const option = optionLabel || plOptionDisplay(product) || product.option_name || '';
+    if (option) bits.push(option);
+    return bits.filter(Boolean).join(' · ');
+  }
+
+  function catProductCellHtml(product, options) {
+    const opts = options || {};
+    const toggle = opts.toggleHtml || '';
+    const title = opts.title || catProductTitle(product);
+    const meta = opts.meta || catProductMeta(product, opts.optionLabel || '');
+    return '<div class="pl-group-main cat-product-main">'
+      + toggle
+      + plProductThumb(product || {})
+      + '<div class="pl-product-copy">'
+      + '<div class="pl-master-title-row"><span class="pl-master-title">' + esc(title) + '</span></div>'
+      + '<div class="muted" style="font-size:11px;">' + esc(meta || '') + '</div>'
+      + '</div></div>';
+  }
+
+  function catBaseReadonlyCell(rows) {
+    return '<div class="cat-base-cell">'
+      + '<div class="cat-base-row"><span>도매가</span><span class="cat-base-readonly">' + esc(catNumberRange(rows, 'sourcing_price')) + '</span></div>'
+      + '<div class="cat-base-row"><span>Cost</span><span class="cat-base-readonly">' + esc(catNumberRange(rows, 'cost_krw')) + '</span></div>'
+      + '<div class="cat-base-row"><span>무게</span><span class="cat-base-readonly">' + esc(catNumberRange(rows.map(function(row) { return Object.assign({}, row, { weight_g: catEffectiveWeight(row) }); }), 'weight_g')) + 'g</span></div>'
+      + '<div class="cat-base-hint">옵션별 수정은 펼쳐서 입력</div>'
+      + '</div>';
+  }
+
   /** Build the region th column headers (current + new price pairs). */
   function catBuildRegionHeaders() {
     if (_catActivePlatform === 'joom') return catBuildJoomHeaders();
@@ -19863,6 +20355,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (_catActivePlatform === 'joom') return catBuildJoomCells(product, effectiveCost, weightG);
     if (_catActivePlatform === 'ebay') return catBuildEbayCells(product, effectiveCost, weightG);
     if (_catActivePlatform === 'qoo10') return catBuildQoo10Cells(product, effectiveCost);
+    if (_catActivePlatform === 'shopee') return catShopeeMarketsForProduct(product, listingByRegion, effectiveCost, weightG);
     let html = '';
     let maxDeltaPct = 0;
 
@@ -20077,6 +20570,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return;
     }
 
+    if (_catActivePlatform === 'shopee' && product) {
+      const shopeeResult = catShopeeMarketsForProduct(product, listingByRegion, newCost, weightG);
+      const temp = document.createElement('tbody');
+      temp.innerHTML = '<tr>' + shopeeResult.html + '</tr>';
+      ['[data-cat-markets-cell]', '[data-cat-sync-note]'].forEach(function(sel) {
+        const oldCell = tr.querySelector(sel);
+        const newCell = temp.querySelector(sel);
+        if (oldCell && newCell) oldCell.replaceWith(newCell);
+      });
+      return;
+    }
+
     // Update each region td in this row
     CAT_REGIONS.forEach(function(r) {
       const tdCurrent = tr.querySelector('[data-cat-region="' + r + '"]');
@@ -20282,6 +20787,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (_catActivePlatform === 'joom') return catJoomSummaryCells(rows);
     if (_catActivePlatform === 'ebay') return catEbaySummaryCells(rows);
     if (_catActivePlatform === 'qoo10') return catQoo10SummaryCells(rows);
+    if (_catActivePlatform === 'shopee') return catShopeeMarketsForRows(rows, listingIdx);
     let html = '';
     let maxDeltaPct = 0;
     CAT_REGIONS.forEach(function(r) {
@@ -20403,6 +20909,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function catRenderGroupRow(group, listingIdx) {
+    if (_catActivePlatform === 'shopee') return catRenderShopeeGroupRow(group, listingIdx);
     const rows = group.rows;
     const first = rows[0] || {};
     const collapsed = !state.priceSyncExpandedGroups.has(group.key);
@@ -20436,7 +20943,33 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + '</tr>';
   }
 
+  function catRenderShopeeGroupRow(group, listingIdx) {
+    const rows = group.rows;
+    const first = rows[0] || {};
+    const collapsed = !state.priceSyncExpandedGroups.has(group.key);
+    const productIds = rows.map(function(p) { return String(p.id || ''); }).filter(Boolean);
+    const optionSpec = plEffectiveVariationSpec(rows, 'Version');
+    const options = rows.map(function(row, idx) {
+      return plEffectiveOptionDisplay(row, optionSpec, idx, plOptionDisplay(row));
+    }).filter(Boolean);
+    const shownOptions = options.slice(0, 4).join(', ');
+    const more = options.length > 4 ? ' 외 ' + (options.length - 4) + '개' : '';
+    const marketResult = catShopeeMarketsForRows(rows, listingIdx);
+    const checked = productIds.length && productIds.every(function(id) { return catSelectedIds.has(id); });
+    const partial = !checked && productIds.some(function(id) { return catSelectedIds.has(id); });
+    const toggleHtml = '<button type="button" class="pl-group-toggle" data-cat-group-toggle="1" data-group-key="' + esc(group.key) + '" title="' + (collapsed ? '옵션 펼치기' : '옵션 접기') + '">' + (collapsed ? '▸' : '▾') + '</button>';
+    const meta = esc(plParentSku(rows)) + ' · 옵션 묶음 ' + rows.length + '개' + (shownOptions ? ' · ' + esc(shownOptions + more) : '');
+    return '<tr class="pl-group-row" data-cat-group-key="' + esc(group.key) + '">'
+      + '<td><input type="checkbox" class="cat-cb cat-group-cb" data-group-key="' + esc(group.key) + '" data-product-ids="' + esc(productIds.join(',')) + '" ' + (checked ? 'checked' : '') + (partial ? ' data-partial="1"' : '') + ' title="이 묶음 옵션 전체 선택"></td>'
+      + '<td>' + catProductCellHtml(first, { toggleHtml: toggleHtml, title: catProductTitle(first), meta: meta }) + '</td>'
+      + '<td>' + catLifecycleBadge(first.lifecycle_state) + '</td>'
+      + '<td>' + catBaseReadonlyCell(rows) + '</td>'
+      + marketResult.html
+      + '</tr>';
+  }
+
   function catRenderProductRow(p, listingIdx, isGroupChild) {
+    if (_catActivePlatform === 'shopee') return catRenderShopeeProductRow(p, listingIdx, isGroupChild, arguments.length > 3 ? arguments[3] : null, arguments.length > 4 ? arguments[4] : 0);
     const optionSpec = arguments.length > 3 ? arguments[3] : null;
     const rowIndex = arguments.length > 4 ? arguments[4] : 0;
     const pid = String(p.id);
@@ -20506,6 +21039,46 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + '</tr>';
   }
 
+  function catRenderShopeeProductRow(p, listingIdx, isGroupChild, optionSpec, rowIndex) {
+    const pid = String(p.id);
+    const byRegion = listingIdx.get(pid) || new Map();
+    const effectiveCost = catEffectiveCost(p);
+    const origCost = Number(p.cost_krw || 0);
+    const isLargeChange = pid in pendingCostEdits && origCost > 0
+      && Math.abs(pendingCostEdits[pid] - origCost) / origCost > 0.30;
+    const effectiveWeight = catEffectiveWeight(p);
+    const marketResult = catShopeeMarketsForProduct(p, byRegion, effectiveCost, effectiveWeight);
+    const optionLabel = optionSpec
+      ? plEffectiveOptionDisplay(p, optionSpec, rowIndex, plOptionDisplay(p))
+      : plOptionDisplay(p);
+    const rowClass = (isGroupChild ? 'pl-option-row ' : 'pl-single-product-row ') + (isLargeChange ? 'cat-row-warn' : '');
+    const sourcingVal = Number(p.sourcing_price || 0);
+    const costVal = effectiveCost > 0 ? effectiveCost : (origCost || '');
+    const hasStaronemall = !!(p.staronemall_url && String(p.staronemall_url).trim());
+    const toggleHtml = isGroupChild
+      ? '<span style="width:24px;height:24px;display:inline-block;"></span>'
+      : '';
+    const baseCell = '<div class="cat-base-cell">'
+      + '<div class="cat-base-row"><span>도매가</span><input type="number" inputmode="decimal" class="cat-sourcing-input" data-cat-sourcing-pid="' + esc(pid) + '" value="' + (sourcingVal > 0 ? sourcingVal : '') + '" min="0" max="999999999" step="1" placeholder="도매가" title="도매가(₩) — blur/Enter 시 × 1.30 정산가 자동 산출"></div>'
+      + '<div class="cat-base-row"><span>Cost</span><input type="number" inputmode="decimal" class="cat-cost-input' + (isLargeChange ? ' cost-warn' : '') + '" data-cat-cost-pid="' + esc(pid) + '" value="' + Number(costVal || 0) + '" min="1" max="999999999" step="1" title="매입가(₩) — blur 또는 Enter로 market preview 갱신"></div>'
+      + '<div class="cat-base-row"><span>무게</span><input type="number" inputmode="decimal" class="cat-weight-input mono" data-cat-weight-pid="' + esc(pid) + '" value="' + (effectiveWeight > 0 ? Number(effectiveWeight) : '') + '" min="1" max="999999999" step="1" title="무게(g) — blur/Enter 시 저장 + market preview 갱신"></div>'
+      + (isLargeChange
+        ? '<div data-cat-confirm style="font-size:10px;color:var(--yellow);"><input type="checkbox" class="cat-confirm-cb" title="매입가 30% 이상 변동 — 확인 체크 필요"> 확인↑30%</div>'
+        : '<div data-cat-confirm></div>')
+      + (hasStaronemall
+        ? '<button type="button" class="cat-staronemall-btn" data-cat-staronemall-pid="' + esc(pid) + '" title="Staronemall 재크롤링 → 도매가/정산가 갱신" style="font-size:10px;padding:2px 7px;cursor:pointer;width:max-content;">↻ Staronemall</button>'
+          + '<div class="cat-staronemall-status" data-cat-staronemall-status="' + esc(pid) + '" style="font-size:10px;color:var(--muted);"></div>'
+        : '')
+      + '</div>';
+    return '<tr class="' + rowClass + '" data-cat-pid="' + esc(pid) + '">'
+      + '<td><input type="checkbox" class="cat-cb cat-row-cb" data-cat-sel="' + esc(pid) + '" ' + (catSelectedIds.has(pid) ? 'checked' : '') + '></td>'
+      + '<td>' + catProductCellHtml(p, { toggleHtml: toggleHtml, optionLabel: optionLabel, title: isGroupChild ? (optionLabel || p.option_name || p.sku || '옵션') : catProductTitle(p), meta: catProductMeta(p, optionLabel) }) + '</td>'
+      + '<td>' + catLifecycleBadge(p.lifecycle_state) + '</td>'
+      + '<td>' + baseCell + '</td>'
+      + marketResult.html
+      + '</tr>';
+  }
+
 
   // ── Main render ──────────────────────────────────────────────────
 
@@ -20569,9 +21142,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (!table) return;
     const thead = table.querySelector('thead tr');
     if (!thead) return;
+    const headMode = _catActivePlatform === 'shopee' ? 'shopee' : 'legacy';
+
+    if (thead.parentElement && thead.parentElement.dataset.catHeadMode !== headMode) {
+      if (headMode === 'shopee') {
+        thead.innerHTML = ''
+          + '<th style="width:28px;"><input type="checkbox" id="cat-select-all" class="cat-cb" title="전체 선택"></th>'
+          + '<th style="width:405px;">Product</th>'
+          + '<th style="width:90px;">Lifecycle</th>'
+          + '<th style="width:190px;">KRW Base</th>'
+          + '<th style="width:520px;">Markets</th>'
+          + '<th style="width:160px;">Sync Note</th>';
+      } else {
+        thead.innerHTML = ''
+          + '<th style="width:28px;"><input type="checkbox" id="cat-select-all" class="cat-cb" title="전체 선택"></th>'
+          + '<th style="min-width:180px;">SKU / 옵션</th>'
+          + '<th style="min-width:90px;">Lifecycle</th>'
+          + '<th style="min-width:100px;">도매가 (₩)</th>'
+          + '<th style="min-width:110px;">Cost (₩)</th>'
+          + '<th style="min-width:70px;">무게(g)</th>'
+          + '<th style="min-width:80px;">Δ 최대</th>'
+          + '<th style="min-width:100px;">cost 갱신</th>'
+          + '<th style="min-width:60px;">배지</th>';
+      }
+      thead.parentElement.dataset.catHeadMode = headMode;
+      catBindSelectAll();
+    }
 
     // Remove existing dynamic price headers (all platform columns)
     thead.querySelectorAll('[data-cat-region],[data-cat-region-new],[data-cat-joom-current],[data-cat-joom-new],[data-cat-joom-status],[data-cat-ebay-current],[data-cat-ebay-new],[data-cat-ebay-status],[data-cat-qoo10-current],[data-cat-qoo10-new],[data-cat-qoo10-status]').forEach(function(th) { th.remove(); });
+    if (_catActivePlatform === 'shopee') return;
 
     // Find anchor: the 무게(g) column, insert region columns after it
     const ths = Array.from(thead.querySelectorAll('th'));

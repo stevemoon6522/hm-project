@@ -140,7 +140,7 @@ for (const token of [
   "stage: 'variation_preflight'",
   "error: 'invalid_variation'",
   'mandatoryRegions.includes(regionCode)',
-  "name.includes('adult')",
+  'missing_attributes: catAttrs.missing',
   'requestPayload.attribute_list = attribute_list',
   'item.attribute_list = attributeList',
   'function buildStandardiseTierVariation',
@@ -160,5 +160,8 @@ for (const token of [
 ]) {
   assert(bridge.includes(token), `Shopee bridge regression guard missing token: ${token}`);
 }
+
+assert(!bridge.includes('defaultForMandatoryAttr'), 'Shopee bridge must not auto-fill mandatory attributes with guessed defaults');
+assert(!bridge.includes('fallbackAttrValueByName'), 'Shopee bridge must not retry missing mandatory specs with name-based guesses');
 
 console.log('v2 Shopee tier_index regression checks passed');

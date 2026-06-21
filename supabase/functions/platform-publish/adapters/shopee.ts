@@ -452,9 +452,72 @@ function base64UrlEncodeText(value: string): string {
   return bytesToBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
 }
 
-function shopeeLayeredCloudinaryUrl(imageUrl: string): string {
+function resolveShopeeLayerUrl(value: unknown): string {
+  const raw = String(value || '').trim();
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const base = String(Deno.env.get('SHOPEE_DASHBOARD_V2_BASE_URL') || DEFAULT_SHOP_LAYER_BASE_URL).trim().replace(/\/?$/, '/');
+  const asset = (raw || DEFAULT_SHOP_LAYER_ASSET).replace(/^\/+/, '');
+  return new URL(asset || DEFAULT_SHOP_LAYER_ASSET, base).toString();
+}
+
+function shopeeLayerVersion(accountKey: string, layerUrl: string): string {
+  return `platform-publish-shop-layer-v1:${normalizeShopeeAccountKey(accountKey)}:${base64UrlEncodeText(layerUrl).slice(0, 64)}`;
+}
+
+const shopeeLayerContextCache = new Map<string, Promise<{ layerUrl: string; layerVersion: string }>>();
+
+async function shopeeLayerContext(accountKey: string): Promise<{ layerUrl: string; layerVersion: string }> {
+  const normalizedAccount = normalizeShopeeAccountKey(accountKey);
+  const cached = shopeeLayerContextCache.get(normalizedAccount);
+  if (cached) return cached;
+
+  const pending = (async () => {
+    const envAccount = normalizedAccount.toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    const accountSpecificLayer = String(Deno.env.get(`SHOPEE_LAYER_URL_${envAccount}`) || '').trim();
+    let profileLayer = '';
+    if (!accountSpecificLayer && SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY) {
+      try {
+        const { data, error } = await makeSvcClient()
+          .from('shopee_account_profiles')
+          .select('layer_asset_path')
+          .eq('account_key', normalizedAccount)
+          .maybeSingle();
+        if (error) {
+          console.warn(JSON.stringify({
+            service: 'platform-publish/shopee-adapter',
+            event: 'shopee_layer_profile_lookup_failed',
+            account_key: normalizedAccount,
+            message: String(error.message || error),
+            ts: new Date().toISOString(),
+          }));
+        } else {
+          profileLayer = String((data as any)?.layer_asset_path || '').trim();
+        }
+      } catch (e) {
+        console.warn(JSON.stringify({
+          service: 'platform-publish/shopee-adapter',
+          event: 'shopee_layer_profile_lookup_failed',
+          account_key: normalizedAccount,
+          message: String((e as any)?.message || e),
+          ts: new Date().toISOString(),
+        }));
+      }
+    }
+    const genericDirect = String(Deno.env.get('SHOPEE_LAYER_URL') || '').trim();
+    const genericAsset = String(Deno.env.get('SHOPEE_LAYER_ASSET') || '').trim();
+    const layerUrl = resolveShopeeLayerUrl(accountSpecificLayer || profileLayer || genericDirect || genericAsset || DEFAULT_SHOP_LAYER_ASSET);
+    return {
+      layerUrl,
+      layerVersion: shopeeLayerVersion(normalizedAccount, layerUrl),
+    };
+  })();
+  shopeeLayerContextCache.set(normalizedAccount, pending);
+  return pending;
+}
+
+function shopeeLayeredCloudinaryUrl(imageUrl: string, layerUrl: string): string {
   const cloudName = String(Deno.env.get('CLOUDINARY_CLOUD_NAME') || DEFAULT_CLOUDINARY_CLOUD_NAME).trim();
-  const layerFetchId = base64UrlEncodeText(shopeeLayerUrl());
+  const layerFetchId = base64UrlEncodeText(layerUrl);
   const sourceUrl = encodeURIComponent(imageUrl);
   const transforms = [
     `c_fill,w_${SHOP_LAYER_IMAGE_SIZE},h_${SHOP_LAYER_IMAGE_SIZE},g_center`,
@@ -476,10 +539,10 @@ function shopeeUploadReadyCloudinaryUrl(imageUrl: string): string {
   return `https://res.cloudinary.com/${encodeURIComponent(cloudName)}/image/fetch/${transforms}/${sourceUrl}`;
 }
 
-async function fetchShopeeLayeredImageDataUrl(imageUrl: string): Promise<{ image_base64: string; output_hash: string }> {
+async function fetchShopeeLayeredImageDataUrl(imageUrl: string, layerContext: { layerUrl: string }): Promise<{ image_base64: string; output_hash: string }> {
   const url = String(imageUrl || '').trim();
   if (!url) throw new Error('main_image URL is empty');
-  const layeredUrl = shopeeLayeredCloudinaryUrl(url);
+  const layeredUrl = shopeeLayeredCloudinaryUrl(url, layerContext.layerUrl);
   const layeredRes = await fetchShopeeImageResponse(layeredUrl);
   const layeredBytes = await responseBytes(layeredRes);
   const output_hash = await sha256HexBytes(layeredBytes);
@@ -496,8 +559,14 @@ async function uploadShopeeImageFromUrl(args: {
   imageData?: { image_base64: string; output_hash: string };
   userToken: string;
   layered?: boolean;
+  layerVersion?: string;
 }): Promise<string> {
-  const imageData = args.imageData || await fetchShopeeImageDataUrl(args.imageUrl);
+  const layerContext = args.layered && (!args.imageData || !args.layerVersion)
+    ? await shopeeLayerContext(args.account_key)
+    : null;
+  const imageData = args.imageData || (args.layered && layerContext
+    ? await fetchShopeeLayeredImageDataUrl(args.imageUrl, layerContext)
+    : await fetchShopeeImageDataUrl(args.imageUrl));
   const body: Record<string, unknown> = {
     account_key: args.account_key,
     region: args.region,
@@ -507,7 +576,7 @@ async function uploadShopeeImageFromUrl(args: {
   };
   if (args.layered) {
     body.main_image_url = args.imageUrl;
-    body.layer_version = 'platform-publish-shop-layer-v1';
+    body.layer_version = args.layerVersion || layerContext?.layerVersion || shopeeLayerVersion(args.account_key, shopeeLayerUrl());
   }
   const raw = await bridgePost('upload_image', body, args.userToken) as any;
   const imageId = String(raw?.image_id || '').trim();
@@ -537,9 +606,11 @@ async function uploadShopeeImageRefsForRegions(args: {
   refs: Array<{ imageUrl: string; layered: boolean }>;
   userToken: string;
 }): Promise<Record<string, string[]>> {
+  const layerContext = await shopeeLayerContext(args.account_key);
   const prepared = await Promise.all(args.refs.map(async (ref) => ({
     ...ref,
-    imageData: ref.layered ? await fetchShopeeLayeredImageDataUrl(ref.imageUrl) : await fetchShopeeImageDataUrl(ref.imageUrl),
+    layerVersion: ref.layered ? layerContext.layerVersion : undefined,
+    imageData: ref.layered ? await fetchShopeeLayeredImageDataUrl(ref.imageUrl, layerContext) : await fetchShopeeImageDataUrl(ref.imageUrl),
   })));
   const uploadedEntries = await Promise.all(args.regions.map(async (region) => {
     const ids = await Promise.all(prepared.map((ref) => uploadShopeeImageFromUrl({
@@ -549,6 +620,7 @@ async function uploadShopeeImageRefsForRegions(args: {
       imageData: ref.imageData,
       userToken: args.userToken,
       layered: ref.layered,
+      layerVersion: ref.layerVersion,
     })));
     return [region, ids.slice(0, SHOPEE_MAX_PRODUCT_IMAGES)] as const;
   }));

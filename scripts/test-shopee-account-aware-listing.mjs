@@ -49,6 +49,11 @@ assert(bridge.includes("upsert({\r\n            account_key: accountKey") || bri
 assert(adapter.includes("const SHOPEE_LISTING_CONFLICT = 'product_id,account_key,region'"), 'Shopee adapter uses account-aware listing conflict');
 assert(adapter.includes('account_key,'), 'Shopee adapter includes account_key in upsert payloads');
 assert(adapter.includes('const bridgeBody: Record<string, unknown> = {') && adapter.includes('    account_key,'), 'Shopee adapter forwards account_key to shopee-bridge');
+assert(adapter.includes("from('shopee_account_profiles')") && adapter.includes("select('layer_asset_path')"), 'Shopee adapter resolves account-specific layer assets from account profiles');
+assert(adapter.includes('SHOPEE_LAYER_URL_${envAccount}'), 'Shopee adapter supports account-specific layer URL overrides');
+assert(adapter.includes('shopeeLayerVersion(normalizedAccount, layerUrl)'), 'Shopee adapter versions layered cover uploads by account and layer URL');
+assert(adapter.includes('fetchShopeeLayeredImageDataUrl(ref.imageUrl, layerContext)'), 'Shopee adapter applies account-specific layer context when generating fallback cover images');
+assert(adapter.includes('body.layer_version = args.layerVersion'), 'Shopee adapter sends account-specific layer_version to upload_image');
 assert(platformPublish.includes('account_key:'), 'platform-publish dispatcher passes account_key to adapters');
 
 assert(orders.includes('const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard"'), 'orders function pins legacy flow to default account');

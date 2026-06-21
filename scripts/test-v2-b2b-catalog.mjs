@@ -5,6 +5,7 @@ import { join } from 'node:path';
 const root = process.cwd();
 const html = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
 const migration = readFileSync(join(root, 'supabase', 'migrations', '202606200001_b2b_catalog_items.sql'), 'utf8');
+const deleteMigration = readFileSync(join(root, 'supabase', 'migrations', '202606210001_catalog_items_delete_policy.sql'), 'utf8');
 const crawler = readFileSync(join(root, 'supabase', 'functions', 'starone-crawl', 'index.ts'), 'utf8');
 const api = readFileSync(join(root, 'api', 'b2b-catalog-sheet-sync.js'), 'utf8');
 
@@ -25,6 +26,14 @@ for (const token of [
   'grant select, insert, update on public.catalog_items to authenticated',
 ]) {
   assert(migration.includes(token), `catalog_items migration missing token: ${token}`);
+}
+
+for (const token of [
+  'catalog_items deletable by authenticated',
+  'on public.catalog_items for delete',
+  'grant delete on public.catalog_items to authenticated',
+]) {
+  assert(deleteMigration.includes(token), `catalog_items delete migration missing token: ${token}`);
 }
 
 for (const token of [
@@ -72,7 +81,15 @@ for (const token of [
   'id="b2b-crawl-staronemall"',
   'id="b2b-save-selected"',
   'id="b2b-sync-sheet"',
+  'id="b2b-bulk-edit"',
+  'id="b2b-bulk-delete"',
   'id="b2b-conflict-modal"',
+  'id="b2b-catalog-edit-modal"',
+  'id="b2b-catalog-bulk-modal"',
+  'id="b2b-catalog-check-all"',
+  'data-b2b-edit',
+  'data-b2b-delete',
+  'data-b2b-bulk-apply',
   'const B2B_CATEGORIES',
   'const B2B_AVAILABILITY',
   'function b2bCrawlStaronemall',
@@ -80,6 +97,11 @@ for (const token of [
   'function b2bSaveSelectedRows',
   ".from('catalog_items')",
   ".in('staronemall_pno', pnos)",
+  'function b2bOpenCatalogEditModal',
+  'function b2bSaveCatalogEdit',
+  'function b2bOpenBulkEditModal',
+  'function b2bApplyBulkEdit',
+  'function b2bDeleteCatalogRows',
   'function b2bConfirmConflictOverwrite',
   'function renderB2bCatalogView',
   'function b2bMasterStatus',

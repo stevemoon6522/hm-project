@@ -1737,6 +1737,39 @@
     }
     .b2b-modal-footer { border-top: 1px solid var(--border); border-bottom: none; justify-content: flex-end; }
     .b2b-modal-body { padding: 16px; max-height: 70vh; overflow-y: auto; }
+    .b2b-edit-grid {
+      display: grid;
+      grid-template-columns: repeat(12, 1fr);
+      gap: 10px;
+      align-items: end;
+    }
+    .b2b-edit-field {
+      display: grid;
+      gap: 4px;
+      grid-column: span 4;
+      font-size: 12px;
+      color: #344054;
+    }
+    .b2b-edit-field.wide { grid-column: span 8; }
+    .b2b-edit-field.full { grid-column: 1 / -1; }
+    .b2b-edit-field label {
+      color: #475467;
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .b2b-edit-preview {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      grid-column: 1 / -1;
+      min-width: 0;
+    }
+    @media (max-width: 760px) {
+      .b2b-edit-field,
+      .b2b-edit-field.wide {
+        grid-column: 1 / -1;
+      }
+    }
 
     #view-probe .panel { margin-bottom: 14px; }
 
@@ -3841,13 +3874,18 @@
 
       <div class="panel" style="padding:14px;">
         <div class="b2b-toolbar" style="justify-content:space-between;">
-          <strong>Stored catalog</strong>
+          <div class="b2b-toolbar" style="margin-bottom:0;">
+            <strong>Stored catalog</strong>
+            <button type="button" id="b2b-bulk-edit" disabled>Bulk edit selected</button>
+            <button type="button" id="b2b-bulk-delete" style="background:#fee2e2;color:#991b1b;" disabled>Delete selected</button>
+          </div>
           <span id="b2b-catalog-summary" class="b2b-status"></span>
         </div>
         <div class="b2b-table-wrap">
           <table class="b2b-table" id="b2b-catalog-table">
             <thead>
               <tr>
+                <th style="width:42px;"><input type="checkbox" id="b2b-catalog-check-all" aria-label="Select all catalog rows"></th>
                 <th style="width:64px;">Image</th>
                 <th>Artist</th>
                 <th>Release Title</th>
@@ -3858,10 +3896,11 @@
                 <th>Master</th>
                 <th>WMS</th>
                 <th>Supply Note</th>
+                <th style="width:116px;">Actions</th>
               </tr>
             </thead>
             <tbody id="b2b-catalog-body">
-              <tr><td colspan="10" class="cat-empty">Catalog not loaded.</td></tr>
+              <tr><td colspan="12" class="cat-empty">Catalog not loaded.</td></tr>
             </tbody>
           </table>
         </div>
@@ -4032,6 +4071,129 @@
     <div class="b2b-modal-footer">
       <button type="button" id="b2b-conflict-cancel">Cancel</button>
       <button type="button" id="b2b-conflict-confirm" class="primary">Overwrite checked</button>
+    </div>
+  </div>
+</div>
+
+<div class="b2b-modal-overlay" id="b2b-catalog-edit-modal" aria-hidden="true">
+  <div class="b2b-modal" role="dialog" aria-modal="true" aria-labelledby="b2b-catalog-edit-title">
+    <div class="b2b-modal-header">
+      <div>
+        <h2 id="b2b-catalog-edit-title" style="font-size:16px;margin:0;">Edit catalog row</h2>
+        <div class="b2b-subtitle">Only public catalog fields are editable here. StarOneMall URL/pno stay internal.</div>
+      </div>
+      <button type="button" id="b2b-catalog-edit-close">Close</button>
+    </div>
+    <div class="b2b-modal-body">
+      <div class="b2b-edit-grid">
+        <div class="b2b-edit-preview">
+          <img id="b2b-edit-image-preview" class="b2b-thumb" alt="" style="display:none;">
+          <div class="b2b-status" id="b2b-edit-row-meta"></div>
+        </div>
+        <div class="b2b-edit-field full">
+          <label for="b2b-edit-image-url">Image URL</label>
+          <input id="b2b-edit-image-url" class="b2b-input" type="url" placeholder="https://...">
+        </div>
+        <div class="b2b-edit-field">
+          <label for="b2b-edit-artist">Artist</label>
+          <input id="b2b-edit-artist" class="b2b-input" type="text">
+        </div>
+        <div class="b2b-edit-field wide">
+          <label for="b2b-edit-release-title">Release Title</label>
+          <input id="b2b-edit-release-title" class="b2b-input" type="text">
+        </div>
+        <div class="b2b-edit-field wide">
+          <label for="b2b-edit-edition">Edition</label>
+          <input id="b2b-edit-edition" class="b2b-input" type="text">
+        </div>
+        <div class="b2b-edit-field">
+          <label for="b2b-edit-category">Category</label>
+          <select id="b2b-edit-category" class="b2b-select">
+            <option value="Album">Album</option>
+            <option value="Photocard">Photocard</option>
+            <option value="MD">MD</option>
+          </select>
+        </div>
+        <div class="b2b-edit-field">
+          <label for="b2b-edit-availability">Availability</label>
+          <select id="b2b-edit-availability" class="b2b-select">
+            <option value="Available">Available</option>
+            <option value="Restock Watch">Restock Watch</option>
+            <option value="Inquiry Only">Inquiry Only</option>
+          </select>
+        </div>
+        <div class="b2b-edit-field">
+          <label for="b2b-edit-retail-price">Retail Price KRW</label>
+          <input id="b2b-edit-retail-price" class="b2b-input price" type="number" min="0" step="1">
+        </div>
+        <div class="b2b-edit-field full">
+          <label for="b2b-edit-supply-note">Supply Note</label>
+          <input id="b2b-edit-supply-note" class="b2b-input" type="text">
+        </div>
+      </div>
+      <div id="b2b-edit-error" class="notice error" style="display:none;margin-top:12px;"></div>
+    </div>
+    <div class="b2b-modal-footer">
+      <button type="button" id="b2b-catalog-edit-cancel">Cancel</button>
+      <button type="button" id="b2b-catalog-edit-save" class="primary">Save changes</button>
+    </div>
+  </div>
+</div>
+
+<div class="b2b-modal-overlay" id="b2b-catalog-bulk-modal" aria-hidden="true">
+  <div class="b2b-modal" role="dialog" aria-modal="true" aria-labelledby="b2b-catalog-bulk-title">
+    <div class="b2b-modal-header">
+      <div>
+        <h2 id="b2b-catalog-bulk-title" style="font-size:16px;margin:0;">Bulk edit catalog rows</h2>
+        <div class="b2b-subtitle">Only checked fields below will be applied to selected rows.</div>
+      </div>
+      <button type="button" id="b2b-catalog-bulk-close">Close</button>
+    </div>
+    <div class="b2b-modal-body">
+      <div id="b2b-bulk-row-count" class="b2b-status" style="margin-bottom:10px;"></div>
+      <div class="b2b-edit-grid">
+        <label class="b2b-edit-field">
+          <span><input type="checkbox" data-b2b-bulk-apply="artist"> Artist</span>
+          <input id="b2b-bulk-artist" class="b2b-input" type="text">
+        </label>
+        <label class="b2b-edit-field wide">
+          <span><input type="checkbox" data-b2b-bulk-apply="release_title"> Release Title</span>
+          <input id="b2b-bulk-release-title" class="b2b-input" type="text">
+        </label>
+        <label class="b2b-edit-field wide">
+          <span><input type="checkbox" data-b2b-bulk-apply="edition"> Edition</span>
+          <input id="b2b-bulk-edition" class="b2b-input" type="text">
+        </label>
+        <label class="b2b-edit-field">
+          <span><input type="checkbox" data-b2b-bulk-apply="category"> Category</span>
+          <select id="b2b-bulk-category" class="b2b-select">
+            <option value="Album">Album</option>
+            <option value="Photocard">Photocard</option>
+            <option value="MD">MD</option>
+          </select>
+        </label>
+        <label class="b2b-edit-field">
+          <span><input type="checkbox" data-b2b-bulk-apply="availability_status"> Availability</span>
+          <select id="b2b-bulk-availability" class="b2b-select">
+            <option value="Available">Available</option>
+            <option value="Restock Watch">Restock Watch</option>
+            <option value="Inquiry Only">Inquiry Only</option>
+          </select>
+        </label>
+        <label class="b2b-edit-field">
+          <span><input type="checkbox" data-b2b-bulk-apply="retail_price_krw"> Retail Price KRW</span>
+          <input id="b2b-bulk-retail-price" class="b2b-input price" type="number" min="0" step="1">
+        </label>
+        <label class="b2b-edit-field full">
+          <span><input type="checkbox" data-b2b-bulk-apply="supply_note"> Supply Note</span>
+          <input id="b2b-bulk-supply-note" class="b2b-input" type="text">
+        </label>
+      </div>
+      <div id="b2b-bulk-error" class="notice error" style="display:none;margin-top:12px;"></div>
+    </div>
+    <div class="b2b-modal-footer">
+      <button type="button" id="b2b-catalog-bulk-cancel">Cancel</button>
+      <button type="button" id="b2b-catalog-bulk-save" class="primary">Apply to selected</button>
     </div>
   </div>
 </div>
@@ -21358,6 +21520,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     loading: false,
     previewRows: [],
     catalogRows: [],
+    catalogSelectedIds: new Set(),
+    editingCatalogId: '',
     conflicts: [],
     masterPnos: new Set(),
     wmsRows: [],
@@ -21766,6 +21930,264 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return '<span class="b2b-chip ' + esc(cls) + '">' + esc(value || '-') + '</span>';
   }
 
+  function b2bCatalogRowById(id) {
+    return (b2bCatalogState.catalogRows || []).find(function(row) { return String(row.id || '') === String(id || ''); }) || null;
+  }
+
+  function b2bSelectedCatalogRows() {
+    const selected = b2bCatalogState.catalogSelectedIds || new Set();
+    return (b2bCatalogState.catalogRows || []).filter(function(row) { return selected.has(String(row.id || '')); });
+  }
+
+  function b2bSetModalError(id, message) {
+    const el = b2bEl(id);
+    if (!el) return;
+    el.textContent = message || '';
+    el.style.display = message ? 'block' : 'none';
+  }
+
+  function b2bCatalogPatchFromValues(values) {
+    return {
+      artist: String(values.artist || '').trim(),
+      release_title: String(values.release_title || '').trim(),
+      edition: String(values.edition || '').trim() || 'Standard',
+      category: B2B_CATEGORIES.includes(values.category) ? values.category : 'Album',
+      availability_status: B2B_AVAILABILITY.includes(values.availability_status) ? values.availability_status : 'Available',
+      retail_price_krw: Math.max(0, Math.round(Number(values.retail_price_krw || 0))),
+      supply_note: String(values.supply_note || '').trim(),
+      main_image_url: String(values.main_image_url || '').trim() || null,
+    };
+  }
+
+  function b2bValidateCatalogPatch(patch) {
+    const missing = [];
+    ['artist', 'release_title', 'edition', 'category', 'availability_status'].forEach(function(field) {
+      if (!String(patch[field] || '').trim()) missing.push(field);
+    });
+    if (!Number.isFinite(Number(patch.retail_price_krw)) || Number(patch.retail_price_krw) < 0) missing.push('retail_price_krw');
+    return missing;
+  }
+
+  function b2bUpdateCatalogSelectionUi() {
+    const selected = b2bCatalogState.catalogSelectedIds || new Set();
+    const rows = b2bCatalogState.catalogRows || [];
+    const selectedCount = rows.filter(function(row) { return selected.has(String(row.id || '')); }).length;
+    const bulkEdit = b2bEl('b2b-bulk-edit');
+    const bulkDelete = b2bEl('b2b-bulk-delete');
+    if (bulkEdit) bulkEdit.disabled = selectedCount === 0;
+    if (bulkDelete) bulkDelete.disabled = selectedCount === 0;
+    const all = b2bEl('b2b-catalog-check-all');
+    if (all) {
+      all.checked = rows.length > 0 && selectedCount === rows.length;
+      all.indeterminate = selectedCount > 0 && selectedCount < rows.length;
+    }
+  }
+
+  function b2bRefreshCatalogEditPreview() {
+    const img = b2bEl('b2b-edit-image-preview');
+    const url = String(b2bEl('b2b-edit-image-url')?.value || '').trim();
+    if (!img) return;
+    img.style.display = url ? '' : 'none';
+    if (url) img.src = url;
+  }
+
+  function b2bOpenCatalogEditModal(rowId) {
+    const row = b2bCatalogRowById(rowId);
+    if (!row) return;
+    b2bCatalogState.editingCatalogId = String(row.id || '');
+    b2bSetModalError('b2b-edit-error', '');
+    const set = function(id, value) {
+      const el = b2bEl(id);
+      if (el) el.value = value == null ? '' : String(value);
+    };
+    set('b2b-edit-image-url', row.main_image_url || '');
+    set('b2b-edit-artist', row.artist || '');
+    set('b2b-edit-release-title', row.release_title || '');
+    set('b2b-edit-edition', row.edition || '');
+    set('b2b-edit-category', row.category || 'Album');
+    set('b2b-edit-availability', row.availability_status || 'Available');
+    set('b2b-edit-retail-price', row.retail_price_krw || 0);
+    set('b2b-edit-supply-note', row.supply_note || '');
+    const meta = b2bEl('b2b-edit-row-meta');
+    if (meta) meta.textContent = [row.artist, row.release_title, row.edition].filter(Boolean).join(' / ');
+    b2bRefreshCatalogEditPreview();
+    const modal = b2bEl('b2b-catalog-edit-modal');
+    if (modal) {
+      modal.classList.add('show');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+  }
+
+  function b2bCloseCatalogEditModal() {
+    const modal = b2bEl('b2b-catalog-edit-modal');
+    if (modal) {
+      modal.classList.remove('show');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    b2bCatalogState.editingCatalogId = '';
+    b2bSetModalError('b2b-edit-error', '');
+  }
+
+  async function b2bSaveCatalogEdit() {
+    const row = b2bCatalogRowById(b2bCatalogState.editingCatalogId);
+    if (!row) {
+      b2bSetModalError('b2b-edit-error', 'Catalog row was not found.');
+      return;
+    }
+    const patch = b2bCatalogPatchFromValues({
+      main_image_url: b2bEl('b2b-edit-image-url')?.value,
+      artist: b2bEl('b2b-edit-artist')?.value,
+      release_title: b2bEl('b2b-edit-release-title')?.value,
+      edition: b2bEl('b2b-edit-edition')?.value,
+      category: b2bEl('b2b-edit-category')?.value,
+      availability_status: b2bEl('b2b-edit-availability')?.value,
+      retail_price_krw: b2bEl('b2b-edit-retail-price')?.value,
+      supply_note: b2bEl('b2b-edit-supply-note')?.value,
+    });
+    const missing = b2bValidateCatalogPatch(patch);
+    if (missing.length) {
+      b2bSetModalError('b2b-edit-error', 'Required/invalid fields: ' + missing.join(', '));
+      return;
+    }
+    const btn = b2bEl('b2b-catalog-edit-save');
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    try {
+      const { data, error } = await db
+        .from('catalog_items')
+        .update(patch)
+        .eq('id', row.id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      b2bCatalogState.catalogRows = (b2bCatalogState.catalogRows || []).map(function(item) {
+        return String(item.id || '') === String(row.id || '') ? data : item;
+      });
+      b2bRenderCatalogRows();
+      b2bCloseCatalogEditModal();
+      b2bSetStatus('Catalog row updated. Sync Google Sheet when ready.');
+      showToast('B2B catalog row updated', 'ok');
+    } catch (e) {
+      b2bSetModalError('b2b-edit-error', 'Save failed: ' + (e.message || e));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = old; }
+    }
+  }
+
+  function b2bOpenBulkEditModal() {
+    const rows = b2bSelectedCatalogRows();
+    if (!rows.length) return;
+    b2bSetModalError('b2b-bulk-error', '');
+    document.querySelectorAll('[data-b2b-bulk-apply]').forEach(function(cb) { cb.checked = false; });
+    const count = b2bEl('b2b-bulk-row-count');
+    if (count) count.textContent = rows.length + ' selected rows';
+    const modal = b2bEl('b2b-catalog-bulk-modal');
+    if (modal) {
+      modal.classList.add('show');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+  }
+
+  function b2bCloseBulkEditModal() {
+    const modal = b2bEl('b2b-catalog-bulk-modal');
+    if (modal) {
+      modal.classList.remove('show');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    b2bSetModalError('b2b-bulk-error', '');
+  }
+
+  function b2bBulkPatchFromForm() {
+    const fieldToInput = {
+      artist: 'b2b-bulk-artist',
+      release_title: 'b2b-bulk-release-title',
+      edition: 'b2b-bulk-edition',
+      category: 'b2b-bulk-category',
+      availability_status: 'b2b-bulk-availability',
+      retail_price_krw: 'b2b-bulk-retail-price',
+      supply_note: 'b2b-bulk-supply-note',
+    };
+    const patch = {};
+    document.querySelectorAll('[data-b2b-bulk-apply]').forEach(function(cb) {
+      if (!cb.checked) return;
+      const field = cb.dataset.b2bBulkApply;
+      const input = b2bEl(fieldToInput[field]);
+      if (!input) return;
+      patch[field] = field === 'retail_price_krw'
+        ? Math.max(0, Math.round(Number(input.value || 0)))
+        : String(input.value || '').trim();
+    });
+    if (Object.prototype.hasOwnProperty.call(patch, 'edition') && !patch.edition) patch.edition = 'Standard';
+    if (Object.prototype.hasOwnProperty.call(patch, 'category') && !B2B_CATEGORIES.includes(patch.category)) patch.category = 'Album';
+    if (Object.prototype.hasOwnProperty.call(patch, 'availability_status') && !B2B_AVAILABILITY.includes(patch.availability_status)) patch.availability_status = 'Available';
+    return patch;
+  }
+
+  async function b2bApplyBulkEdit() {
+    const rows = b2bSelectedCatalogRows();
+    if (!rows.length) {
+      b2bSetModalError('b2b-bulk-error', 'No selected rows.');
+      return;
+    }
+    const patch = b2bBulkPatchFromForm();
+    if (!Object.keys(patch).length) {
+      b2bSetModalError('b2b-bulk-error', 'Check at least one field to apply.');
+      return;
+    }
+    const merged = b2bCatalogPatchFromValues(Object.assign({}, rows[0], patch));
+    const missing = b2bValidateCatalogPatch(merged).filter(function(field) {
+      return Object.prototype.hasOwnProperty.call(patch, field);
+    });
+    if (missing.length) {
+      b2bSetModalError('b2b-bulk-error', 'Required/invalid fields: ' + missing.join(', '));
+      return;
+    }
+    const ids = rows.map(function(row) { return row.id; }).filter(Boolean);
+    const btn = b2bEl('b2b-catalog-bulk-save');
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Applying...'; }
+    try {
+      const { data, error } = await db
+        .from('catalog_items')
+        .update(patch)
+        .in('id', ids)
+        .select('*');
+      if (error) throw error;
+      const byId = new Map((data || []).map(function(row) { return [String(row.id || ''), row]; }));
+      b2bCatalogState.catalogRows = (b2bCatalogState.catalogRows || []).map(function(row) {
+        return byId.get(String(row.id || '')) || row;
+      });
+      b2bCloseBulkEditModal();
+      b2bRenderCatalogRows();
+      b2bSetStatus('Bulk edit complete: ' + ids.length + ' rows. Sync Google Sheet when ready.');
+      showToast('B2B bulk edit complete: ' + ids.length + ' rows', 'ok');
+    } catch (e) {
+      b2bSetModalError('b2b-bulk-error', 'Bulk edit failed: ' + (e.message || e));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = old; }
+    }
+  }
+
+  async function b2bDeleteCatalogRows(ids) {
+    const cleanIds = Array.from(new Set((ids || []).map(String).filter(Boolean)));
+    if (!cleanIds.length) return;
+    if (!confirm('Delete ' + cleanIds.length + ' catalog row(s)? This removes them from the stored catalog.')) return;
+    b2bSetStatus('Deleting catalog rows...');
+    const { error } = await db.from('catalog_items').delete().in('id', cleanIds);
+    if (error) {
+      b2bSetStatus('Delete failed: ' + error.message, true);
+      showToast('B2B catalog delete failed: ' + error.message, 'err');
+      return;
+    }
+    cleanIds.forEach(function(id) { b2bCatalogState.catalogSelectedIds.delete(String(id)); });
+    b2bCatalogState.catalogRows = (b2bCatalogState.catalogRows || []).filter(function(row) {
+      return !cleanIds.includes(String(row.id || ''));
+    });
+    b2bRenderCatalogRows();
+    b2bSetStatus('Deleted catalog rows: ' + cleanIds.length + '. Sync Google Sheet when ready.');
+    showToast('B2B catalog rows deleted: ' + cleanIds.length, 'ok');
+  }
+
   function b2bRenderCatalogRows() {
     const body = b2bEl('b2b-catalog-body');
     const summary = b2bEl('b2b-catalog-summary');
@@ -21777,13 +22199,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       summary.textContent = rows.length + ' rows | Master missing ' + masterMissing + ' | WMS missing ' + wmsMissing;
     }
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="10" class="cat-empty">No stored catalog rows.</td></tr>';
+      body.innerHTML = '<tr><td colspan="12" class="cat-empty">No stored catalog rows.</td></tr>';
+      b2bUpdateCatalogSelectionUi();
       return;
     }
     body.innerHTML = rows.map(function(row) {
       const master = b2bMasterStatus(row);
       const wms = b2bWmsStatus(row);
       return '<tr>'
+        + '<td><input type="checkbox" class="b2b-catalog-select" data-id="' + esc(row.id || '') + '"' + (b2bCatalogState.catalogSelectedIds.has(String(row.id || '')) ? ' checked' : '') + ' aria-label="Select catalog row"></td>'
         + '<td>' + (row.main_image_url ? '<img class="b2b-thumb" src="' + esc(row.main_image_url) + '" alt="">' : '') + '</td>'
         + '<td>' + esc(row.artist || '') + '</td>'
         + '<td>' + esc(row.release_title || '') + '</td>'
@@ -21794,8 +22218,28 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         + '<td>' + b2bChip(master) + '</td>'
         + '<td>' + b2bChip(wms) + '</td>'
         + '<td>' + esc(row.supply_note || '') + '</td>'
+        + '<td style="white-space:nowrap;">'
+        + '<button type="button" data-b2b-edit="' + esc(row.id || '') + '" style="font-size:11px;padding:4px 8px;">Edit</button> '
+        + '<button type="button" data-b2b-delete="' + esc(row.id || '') + '" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">Delete</button>'
+        + '</td>'
         + '</tr>';
     }).join('');
+    body.querySelectorAll('.b2b-catalog-select').forEach(function(cb) {
+      cb.addEventListener('change', function() {
+        const id = String(cb.dataset.id || '');
+        if (!id) return;
+        if (cb.checked) b2bCatalogState.catalogSelectedIds.add(id);
+        else b2bCatalogState.catalogSelectedIds.delete(id);
+        b2bUpdateCatalogSelectionUi();
+      });
+    });
+    body.querySelectorAll('[data-b2b-edit]').forEach(function(btn) {
+      btn.addEventListener('click', function() { b2bOpenCatalogEditModal(btn.dataset.b2bEdit); });
+    });
+    body.querySelectorAll('[data-b2b-delete]').forEach(function(btn) {
+      btn.addEventListener('click', function() { b2bDeleteCatalogRows([btn.dataset.b2bDelete]); });
+    });
+    b2bUpdateCatalogSelectionUi();
   }
 
   async function renderB2bCatalogView(forceRefresh) {
@@ -21815,6 +22259,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         .order('edition', { ascending: true });
       if (error) throw error;
       b2bCatalogState.catalogRows = data || [];
+      {
+        const liveIds = new Set(b2bCatalogState.catalogRows.map(function(row) { return String(row.id || ''); }));
+        b2bCatalogState.catalogSelectedIds = new Set(
+          Array.from(b2bCatalogState.catalogSelectedIds || []).filter(function(id) { return liveIds.has(String(id)); })
+        );
+      }
       b2bCatalogState.masterPnos = await b2bFetchProductsPnos();
       const artists = Array.from(new Set(b2bCatalogState.catalogRows.map(function(row) { return row.artist; }).filter(Boolean)));
       b2bCatalogState.wmsRows = await b2bFetchWmsInventory(artists);
@@ -21824,7 +22274,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     } catch (e) {
       b2bSetStatus('Catalog load failed: ' + (e.message || e), true);
       const body = b2bEl('b2b-catalog-body');
-      if (body) body.innerHTML = '<tr><td colspan="10" class="cat-empty">Catalog load failed: ' + esc(e.message || e) + '</td></tr>';
+      if (body) body.innerHTML = '<tr><td colspan="12" class="cat-empty">Catalog load failed: ' + esc(e.message || e) + '</td></tr>';
     } finally {
       b2bCatalogState.loading = false;
     }
@@ -21863,6 +22313,33 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     b2bEl('b2b-save-selected')?.addEventListener('click', b2bSaveSelectedRows);
     b2bEl('b2b-refresh-catalog')?.addEventListener('click', function() { renderB2bCatalogView(true); });
     b2bEl('b2b-sync-sheet')?.addEventListener('click', b2bSyncGoogleSheet);
+    b2bEl('b2b-catalog-check-all')?.addEventListener('change', function(e) {
+      const checked = !!e.currentTarget.checked;
+      b2bCatalogState.catalogSelectedIds = new Set();
+      if (checked) {
+        (b2bCatalogState.catalogRows || []).forEach(function(row) {
+          if (row.id) b2bCatalogState.catalogSelectedIds.add(String(row.id));
+        });
+      }
+      b2bRenderCatalogRows();
+    });
+    b2bEl('b2b-bulk-edit')?.addEventListener('click', b2bOpenBulkEditModal);
+    b2bEl('b2b-bulk-delete')?.addEventListener('click', function() {
+      b2bDeleteCatalogRows(Array.from(b2bCatalogState.catalogSelectedIds || []));
+    });
+    b2bEl('b2b-catalog-edit-close')?.addEventListener('click', b2bCloseCatalogEditModal);
+    b2bEl('b2b-catalog-edit-cancel')?.addEventListener('click', b2bCloseCatalogEditModal);
+    b2bEl('b2b-catalog-edit-save')?.addEventListener('click', b2bSaveCatalogEdit);
+    b2bEl('b2b-edit-image-url')?.addEventListener('input', b2bRefreshCatalogEditPreview);
+    b2bEl('b2b-catalog-edit-modal')?.addEventListener('click', function(e) {
+      if (e.target === b2bEl('b2b-catalog-edit-modal')) b2bCloseCatalogEditModal();
+    });
+    b2bEl('b2b-catalog-bulk-close')?.addEventListener('click', b2bCloseBulkEditModal);
+    b2bEl('b2b-catalog-bulk-cancel')?.addEventListener('click', b2bCloseBulkEditModal);
+    b2bEl('b2b-catalog-bulk-save')?.addEventListener('click', b2bApplyBulkEdit);
+    b2bEl('b2b-catalog-bulk-modal')?.addEventListener('click', function(e) {
+      if (e.target === b2bEl('b2b-catalog-bulk-modal')) b2bCloseBulkEditModal();
+    });
     b2bEl('b2b-conflict-close')?.addEventListener('click', b2bCloseConflictModal);
     b2bEl('b2b-conflict-cancel')?.addEventListener('click', b2bCloseConflictModal);
     b2bEl('b2b-conflict-confirm')?.addEventListener('click', b2bConfirmConflictOverwrite);

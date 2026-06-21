@@ -41,9 +41,10 @@ for (const token of [
 }
 
 assert(
-  rshBlock.includes('targetPrice = Number.isFinite(computedPrice) && computedPrice > 0 ? computedPrice : cost_krw')
-    || shopeeAdapter.includes('targetPrice = Number.isFinite(computedPrice) && computedPrice > 0 ? computedPrice : cost_krw'),
-  'single-product platform publish must accept UI-computed per-region prices',
+  shopeeAdapter.includes('const missingRegionPrices = regions.filter')
+    && shopeeAdapter.includes('Shopee registration requires dashboard-computed region_prices')
+    && shopeeAdapter.includes('const targetPrice = Number(regionPrices[r])'),
+  'single-product platform publish must require UI-computed per-region prices and never fall back to KRW cost',
 );
 
 for (const token of [
@@ -77,7 +78,7 @@ for (const token of [
   'image_id_list: baseImageIds.length ? baseImageIds : undefined',
   'price: targetPrice',
   'const registerDescription',
-  '(ctx as any).shopee_description',
+  'shopeeSellerCenterDescription',
   'const registerStock',
   '(ctx as any).stock_override',
   'stock: registerStock',
@@ -85,6 +86,20 @@ for (const token of [
 ]) {
   assert(shopeeAdapter.includes(token), `Shopee adapter missing token: ${token}`);
 }
+
+assert(
+  shopeeAdapter.includes('💿 100% Official & Authentic K-POP Album')
+    && shopeeAdapter.includes('📌 Contents')
+    && shopeeAdapter.includes('💳 COD Policy')
+    && !shopeeAdapter.includes('|| master.shopee_description')
+    && !shopeeAdapter.includes('|| master.description'),
+  'Shopee adapter must generate the plain Seller Center description instead of reusing stored HTML descriptions',
+);
+
+assert(
+  !bridge.includes("requestPayload.description !== undefined && !flags.probe_item_name_ok"),
+  'Shopee global description update must not be blocked by the item-name probe gate',
+);
 
 for (const token of [
   'function rshCanonicalShopeeProductName',
@@ -113,6 +128,9 @@ for (const token of [
   'function resolveGlobalProductDts',
   'pre_order: { days_to_ship: resolveGlobalProductDts(body) }',
   'days_to_ship: resolveGlobalProductDts(body)',
+  "'update_shop_item_description'",
+  '/api/v2/product/update_item',
+  'sent_description_length',
 ]) {
   assert(bridge.includes(token), `Global Product DTS policy missing token: ${token}`);
 }

@@ -99,6 +99,10 @@ assert(
 );
 assert(
   rshModal.includes('COD Policy')
+    && rshModal.includes('💿 100% Official & Authentic K-POP Album')
+    && rshModal.includes('📌 Contents')
+    && rshModal.includes('⚠️ Important Notice')
+    && rshModal.includes('💳 COD Policy')
     && rshModal.includes('components_extracted_en')
     && rshModal.includes('rshDescriptionTemplate'),
   'Shopee description must include COD policy and extracted components when available',

@@ -51,6 +51,74 @@ function normalizeShopeeAccountKey(value: unknown): string {
   return /^[a-z0-9][a-z0-9_-]{1,62}$/.test(raw) ? raw : DEFAULT_SHOPEE_ACCOUNT_KEY;
 }
 
+function shopeePlainText(value: unknown): string {
+  return String(value ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\/\s*(div|p|li|tr|h[1-6])\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function shopeeComponentsBlock(components: unknown): string {
+  const lines = shopeePlainText(components)
+    .split('\n')
+    .map((line) => line.replace(/^[\s\-*•·]+/, '').trim())
+    .filter(Boolean);
+  return lines.map((line) => `- ${line}`).join('\n');
+}
+
+function shopeeSellerCenterDescription(productName: string, lifecycleState: string, components: unknown): string {
+  const title = String(productName || '').trim();
+  const componentBlock = shopeeComponentsBlock(components) || '- Album package contents vary by version.';
+  const preOrderNotice = lifecycleState === 'pre_order'
+    ? `\n📅 Pre-Order Notice\n\n- This is a pre-order item. Estimated shipping window: per artist's announcement.\n\n- Items will be shipped sequentially after the official release date.\n\n- Pre-order may take 2-8 weeks depending on supply.\n`
+    : '';
+  return `🟣 ${title}
+
+💿 100% Official & Authentic K-POP Album
+
+- Brand new, sealed, and sourced directly from the official distributor
+
+📊 Chart Certified
+
+- This album counts toward Hanteo and Circle (Gaon) charts
+
+- Your purchase directly supports the artist's chart performance
+${preOrderNotice}
+📦 Fast & Secure Shipping
+
+- Ships from Korea with tracking
+
+- Safely packed with bubble wrap and a sturdy box
+
+- Items labeled [READY STOCK], [ON HAND], or [FAST DELIVERY] are dispatched within 1 business day
+
+📌 Contents
+
+${componentBlock}
+
+⚠️ Important Notice
+
+- The outer box is for protection and may have minor dents, scratches, or creases.
+
+- The outer vinyl wrap may have slight tears or marks due to shipping.
+
+- These are not considered defects and are not grounds for return or refund.
+
+- Please purchase only if you agree to the above conditions.
+
+💳 COD Policy
+
+Cash on Delivery (COD) is available only for buyers with: 10 or more completed ratings or Perfect 5.0 rating score`.trim();
+}
+
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
 
@@ -577,10 +645,22 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   ).map((id: unknown) => String(id || '').trim()).filter(Boolean);
   const baseImageIds = (uploadedBaseImageIds.length ? uploadedBaseImageIds : cachedMasterImageIds)
     .slice(0, SHOPEE_MAX_PRODUCT_IMAGES);
+  const missingRegionPrices = regions.filter((r: string) => {
+    const computedPrice = Number(regionPrices[r]);
+    return !Number.isFinite(computedPrice) || computedPrice <= 0;
+  });
+  if (missingRegionPrices.length) {
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'PLATFORM_VALIDATION_ERROR',
+      errorMsg: `Shopee registration requires dashboard-computed region_prices for: ${missingRegionPrices.join(', ')}`,
+      rawResponse: { missing_region_prices: missingRegionPrices, supplied_region_prices: regionPrices },
+    };
+  }
   const targets = regions.map((r: string) => {
     const ids = Array.isArray(regionImageIds[r]) && regionImageIds[r].length ? regionImageIds[r] : null;
-    const computedPrice = Number(regionPrices[r]);
-    const targetPrice = Number.isFinite(computedPrice) && computedPrice > 0 ? computedPrice : cost_krw;
+    const targetPrice = Number(regionPrices[r]);
     return {
       region: r,
       price: targetPrice,
@@ -602,14 +682,11 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     || master.sku
     || ''
   ).trim();
-  const registerDescription = String(
-    (ctx as any).shopee_description
-    || master.shopee_description
-    || master.description
-    || registerName
-    || master.sku
-    || ''
-  ).trim();
+  const registerDescription = shopeeSellerCenterDescription(
+    registerName || master.sku || '',
+    lifecycle_state,
+    master.components_extracted_en,
+  );
   const variationRows = publishableGroupRows(master, (ctx as any).groupProducts || []);
   const variationBundle = variationRows.length > 1 ? buildVariationItems(variationRows, 'Version') : null;
   const stockOverride = Number((ctx as any).stock_override);

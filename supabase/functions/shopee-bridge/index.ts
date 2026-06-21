@@ -765,6 +765,7 @@ const V2_MUTATION_ACTIONS = new Set([
   'update_global_price',
   'update_shop_days_to_ship',
   'update_shop_item_name',
+  'update_shop_item_description',
   'set_global_sync_fields',
   'set_price_sync_on',
 ]);
@@ -1106,7 +1107,6 @@ async function enforceV2ProbePreflight(action: string, requestPayload: any, body
   const blockedFields: string[] = [];
   if (action === 'update_global_item') {
     if (requestPayload.item_name !== undefined && !flags.probe_item_name_ok) blockedFields.push('item_name');
-    if (requestPayload.description !== undefined && !flags.probe_item_name_ok) blockedFields.push('description');
     if (requestPayload.weight !== undefined && !flags.probe_model_weight_ok) blockedFields.push('weight');
   }
   // Shopee Global Product update_global_model documents model-level `weight`
@@ -1511,6 +1511,19 @@ async function runV2MutationAction(action: string, body: any) {
       shopApiCall(r, '/api/v2/product/update_item', { method: 'POST', body: payload, account_key: accountKey })
     );
     return { ...response, item_id, sent_item_name: item_name };
+  }
+
+  if (action === 'update_shop_item_description') {
+    const item_id = parseInt(body.item_id || body.shop_item_id);
+    const description = typeof body.description === 'string' ? body.description.trim() : '';
+    if (!item_id) return { ok: false, error: 'shop_item_id required' };
+    if (!description) return { ok: false, error: 'description required' };
+    // Official local doc: C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\product\v2.product.update_item.json
+    const requestPayload = { item_id, description };
+    const response = await executeLoggedMutation(action, r, requestPayload, body, payload =>
+      shopApiCall(r, '/api/v2/product/update_item', { method: 'POST', body: payload, account_key: accountKey })
+    );
+    return { ...response, item_id, sent_description_length: description.length };
   }
 
   const item_id = parseInt(body.item_id || body.shop_item_id);

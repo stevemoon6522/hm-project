@@ -534,6 +534,10 @@
       align-items: end;
       margin-bottom: 10px;
     }
+    .platform-toolbar-shopee {
+      align-items: center;
+      gap: 14px;
+    }
     .platform-filters,
     .platform-actions,
     .platform-region-row {
@@ -573,6 +577,59 @@
       opacity: .45;
       text-decoration: line-through;
       cursor: not-allowed;
+    }
+    .platform-shopee-actions {
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: nowrap;
+    }
+    .platform-selection-meter {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      color: #6b5a72;
+      white-space: nowrap;
+    }
+    .platform-selected-count {
+      font-weight: 800;
+      color: #2f1646;
+    }
+    .platform-more-wrap {
+      position: relative;
+      display: inline-flex;
+    }
+    .platform-more-menu {
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 20;
+      min-width: 174px;
+      padding: 6px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      box-shadow: 0 10px 22px rgba(65, 31, 84, .13);
+      display: grid;
+      gap: 4px;
+    }
+    .platform-more-menu[hidden] {
+      display: none;
+    }
+    .platform-more-menu button {
+      width: 100%;
+      justify-content: flex-start;
+      border-color: transparent;
+      background: #fff;
+      box-shadow: none;
+    }
+    .platform-more-menu button:hover {
+      background: #fff7fc;
+      border-color: var(--border);
     }
     .platform-preview {
       border: 1px solid var(--border);
@@ -627,7 +684,7 @@
       overflow-wrap: anywhere;
     }
     .platform-table-shopee {
-      min-width: 1180px;
+      min-width: 1100px;
     }
     .platform-table-shopee th,
     .platform-table-shopee td {
@@ -689,6 +746,70 @@
     .platform-master-cell,
     .platform-wms-cell {
       white-space: nowrap;
+    }
+    .platform-status-cell {
+      white-space: nowrap;
+    }
+    .platform-region-status-row {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      flex-wrap: nowrap;
+    }
+    .platform-region-status-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      min-width: 42px;
+      height: 24px;
+      padding: 0 7px;
+      border: 1px solid #e5e7eb;
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .platform-region-status-chip::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: .88;
+    }
+    .platform-region-status-chip.ok {
+      border-color: #bbf7d0;
+      background: #f0fdf4;
+      color: #15803d;
+    }
+    .platform-region-status-chip.partial,
+    .platform-region-status-chip.pending {
+      border-color: #fde68a;
+      background: #fffbeb;
+      color: #b45309;
+    }
+    .platform-region-status-chip.error {
+      border-color: #fecaca;
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+    .platform-region-status-chip.missing {
+      border-color: #e2e8f0;
+      background: #f8fafc;
+      color: #64748b;
+    }
+    .platform-note-cell {
+      color: #475569;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .platform-note-issue {
+      color: #92400e;
+      font-weight: 700;
     }
     .platform-actions-cell {
       justify-content: flex-end;
@@ -7411,6 +7532,103 @@ LEGACY END -->
       </div>`;
   }
 
+  function shopeePlatformRollupDetailEntries(row) {
+    const rollup = rollupFor(row?.id, 'shopee');
+    const detail = rollup?.per_shop_detail || {};
+    if (Array.isArray(detail)) {
+      return detail.filter(Boolean).map((value) => ({ ...value, product_id: row?.id, sku: row?.sku }));
+    }
+    if (detail && typeof detail === 'object') {
+      return Object.entries(detail).map(([region, value]) => ({
+        ...(value || {}),
+        region: value?.region || value?.shop_region || region,
+        product_id: row?.id,
+        sku: row?.sku,
+      }));
+    }
+    return [];
+  }
+
+  function shopeePlatformDetailsForRow(row) {
+    const localListings = shopeePlatformListingRows([row]).map((listing) => ({
+      ...listing,
+      region: listing.region || listing.shop_region,
+      product_id: row?.id,
+      sku: row?.sku,
+    }));
+    return [...shopeePlatformRollupDetailEntries(row), ...localListings];
+  }
+
+  function shopeePlatformDetailRegion(detail) {
+    return String(detail?.region || detail?.shop_region || detail?.country || '').trim().toUpperCase();
+  }
+
+  function shopeePlatformDetailState(detail) {
+    const status = String(detail?.status || detail?.listing_status || '').trim().toLowerCase();
+    const hasItemId = !!(detail?.shop_item_id || detail?.platform_item_id || detail?.item_id || detail?.global_item_id);
+    const lastError = String(detail?.last_error || detail?.error || '').trim();
+    if (lastError || ['error', 'failed', 'rejected'].includes(status)) return 'error';
+    if (['pending', 'draft', 'processing', 'syncing'].includes(status)) return 'pending';
+    if (hasItemId || ['mapped', 'listed', 'active'].includes(status)) return 'ok';
+    return 'missing';
+  }
+
+  function shopeePlatformRegionSummary(group, region) {
+    const rows = group?.rows || [];
+    const total = rows.length || 1;
+    let ok = 0;
+    let pending = 0;
+    let error = 0;
+    const itemIds = [];
+    rows.forEach((row) => {
+      const states = shopeePlatformDetailsForRow(row)
+        .filter((detail) => shopeePlatformDetailRegion(detail) === region)
+        .map((detail) => {
+          const itemId = detail?.shop_item_id || detail?.platform_item_id || detail?.item_id || detail?.global_item_id || '';
+          if (itemId) itemIds.push(itemId);
+          return shopeePlatformDetailState(detail);
+        });
+      if (states.includes('error')) error += 1;
+      else if (states.includes('ok')) ok += 1;
+      else if (states.includes('pending')) pending += 1;
+    });
+    const uniqueItemIds = platformUniqueValues(itemIds);
+    if (error > 0) return { key: 'error', region, label: region, title: `${region}: ${error}/${total} error` };
+    if (ok === total && total > 0) return { key: 'ok', region, label: region, title: `${region}: ${ok}/${total} found${uniqueItemIds.length ? ` - ${uniqueItemIds.join(', ')}` : ''}` };
+    if (ok > 0 || pending > 0) return { key: pending > 0 ? 'pending' : 'partial', region, label: region, title: `${region}: ${ok}/${total} found${pending ? `, ${pending} pending` : ''}` };
+    return { key: 'missing', region, label: region, title: `${region}: missing` };
+  }
+
+  function shopeePlatformRegionsCell(group) {
+    const summaries = SHOPEE_PLATFORM_ACTIVE_REGIONS.map((region) => shopeePlatformRegionSummary(group, region));
+    return `<div class="platform-region-status-row" aria-label="Shopee region status">${
+      summaries.map((summary) => (
+        `<span class="platform-region-status-chip ${text(summary.key)}" title="${text(summary.title)}">${text(summary.label)}</span>`
+      )).join('')
+    }</div>`;
+  }
+
+  function shopeePlatformNoteCell(group) {
+    const rows = group?.rows || [];
+    const summaries = SHOPEE_PLATFORM_ACTIVE_REGIONS.map((region) => shopeePlatformRegionSummary(group, region));
+    const errors = summaries.filter((summary) => summary.key === 'error').map((summary) => summary.region);
+    const partials = summaries.filter((summary) => summary.key === 'partial' || summary.key === 'pending').map((summary) => summary.region);
+    const missing = summaries.filter((summary) => summary.key === 'missing').map((summary) => summary.region);
+    const wms = plWmsStatus(rows);
+    const notes = [];
+    if (errors.length) notes.push(`오류 ${shopeePlatformShortValues(errors, 3)}`);
+    if (partials.length) notes.push(`일부 ${shopeePlatformShortValues(partials, 3)}`);
+    if (missing.length) notes.push(`미등록 ${shopeePlatformShortValues(missing, 3)}`);
+    if (wms.key !== 'ok') notes.push(`WMS ${wms.label}`);
+    if (!notes.length) return '<span class="muted">-</span>';
+    return `<span class="platform-note-issue">${text(notes.slice(0, 2).join(' / '))}${notes.length > 2 ? text(` +${notes.length - 2}`) : ''}</span>`;
+  }
+
+  function shopeePlatformStatusCell(group) {
+    const status = platformStatusForGroup(group, 'shopee');
+    return `<div class="platform-status-cell" title="${text(status.detail || '')}">${platformStatusPill(status)}</div>`;
+  }
+
   function shopeePlatformProductCell(group, expanded) {
     const first = group?.rows?.[0] || {};
     const key = platformGroupKey(group);
@@ -7429,7 +7647,6 @@ LEGACY END -->
 
   function shopeePlatformOptionRows(group, key) {
     return (group?.rows || []).map((row) => {
-      const status = platformStatusForGroup({ rows: [row] }, 'shopee');
       const optionName = plOptionDisplay(row) || row.option_name || 'Option';
       return `
         <tr class="platform-shopee-row platform-shopee-option-row platform-option-row">
@@ -7443,12 +7660,10 @@ LEGACY END -->
               </div>
             </div>
           </td>
-          <td>${shopeePlatformIdsCell({ rows: [row] })}</td>
-          <td>${shopeePlatformPriceCell([row])}</td>
-          <td>${platformStatusPill(status)}</td>
-          <td class="platform-master-cell"><span class="pl-status-pill ok">Linked</span></td>
+          <td>${shopeePlatformStatusCell({ rows: [row] })}</td>
+          <td>${shopeePlatformRegionsCell({ rows: [row] })}</td>
           <td class="platform-wms-cell pl-wms-cell">${plWmsStatusCell([row])}</td>
-          <td>${shopeePlatformActionButtonsHtml(key, false)}</td>
+          <td class="platform-note-cell">${shopeePlatformNoteCell({ rows: [row] })}</td>
         </tr>`;
     }).join('');
   }
@@ -7457,23 +7672,19 @@ LEGACY END -->
     const groups = platformVisibleGroups('shopee');
     const selected = platformSelection('shopee');
     if (!groups.length) {
-      return '<tr><td colspan="8" class="empty">No Shopee products match the current filters.</td></tr>';
+      return '<tr><td colspan="6" class="empty">No Shopee products match the current filters.</td></tr>';
     }
     return groups.map((group) => {
       const key = platformGroupKey(group);
       const expanded = state.platformExpandedGroups.has(`shopee:${key}`);
-      const status = platformStatusForGroup(group, 'shopee');
-      const quickDisabled = '';
       const master = `
         <tr class="platform-shopee-row" data-platform-master-key="${text(key)}">
           <td><input type="checkbox" class="platform-master-check" data-platform-key="${text(key)}" ${selected.has(key) ? 'checked' : ''}></td>
           <td>${shopeePlatformProductCell(group, expanded)}</td>
-          <td>${shopeePlatformIdsCell(group)}</td>
-          <td>${shopeePlatformPriceCell(group.rows || [])}</td>
-          <td>${platformStatusPill(status)}<div class="muted" style="font-size:11px;margin-top:4px;">${text(status.detail || '')}</div></td>
-          <td class="platform-master-cell"><span class="pl-status-pill ok">Linked</span></td>
+          <td>${shopeePlatformStatusCell(group)}</td>
+          <td>${shopeePlatformRegionsCell(group)}</td>
           <td class="platform-wms-cell pl-wms-cell">${plWmsStatusCell(group.rows || [])}</td>
-          <td>${shopeePlatformActionButtonsHtml(key, quickDisabled)}</td>
+          <td class="platform-note-cell">${shopeePlatformNoteCell(group)}</td>
         </tr>`;
       return expanded ? master + shopeePlatformOptionRows(group, key) : master;
     }).join('');
@@ -7485,13 +7696,11 @@ LEGACY END -->
         <thead>
           <tr>
             <th style="width:34px;"></th>
-            <th style="width:390px;">Product</th>
-            <th style="width:190px;">Shopee IDs</th>
-            <th style="width:130px;">KRW</th>
-            <th style="width:150px;">Listing</th>
-            <th style="width:110px;">Master</th>
+            <th style="width:470px;">Product</th>
+            <th style="width:150px;">Shopee Status</th>
+            <th style="width:290px;">Regions</th>
             <th style="width:120px;">WMS</th>
-            <th style="width:180px;">Actions</th>
+            <th style="width:170px;">Note</th>
           </tr>
         </thead>`;
     }
@@ -7584,6 +7793,7 @@ LEGACY END -->
     const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;
     const canRunSelectionAction = selectedCount > 0 || canUseVisibleSingle;
     const actionTargetCount = selectedCount || (canUseVisibleSingle ? 1 : 0);
+    const shopeeActionEnabled = platform === 'shopee' ? selectedCount > 0 : canRunSelectionAction;
     const registerActionLabel = actionTargetCount === 1 ? '등록' : '선택 등록 확인';
     const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
       `<button type="button" class="platform-status-tab${filter.status === key ? ' is-active' : ''}" data-platform-status="${key}" aria-pressed="${filter.status === key ? 'true' : 'false'}">${PLATFORM_STATUS_LABELS[key]} ${counts[key] || 0}</button>`
@@ -7591,39 +7801,66 @@ LEGACY END -->
     const previewHtml = state.platformPreview?.platform === platform ? platformPreviewHtml() : '';
     const shopeeNameSyncHtml = platform === 'shopee' ? shopeeNameSyncPanelHtml() : '';
     const platformTableClass = platform === 'shopee' ? 'platform-table platform-table-shopee' : 'platform-table';
+    const summaryHtml = platform === 'shopee'
+      ? ''
+      : `<div class="platform-summary">
+          <span class="pill">선택 ${selectedCount}개</span>
+          <span class="pill">수정 필드: ${text(platformSafeFieldsLabel(platform))}</span>
+        </div>`;
+    const toolbarHtml = platform === 'shopee'
+      ? `<div class="platform-toolbar platform-toolbar-shopee">
+          <div class="platform-filters">
+            <input type="search" data-platform-search value="${text(filter.search || '')}" placeholder="상품명 / SKU / 옵션 검색">
+            <div class="platform-status-tabs" role="group" aria-label="${text(label)} 등록 상태 필터">${statusTabs}</div>
+          </div>
+          <div class="platform-actions platform-shopee-actions">
+            <span class="platform-selection-meter" aria-label="선택된 상품 수">
+              <span>선택</span>
+              <span class="platform-selected-count">${text(selectedCount)}개</span>
+            </span>
+            <button type="button" data-platform-preview="register" class="primary" ${shopeeActionEnabled ? '' : 'disabled'}>등록</button>
+            <button type="button" data-platform-preview="edit" ${shopeeActionEnabled ? '' : 'disabled'}>가격 수정</button>
+            <button type="button" data-platform-sync ${shopeeActionEnabled ? '' : 'disabled'}>SKU 매핑</button>
+            <span class="platform-more-wrap">
+              <button type="button" data-shopee-more-toggle aria-expanded="false">더보기</button>
+              <div class="platform-more-menu" data-shopee-more-menu hidden>
+                <button type="button" data-shopee-name-sync ${shopeeActionEnabled ? '' : 'disabled'}>영문명 동기화</button>
+                <button type="button" data-platform-preview="delete" ${shopeeActionEnabled ? '' : 'disabled'}>매핑 삭제/초기화</button>
+              </div>
+            </span>
+          </div>
+        </div>`
+      : `<div class="platform-toolbar">
+          <div class="platform-filters">
+            <input type="search" data-platform-search value="${text(filter.search || '')}" placeholder="SKU / 상품명 / 옵션 검색">
+            <select data-platform-lifecycle>
+              <option value="all"${filter.lifecycle === 'all' ? ' selected' : ''}>전체 lifecycle</option>
+              <option value="pre_order"${filter.lifecycle === 'pre_order' ? ' selected' : ''}>PRE ORDER</option>
+              <option value="ready_stock"${filter.lifecycle === 'ready_stock' ? ' selected' : ''}>READY STOCK</option>
+            </select>
+            <div class="platform-status-tabs" role="group" aria-label="${text(label)} 등록 상태 필터">${statusTabs}</div>
+            ${platformRegionControls(platform)}
+          </div>
+          <div class="platform-actions">
+            <button type="button" data-platform-select-visible>표시 항목 선택</button>
+            <button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>
+            <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(registerActionLabel)}</button>
+            <button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>가격 수정</button>
+            <button type="button" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>삭제</button>
+            ${platform === 'shopee' ? `<button type="button" data-shopee-name-sync ${canRunSelectionAction ? '' : 'disabled'}>영문명 동기화</button>` : ''}
+            <button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>${text(label)} SKU 매핑</button>
+          </div>
+        </div>`;
     root.innerHTML = `
       <div class="platform-page-head">
         <div>
           <h2>${text(label)}</h2>
           <p>${isAlibaba ? 'Alibaba(ICBU) B2B 등록 — FOB 단가(USD)/MOQ 기준. 등록 미리보기 → 실행 시 ICBU 등록 모달이 열립니다.' : '전체 마스터 상품을 기준으로 등록 상태를 좁히고, 선택 항목을 미리보기 후 실행합니다.'}</p>
         </div>
-        <div class="platform-summary">
-          <span class="pill">선택 ${selectedCount}개</span>
-          <span class="pill">수정 필드: ${text(platformSafeFieldsLabel(platform))}</span>
-        </div>
+        ${summaryHtml}
       </div>
       ${isAlibaba ? '<div class="notice" style="margin-bottom:10px;">Alibaba(ICBU) 등록은 운영자 설정이 끝나야 실제 동작합니다: alibaba-bridge 시크릿(App Key/Secret/access_token) + ALIBABA_BRIDGE_ENABLED=true + auth_verified 플립. (1차: create_listing + sync, 카테고리/속성/운임은 선택)</div>' : ''}
-      <div class="platform-toolbar">
-        <div class="platform-filters">
-          <input type="search" data-platform-search value="${text(filter.search || '')}" placeholder="SKU / 상품명 / 옵션 검색">
-          <select data-platform-lifecycle>
-            <option value="all"${filter.lifecycle === 'all' ? ' selected' : ''}>전체 lifecycle</option>
-            <option value="pre_order"${filter.lifecycle === 'pre_order' ? ' selected' : ''}>PRE ORDER</option>
-            <option value="ready_stock"${filter.lifecycle === 'ready_stock' ? ' selected' : ''}>READY STOCK</option>
-          </select>
-          <div class="platform-status-tabs" role="group" aria-label="${text(label)} 등록 상태 필터">${statusTabs}</div>
-          ${platformRegionControls(platform)}
-        </div>
-        <div class="platform-actions">
-          <button type="button" data-platform-select-visible>표시 항목 선택</button>
-          <button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>
-          <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(registerActionLabel)}</button>
-          <button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>가격 수정</button>
-          <button type="button" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>삭제</button>
-          ${platform === 'shopee' ? `<button type="button" data-shopee-name-sync ${canRunSelectionAction ? '' : 'disabled'}>영문명 동기화</button>` : ''}
-          <button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>${text(label)} SKU 매핑</button>
-        </div>
-      </div>
+      ${toolbarHtml}
       ${previewHtml}
       ${shopeeNameSyncHtml}
       <div class="panel table-scroll">
@@ -7705,6 +7942,18 @@ LEGACY END -->
       btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformQuick || 'register', [btn.dataset.platformKey || '']));
     });
     root.querySelector('[data-platform-sync]')?.addEventListener('click', (event) => platformSyncSelected(platform, event.currentTarget));
+    root.querySelector('[data-shopee-more-toggle]')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const toggle = event.currentTarget;
+      const menu = root.querySelector('[data-shopee-more-menu]');
+      if (!menu) return;
+      const willOpen = menu.hasAttribute('hidden');
+      menu.toggleAttribute('hidden', !willOpen);
+      toggle.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+    root.querySelector('[data-shopee-more-menu]')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
     root.querySelector('[data-platform-preview-close]')?.addEventListener('click', () => {
       state.platformPreview = null;
       renderPlatformWorkbench(platform);

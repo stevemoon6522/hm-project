@@ -121,11 +121,20 @@ assert(
   'B2B catalog edit modal must not close when the backdrop is clicked',
 );
 
+for (const forbidden of [
+  "b2bEl('b2b-catalog-bulk-modal')?.addEventListener('click'",
+  "b2bEl('b2b-conflict-modal')?.addEventListener('click'",
+]) {
+  assert(!html.includes(forbidden), `B2B modal backdrop close handler must not exist: ${forbidden}`);
+}
+
 for (const token of [
   "b2bEl('b2b-catalog-edit-close')?.addEventListener('click', b2bCloseCatalogEditModal)",
   "b2bEl('b2b-catalog-edit-cancel')?.addEventListener('click', b2bCloseCatalogEditModal)",
-  "b2bEl('b2b-catalog-bulk-modal')?.addEventListener('click'",
-  "b2bEl('b2b-conflict-modal')?.addEventListener('click'",
+  "b2bEl('b2b-catalog-bulk-close')?.addEventListener('click', b2bCloseBulkEditModal)",
+  "b2bEl('b2b-catalog-bulk-cancel')?.addEventListener('click', b2bCloseBulkEditModal)",
+  "b2bEl('b2b-conflict-close')?.addEventListener('click', b2bCloseConflictModal)",
+  "b2bEl('b2b-conflict-cancel')?.addEventListener('click', b2bCloseConflictModal)",
 ]) {
   assert(html.includes(token), `B2B modal close behavior regression missing token: ${token}`);
 }

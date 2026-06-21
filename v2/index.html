@@ -12481,9 +12481,6 @@ LEGACY END -->
   document.getElementById('pl-master-edit-tw-short-name')?.addEventListener('input', plMasterEditUpdateNameSyncPanel);
   document.getElementById('pl-master-edit-name-sync-preview')?.addEventListener('click', plMasterEditShowNameSyncPreview);
   document.getElementById('pl-master-edit-name-sync-apply')?.addEventListener('click', plMasterEditApplyNameSync);
-  document.getElementById('pl-master-edit-modal')?.addEventListener('click', (e) => {
-    if (e.target && e.target.id === 'pl-master-edit-modal') closeProductMasterEditModal();
-  });
 
   // Step 0 (plan v2.2): real Supabase auth gate. Replaces the prior anon-JWT
   // bypass — every Edge Function mutating route now requires a signed-in
@@ -12517,7 +12514,6 @@ LEGACY END -->
   // LEGACY modal listeners — guarded with null checks (Phase B: HTML removed).
   if (els.close) els.close.addEventListener('click', closeModal);
   if (els.cancel) els.cancel.addEventListener('click', closeModal);
-  if (els.modal) els.modal.addEventListener('click', (e) => { if (e.target === els.modal) closeModal(); });
   if (els.submit) els.submit.addEventListener('click', submitRegistration);
   // Note: readyLoadPreOrders / readyPreview / readyDryRun are legacy refs (now null).
   // RSW Phase B listeners are wired in initRswListeners() instead.
@@ -13900,9 +13896,6 @@ LEGACY END -->
 
   window.closeWizModal = function() { g('wiz-modal-overlay').classList.remove('show'); };
 
-  g('wiz-modal-overlay').addEventListener && g('wiz-modal-overlay').addEventListener('click', function(e) {
-    if (e.target === this) closeWizModal();
-  });
 
   function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -18613,9 +18606,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const overlay = document.getElementById('register-shopee-modal');
     if (!overlay) return;
 
-    // Close on backdrop click — P1-2: blocked while in-flight
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) rshCloseModal(); });
-
     // P1-2: Escape key — blocked while in-flight
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'Escape') return;
@@ -19852,12 +19842,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       });
     }
 
-    // Modal: close on backdrop click
-    if (els.rswModalOverlay) {
-      els.rswModalOverlay.addEventListener('click', function(e) {
-        if (e.target === els.rswModalOverlay) rswCloseModal();
-      });
-    }
   }
 
   /* ═══════════════════════════════════════════════════════════════
@@ -22789,10 +22773,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (closeBtn) closeBtn.addEventListener('click', catCloseModal);
     const cancelBtn = document.getElementById('cat-modal-cancel');
     if (cancelBtn) cancelBtn.addEventListener('click', catCloseModal);
-    const overlay = document.getElementById('cat-modal-overlay');
-    if (overlay) overlay.addEventListener('click', function(e) {
-      if (e.target === overlay) catCloseModal();
-    });
   }
 
   // ── Boot ────────────────────────────────────────────────────────
@@ -23678,15 +23658,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     b2bEl('b2b-catalog-bulk-close')?.addEventListener('click', b2bCloseBulkEditModal);
     b2bEl('b2b-catalog-bulk-cancel')?.addEventListener('click', b2bCloseBulkEditModal);
     b2bEl('b2b-catalog-bulk-save')?.addEventListener('click', b2bApplyBulkEdit);
-    b2bEl('b2b-catalog-bulk-modal')?.addEventListener('click', function(e) {
-      if (e.target === b2bEl('b2b-catalog-bulk-modal')) b2bCloseBulkEditModal();
-    });
     b2bEl('b2b-conflict-close')?.addEventListener('click', b2bCloseConflictModal);
     b2bEl('b2b-conflict-cancel')?.addEventListener('click', b2bCloseConflictModal);
     b2bEl('b2b-conflict-confirm')?.addEventListener('click', b2bConfirmConflictOverwrite);
-    b2bEl('b2b-conflict-modal')?.addEventListener('click', function(e) {
-      if (e.target === b2bEl('b2b-conflict-modal')) b2bCloseConflictModal();
-    });
   }
 
   initCatRegionFilters();
@@ -31976,15 +31950,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     document.getElementById('mr-ebay-modal-close')?.addEventListener('click', mrCloseEbayModal);
     document.getElementById('mr-ebay-modal-cancel')?.addEventListener('click', mrCloseEbayModal);
     document.getElementById('mr-ebay-modal-confirm')?.addEventListener('click', mrConfirmEbayModal);
-    document.getElementById('mr-ebay-modal-overlay')?.addEventListener('click', (e) => {
-      if (e.target?.id === 'mr-ebay-modal-overlay') mrCloseEbayModal();
-    });
     document.getElementById('mr-qoo10-modal-close')?.addEventListener('click', mrCloseQoo10Modal);
     document.getElementById('mr-qoo10-modal-cancel')?.addEventListener('click', mrCloseQoo10Modal);
     document.getElementById('mr-qoo10-modal-confirm')?.addEventListener('click', mrQoo10Submit);
-    document.getElementById('mr-qoo10-modal-overlay')?.addEventListener('click', (e) => {
-      if (e.target?.id === 'mr-qoo10-modal-overlay') mrCloseQoo10Modal();
-    });
     // ── end eBay registration modal + publish flow ─────────────────────────
 
     function initRegisterWorkbench() {

@@ -265,6 +265,8 @@ const ALERT_HMAC_SECRET = Deno.env.get('ALERT_HMAC_SECRET') || '';
 const SHOPEE_MAX_PRODUCT_IMAGES = 9;
 const SHOP_LAYER_CANVAS_SIZE = 1000;
 const SHOP_LAYER_IMAGE_SIZE = 850;
+const SHOPEE_PRODUCT_IMAGE_MAX_SIDE = 2000;
+const SHOPEE_PRODUCT_IMAGE_QUALITY = 85;
 const DEFAULT_SHOP_LAYER_BASE_URL = 'https://shopee-dashboard-kohl.vercel.app/v2/';
 const DEFAULT_SHOP_LAYER_ASSET = 'shop-overlay-layer.png';
 const DEFAULT_CLOUDINARY_CLOUD_NAME = 'dybau67eb';
@@ -371,12 +373,6 @@ function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function imageMimeFromUrl(url: string): string {
-  const path = url.split('?')[0].toLowerCase();
-  if (path.endsWith('.jpg') || path.endsWith('.jpeg')) return 'image/jpeg';
-  return 'image/png';
-}
-
 async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return Array.from(new Uint8Array(digest))
@@ -429,13 +425,12 @@ async function fetchShopeeImageResponse(imageUrl: string): Promise<Response> {
 async function fetchShopeeImageDataUrl(imageUrl: string): Promise<{ image_base64: string; output_hash: string }> {
   const url = String(imageUrl || '').trim();
   if (!url) throw new Error('main_image URL is empty');
-  const res = await fetchShopeeImageResponse(url);
-  const contentType = String(res.headers.get('content-type') || '').split(';')[0].toLowerCase();
-  const mime = /^image\/(png|jpe?g)$/.test(contentType) ? contentType.replace('image/jpg', 'image/jpeg') : imageMimeFromUrl(url);
+  const uploadUrl = shopeeUploadReadyCloudinaryUrl(url);
+  const res = await fetchShopeeImageResponse(uploadUrl);
   const bytes = new Uint8Array(await res.arrayBuffer());
   const output_hash = await sha256HexBytes(bytes);
   return {
-    image_base64: `data:${mime};base64,${bytesToBase64(bytes)}`,
+    image_base64: `data:image/jpeg;base64,${bytesToBase64(bytes)}`,
     output_hash,
   };
 }
@@ -467,6 +462,16 @@ function shopeeLayeredCloudinaryUrl(imageUrl: string): string {
     `l_fetch:${layerFetchId},w_${SHOP_LAYER_CANVAS_SIZE},h_${SHOP_LAYER_CANVAS_SIZE}`,
     'fl_layer_apply',
     'f_jpg,q_92',
+  ].join('/');
+  return `https://res.cloudinary.com/${encodeURIComponent(cloudName)}/image/fetch/${transforms}/${sourceUrl}`;
+}
+
+function shopeeUploadReadyCloudinaryUrl(imageUrl: string): string {
+  const cloudName = String(Deno.env.get('CLOUDINARY_CLOUD_NAME') || DEFAULT_CLOUDINARY_CLOUD_NAME).trim();
+  const sourceUrl = encodeURIComponent(imageUrl);
+  const transforms = [
+    `c_limit,w_${SHOPEE_PRODUCT_IMAGE_MAX_SIDE},h_${SHOPEE_PRODUCT_IMAGE_MAX_SIDE}`,
+    `f_jpg,q_${SHOPEE_PRODUCT_IMAGE_QUALITY}`,
   ].join('/');
   return `https://res.cloudinary.com/${encodeURIComponent(cloudName)}/image/fetch/${transforms}/${sourceUrl}`;
 }

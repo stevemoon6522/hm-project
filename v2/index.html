@@ -3876,6 +3876,7 @@
         <div class="b2b-toolbar" style="justify-content:space-between;">
           <div class="b2b-toolbar" style="margin-bottom:0;">
             <strong>Stored catalog</strong>
+            <button type="button" id="b2b-sync-selected-master" disabled>Sync selected master</button>
             <button type="button" id="b2b-bulk-edit" disabled>Bulk edit selected</button>
             <button type="button" id="b2b-bulk-delete" style="background:#fee2e2;color:#991b1b;" disabled>Delete selected</button>
           </div>
@@ -21872,13 +21873,39 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     showToast('B2B conflict overwrite complete: ' + updated + ' rows', 'ok');
   }
 
-  async function b2bFetchProductsPnos() {
-    const { data, error } = await db
-      .from('products')
-      .select('id,staronemall_url')
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    return new Set((data || []).map(function(row) { return b2bPnoFromUrl(row.staronemall_url); }).filter(Boolean));
+  function b2bCatalogPnos(rows) {
+    return Array.from(new Set((rows || []).map(function(row) {
+      return String(row?.staronemall_pno || '').trim();
+    }).filter(Boolean)));
+  }
+
+  function b2bProductPnoFilter(pno) {
+    const token = String(pno || '').trim().replace(/[^a-zA-Z0-9_-]/g, '');
+    return token ? 'staronemall_url.ilike.%' + token + '%' : '';
+  }
+
+  async function b2bFetchProductsPnos(targetPnos) {
+    const pnos = b2bCatalogPnos((targetPnos || []).map(function(pno) {
+      return { staronemall_pno: pno };
+    }));
+    if (!pnos.length) return new Set();
+    const requested = new Set(pnos);
+    const found = new Set();
+    for (let i = 0; i < pnos.length; i += 20) {
+      const filters = pnos.slice(i, i + 20).map(b2bProductPnoFilter).filter(Boolean);
+      if (!filters.length) continue;
+      const { data, error } = await db
+        .from('products')
+        .select('id,staronemall_url')
+        .or(filters.join(','))
+        .limit(1000);
+      if (error) throw error;
+      (data || []).forEach(function(row) {
+        const pno = String(b2bPnoFromUrl(row.staronemall_url) || '').trim();
+        if (requested.has(pno)) found.add(pno);
+      });
+    }
+    return found;
   }
 
   async function b2bFetchWmsInventory(artists) {
@@ -21972,8 +21999,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const selected = b2bCatalogState.catalogSelectedIds || new Set();
     const rows = b2bCatalogState.catalogRows || [];
     const selectedCount = rows.filter(function(row) { return selected.has(String(row.id || '')); }).length;
+    const syncSelectedMaster = b2bEl('b2b-sync-selected-master');
     const bulkEdit = b2bEl('b2b-bulk-edit');
     const bulkDelete = b2bEl('b2b-bulk-delete');
+    if (syncSelectedMaster) syncSelectedMaster.disabled = selectedCount === 0;
     if (bulkEdit) bulkEdit.disabled = selectedCount === 0;
     if (bulkDelete) bulkDelete.disabled = selectedCount === 0;
     const all = b2bEl('b2b-catalog-check-all');
@@ -22188,6 +22217,37 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     showToast('B2B catalog rows deleted: ' + cleanIds.length, 'ok');
   }
 
+  async function b2bSyncSelectedMasterMatches() {
+    const rows = b2bSelectedCatalogRows();
+    if (!rows.length) {
+      b2bSetStatus('No selected catalog rows.', true);
+      return;
+    }
+    const pnos = b2bCatalogPnos(rows);
+    if (!pnos.length) {
+      b2bSetStatus('Selected rows do not have StarOneMall pno values.', true);
+      return;
+    }
+    const btn = b2bEl('b2b-sync-selected-master');
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Syncing...'; }
+    b2bSetStatus('Syncing selected master matches...');
+    try {
+      const found = await b2bFetchProductsPnos(pnos);
+      pnos.forEach(function(pno) { b2bCatalogState.masterPnos.delete(pno); });
+      found.forEach(function(pno) { b2bCatalogState.masterPnos.add(pno); });
+      b2bRenderCatalogRows();
+      b2bSetStatus('Selected master sync complete: ' + found.size + '/' + pnos.length + ' pno linked.');
+      showToast('B2B selected master sync: ' + found.size + ' linked', found.size ? 'ok' : 'warn');
+    } catch (e) {
+      b2bSetStatus('Selected master sync failed: ' + (e.message || e), true);
+      showToast('B2B selected master sync failed: ' + (e.message || e), 'err');
+    } finally {
+      if (btn) { btn.textContent = old; }
+      b2bUpdateCatalogSelectionUi();
+    }
+  }
+
   function b2bRenderCatalogRows() {
     const body = b2bEl('b2b-catalog-body');
     const summary = b2bEl('b2b-catalog-summary');
@@ -22265,7 +22325,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           Array.from(b2bCatalogState.catalogSelectedIds || []).filter(function(id) { return liveIds.has(String(id)); })
         );
       }
-      b2bCatalogState.masterPnos = await b2bFetchProductsPnos();
+      b2bCatalogState.masterPnos = await b2bFetchProductsPnos(b2bCatalogPnos(b2bCatalogState.catalogRows));
       const artists = Array.from(new Set(b2bCatalogState.catalogRows.map(function(row) { return row.artist; }).filter(Boolean)));
       b2bCatalogState.wmsRows = await b2bFetchWmsInventory(artists);
       b2bCatalogState.loaded = true;
@@ -22323,6 +22383,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
       b2bRenderCatalogRows();
     });
+    b2bEl('b2b-sync-selected-master')?.addEventListener('click', b2bSyncSelectedMasterMatches);
     b2bEl('b2b-bulk-edit')?.addEventListener('click', b2bOpenBulkEditModal);
     b2bEl('b2b-bulk-delete')?.addEventListener('click', function() {
       b2bDeleteCatalogRows(Array.from(b2bCatalogState.catalogSelectedIds || []));

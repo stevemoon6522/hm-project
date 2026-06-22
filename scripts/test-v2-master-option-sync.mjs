@@ -101,6 +101,24 @@ assert.deepEqual(
   'ARIRANG tier indexes should be rewritten for the collapsed Version axis',
 );
 
+const setFirstRows = [arirangRows[2], arirangRows[0], arirangRows[1]];
+const setFirstReader = buildMasterEditReader([
+  new FakeTr('ar3', { sku: 'M4-BTS-ARIRA-PHO-SET', option_name: '2 VER SET', cost_krw: '20000', weight_g: '600', shopee_option_image_url: 'https://img/s.jpg' }),
+  new FakeTr('ar1', { sku: 'M4-BTS-ARIRA-PHO-ROOTED-IN-KOREA', option_name: 'ROOTED IN KOREA VER', cost_krw: '10000', weight_g: '300', shopee_option_image_url: 'https://img/k.jpg' }),
+  new FakeTr('ar2', { sku: 'M4-BTS-ARIRA-PHO-ROOTED-IN-MUSIC', option_name: 'ROOTED IN MUSIC VER', cost_krw: '10000', weight_g: '300', shopee_option_image_url: 'https://img/m.jpg' }),
+]);
+const setFirstPatchById = new Map(setFirstReader(setFirstRows).map((item) => [item.id, item.patch]));
+assert.deepEqual(
+  setFirstPatchById.get('ar3').variation_tier_index,
+  [2],
+  'master edit save must rewrite SET option to the last Version index even if it was first',
+);
+assert.deepEqual(
+  setFirstPatchById.get('ar1').variation_tier_index,
+  [0],
+  'master edit save must keep non-SET options before SET',
+);
+
 const trueTwoAxisRows = [
   { id: 'a1', option_name: 'A', variation_tier_names: ['MEMBER', 'VERSION'], variation_option_names: ['A', 'X'], variation_tier_index: [0, 0] },
   { id: 'a2', option_name: 'A', variation_tier_names: ['MEMBER', 'VERSION'], variation_option_names: ['A', 'Y'], variation_tier_index: [0, 1] },
@@ -144,7 +162,13 @@ const buildEbayGroup = new Function(
   'crypto',
   `${optionHelpers}\n${ebayGroupBuilderBlock}\nreturn plBuildEbayPublishGroupFromProducts;`,
 )(
-  (rows) => rows.slice(),
+  (rows) => rows.slice().sort((a, b) => {
+    const isSet = (row) => /\bSET\b/i.test([row.sku, row.option_name, ...(Array.isArray(row.variation_option_names) ? row.variation_option_names : [])].join(' '));
+    const idx = (row) => (Array.isArray(row.variation_tier_index) ? row.variation_tier_index : [])
+      .map((n) => String(Number(n) || 0).padStart(4, '0'))
+      .join('.');
+    return Number(isSet(a)) - Number(isSet(b)) || idx(a).localeCompare(idx(b));
+  }),
   (row) => !!row.product_group_id,
   (row) => (Array.isArray(row.variation_option_names) && row.variation_option_names.length ? row.variation_option_names.join(' / ') : String(row.option_name || '').trim()),
   (value) => String(value || '').replace(/[^\x20-\x7E]/g, '').trim(),
@@ -173,6 +197,21 @@ assert.deepEqual(
   ebayGroup.rows.map((row) => row._opt0),
   ['ROOTED IN KOREA VER', 'ROOTED IN MUSIC VER', '2 VER SET'],
   'eBay modal option labels should be seeded from master option names',
+);
+const setFirstEbayGroup = buildEbayGroup([
+  { id: 'ar3', product_group_id: 'g1', sku: 'M4-BTS-ARIRA-PHO-SET', product_name: '[READY STOCK] (BTS) ARIRANG Rooted in Korea ver. / Rooted in Music ver.', option_name: '2 VER SET', variation_tier_names: ['Version'], variation_option_names: ['2 VER SET'], variation_tier_index: [0], ebay_variation_value: 'SET', ebay_variation_image_url: 'https://img/layered-set.jpg', shopee_option_image_url: 'https://img/raw-set.jpg', cost_krw: 20000, weight_g: 600, inventory: 3 },
+  { id: 'ar1', product_group_id: 'g1', sku: 'M4-BTS-ARIRA-PHO-ROOTED-IN-KOREA', product_name: '[READY STOCK] (BTS) ARIRANG Rooted in Korea ver. / Rooted in Music ver.', option_name: 'ROOTED IN KOREA VER', variation_tier_names: ['Version'], variation_option_names: ['ROOTED IN KOREA VER'], variation_tier_index: [1], ebay_variation_value: 'ROOTED IN KOREA', shopee_option_image_url: 'https://img/raw-k.jpg', cost_krw: 10000, weight_g: 300, inventory: 3 },
+  { id: 'ar2', product_group_id: 'g1', sku: 'M4-BTS-ARIRA-PHO-ROOTED-IN-MUSIC', product_name: '[READY STOCK] (BTS) ARIRANG Rooted in Korea ver. / Rooted in Music ver.', option_name: 'ROOTED IN MUSIC VER', variation_tier_names: ['Version'], variation_option_names: ['ROOTED IN MUSIC VER'], variation_tier_index: [2], ebay_variation_value: 'ROOTED IN MUSIC', shopee_option_image_url: 'https://img/raw-m.jpg', cost_krw: 10000, weight_g: 300, inventory: 3 },
+]);
+assert.deepEqual(
+  setFirstEbayGroup.rows.map((row) => row._ebayVariationValue),
+  ['ROOTED IN KOREA VER', 'ROOTED IN MUSIC VER', '2 VER SET'],
+  'eBay registration group must display SET as the last option even when stored tier index put SET first',
+);
+assert.equal(
+  setFirstEbayGroup.rows.at(-1)._ebayOptionImageUrl,
+  'https://img/raw-set.jpg',
+  'eBay registration group must prefer current master option image over stale layered eBay variation image',
 );
 
 const joomGroupBuilderBlock = sliceBetween(

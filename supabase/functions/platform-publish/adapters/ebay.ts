@@ -206,6 +206,17 @@ function imagesFrom(master: Record<string, unknown>): string[] {
   return [...new Set(images)].slice(0, 24);
 }
 
+function variationImagesFrom(row: Record<string, unknown>, fallbackImages: string[]): string[] {
+  const images = [
+    s(row.shopee_option_image_url || row.main_image || row.ebay_variation_image_url),
+    ...(Array.isArray(row.extra_images) ? row.extra_images.map((v) => s(v)) : []),
+  ]
+    .map((v) => v.trim())
+    .filter(Boolean);
+  const unique = [...new Set(images)];
+  return (unique.length ? unique : fallbackImages).slice(0, 12);
+}
+
 function mapBridgeError(status: number, raw: any): AdapterErrorCode {
   const text = s(raw?.error || raw?.message || raw?.detail).toLowerCase();
   if (status === 401 || status === 403 || text.includes('auth') || text.includes('token') || text.includes('oauth')) return 'PLATFORM_AUTH_FAILED';
@@ -316,7 +327,6 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   if (variationBundle) {
     const variationRows = await Promise.all(variationBundle.items.map(async (item: any) => {
       const row = item.row || {};
-      const rowImages = imagesFrom(row).length ? imagesFrom(row) : images;
       const rowPricing = await ebayPricingContext(row);
       return {
         productId: row.id || null,
@@ -329,7 +339,7 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
         weightBucketG: rowPricing.weightBucketG,
         usShippingKrw: rowPricing.usShippingKrw,
         usShippingUsd: Number(n(rowPricing.usShippingUsd, 0).toFixed(2)),
-        imageUrls: rowImages.slice(0, 12),
+        imageUrls: variationImagesFrom(row, images),
       };
     }));
     if (!categoryId || !description || images.length === 0 || variationRows.some((row) => !row.sku || row.sku.length > 50 || !row.priceUsd || row.weightG <= 0 || !row.imageUrls.length)) {

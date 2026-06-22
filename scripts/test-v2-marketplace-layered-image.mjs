@@ -63,30 +63,31 @@ assert(
 
 const ebayImageUrlsFn = extractFunctionBlock(html, 'mrEbayImageUrls');
 assert(
-  ebayImageUrlsFn.includes("function mrEbayImageUrls(group, sourceRow, layeredMainImageUrl = '')")
-    && ebayImageUrlsFn.includes('layeredMainImageUrl')
-    && ebayImageUrlsFn.indexOf('layeredMainImageUrl') < ebayImageUrlsFn.indexOf('firstRow._ebayMainImage'),
-  'eBay image URL list must prefer the layered representative URL before raw master images',
+  ebayImageUrlsFn.includes("function mrEbayImageUrls(group, sourceRow, representativeImageUrl = '')")
+    && ebayImageUrlsFn.includes('representativeImageUrl')
+    && ebayImageUrlsFn.indexOf('representativeImageUrl') < ebayImageUrlsFn.indexOf('firstRow._ebayMainImage')
+    && !ebayImageUrlsFn.includes('mrEbayActiveRows(group).map'),
+  'eBay default image URL list must use raw representative/detail images without option images',
 );
 
-const ebayLayerFn = extractFunctionBlock(html, 'mrEbayBuildLayeredMainImageUrl');
+const ebayRepresentativeFn = extractFunctionBlock(html, 'mrEbayRepresentativeImageUrl');
 assert(
-  ebayLayerFn.includes("await mrBuildMarketplaceLayeredMainImageUrl('ebay', mainImageUrl, sourceRow || firstRow)")
-    && ebayLayerFn.includes('firstRow._ebayLayeredMainImageUrl = layeredUrl'),
-  'eBay layered image builder must upload and cache the representative layered cover URL',
+  ebayRepresentativeFn.includes('firstRow._ebayRepresentativeImageUrl = mainImageUrl')
+    && !ebayRepresentativeFn.includes('mrBuildMarketplaceLayeredMainImageUrl'),
+  'eBay representative image builder must keep the raw master image and avoid marketplace layer upload',
 );
 
 const ebayDraftFn = extractFunctionBlock(html, 'mrBuildEbayDraft');
 assert(
-  ebayDraftFn.includes('const layeredMainImageUrl = await mrEbayBuildLayeredMainImageUrl(group, sourceRow);')
-    && ebayDraftFn.includes('imageUrls: mrEbayImageUrls(group, sourceRow, layeredMainImageUrl)'),
-  'eBay draft creation must generate the layered cover before building imageUrls and payload preview',
+  ebayDraftFn.includes('const representativeImageUrl = mrEbayRepresentativeImageUrl(group, sourceRow);')
+    && ebayDraftFn.includes('imageUrls: mrEbayImageUrls(group, sourceRow, representativeImageUrl)'),
+  'eBay draft creation must build default photos from the raw representative image',
 );
 
 const ebaySyncFn = extractFunctionBlock(html, 'mrEbaySyncModalDraft');
 assert(
-  ebaySyncFn.includes('draft.imageUrls = mrEbayImageUrls(draft.group, draft.sourceRow, draft.layeredMainImageUrl);'),
-  'eBay modal edits must preserve the layered cover when rebuilding imageUrls',
+  ebaySyncFn.includes('draft.imageUrls = mrEbayImageUrls(draft.group, draft.sourceRow, draft.representativeImageUrl);'),
+  'eBay modal edits must preserve the raw representative image when rebuilding imageUrls',
 );
 
 console.log('v2 marketplace layered image checks passed');

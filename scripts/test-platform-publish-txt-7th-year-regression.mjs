@@ -32,6 +32,7 @@ const staroneCrawl = read('supabase', 'functions', 'starone-crawl', 'index.ts');
 
 const publishableGroupRows = extractFunction(grouping, 'publishableGroupRows');
 assert.match(grouping, /function rowIsSetOption/, 'grouping must explicitly preserve SET option rows');
+assert.match(grouping, /function sortOptionValuesSetLast/, 'grouping must normalize SET option values to the last variation position');
 assert.match(
   publishableGroupRows,
   /rowHasPublishableStock\(row,\s*master\)\s*\|\|\s*rowIsSetOption\(row\)/,

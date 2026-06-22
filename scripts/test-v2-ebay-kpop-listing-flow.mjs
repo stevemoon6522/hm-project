@@ -82,6 +82,25 @@ assert.equal(
   'current master option image must override stale saved eBay variation image',
 );
 
+const imageUrlsStart = html.indexOf('    function mrEbayImageUrls');
+const imageUrlsEnd = html.indexOf('    function mrEbayRepresentativeImageUrl', imageUrlsStart);
+assert(imageUrlsStart >= 0 && imageUrlsEnd > imageUrlsStart, 'eBay default image helper must be extractable');
+const ebayImageUrls = new Function(
+  'mrJoomNormalizeImageList',
+  `${html.slice(imageUrlsStart, imageUrlsEnd)}\nreturn mrEbayImageUrls;`,
+)(
+  (values) => values.map((value) => String(value || '').trim()).filter(Boolean),
+);
+assert.deepEqual(
+  ebayImageUrls(
+    { rows: [{ shopee_option_image_url: 'option-a.jpg' }, { shopee_option_image_url: 'option-b.jpg' }] },
+    { _extra_images: ['detail-a.jpg'], observed: { detail_image_urls: ['detail-b.jpg'] } },
+    'master-main.jpg',
+  ),
+  ['master-main.jpg', 'detail-a.jpg', 'detail-b.jpg'],
+  'eBay default photos must contain the raw representative image and detail images only',
+);
+
 const skuLikeStart = html.indexOf('    function mrEbayIsSkuLikeVariationValue');
 const skuLikeEnd = html.indexOf('    function mrEbayBuildGroupKey', skuLikeStart);
 assert(skuLikeStart >= 0 && skuLikeEnd > skuLikeStart, 'eBay SKU-like variation helper must be extractable');
@@ -162,6 +181,8 @@ for (const token of [
   'mrEbayBuildDescription(group, firstRow, lifecycleState)',
   'id="mr-ebay-rendered-preview"',
   'function mrEbayBuildVariationOptions',
+  'function mrEbayRepresentativeImageUrl',
+  'firstRow._ebayRepresentativeImageUrl = mainImageUrl',
   'function mrEbayIsSkuLikeVariationValue',
   'mrEbayMasterOptionImageUrl(row)',
   'description: mrEbayDescriptionForPayload(draft.description).slice(0, 4000)',

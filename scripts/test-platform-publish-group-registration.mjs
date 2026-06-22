@@ -59,6 +59,7 @@ assert.doesNotMatch(qoo10, /BrandNo is required/, 'Qoo10 adapter must not requir
 assert.match(ebay, /bridgePost\('publish-variation'/, 'eBay adapter must route grouped creates through publish-variation');
 assert.match(ebay, /inventoryGroupKey\(master, groupRows\)/, 'eBay adapter must generate a stable inventory item group key');
 assert.match(ebay, /variationAxis: 'Version'/, 'eBay adapter must use a Version variation axis for grouped K-pop albums');
+assert.match(ebay, /function variationImagesFrom/, 'eBay adapter must keep variation images separate from group default photos');
 assert.match(ebay, /option_products/, 'eBay adapter must return option mapping hints after grouped create');
 assert.match(ebay, /inferKpopArtistName/, 'eBay adapter must infer artist aspects instead of using No Brand');
 

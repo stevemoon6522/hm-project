@@ -74,7 +74,7 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 // v51: treat CBSC publish task "permission"/empty failed results as async-pending until published_list proves final state.
-const SOURCE_VERSION = 54;
+const SOURCE_VERSION = 56;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -86,6 +86,8 @@ const DEFAULT_REFRESH_ATTEMPTS = 3;
 const DEFAULT_RETRY_BASE_MS = 1000;
 const SHOPEE_HEADLESS_DELETE_CONFIRM_PHRASE = 'DELETE_SHOPEE_GLOBAL_ITEM';
 const SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT = 3.5;
+const SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS = 3;
+const SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_EVERY_POLLS = 3;
 const PROXY_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
 const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
 const UPLOAD_IMAGE_MIN_DIMENSION = 300;
@@ -1745,9 +1747,56 @@ function normalizeBrGlobalModelPriceRatio(body: any, targets: any[] = []) {
       sku: row.sku,
       from: row.price,
       to: safeMinimum,
+      min_price: minPrice,
       max_price: maxPrice,
+      ratio: Number((maxPrice / minPrice).toFixed(4)),
       safe_ratio: SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT,
     });
+  }
+  return adjustments;
+}
+
+function normalizeBrTargetModelPriceRatio(targets: any[] = []) {
+  const adjustments: any[] = [];
+  for (const target of targets) {
+    if (String(target?.region || '').toUpperCase() !== 'BR') continue;
+    let normalized: any = null;
+    try {
+      normalized = normalizeVariation(target?.variation);
+    } catch (_) {
+      continue;
+    }
+    const models = Array.isArray(normalized?.model) ? normalized.model : [];
+    if (models.length < 2) continue;
+    const fallbackPrice = Number(target?.price ?? 0);
+    const rows = models
+      .map((model: any, index: number) => ({
+        model,
+        index,
+        sku: String(model?.model_sku || model?.global_model_sku || `model-${index + 1}`).trim(),
+        price: Number(model?.original_price ?? fallbackPrice),
+      }))
+      .filter((row: any) => Number.isFinite(row.price) && row.price > 0);
+    if (rows.length < 2) continue;
+    const maxPrice = Math.max(...rows.map((row: any) => row.price));
+    const minPrice = Math.min(...rows.map((row: any) => row.price));
+    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) continue;
+
+    const safeMinimum = Number((Math.ceil(((maxPrice / SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) + 0.000001) * 100) / 100).toFixed(2));
+    for (const row of rows) {
+      if (row.price >= safeMinimum) continue;
+      row.model.original_price = safeMinimum;
+      adjustments.push({
+        region: 'BR',
+        sku: row.sku,
+        from: row.price,
+        to: safeMinimum,
+        min_price: minPrice,
+        max_price: maxPrice,
+        ratio: Number((maxPrice / minPrice).toFixed(4)),
+        safe_ratio: SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT,
+      });
+    }
   }
   return adjustments;
 }
@@ -2274,21 +2323,27 @@ async function verifyPublishedListOutcome(region: string, shopId: number, global
   const sleepMs = 5000;
   for (let attempt = 0; attempt < retries; attempt += 1) {
     if (attempt > 0) await new Promise(s => setTimeout(s, sleepMs));
-    const publishedRes = await merchantApiCall(region, '/api/v2/global_product/get_published_list', { query: { global_item_id: globalItemId }, account_key: accountKey });
-    const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
-    const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shopId));
-    if (hit && hit.item_id) {
-      return {
-        ok: true,
-        region,
-        shop_id: shopId,
-        publish_task_id: publishTaskId,
-        item_id: Number(hit.item_id),
-        publish_status: 'verified_via_published_list_retry_' + attempt,
-        error: null,
-        task,
-      };
-    }
+    const verified = await verifyPublishedListOutcomeOnce(region, shopId, globalItemId, publishTaskId, task, accountKey, 'verified_via_published_list_retry_' + attempt);
+    if (verified) return verified;
+  }
+  return null;
+}
+
+async function verifyPublishedListOutcomeOnce(region: string, shopId: number, globalItemId: number, publishTaskId: number, task: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, status = 'verified_via_published_list') {
+  const publishedRes = await merchantApiCall(region, '/api/v2/global_product/get_published_list', { query: { global_item_id: globalItemId }, account_key: accountKey });
+  const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
+  const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shopId));
+  if (hit && hit.item_id) {
+    return {
+      ok: true,
+      region,
+      shop_id: shopId,
+      publish_task_id: publishTaskId,
+      item_id: Number(hit.item_id),
+      publish_status: status,
+      error: null,
+      task,
+    };
   }
   return null;
 }
@@ -3509,6 +3564,7 @@ Deno.serve(async (req) => {
           const publish_task_id = Number(publishRes.response?.publish_task_id);
           let task: any = null;
           let pollAttempts = 0;
+          let earlyPublishedOutcome: any = null;
           // BR publish async is slower — double the polling window for BR only
           const maxPoll = (targetRegion === 'BR') ? 60 : 30;
           for (let i = 0; i < maxPoll; i++) {
@@ -3516,10 +3572,18 @@ Deno.serve(async (req) => {
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id }, account_key: reqAccountKey });
             task = taskRes;
             pollAttempts = i + 1;
+            if (
+              targetRegion === 'BR'
+              && pollAttempts >= SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS
+              && pollAttempts % SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_EVERY_POLLS === 0
+            ) {
+              earlyPublishedOutcome = await verifyPublishedListOutcomeOnce(targetRegion, shop_id, global_item_id, publish_task_id, task, reqAccountKey, 'verified_via_br_early_published_list_' + pollAttempts).catch(() => null);
+              if (earlyPublishedOutcome) break;
+            }
             if (isCrossuploadPermissionPublishFailure(taskRes)) break;
             if (!shouldContinuePublishPolling(taskRes)) break;
           }
-          let outcome = parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
+          let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
           // Fallback verification: query published_list — BR gets 3 retries (5s apart), others get 1
           if (!outcome.ok) {
             const fbRetries = (targetRegion === 'BR') ? 3 : 1;
@@ -3804,6 +3868,7 @@ Deno.serve(async (req) => {
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
       const brGlobalPriceAdjustments = normalizeBrGlobalModelPriceRatio(body, targetInputs);
+      const brTargetPriceAdjustments = normalizeBrTargetModelPriceRatio(targetInputs);
 
       let preflightVariation: any = null;
       try {
@@ -3856,7 +3921,12 @@ Deno.serve(async (req) => {
       return withPublishRequestId(action, `${accountKey}:${r}`, _cbscIdempotencyToken, body, async () => {
       const stage_logs: string[] = [];
       if (brGlobalPriceAdjustments.length) {
-        stage_logs.push(`br_global_model_price_ratio_normalized: ${brGlobalPriceAdjustments.length} model(s), safe_ratio=${SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT}`);
+        const firstAdjustment = brGlobalPriceAdjustments[0] || {};
+        stage_logs.push(`br_global_model_price_ratio_normalized: ${brGlobalPriceAdjustments.length} model(s), ratio=${firstAdjustment.ratio || 'unknown'}, min=${firstAdjustment.min_price || 'unknown'}->${firstAdjustment.to || 'unknown'}, max=${firstAdjustment.max_price || 'unknown'}, safe_ratio=${SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT}`);
+      }
+      if (brTargetPriceAdjustments.length) {
+        const firstAdjustment = brTargetPriceAdjustments[0] || {};
+        stage_logs.push(`br_target_model_price_ratio_normalized: ${brTargetPriceAdjustments.length} model(s), ratio=${firstAdjustment.ratio || 'unknown'}, min=${firstAdjustment.min_price || 'unknown'}->${firstAdjustment.to || 'unknown'}, max=${firstAdjustment.max_price || 'unknown'}, safe_ratio=${SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT}`);
       }
       const catAttrs = await buildCategoryAttributeListForRegions(r, targetInputs.map((target: any) => target.region), Number(body.category_id), Array.isArray(body.attribute_list) ? body.attribute_list : [], accountKey);
       if (catAttrs.missing.length > 0) {
@@ -4082,6 +4152,7 @@ Deno.serve(async (req) => {
           console.log(`[register_cbsc] region=${targetRegion} shop_id=${shop_id} publish_task_id=${publish_task_id} create_publish_task_response=${JSON.stringify(publishRes).slice(0, 800)}`);
           let task: any = null;
           let pollAttempts = 0;
+          let earlyPublishedOutcome: any = null;
           // BR publish async is slower — double the polling window for BR only
           const maxPoll = (targetRegion === 'BR') ? 60 : 30;
           for (let i = 0; i < maxPoll; i++) {
@@ -4089,11 +4160,19 @@ Deno.serve(async (req) => {
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id }, account_key: accountKey });
             task = taskRes;
             pollAttempts = i + 1;
+            if (
+              targetRegion === 'BR'
+              && pollAttempts >= SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS
+              && pollAttempts % SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_EVERY_POLLS === 0
+            ) {
+              earlyPublishedOutcome = await verifyPublishedListOutcomeOnce(targetRegion, shop_id, global_item_id, publish_task_id, task, accountKey, 'verified_via_br_early_published_list_' + pollAttempts).catch(() => null);
+              if (earlyPublishedOutcome) break;
+            }
             if (isCrossuploadPermissionPublishFailure(taskRes)) break;
             if (!shouldContinuePublishPolling(taskRes)) break;
           }
           console.log(`[register_cbsc] region=${targetRegion} publish_task_id=${publish_task_id} poll_attempts=${pollAttempts} final_task=${JSON.stringify(task).slice(0, 1200)}`);
-          let outcome = parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
+          let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
           outcome.raw_create = publishRes;
           outcome.raw_task = task;
           outcome.poll_attempts = pollAttempts;
@@ -4169,7 +4248,7 @@ Deno.serve(async (req) => {
           results.push({ ok: false, region: target.region || r, stage: 'publish_exception', error: String(e?.message || e) });
         }
       });
-      return jsonResp({ ok: true, account_key: accountKey, region: r, global_item_id, stage_logs, results: results.map((row) => ({ account_key: accountKey, ...row })), publishable_shops, publishable_status });
+      return jsonResp({ ok: true, account_key: accountKey, region: r, global_item_id, stage_logs, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: results.map((row) => ({ account_key: accountKey, ...row })), publishable_shops, publishable_status });
       }); // end withPublishRequestId for register_cbsc
     }
     if (action === 'item_info') {

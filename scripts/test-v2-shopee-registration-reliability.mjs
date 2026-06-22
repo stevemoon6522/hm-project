@@ -28,6 +28,7 @@ const applyPublishState = extractFunction(html, 'rshApplyShopeePublishState');
 const publishStateFromRows = extractFunction(html, 'rshPublishStateFromMappingRows');
 const buildGroupPayload = extractFunction(html, 'rshBuildGroupRegisterPayload');
 const normalizeBrGlobalModelPrices = extractFunction(html, 'rshNormalizeBrGlobalModelPrices');
+const normalizeBrTargetModelPrices = extractFunction(html, 'rshNormalizeBrTargetModelPrices');
 const brandForPublish = extractFunction(html, 'rshBrandForShopeePublish');
 const mrUploadRegionImages = extractFunction(html, 'mrUploadRegionImages');
 const renderModal = html.slice(html.indexOf('<section class="rsh-seller-section grid" id="rsh-info-section"'), html.indexOf('<!-- Description -->'));
@@ -144,6 +145,16 @@ assert.match(
   /const model = rshNormalizeBrGlobalModelPrices\(modelRaw,\s*activeRegions\)/,
   'group payload must apply BR-safe global model price normalization before register_cbsc',
 );
+assert.match(
+  normalizeBrTargetModelPrices,
+  /original_price:\s*safeMinimum[\s\S]*br_original_price_adjusted_from/,
+  'group payload must normalize BR target-region option prices when the local price ratio would be rejected',
+);
+assert.match(
+  buildGroupPayload,
+  /return rshNormalizeBrTargetModelPrices\(targetModels,\s*region\)/,
+  'group payload must apply BR-safe target model price normalization for each region variation',
+);
 
 assert.match(
   mrUploadRegionImages,
@@ -167,14 +178,44 @@ assert.match(
   'Shopee bridge must defensively normalize BR Global Product option price ratios',
 );
 assert.match(
+  bridge,
+  /function normalizeBrTargetModelPriceRatio[\s\S]*row\.model\.original_price = safeMinimum/,
+  'Shopee bridge must defensively normalize BR target-region option price ratios',
+);
+assert.match(
   registerCbscBlock,
   /normalizeBrGlobalModelPriceRatio\(body,\s*targetInputs\)[\s\S]*br_global_model_price_ratio_normalized/,
   'register_cbsc must apply and log BR global model price ratio normalization',
 );
 assert.match(
+  registerCbscBlock,
+  /normalizeBrTargetModelPriceRatio\(targetInputs\)[\s\S]*br_target_model_price_ratio_normalized/,
+  'register_cbsc must apply and log BR target model price ratio normalization',
+);
+assert.match(
   bridge,
   /const retries = region === 'BR' \? 8/,
   'BR published_list verification must wait longer because publish_task_result can report false failure',
+);
+assert.match(
+  bridge,
+  /SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS[\s\S]*verifyPublishedListOutcomeOnce/,
+  'BR publish polling must check published_list during long ambiguous publish_task polling',
+);
+assert.match(
+  registerCbscBlock,
+  /earlyPublishedOutcome[\s\S]*verified_via_br_early_published_list_[\s\S]*earlyPublishedOutcome \|\| parsePublishOutcome/,
+  'register_cbsc must short-circuit BR polling once published_list confirms the item',
+);
+assert.match(
+  registerCbscBlock,
+  /br_global_price_adjustments: brGlobalPriceAdjustments/,
+  'register_cbsc must return BR Global Product price-ratio adjustments for diagnosis',
+);
+assert.match(
+  registerCbscBlock,
+  /br_target_price_adjustments: brTargetPriceAdjustments/,
+  'register_cbsc must return BR target-region price-ratio adjustments for diagnosis',
 );
 assert.match(
   publishToRegionBlock,

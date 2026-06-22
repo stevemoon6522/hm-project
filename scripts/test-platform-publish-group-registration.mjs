@@ -15,6 +15,8 @@ const ebay = read('supabase', 'functions', 'platform-publish', 'adapters', 'ebay
 assert.match(grouping, /function publishableGroupRows/, 'shared grouping helper must expose publishable group row selection');
 assert.match(grouping, /rowHasPublishableStock/, 'group helper must avoid ready-stock zero-inventory options when alternatives exist');
 assert.match(grouping, /effectiveVariationSpec/, 'group helper must collapse stale constant variation axes');
+assert.match(grouping, /Number\(rowIsSetOption\(a\)\) - Number\(rowIsSetOption\(b\)\)/, 'group helper must sort SET options after single-version options');
+assert.match(grouping, /values: sortOptionValuesSetLast\(values\)/, 'group helper must rewrite variation axis values with SET last');
 assert.match(grouping, /inferKpopBrandName/, 'group helper must preserve K-pop brand fallback for Joom');
 assert.match(grouping, /inferKpopArtistName/, 'group helper must preserve K-pop artist fallback for eBay aspects');
 
@@ -29,6 +31,9 @@ assert.match(shopee, /publishableGroupRows\(master/, 'Shopee adapter must detect
 assert.match(shopee, /bridgeParentSku/, 'Shopee adapter must use a parent SKU for grouped Global Product registration');
 assert.match(shopee, /global_model_sku: String\(row\.shopee_global_model_sku \|\| row\.sku/, 'Shopee adapter must send option SKUs as global model SKUs');
 assert.match(shopee, /variation: shopeeVariation \|\| undefined/, 'Shopee adapter dry-run payload must include generated variation data');
+assert.match(shopee, /const regionOptionPrices: Record<string, Record<string, number>> = \(ctx as any\)\.region_option_prices \|\| \{\}/, 'Shopee adapter must accept per-region option prices for grouped registrations');
+assert.match(shopee, /targets = targets\.map\(\(target: any\) => \{[\s\S]*variation:\s*\{[\s\S]*tier_variation: shopeeVariation\.tier_variation,[\s\S]*model: targetModels/s, 'Shopee adapter must attach target-region variation models for grouped registrations');
+assert.match(shopee, /global_original_price: Number\(row\.cost_krw \|\| cost_krw\)/, 'Shopee adapter must keep Global Product option prices separate from target-region prices');
 assert.match(shopee, /listingProducts = variationRows\.length > 1 \? variationRows : \[master\]/, 'Shopee adapter must store per-option region mappings');
 assert.match(shopee, /bridgePost\('upload_image'/, 'Shopee adapter must upload main_image URL before live Global Product registration');
 assert.match(shopee, /image_base64: imageData\.image_base64/, 'Shopee adapter must send upload_image a base64 JPEG/PNG payload');
@@ -54,6 +59,7 @@ assert.doesNotMatch(qoo10, /BrandNo is required/, 'Qoo10 adapter must not requir
 assert.match(ebay, /bridgePost\('publish-variation'/, 'eBay adapter must route grouped creates through publish-variation');
 assert.match(ebay, /inventoryGroupKey\(master, groupRows\)/, 'eBay adapter must generate a stable inventory item group key');
 assert.match(ebay, /variationAxis: 'Version'/, 'eBay adapter must use a Version variation axis for grouped K-pop albums');
+assert.match(ebay, /function variationImagesFrom/, 'eBay adapter must keep variation images separate from group default photos');
 assert.match(ebay, /option_products/, 'eBay adapter must return option mapping hints after grouped create');
 assert.match(ebay, /inferKpopArtistName/, 'eBay adapter must infer artist aspects instead of using No Brand');
 

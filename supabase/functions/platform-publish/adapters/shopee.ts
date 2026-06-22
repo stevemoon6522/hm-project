@@ -51,6 +51,39 @@ function normalizeShopeeAccountKey(value: unknown): string {
   return /^[a-z0-9][a-z0-9_-]{1,62}$/.test(raw) ? raw : DEFAULT_SHOPEE_ACCOUNT_KEY;
 }
 
+function normalizeShopeeRegionPrice(region: unknown, rawPrice: unknown): number {
+  const n = Number(rawPrice);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  const code = String(region || '').toUpperCase();
+  const decimals = (code === 'SG' || code === 'MY' || code === 'BR') ? 2 : 0;
+  return decimals === 0 ? Math.round(n) : Number(n.toFixed(decimals));
+}
+
+function shopeeOptionRegionPrice(region: string, targetBasePrice: number, optionCostKrw: number, baseCostKrw: number): number {
+  const base = Number(targetBasePrice);
+  const optionCost = Number(optionCostKrw);
+  const baseCost = Number(baseCostKrw);
+  if (Number.isFinite(base) && base > 0 && Number.isFinite(optionCost) && optionCost > 0 && Number.isFinite(baseCost) && baseCost > 0) {
+    return normalizeShopeeRegionPrice(region, base * (optionCost / baseCost));
+  }
+  return normalizeShopeeRegionPrice(region, optionCost);
+}
+
+function pickRegionOptionPrice(regionOptionPrices: Record<string, any>, row: any, fallback: number): number {
+  const keys = [
+    row?.sku,
+    row?.shopee_global_model_sku,
+    row?.id,
+    row?.option_name,
+    ...(Array.isArray(row?.variation_option_names) ? row.variation_option_names : []),
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+  for (const key of keys) {
+    const value = Number(regionOptionPrices[key]);
+    if (Number.isFinite(value) && value > 0) return value;
+  }
+  return fallback;
+}
+
 function shopeePlainText(value: unknown): string {
   return String(value ?? '')
     .replace(/\r\n?/g, '\n')
@@ -721,6 +754,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   // upload) but BR will fail at publish_task if only 1 image provided.
   let regionImageIds: Record<string, string[]> = { ...((ctx as any).region_image_ids || {}) };
   const regionPrices: Record<string, number> = (ctx as any).region_prices || {};
+  const regionOptionPrices: Record<string, Record<string, number>> = (ctx as any).region_option_prices || {};
   const cachedMasterImageIds = [
     master.shopee_image_id,
     ...(Array.isArray(master.shopee_extra_image_ids) ? master.shopee_extra_image_ids : []),
@@ -806,7 +840,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
       rawResponse: { missing_region_prices: missingRegionPrices, supplied_region_prices: regionPrices },
     };
   }
-  const targets = regions.map((r: string) => {
+  let targets = regions.map((r: string) => {
     const ids = Array.isArray(regionImageIds[r]) && regionImageIds[r].length ? regionImageIds[r] : null;
     const targetPrice = Number(regionPrices[r]);
     return {
@@ -902,12 +936,43 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
           tier_index: item.tierIndex,
           global_model_sku: String(row.shopee_global_model_sku || row.sku || '').trim(),
           original_price: Number(row.cost_krw || cost_krw),
+          global_original_price: Number(row.cost_krw || cost_krw),
           seller_stock: [{ stock: Math.max(1, Math.floor(Number(row.inventory || 0))) }],
           weight_g: Number(row.weight_g || master.weight_g || 0),
         };
       }).filter((model: any) => model.global_model_sku),
     }
     : null;
+
+  if (variationBundle && shopeeVariation) {
+    targets = targets.map((target: any) => {
+      const region = String(target.region || '').toUpperCase();
+      const explicitOptionPrices = regionOptionPrices[region] || {};
+      const targetBasePrice = Number(target.price);
+      const targetModels = variationBundle.items.map((item: any) => {
+        const row = item.row || {};
+        const optionCostKrw = Number(row.cost_krw || cost_krw);
+        const fallbackPrice = shopeeOptionRegionPrice(region, targetBasePrice, optionCostKrw, Number(cost_krw || 0));
+        const optionPrice = pickRegionOptionPrice(explicitOptionPrices, row, fallbackPrice);
+        return {
+          tier_index: item.tierIndex,
+          global_model_sku: String(row.shopee_global_model_sku || row.sku || '').trim(),
+          model_sku: String(row.shopee_global_model_sku || row.sku || '').trim(),
+          original_price: optionPrice,
+          global_original_price: optionCostKrw,
+          stock: Math.max(1, Math.floor(Number(row.inventory || 0))),
+          weight_g: Number(row.weight_g || master.weight_g || 0),
+        };
+      }).filter((model: any) => model.global_model_sku && Number(model.original_price) > 0);
+      return {
+        ...target,
+        variation: {
+          tier_variation: shopeeVariation.tier_variation,
+          model: targetModels,
+        },
+      };
+    });
+  }
 
   const bridgeBody: Record<string, unknown> = {
     account_key,

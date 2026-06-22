@@ -19343,6 +19343,30 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     });
   }
 
+  function rshNormalizeBrTargetModelPrices(models, region) {
+    if (String(region || '').toUpperCase() !== 'BR' || !Array.isArray(models) || models.length < 2) return models;
+    const rows = models
+      .map((model) => ({
+        model,
+        price: Number(model.original_price ?? 0),
+      }))
+      .filter((row) => Number.isFinite(row.price) && row.price > 0);
+    if (rows.length < 2) return models;
+    const maxPrice = Math.max(...rows.map((row) => row.price));
+    const minPrice = Math.min(...rows.map((row) => row.price));
+    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) return models;
+    const safeMinimum = Number((Math.ceil(((maxPrice / RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) + 0.000001) * 100) / 100).toFixed(2));
+    return models.map((model) => {
+      const price = Number(model.original_price ?? 0);
+      if (!Number.isFinite(price) || price <= 0 || price >= safeMinimum) return model;
+      return {
+        ...model,
+        original_price: safeMinimum,
+        br_original_price_adjusted_from: price,
+      };
+    });
+  }
+
   function rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKeyOverride) {
     const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     const products = rshSortedProducts(_rsh.products || []);
@@ -19389,23 +19413,26 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const packageWidth = hasOptionWeights ? 20 : Number(document.getElementById('rsh-package-width')?.value || 20);
     const packageHeight = hasOptionWeights ? 5 : Number(document.getElementById('rsh-package-height')?.value || 5);
 
-    const modelForRegion = (region) => variantInputs.map((v, index) => {
-      const p = v.product || {};
-      const settlementKrw = Number(v.price || basePrice);
-      const calc = rshComputeRegionPrice(settlementKrw, Number(v.weight_g || maxWeight), region);
-      if (!calc) {
+    const modelForRegion = (region) => {
+      const targetModels = variantInputs.map((v, index) => {
+        const p = v.product || {};
+        const settlementKrw = Number(v.price || basePrice);
+        const calc = rshComputeRegionPrice(settlementKrw, Number(v.weight_g || maxWeight), region);
+        if (!calc) {
         throw new Error(`${region} ${v.sku || p.sku || index + 1} 가격 계산 실패: 정산가/무게/country_settings를 확인하세요.`);
       }
-      return {
-        tier_index: variationSpec.tierIndexForProduct(p, index),
-        global_model_sku: String(v.sku || p.sku || '').trim(),
-        model_sku: String(v.sku || p.sku || '').trim(),
-        original_price: calc.originalPrice,
-        global_original_price: settlementKrw,
-        stock: Number(v.stock || 0),
-        weight_g: Number(v.weight_g || 0),
-      };
-    });
+        return {
+          tier_index: variationSpec.tierIndexForProduct(p, index),
+          global_model_sku: String(v.sku || p.sku || '').trim(),
+          model_sku: String(v.sku || p.sku || '').trim(),
+          original_price: calc.originalPrice,
+          global_original_price: settlementKrw,
+          stock: Number(v.stock || 0),
+          weight_g: Number(v.weight_g || 0),
+        };
+      });
+      return rshNormalizeBrTargetModelPrices(targetModels, region);
+    };
 
     const targets = activeRegions.map((region) => {
       const imageIds = Array.isArray(_rsh.regionImageIds?.[region]) ? _rsh.regionImageIds[region].filter(Boolean) : [];

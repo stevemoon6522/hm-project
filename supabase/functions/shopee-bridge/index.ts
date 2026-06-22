@@ -74,7 +74,7 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 // v51: treat CBSC publish task "permission"/empty failed results as async-pending until published_list proves final state.
-const SOURCE_VERSION = 52;
+const SOURCE_VERSION = 53;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -2328,18 +2328,63 @@ async function finalizePublishOutcomeAfterSuccess(outcome: any, region: string, 
   return outcome;
 }
 
-async function retryTwMinimalPublish(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+function publishFailureText(...parts: any[]): string {
+  return parts
+    .map((part) => {
+      if (!part) return '';
+      if (typeof part === 'string') return part;
+      try {
+        return JSON.stringify(part);
+      } catch (_) {
+        return String(part);
+      }
+    })
+    .join(' ')
+    .toLowerCase();
+}
+
+function isVariationInvalidPublishFailure(...parts: any[]): boolean {
+  const text = publishFailureText(...parts);
+  return /variation/.test(text)
+    && (/invalid/.test(text) || /current category/.test(text) || /under current category/.test(text));
+}
+
+function isCrossuploadPermissionPublishFailure(...parts: any[]): boolean {
+  const text = publishFailureText(...parts);
+  return /crossupload\.api error:partner does not have permission to operate shop/.test(text)
+    || /partner does not have permission to operate shop/.test(text);
+}
+
+function shouldRetryMinimalPublish(...parts: any[]): boolean {
+  return isVariationInvalidPublishFailure(...parts) || isCrossuploadPermissionPublishFailure(...parts);
+}
+
+async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const output: R[] = new Array(items.length);
+  let nextIndex = 0;
+  const workerCount = Math.max(1, Math.min(Math.floor(limit || 1), items.length || 1));
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      output[index] = await worker(items[index], index);
+    }
+  }));
+  return output;
+}
+
+async function retryMinimalPublish(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, reason = 'minimal_publish_retry') {
   const region = String(target?.region || '').toUpperCase();
-  if (region !== 'TW') return null;
   const retryBody = { global_item_id: globalItemId, shop_id: shopId, shop_region: region, item: { logistic: logistics } };
   const retryCreate = await merchantApiCall(region, '/api/v2/global_product/create_publish_task', { method: 'POST', body: retryBody, account_key: accountKey });
   if (retryCreate.error || !retryCreate.response?.publish_task_id) {
-    return { ok: false, region, shop_id: shopId, stage: 'tw_minimal_publish_create', error: retryCreate.error || 'publish_task_id missing', message: retryCreate.message, raw_retry_create: retryCreate };
+    return { ok: false, region, shop_id: shopId, stage: 'minimal_publish_create', error: retryCreate.error || 'publish_task_id missing', message: retryCreate.message, raw_retry_create: retryCreate, minimal_retry_reason: reason };
   }
   const retryTaskId = Number(retryCreate.response.publish_task_id);
   let retryTask: any = null;
   let retryPollAttempts = 0;
-  for (let i = 0; i < 8; i += 1) {
+  const maxPoll = region === 'BR' ? 10 : 5;
+  for (let i = 0; i < maxPoll; i += 1) {
     await new Promise(s => setTimeout(s, 2000));
     const taskRes = await merchantApiCall(region, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id: retryTaskId }, account_key: accountKey });
     retryTask = taskRes;
@@ -2355,7 +2400,8 @@ async function retryTwMinimalPublish(globalItemId: number, shopId: number, targe
     const verified = await verifyPublishedSkuOutcome(region, shopId, retryTaskId, retryTask, body?.sku || target?.sku || '', accountKey);
     if (verified) retryOutcome = verified;
   }
-  retryOutcome.tw_minimal_item_retry = true;
+  retryOutcome.minimal_item_retry = true;
+  retryOutcome.minimal_retry_reason = reason;
   retryOutcome.raw_retry_create = retryCreate;
   retryOutcome.raw_retry_task = retryTask;
   retryOutcome.retry_poll_attempts = retryPollAttempts;
@@ -2366,6 +2412,14 @@ async function retryTwMinimalPublish(globalItemId: number, shopId: number, targe
       retryOutcome.price_sync = { ok: false, error: String(e?.message || e) };
     }
   }
+  return retryOutcome;
+}
+
+async function retryTwMinimalPublish(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const region = String(target?.region || '').toUpperCase();
+  if (region !== 'TW') return null;
+  const retryOutcome = await retryMinimalPublish(globalItemId, shopId, target, body, logistics, accountKey, 'tw_minimal_publish_retry');
+  if (retryOutcome) retryOutcome.tw_minimal_item_retry = true;
   return retryOutcome;
 }
 
@@ -3379,7 +3433,7 @@ Deno.serve(async (req) => {
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       const _isPreOrderRepublish = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
       const results: any[] = [];
-      await Promise.all(targetInputs.map(async (target: any) => {
+      await mapWithConcurrency(targetInputs, 2, async (target: any) => {
         const targetRegion = String(target.region || '').toUpperCase();
         try {
           const shop_id = target.shop_id ? Number(target.shop_id) : await getRegionShopId(targetRegion, reqAccountKey);
@@ -3393,7 +3447,15 @@ Deno.serve(async (req) => {
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: reqAccountKey });
           if (publishRes.error) {
-            results.push({ ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes });
+            const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
+            if (shouldRetryMinimalPublish(createFailure, publishRes)) {
+              const retryReason = isCrossuploadPermissionPublishFailure(createFailure, publishRes) ? 'crossupload_permission_create_retry' : 'variation_invalid_create_retry';
+              const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+              if (retryOutcome?.ok) results.push(await finalizePublishOutcomeAfterSuccess(retryOutcome, targetRegion, target, body, reqAccountKey));
+              else results.push({ ...createFailure, minimal_item_retry: retryOutcome });
+              return;
+            }
+            results.push(createFailure);
             return;
           }
           const publish_task_id = Number(publishRes.response?.publish_task_id);
@@ -3406,6 +3468,7 @@ Deno.serve(async (req) => {
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id }, account_key: reqAccountKey });
             task = taskRes;
             pollAttempts = i + 1;
+            if (isCrossuploadPermissionPublishFailure(taskRes)) break;
             if (!shouldContinuePublishPolling(taskRes)) break;
           }
           let outcome = parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
@@ -3434,13 +3497,19 @@ Deno.serve(async (req) => {
             const verified = await verifyPublishedSkuOutcome(targetRegion, shop_id, publish_task_id, task, body?.sku || target?.sku || '', reqAccountKey).catch(() => null);
             if (verified) outcome = verified;
           }
-          if (!outcome.ok && targetRegion === 'TW') {
+          if (!outcome.ok && shouldRetryMinimalPublish(outcome, task, publishRes)) {
+            const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
+            const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+            if (retryOutcome?.ok) outcome = retryOutcome;
+            else (outcome as any).minimal_item_retry = retryOutcome;
+          }
+          if (!outcome.ok && targetRegion === 'TW' && !(outcome as any).minimal_item_retry) {
             const retryOutcome = await retryTwMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'tw_minimal_publish_exception', error: String(e?.message || e) }));
             if (retryOutcome?.ok) outcome = retryOutcome;
             else (outcome as any).tw_minimal_item_retry = retryOutcome;
           }
           // BR-only: if still failing after fallback, re-issue create_publish_task once more
-          if (!outcome.ok && targetRegion === 'BR') {
+          if (!outcome.ok && targetRegion === 'BR' && !(outcome as any).minimal_item_retry) {
             try {
               const retryPublishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: reqAccountKey });
               if (retryPublishRes.response?.publish_task_id) {
@@ -3464,7 +3533,7 @@ Deno.serve(async (req) => {
         } catch (e: any) {
           results.push({ ok: false, region: targetRegion, stage: 'publish_exception', error: String(e?.message || e) });
         }
-      }));
+      });
       return jsonResp({ ok: true, account_key: reqAccountKey, global_item_id, results: results.map((row) => ({ account_key: reqAccountKey, ...row })) });
     }
     if (action === 'oauth_exchange') {
@@ -3911,7 +3980,7 @@ Deno.serve(async (req) => {
       }
 
       const results: any[] = [];
-      await Promise.all(targetInputs.map(async (target: any) => {
+      await mapWithConcurrency(targetInputs, 2, async (target: any) => {
         const targetRegion = String(target.region || '').toUpperCase();
         try {
           // Prefer caller-provided shop_id; only fall back to region default when omitted.
@@ -3946,7 +4015,15 @@ Deno.serve(async (req) => {
                 return;
               }
             }
-            results.push({ ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes });
+            const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
+            if (shouldRetryMinimalPublish(createFailure, publishRes)) {
+              const retryReason = isCrossuploadPermissionPublishFailure(createFailure, publishRes) ? 'crossupload_permission_create_retry' : 'variation_invalid_create_retry';
+              const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+              if (retryOutcome?.ok) results.push(await finalizePublishOutcomeAfterSuccess(retryOutcome, targetRegion, target, body, accountKey));
+              else results.push({ ...createFailure, minimal_item_retry: retryOutcome });
+              return;
+            }
+            results.push(createFailure);
             return;
           }
           const publish_task_id = Number(publishRes.response?.publish_task_id);
@@ -3960,6 +4037,7 @@ Deno.serve(async (req) => {
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id }, account_key: accountKey });
             task = taskRes;
             pollAttempts = i + 1;
+            if (isCrossuploadPermissionPublishFailure(taskRes)) break;
             if (!shouldContinuePublishPolling(taskRes)) break;
           }
           console.log(`[register_cbsc] region=${targetRegion} publish_task_id=${publish_task_id} poll_attempts=${pollAttempts} final_task=${JSON.stringify(task).slice(0, 1200)}`);
@@ -4004,13 +4082,19 @@ Deno.serve(async (req) => {
             const verified = await verifyPublishedSkuOutcome(targetRegion, shop_id, publish_task_id, task, body?.sku || target?.sku || '', accountKey).catch(() => null);
             if (verified) outcome = verified;
           }
-          if (!outcome.ok && targetRegion === 'TW') {
+          if (!outcome.ok && shouldRetryMinimalPublish(outcome, task, publishRes)) {
+            const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
+            const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+            if (retryOutcome?.ok) outcome = retryOutcome;
+            else (outcome as any).minimal_item_retry = retryOutcome;
+          }
+          if (!outcome.ok && targetRegion === 'TW' && !(outcome as any).minimal_item_retry) {
             const retryOutcome = await retryTwMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'tw_minimal_publish_exception', error: String(e?.message || e) }));
             if (retryOutcome?.ok) outcome = retryOutcome;
             else (outcome as any).tw_minimal_item_retry = retryOutcome;
           }
           // BR-only: if still failing after fallback retries, re-issue create_publish_task once more
-          if (!outcome.ok && targetRegion === 'BR') {
+          if (!outcome.ok && targetRegion === 'BR' && !(outcome as any).minimal_item_retry) {
             try {
               stage_logs.push('BR retry: re-creating publish_task');
               const retryPublishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: accountKey });
@@ -4032,7 +4116,7 @@ Deno.serve(async (req) => {
         } catch (e: any) {
           results.push({ ok: false, region: target.region || r, stage: 'publish_exception', error: String(e?.message || e) });
         }
-      }));
+      });
       return jsonResp({ ok: true, account_key: accountKey, region: r, global_item_id, stage_logs, results: results.map((row) => ({ account_key: accountKey, ...row })), publishable_shops, publishable_status });
       }); // end withPublishRequestId for register_cbsc
     }

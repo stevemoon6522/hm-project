@@ -153,10 +153,10 @@ assert(
 );
 
 assert(
-  registerCbscBlock.includes('await Promise.all(targetInputs.map(async (target: any) => {')
+  registerCbscBlock.includes('await mapWithConcurrency(targetInputs, 2, async (target: any) => {')
     && registerCbscBlock.includes('/api/v2/global_product/create_publish_task')
     && registerCbscBlock.includes('/api/v2/global_product/get_publish_task_result'),
-  'register_cbsc must publish target regions concurrently and still poll publish task results',
+  'register_cbsc must publish target regions with bounded concurrency and still poll publish task results',
 );
 
 console.log('v2 Shopee register price flow checks passed');

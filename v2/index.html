@@ -4696,14 +4696,6 @@
             </select>
             <div id="rsh-category-hint" style="font-size:11px;color:var(--muted);margin-top:3px;display:none;">변경 사항은 Register 클릭 시 저장됩니다.</div>
           </div>
-          <div class="field span-2">
-            <label for="rsh-sourcing-price-krw">도매가 KRW</label>
-            <input id="rsh-sourcing-price-krw" type="number" min="0" step="1">
-          </div>
-          <div class="field span-2">
-            <label for="rsh-cost-krw">정산가 KRW</label>
-            <input id="rsh-cost-krw" type="number" min="1" step="1">
-          </div>
           <div class="field span-2" id="rsh-stock-field">
             <label for="rsh-stock">Stock</label>
             <input id="rsh-stock" type="number" min="1" step="1">
@@ -4794,25 +4786,27 @@
             <small>지역별 pre-order/DTS는 기존 V2 입력값 유지</small>
           </div>
           <div class="rsh-shipping-grid">
-            <div class="field">
-              <label for="rsh-ship-weight-kg">Weight (kg)</label>
-              <input id="rsh-ship-weight-kg" type="number" min="0.01" step="0.01">
-            </div>
-            <div class="field">
-              <label for="rsh-package-width">Width (cm)</label>
-              <input id="rsh-package-width" type="number" min="0" step="0.1" placeholder="20">
-            </div>
-            <div class="field">
-              <label for="rsh-package-length">Length (cm)</label>
-              <input id="rsh-package-length" type="number" min="0" step="0.1" placeholder="15">
-            </div>
-            <div class="field">
-              <label for="rsh-package-height">Height (cm)</label>
-              <input id="rsh-package-height" type="number" min="0" step="0.1" placeholder="5">
+            <div id="rsh-shipping-package-fields" style="display:contents;">
+              <div class="field">
+                <label for="rsh-ship-weight-kg">Weight (kg)</label>
+                <input id="rsh-ship-weight-kg" type="number" min="0.01" step="0.01">
+              </div>
+              <div class="field">
+                <label for="rsh-package-width">Width (cm)</label>
+                <input id="rsh-package-width" type="number" min="0" step="0.1" placeholder="20">
+              </div>
+              <div class="field">
+                <label for="rsh-package-length">Length (cm)</label>
+                <input id="rsh-package-length" type="number" min="0" step="0.1" placeholder="15">
+              </div>
+              <div class="field">
+                <label for="rsh-package-height">Height (cm)</label>
+                <input id="rsh-package-height" type="number" min="0" step="0.1" placeholder="5">
+              </div>
             </div>
             <div class="field">
               <label>Different weight</label>
-              <div class="rsh-readbox">OFF</div>
+              <div id="rsh-different-weight" class="rsh-readbox">OFF</div>
             </div>
           </div>
           <div style="font-weight:700;font-size:13px;margin-top:2px;">Region Pre-order / Days-to-Ship</div>
@@ -9983,12 +9977,12 @@ LEGACY END -->
     const iconFor = (status) => {
       if (status === 'ok') return '✓';
       if (status === 'running') return '...';
-      if (status === 'error') return '!';
+      if (status === 'error' || status === 'failed') return '!';
       return '-';
     };
     const colorFor = (status) => {
       if (status === 'ok') return 'var(--green)';
-      if (status === 'error') return 'var(--red)';
+      if (status === 'error' || status === 'failed') return 'var(--red)';
       return 'var(--muted)';
     };
     return `<div class="panel" style="margin-top:8px;">
@@ -12007,7 +12001,7 @@ LEGACY END -->
         ? '<span style="color:#000;font-weight:600;">✕ 차단됨</span>'
         : (d.status === 'listed' || d.status === 'mapped')
         ? '<span style="color:#16a34a;">● 등록</span>'
-        : d.status === 'error' || d.status === 'rejected'
+        : d.status === 'error' || d.status === 'failed' || d.status === 'rejected'
         ? '<span style="color:#dc2626;">■ 오류</span>'
         : d.status === 'pending' || d.status === 'draft'
         ? '<span style="color:#f59e0b;">▲ ' + text(d.status) + '</span>'
@@ -13413,8 +13407,8 @@ LEGACY END -->
     return info.error || info.message || info.stage || 'No item_id returned.';
   }
 
-  async function fetchShopModels(region, itemId) {
-    const accountKey = sdSelectedShopeeAccountKey();
+  async function fetchShopModels(region, itemId, accountKeyOverride) {
+    const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     const statuses = ['UNLIST', 'NORMAL'];
     for (const status of statuses) {
       const url = `${SHOPEE_BRIDGE}/list_items?region=${encodeURIComponent(region)}&account_key=${encodeURIComponent(accountKey)}&item_status=${status}&max_items=1000`;
@@ -13431,9 +13425,9 @@ LEGACY END -->
     return [];
   }
 
-  async function fetchGlobalModels(globalItemId) {
+  async function fetchGlobalModels(globalItemId, accountKeyOverride) {
     if (!globalItemId) return [];
-    const accountKey = sdSelectedShopeeAccountKey();
+    const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     const url = `${SHOPEE_BRIDGE}/global_model_list?region=SG&account_key=${encodeURIComponent(accountKey)}&global_item_id=${encodeURIComponent(globalItemId)}`;
     const json = await fetch(url, { headers: AUTH_HEADERS }).then((r) => r.json()).catch(() => null);
     const list = json?.result?.response?.global_model || json?.result?.response?.model || [];
@@ -13444,7 +13438,7 @@ LEGACY END -->
     })) : [];
   }
 
-  async function upsertListingWithFallback(productId, region, fields) {
+  async function upsertListingWithFallback(productId, region, fields, accountKeyOverride) {
     const attempts = [
       fields,
       Object.fromEntries(Object.entries(fields).filter(([key]) => key !== 'shop_id')),
@@ -13452,7 +13446,7 @@ LEGACY END -->
     ];
     let lastError = null;
     for (const attempt of attempts) {
-      const payload = { product_id: productId, account_key: sdSelectedShopeeAccountKey(), region, ...attempt };
+      const payload = { product_id: productId, account_key: sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey()), region, ...attempt };
       const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: SHOPEE_LISTING_CONFLICT });
       if (!error) return { ok: true, saved: attempt };
       lastError = error;
@@ -13462,9 +13456,9 @@ LEGACY END -->
     return { ok: false, error: lastError };
   }
 
-  function skuToProductMap() {
+  function skuToProductMap(extraProducts = []) {
     const map = new Map();
-    state.products.forEach((p) => {
+    [...(state.products || []), ...(extraProducts || [])].forEach((p) => {
       if (p.sku) map.set(String(p.sku).trim(), p);
     });
     return map;
@@ -13474,43 +13468,57 @@ LEGACY END -->
     const globalItemId = regJson.global_item_id || null;
     const variantModels = payload.variation?.model || [];
     const hasVariants = variantModels.length > 0;
-    const productsBySku = skuToProductMap();
-    const globalModels = hasVariants ? await fetchGlobalModels(globalItemId) : [];
+    const accountKey = sdNormalizeShopeeAccountKey(payload.account_key || sdSelectedShopeeAccountKey());
+    const productsBySku = skuToProductMap(_rsh.products || []);
+    const globalModels = hasVariants ? await fetchGlobalModels(globalItemId, accountKey) : [];
     const globalBySku = new Map(globalModels.map((m) => [String(m.sku || '').trim(), m]));
     const rows = [];
+    const requestedRegions = Array.from(new Set([
+      ...((payload.targets || []).map((target) => String(target.region || '').toUpperCase()).filter(Boolean)),
+      ...((regJson.results || []).map((info) => String(info.region || '').toUpperCase()).filter(Boolean)),
+      String(payload.region || '').toUpperCase(),
+    ].filter(Boolean)));
+    if (!requestedRegions.length) requestedRegions.push('SG');
+    const resultByRegion = new Map();
+    (regJson.results || []).forEach((info) => {
+      const region = String(info.region || payload.region || 'SG').toUpperCase();
+      if (!resultByRegion.has(region)) resultByRegion.set(region, info);
+    });
+    const missingResultRows = requestedRegions
+      .filter((region) => !resultByRegion.has(region))
+      .map((region) => ({ region, ok: false, error: 'no result from bridge', message: 'no result from bridge' }));
 
-    for (const info of (regJson.results || [])) {
-      const region = info.region || payload.region || 'SG';
-      if (!info.item_id) {
-        rows.push({ region, shop: info.shop_id || '', item: '', mapping: 'skipped', message: resultMessage(info), ok: false });
-        continue;
-      }
+    for (const info of [...resultByRegion.values(), ...missingResultRows]) {
+      const region = String(info.region || payload.region || 'SG').toUpperCase();
+      const hasItemId = !!info.item_id;
+      const listingStatus = hasItemId && info.ok !== false ? 'mapped' : 'failed';
+      const lastError = listingStatus === 'mapped' ? null : resultMessage(info);
 
       if (!hasVariants) {
-        const listingStatus = info.ok === false ? 'error' : 'mapped';
         const fields = {
-          shop_item_id: info.item_id,
+          shop_item_id: hasItemId ? info.item_id : null,
           shop_model_id: null,
           shop_id: info.shop_id || null,
           global_item_id: globalItemId,
           global_model_id: null,
           status: listingStatus,
-          last_error: listingStatus === 'error' ? resultMessage(info) : null,
-          published_at: new Date().toISOString(),
+          last_error: lastError,
+          published_at: listingStatus === 'mapped' ? new Date().toISOString() : null,
+          last_synced_at: new Date().toISOString(),
         };
-        const saved = await upsertListingWithFallback(state.currentProduct.id, region, fields);
+        const saved = await upsertListingWithFallback(state.currentProduct.id, region, fields, accountKey);
         rows.push({
           region,
           shop: info.shop_id || '',
-          item: info.item_id,
+          item: hasItemId ? info.item_id : '',
           mapping: saved.ok ? 'saved' : 'failed',
-          message: saved.ok ? resultMessage(info) : saved.error?.message || 'DB upsert failed',
-          ok: saved.ok,
+          message: saved.ok ? (lastError || resultMessage(info)) : saved.error?.message || 'DB upsert failed',
+          ok: saved.ok && listingStatus === 'mapped',
         });
         continue;
       }
 
-      const shopModels = await fetchShopModels(region, info.item_id);
+      const shopModels = hasItemId ? await fetchShopModels(region, info.item_id, accountKey) : [];
       const shopBySku = new Map(shopModels.map((m) => [String(m.sku || '').trim(), m]));
       let savedCount = 0;
       const failures = [];
@@ -13521,42 +13529,70 @@ LEGACY END -->
         const shopModel = shopBySku.get(sku) || {};
         const globalModel = globalBySku.get(sku) || {};
         const saved = await upsertListingWithFallback(product.id, region, {
-          shop_item_id: info.item_id,
+          shop_item_id: hasItemId ? info.item_id : null,
           shop_model_id: shopModel.model_id || null,
           shop_id: info.shop_id || null,
           global_item_id: globalItemId,
           global_model_id: globalModel.global_model_id || null,
-          status: info.ok === false ? 'error' : 'mapped',
-          last_error: info.ok === false ? resultMessage(info) : null,
-          published_at: new Date().toISOString(),
-        });
+          status: listingStatus,
+          last_error: lastError,
+          published_at: listingStatus === 'mapped' ? new Date().toISOString() : null,
+          last_synced_at: new Date().toISOString(),
+        }, accountKey);
         if (saved.ok) savedCount += 1;
         else failures.push(`${sku}: ${saved.error?.message || 'DB upsert failed'}`);
       }
       if (savedCount === 0 && !failures.length) {
         const saved = await upsertListingWithFallback(state.currentProduct.id, region, {
-          shop_item_id: info.item_id,
+          shop_item_id: hasItemId ? info.item_id : null,
           shop_model_id: null,
           shop_id: info.shop_id || null,
           global_item_id: globalItemId,
           global_model_id: null,
-          status: info.ok === false ? 'error' : 'mapped',
-          last_error: info.ok === false ? resultMessage(info) : null,
-          published_at: new Date().toISOString(),
-        });
+          status: listingStatus,
+          last_error: lastError,
+          published_at: listingStatus === 'mapped' ? new Date().toISOString() : null,
+          last_synced_at: new Date().toISOString(),
+        }, accountKey);
         savedCount = saved.ok ? 1 : 0;
         if (!saved.ok) failures.push(saved.error?.message || 'DB upsert failed');
       }
       rows.push({
         region,
         shop: info.shop_id || '',
-        item: info.item_id,
+        item: hasItemId ? info.item_id : '',
         mapping: failures.length ? `${savedCount} saved, ${failures.length} failed` : `${savedCount} saved`,
-        message: failures.length ? failures.join('; ') : resultMessage(info),
-        ok: failures.length === 0 && savedCount > 0,
+        message: failures.length ? failures.join('; ') : (lastError || resultMessage(info)),
+        ok: failures.length === 0 && savedCount > 0 && listingStatus === 'mapped',
       });
     }
     return rows;
+  }
+
+  function rshPublishStateFromMappingRows(mappingRows, expectedRegions = []) {
+    const wanted = new Set((expectedRegions || []).map((region) => String(region || '').toUpperCase()).filter(Boolean));
+    const rows = (mappingRows || []).filter((row) => {
+      const region = String(row.region || '').toUpperCase();
+      return region && (!wanted.size || wanted.has(region));
+    });
+    const allSucceeded = rows.length > 0 && rows.every((row) => row.ok);
+    const anySucceeded = rows.some((row) => row.ok);
+    if (wanted.size && rows.length < wanted.size) return anySucceeded ? 'partial_published' : 'publish_failed';
+    if (allSucceeded) return 'published';
+    return anySucceeded ? 'partial_published' : 'publish_failed';
+  }
+
+  async function rshApplyShopeePublishState(productIds, globalItemId, mappingRows, expectedRegions, accountKeyOverride) {
+    const ids = (productIds || []).filter(Boolean);
+    if (!ids.length) return null;
+    const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
+    if (accountKey !== SHOPEE_DEFAULT_ACCOUNT_KEY) return null;
+    const publishState = rshPublishStateFromMappingRows(mappingRows, expectedRegions);
+    const update = { shopee_publish_state: publishState };
+    if (globalItemId && publishState !== 'publish_failed') update.shopee_item_id = globalItemId;
+    const { error } = await db.from('products').update(update).in('id', ids);
+    if (error) throw error;
+    return publishState;
   }
 
   function renderResults(rows) {
@@ -16187,6 +16223,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       : { brand_id: 0, original_brand_name: brandName };
   }
 
+  function rshBrandForShopeePublish(brand, targetRegions = []) {
+    const regions = new Set((targetRegions || []).map((region) => String(region || '').toUpperCase()).filter(Boolean));
+    // BR crossupload can reject category 100740 global items when a brand-specific
+    // merchant brand is attached. NoBrand matches the successful TXT registration
+    // shape and keeps one global item publishable across all target shops.
+    if (regions.has('BR') && Number(brand?.brand_id || 0) > 0) {
+      return { brand_id: 0, original_brand_name: 'No Brand' };
+    }
+    return brand && typeof brand === 'object'
+      ? brand
+      : { brand_id: 0, original_brand_name: 'No Brand' };
+  }
+
   function rshWireBrandSearch() {
     const search = document.getElementById('rsh-brand-search');
     const select = document.getElementById('rsh-attr-brand-select');
@@ -16837,7 +16886,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const variantErrors = _rsh.mode === 'group' ? rshVariantValidationErrors(rows) : [];
     const hasCost = _rsh.mode === 'group'
       ? variantInputs.every((v) => Number(v.price || 0) > 0)
-      : Number(document.getElementById('rsh-cost-krw')?.value) > 0;
+      : Number(_rsh.master?.cost_krw || rows[0]?.cost_krw || 0) > 0;
     const hasStock = _rsh.mode === 'group'
       ? variantInputs.every((v) => Number(v.stock || 0) > 0)
       : rshReadSingleStock() > 0;
@@ -16885,6 +16934,31 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   function rshWeightSummary(rows) {
     return `${plNumberRange(rows || [], 'weight_g')} g`;
+  }
+
+  function rshGroupHasOptionWeights(products = _rsh.products) {
+    const rows = rshSortedProducts(products || []);
+    return _rsh.mode === 'group' && rows.length > 1 && rows.every((row) => Number(row.weight_g || 0) > 0);
+  }
+
+  function rshUpdateDifferentWeightShipping(products = _rsh.products) {
+    const optionWeights = rshGroupHasOptionWeights(products);
+    const packageFields = document.getElementById('rsh-shipping-package-fields');
+    const differentWeight = document.getElementById('rsh-different-weight');
+    if (packageFields) packageFields.style.display = optionWeights ? 'none' : 'contents';
+    if (differentWeight) {
+      differentWeight.textContent = optionWeights ? 'ON' : 'OFF';
+      differentWeight.style.color = optionWeights ? 'var(--green)' : '';
+      differentWeight.title = optionWeights
+        ? 'Per-option weights will be sent to Shopee models.'
+        : 'A single product/package weight will be used.';
+    }
+    ['rsh-ship-weight-kg', 'rsh-package-width', 'rsh-package-length', 'rsh-package-height'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.disabled = optionWeights;
+      if (optionWeights) el.value = '';
+    });
   }
 
   function rshOptionName(product) {
@@ -17142,6 +17216,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (_rsh.mode !== 'group' || rows.length <= 1) {
       section.style.display = 'none';
       body.innerHTML = '';
+      rshUpdateDifferentWeightShipping(rows);
       return;
     }
     const tierNameInput = document.getElementById('rsh-variation-name');
@@ -17196,6 +17271,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       });
     });
     rshRefreshAllVariantRegionPrices();
+    rshUpdateDifferentWeightShipping(rows);
     section.style.display = '';
   }
 
@@ -18782,12 +18858,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     await rshEnsureCountrySettings();
 
-    const sourcingEl = document.getElementById('rsh-sourcing-price-krw');
-    const costEl = document.getElementById('rsh-cost-krw');
     const stockField = document.getElementById('rsh-stock-field');
     const stockEl = document.getElementById('rsh-stock');
-    if (sourcingEl) sourcingEl.value = String(rshDefaultSourcingPrice(master) || '');
-    if (costEl) costEl.value = String(rshDefaultSettlementPrice(master) || '');
     if (stockField) stockField.style.display = _rsh.mode === 'group' ? 'none' : '';
     if (stockEl) stockEl.value = _rsh.mode === 'group' ? '' : String(rshDefaultVariantStock(master));
 
@@ -18817,13 +18889,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       };
     }
 
-    if (sourcingEl) {
-      sourcingEl.addEventListener('input', () => {
-        if (costEl) costEl.value = String(rshSettlementFromSourcing(sourcingEl.value) || '');
-        rshCheckSubmitEnabled();
-      });
-    }
-    if (costEl) costEl.addEventListener('input', rshCheckSubmitEnabled);
     if (stockEl) stockEl.addEventListener('input', rshCheckSubmitEnabled);
 
     // Description
@@ -18864,6 +18929,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const el = document.getElementById(`rsh-package-${key}`);
       if (el && !el.value) el.placeholder = String(val);
     });
+    rshUpdateDifferentWeightShipping(_rsh.products);
 
     // Image section
     const imgSection = $rsh('image-section');
@@ -19260,9 +19326,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const variantInputs = rshReadVariantInputs(products);
     const basePrice = variantInputs.find((v) => Number(v.price || 0) > 0)?.price
       || productCosts[0]
-      || Number(document.getElementById('rsh-cost-krw')?.value)
       || Number(master.cost_krw || 0);
-    const weightKg = Number(document.getElementById('rsh-ship-weight-kg')?.value || 0);
+    const hasOptionWeights = rshGroupHasOptionWeights(products);
+    const weightKg = hasOptionWeights ? 0 : Number(document.getElementById('rsh-ship-weight-kg')?.value || 0);
     const maxWeight = weightKg > 0
       ? Math.round(weightKg * 1000)
       : (productWeights.length ? Math.max(...productWeights) : Number(master.weight_g || 100));
@@ -19273,7 +19339,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const globalImageIds = Array.isArray(_rsh.regionImageIds?.SG)
       ? _rsh.regionImageIds.SG.filter(Boolean)
       : [imageId].concat(_rsh.cachedExtraIds || master.shopee_extra_image_ids || []).filter(Boolean);
-    const brandObj = rshReadBrandObject();
+    const brandObj = rshBrandForShopeePublish(rshReadBrandObject(), activeRegions);
     const variationSpec = rshBuildVariationSpec(products);
     const tierVariation = variationSpec.tierVariation;
 
@@ -19291,9 +19357,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       };
     });
     const totalStock = model.reduce((sum, m) => sum + (Number(m.stock) || 0), 0);
-    const packageLength = Number(document.getElementById('rsh-package-length')?.value || 15);
-    const packageWidth = Number(document.getElementById('rsh-package-width')?.value || 20);
-    const packageHeight = Number(document.getElementById('rsh-package-height')?.value || 5);
+    const packageLength = hasOptionWeights ? 15 : Number(document.getElementById('rsh-package-length')?.value || 15);
+    const packageWidth = hasOptionWeights ? 20 : Number(document.getElementById('rsh-package-width')?.value || 20);
+    const packageHeight = hasOptionWeights ? 5 : Number(document.getElementById('rsh-package-height')?.value || 5);
 
     const modelForRegion = (region) => variantInputs.map((v, index) => {
       const p = v.product || {};
@@ -19416,11 +19482,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let mappingRows = [];
     try {
       mappingRows = await persistMappings(json, payload);
-      if (json.global_item_id) {
-        await db.from('products')
-          .update({ shopee_item_id: json.global_item_id, shopee_publish_state: 'published' })
-          .in('id', products.map((p) => p.id));
-      }
+      await rshApplyShopeePublishState(products.map((p) => p.id), json.global_item_id, mappingRows, activeRegions, accountKey);
     } catch (persistErr) {
       console.warn('[rsh] group mapping persistence failed:', persistErr);
       if (errorEl) {
@@ -19731,11 +19793,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let mappingRows = [];
     try {
       mappingRows = await persistMappings(json, payload);
-      if (accountKey === SHOPEE_DEFAULT_ACCOUNT_KEY && json.global_item_id) {
-        await db.from('products')
-          .update({ shopee_item_id: json.global_item_id, shopee_publish_state: 'published' })
-          .in('id', products.map((p) => p.id));
-      }
+      await rshApplyShopeePublishState(products.map((p) => p.id), json.global_item_id, mappingRows, activeRegions, accountKey);
     } finally {
       state.currentProduct = previousCurrent;
     }
@@ -19779,8 +19837,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const dtsValues = rshReadDts();
     const lifecycle = _rsh.master.lifecycle_state || 'ready_stock';
     const shopeeProductName = rshCanonicalShopeeProductName(lifecycle);
-    const sourcingOverride = Number(document.getElementById('rsh-sourcing-price-krw')?.value) || Number(_rsh.master.sourcing_price || 0);
-    const costOverride = Number(document.getElementById('rsh-cost-krw')?.value) || Number(_rsh.master.cost_krw);
+    const sourcingOverride = Number(_rsh.master.sourcing_price || 0);
+    const costOverride = Number(_rsh.master.cost_krw || 0);
     const stockOverride = _rsh.mode === 'group' ? null : rshReadSingleStock();
     if (_rsh.mode !== 'group' && stockOverride <= 0) {
       _rsh.publishInFlight = false;
@@ -20004,8 +20062,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const shopeeProductName = rshCanonicalShopeeProductName(lifecycle);
 
     // Read sourcing/settlement overrides from the form
-    const sourcingOverride = Number(document.getElementById('rsh-sourcing-price-krw')?.value) || Number(_rsh.master.sourcing_price || 0);
-    const costOverride = Number(document.getElementById('rsh-cost-krw')?.value) || Number(_rsh.master.cost_krw);
+    const sourcingOverride = Number(_rsh.master.sourcing_price || 0);
+    const costOverride = Number(_rsh.master.cost_krw || 0);
     const stockOverride = _rsh.mode === 'group' ? null : rshReadSingleStock();
     if (_rsh.mode !== 'group' && stockOverride <= 0) {
       _rsh.publishInFlight = false;
@@ -26309,7 +26367,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const status = row?.coverage_status || 'missing';
     const count = Number(row?.listed_count || row?.total_count || 0);
     const label = status === 'mapped' && count > 1 ? 'mapped ' + count : status;
-    const glyph = status === 'mapped' ? '●' : status === 'pending' ? '◐' : status === 'error' ? '!' : '○';
+    const glyph = status === 'mapped' ? '●' : status === 'pending' ? '◐' : (status === 'error' || status === 'failed') ? '!' : '○';
     const detail = coverageDetail(row);
     return '<td class="coverage-cell">'
       + '<span class="coverage-chip ' + text(status) + '">' + glyph + ' ' + text(label) + '</span>'
@@ -30537,6 +30595,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return b64;
     }
 
+    async function mrMapWithConcurrency(items, limit, worker) {
+      const out = new Array(items.length);
+      let cursor = 0;
+      const workers = Array.from({ length: Math.max(1, Math.min(limit || 1, items.length || 1)) }, async () => {
+        while (cursor < items.length) {
+          const index = cursor++;
+          out[index] = await worker(items[index], index);
+        }
+      });
+      await Promise.all(workers);
+      return out;
+    }
+
     // ── mrUploadRegionImages ──────────────────────────────────────────────────
     // Upload one image URL to each of the 6 CBSC regions.
     // isMainImage=true → composite with shop-overlay-layer.png before upload.
@@ -30573,7 +30644,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       const regionImageMap = {};
       let done = 0;
-      for (const r of regions) {
+      await mrMapWithConcurrency(regions, 3, async (r) => {
         const count = r === 'BR' ? 2 : 1;
         const ids = [];
         let failed = false;
@@ -30598,7 +30669,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         regionImageMap[r] = failed ? null : ids;
         done++;
         if (typeof onProgress === 'function') onProgress(done, regions.length, r);
-      }
+      });
       return regionImageMap;
     }
 
@@ -30923,29 +30994,23 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 mrRenderPreviewCards();
 
                 let hardFail = false;
-                for (let oi = 0; oi < activeRows.length; oi++) {
-                  const optMainUrl = (activeRows[oi]._main_image || '').trim();
+                const uploadedOptionMaps = await mrMapWithConcurrency(activeRows, 2, async (row, oi) => {
+                  const optMainUrl = (row._main_image || '').trim();
                   if (!optMainUrl) {
-                    activeRows.forEach(r => { r.status = 'failed'; r.error = `옵션 ${oi + 1} 메인 이미지가 없습니다.`; });
-                    mrRenderPreviewCards();
-                    hardFail = true;
-                    break;
+                    throw new Error(`옵션 ${oi + 1} 메인 이미지가 없습니다.`);
                   }
-                  let rMap;
-                  try {
-                    rMap = await mrUploadRegionImages(optMainUrl, (done, total, region) => {
-                      uploadStep++;
-                      activeRows.forEach(r => { r.shopeePublishNote = `이미지 업로드 중... ${uploadStep}/${totalUploadSteps} (옵션 ${oi + 1} ${region})`; });
-                      mrRenderPreviewCards();
-                    }, true /* isMainImage — composite with overlay layer */);
-                  } catch (imgErr) {
-                    activeRows.forEach(r => { r.status = 'failed'; r.error = `이미지 업로드 실패 (옵션 ${oi + 1}): ${imgErr.message}`; });
+                  return await mrUploadRegionImages(optMainUrl, (done, total, region) => {
+                    uploadStep++;
+                    activeRows.forEach(r => { r.shopeePublishNote = `이미지 업로드 중... ${uploadStep}/${totalUploadSteps} (옵션 ${oi + 1} ${region})`; });
                     mrRenderPreviewCards();
-                    hardFail = true;
-                    break;
-                  }
-                  optionRegionMaps.push(rMap);
-                }
+                  }, true /* isMainImage — composite with overlay layer */);
+                }).catch((imgErr) => {
+                  activeRows.forEach(r => { r.status = 'failed'; r.error = `이미지 업로드 실패: ${imgErr.message || imgErr}`; });
+                  mrRenderPreviewCards();
+                  hardFail = true;
+                  return [];
+                });
+                optionRegionMaps.push(...uploadedOptionMaps);
                 if (hardFail) continue;
 
                 // Collect skipped regions (failed for all options in that region)
@@ -30970,15 +31035,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
               // 4b. Upload extra images for first option (product-level image_id_list supplement)
               const firstOptionExtras = (activeRows[0]._extra_images || []).filter(u => (u || '').trim());
-              const extraRegionMaps = [];
-              for (const extraUrl of firstOptionExtras) {
+              const extraRegionMaps = await mrMapWithConcurrency(firstOptionExtras, 2, async (extraUrl) => {
                 try {
-                  const em = await mrUploadRegionImages(extraUrl, null, false);
-                  extraRegionMaps.push(em);
+                  return await mrUploadRegionImages(extraUrl, null, false);
                 } catch (_) {
-                  extraRegionMaps.push(null);
+                  return null;
                 }
-              }
+              });
 
               // Build per-region image_id_list: first option main + valid extras
               const firstOptMap = optionRegionMaps[0] || {};
@@ -31165,26 +31228,32 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               if (cbscJson.ok && cbscGlobalId) {
                 const globalItemId = cbscGlobalId;
 
-                // 6. Update products.shopee_item_id = global_item_id for all rows in group
-                await db.from('products')
-                  .update({ shopee_item_id: globalItemId, shopee_publish_state: 'published' })
-                  .in('sku', skusInGroup);
-
-                // 7. Insert product_shopee_listings per product per region
+                // 6. Insert product_shopee_listings per product per requested region
                 const resultsArr = Array.isArray(cbscJson.results) ? cbscJson.results : [];
+                const resultByRegion = new Map(resultsArr.map((res) => [String(res.region || '').toUpperCase(), res]));
+                const normalizedResults = publishRegions.map((rgn) =>
+                  resultByRegion.get(rgn) || { region: rgn, ok: false, error: 'no result from bridge', message: 'no result from bridge' }
+                );
                 const listingUpserts = [];
+                const nowIso = new Date().toISOString();
                 for (const row of activeRows) {
-                  for (const res of resultsArr) {
+                  for (const res of normalizedResults) {
                     const rgn = String(res.region || '').toUpperCase();
+                    const mapped = !!(res.ok && res.item_id);
                     listingUpserts.push({
                       product_id:      row.product_id,
                       account_key:     accountKey,
                       region:          rgn,
-                      shop_item_id:    res.item_id ? Number(res.item_id) : null,
-                      shopee_item_id:  globalItemId,
-                      publish_status:  res.ok ? 'published' : 'publish_failed',
-                      last_error:      res.ok ? null : (res.error || res.message || null),
-                      last_synced_at:  new Date().toISOString(),
+                      shop_id:         res.shop_id ? Number(res.shop_id) : null,
+                      shop_item_id:    mapped ? Number(res.item_id) : null,
+                      shop_model_id:   null,
+                      global_item_id:  globalItemId,
+                      global_model_id: null,
+                      status:          mapped ? 'mapped' : 'failed',
+                      last_error:      mapped ? null : (res.error || res.message || 'publish failed'),
+                      published_at:    mapped ? nowIso : null,
+                      last_synced_at:  nowIso,
+                      updated_at:      nowIso,
                     });
                   }
                 }
@@ -31193,17 +31262,28 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                   if (listErr) console.warn('[mrPromoteAll] product_shopee_listings upsert error:', listErr);
                 }
 
-                // 8. Check for per-region partial failures
-                const failedRegions = resultsArr.filter(r => !r.ok).map(r => r.region);
+                // 7. Update products from actual per-region results.
+                const failedRegions = normalizedResults.filter(r => !r.ok || !r.item_id).map(r => r.region);
+                const mappedRegions = normalizedResults.filter(r => r.ok && r.item_id).map(r => r.region);
+                const publishState = failedRegions.length === 0 && normalizedResults.length > 0
+                  ? 'published'
+                  : (mappedRegions.length > 0 ? 'partial_published' : 'publish_failed');
+                const productUpdate = { shopee_publish_state: publishState };
+                if (mappedRegions.length > 0) productUpdate.shopee_item_id = globalItemId;
+                await db.from('products')
+                  .update(productUpdate)
+                  .in('sku', skusInGroup);
                 if (failedRegions.length > 0) {
-                  await db.from('products')
-                    .update({ shopee_publish_state: 'partial_published' })
-                    .in('sku', skusInGroup);
                   activeRows.forEach(r => {
-                    r.shopeePublishState = 'partial_published';
+                    r.shopeePublishState = publishState;
                     r.shopeePublishNote  = `실패 리전: ${failedRegions.join(', ')}`;
                   });
-                  showToast(`Shopee 발행 일부 실패: ${failedRegions.join(', ')} — 나머지 리전은 성공했습니다.`, 'warn');
+                  showToast(
+                    mappedRegions.length > 0
+                      ? `Shopee 발행 일부 실패: ${failedRegions.join(', ')} — 나머지 리전은 성공했습니다.`
+                      : `Shopee 발행 실패: ${failedRegions.join(', ')}`,
+                    mappedRegions.length > 0 ? 'warn' : 'err'
+                  );
                 } else {
                   activeRows.forEach(r => { r.shopeePublishState = 'published'; });
                   showToast(`Shopee 발행 완료 (global_item_id: ${globalItemId}, ${resultsArr.length}개 리전)`, 'ok');

@@ -185,9 +185,9 @@ assert(
   'Stage 2 must route grouped products to the direct variation register flow',
 );
 assert(
-  rshModal.includes("status: info.ok === false ? 'error' : 'mapped'")
-    || html.includes("status: info.ok === false ? 'error' : 'mapped'"),
-  'Shopee listing mappings must store mapped/error LED statuses',
+  html.includes("const listingStatus = hasItemId && info.ok !== false ? 'mapped' : 'failed'")
+    && html.includes("d.status === 'error' || d.status === 'failed' || d.status === 'rejected'"),
+  'Shopee listing mappings must store mapped/failed LED statuses',
 );
 
 console.log('v2 Shopee grouped register modal checks passed');

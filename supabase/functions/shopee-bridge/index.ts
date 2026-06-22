@@ -766,6 +766,7 @@ const V2_MUTATION_ACTIONS = new Set([
   'update_shop_days_to_ship',
   'update_shop_item_name',
   'update_shop_item_description',
+  'update_shop_tier_variation',
   'set_global_sync_fields',
   'set_price_sync_on',
 ]);
@@ -1524,6 +1525,97 @@ async function runV2MutationAction(action: string, body: any) {
       shopApiCall(r, '/api/v2/product/update_item', { method: 'POST', body: payload, account_key: accountKey })
     );
     return { ...response, item_id, sent_description_length: description.length };
+  }
+
+  if (action === 'update_shop_tier_variation') {
+    const item_id = parseInt(body.item_id || body.shop_item_id);
+    if (!item_id) return { ok: false, error: 'shop_item_id required' };
+
+    const modelSource = Array.isArray(body.model_list)
+      ? body.model_list
+      : (Array.isArray(body.model) ? body.model : []);
+    const model_list = modelSource
+      .map((m: any) => ({
+        model_id: parseInt(m?.model_id),
+        tier_index: Array.isArray(m?.tier_index) ? m.tier_index.map((v: any) => Number(v)) : [],
+      }))
+      .filter((m: any) => (
+        Number.isFinite(m.model_id)
+        && m.model_id > 0
+        && Array.isArray(m.tier_index)
+        && m.tier_index.every((v: any) => Number.isFinite(v))
+      ));
+
+    const standardiseSource = Array.isArray(body.standardise_tier_variation) ? body.standardise_tier_variation : [];
+    const standardise_tier_variation = standardiseSource
+      .map((tier: any) => {
+        const out: Record<string, any> = {
+          variation_id: Number(tier?.variation_id),
+          variation_option_list: Array.isArray(tier?.variation_option_list)
+            ? tier.variation_option_list.map((option: any) => {
+              const next: Record<string, any> = {
+                variation_option_id: Number(option?.variation_option_id),
+                variation_option_name: String(option?.variation_option_name || '').trim(),
+              };
+              const imageId = String(option?.image_id || option?.image?.image_id || '').trim();
+              if (imageId) next.image_id = imageId;
+              return next;
+            }).filter((option: any) => (
+              Number.isFinite(option.variation_option_id)
+              && option.variation_option_id >= 0
+              && option.variation_option_name
+            ))
+            : [],
+        };
+        const variationName = String(tier?.variation_name || tier?.name || '').trim();
+        if (variationName) out.variation_name = variationName;
+        const variationGroupId = Number(tier?.variation_group_id);
+        if (Number.isFinite(variationGroupId) && variationGroupId >= 0) out.variation_group_id = variationGroupId;
+        return out;
+      })
+      .filter((tier: any) => (
+        Number.isFinite(tier.variation_id)
+        && tier.variation_id >= 0
+        && Array.isArray(tier.variation_option_list)
+        && tier.variation_option_list.length
+      ));
+
+    const tierSource = Array.isArray(body.tier_variation) ? body.tier_variation : [];
+    const tier_variation = tierSource
+      .map((tier: any) => ({
+        name: String(tier?.name || '').trim(),
+        option_list: Array.isArray(tier?.option_list)
+          ? tier.option_list.map((option: any) => {
+            const next: Record<string, any> = { option: String(option?.option || '').trim() };
+            if (option?.image?.image_id) next.image = { image_id: String(option.image.image_id) };
+            else if (option?.image_id) next.image = { image_id: String(option.image_id) };
+            return next;
+          }).filter((option: any) => option.option)
+          : [],
+      }))
+      .filter((tier: any) => tier.option_list.length);
+
+    if (!model_list.length) return { ok: false, error: 'model_list[] required (model_id + tier_index)' };
+    if (!standardise_tier_variation.length && !tier_variation.length) {
+      return { ok: false, error: 'standardise_tier_variation[] or tier_variation[] required' };
+    }
+
+    const requestPayload: Record<string, any> = { item_id, model_list };
+    if (standardise_tier_variation.length) requestPayload.standardise_tier_variation = standardise_tier_variation;
+    else requestPayload.tier_variation = tier_variation;
+
+    // Official local doc:
+    // C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\product\v2.product.update_tier_variation.json
+    const response = await executeLoggedMutation(action, r, requestPayload, body, payload =>
+      shopApiCall(r, '/api/v2/product/update_tier_variation', { method: 'POST', body: payload, account_key: accountKey })
+    );
+    return {
+      ...response,
+      item_id,
+      sent_model_count: model_list.length,
+      sent_tier_count: standardise_tier_variation.length || tier_variation.length,
+      tier_payload_kind: standardise_tier_variation.length ? 'standardise_tier_variation' : 'tier_variation',
+    };
   }
 
   const item_id = parseInt(body.item_id || body.shop_item_id);

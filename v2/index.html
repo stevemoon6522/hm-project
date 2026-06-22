@@ -5428,6 +5428,7 @@ LEGACY END -->
     platformLastResults: {},
     wmsInventoryBySku: new Map(),
     shopeeNameSync: null,
+    shopeeEnglishRestore: null,
     pendingPriceSyncSelectedIds: null,
     priceSyncExpandedGroups: new Set(),
     shopeeGlobalSearchResults: [],
@@ -8037,6 +8038,7 @@ LEGACY END -->
     )).join('');
     const previewHtml = state.platformPreview?.platform === platform ? platformPreviewHtml() : '';
     const shopeeNameSyncHtml = platform === 'shopee' ? shopeeNameSyncPanelHtml() : '';
+    const shopeeEnglishRestoreHtml = platform === 'shopee' ? shopeeEnglishRestorePanelHtml() : '';
     const platformTableClass = platform === 'shopee' ? 'platform-table platform-table-shopee' : 'platform-table';
     const summaryHtml = platform === 'shopee'
       ? ''
@@ -8063,6 +8065,7 @@ LEGACY END -->
               <button type="button" data-shopee-more-toggle aria-expanded="false">더보기</button>
               <div class="platform-more-menu" data-shopee-more-menu hidden>
                 <button type="button" data-shopee-name-sync ${shopeeActionEnabled ? '' : 'disabled'}>영문명 동기화</button>
+                <button type="button" data-shopee-english-restore ${shopeeActionEnabled ? '' : 'disabled'}>TW/TH/BR 영어 복원</button>
               </div>
             </span>
           </div>
@@ -8100,6 +8103,7 @@ LEGACY END -->
       ${toolbarHtml}
       ${previewHtml}
       ${shopeeNameSyncHtml}
+      ${shopeeEnglishRestoreHtml}
       <div class="panel table-scroll">
         <table class="${platformTableClass}">
           ${platformTableHeadHtml(platform)}
@@ -8175,6 +8179,7 @@ LEGACY END -->
       btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformPreview || 'register'));
     });
     root.querySelector('[data-shopee-name-sync]')?.addEventListener('click', () => openShopeeNameSyncPanel());
+    root.querySelector('[data-shopee-english-restore]')?.addEventListener('click', () => openShopeeEnglishRestorePanel());
     root.querySelectorAll('[data-platform-quick]').forEach((btn) => {
       btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformQuick || 'register', [btn.dataset.platformKey || '']));
     });
@@ -8203,12 +8208,17 @@ LEGACY END -->
       state.shopeeNameSync = null;
       renderPlatformWorkbench('shopee');
     });
+    root.querySelector('[data-shopee-english-restore-close]')?.addEventListener('click', () => {
+      state.shopeeEnglishRestore = null;
+      renderPlatformWorkbench('shopee');
+    });
     root.querySelector('[data-shopee-name-sync-preview]')?.addEventListener('click', () => {
       if (!state.shopeeNameSync) return;
       state.shopeeNameSync.preview = true;
       renderPlatformWorkbench('shopee');
     });
     root.querySelector('[data-shopee-name-sync-apply]')?.addEventListener('click', () => applyShopeeNameSyncFromPanel());
+    root.querySelector('[data-shopee-english-restore-apply]')?.addEventListener('click', () => applyShopeeEnglishRestoreFromPanel());
     root.querySelector('[data-shopee-name-sync-tw]')?.addEventListener('input', (event) => {
       if (!state.shopeeNameSync) return;
       state.shopeeNameSync.twShortName = event.target.value || '';
@@ -8367,6 +8377,157 @@ LEGACY END -->
     } finally {
       if (state.shopeeNameSync) {
         state.shopeeNameSync.running = false;
+        renderPlatformWorkbench('shopee');
+      }
+    }
+  }
+
+  function openShopeeEnglishRestorePanel() {
+    const groups = platformActionGroups('shopee');
+    if (!groups.length) {
+      showToast('영어로 복원할 Shopee 상품을 선택하세요.', 'err');
+      return;
+    }
+    state.shopeeNameSync = null;
+    state.shopeeEnglishRestore = {
+      keys: groups.map(platformGroupKey),
+      running: false,
+      resultRows: [],
+      statusMessage: '',
+      statusKind: '',
+    };
+    renderPlatformWorkbench('shopee');
+    document.getElementById('platform-shopee-root')?.querySelector('.shopee-english-restore-panel')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+
+  function shopeeEnglishRestoreBuildPlan(groups = []) {
+    const items = (groups || []).map((group) => {
+      const rows = group.rows || [];
+      const globalItemId = plMasterEditGlobalItemId(rows);
+      const errors = [];
+      if (!rows.length) errors.push('No master rows.');
+      if (!globalItemId) errors.push('Shopee global_item_id is missing.');
+      return {
+        key: platformGroupKey(group),
+        sku: platformGroupSku(group) || rows[0]?.sku || '',
+        title: platformGroupTitle(group),
+        productIds: platformGroupProductIds(group),
+        rows,
+        globalItemId,
+        errors,
+      };
+    });
+    const errors = items.flatMap((item) => item.errors.map((err) => `${item.sku || item.title}: ${err}`));
+    if (!items.length) errors.push('No selected Shopee products.');
+    return {
+      groups,
+      items,
+      targetRegions: SHOPEE_ENGLISH_RESTORE_REGIONS.slice(),
+      errors,
+      valid: items.length > 0 && errors.length === 0,
+    };
+  }
+
+  function shopeeEnglishRestorePanelHtml() {
+    const restore = state.shopeeEnglishRestore;
+    if (!restore) return '';
+    const groups = platformGroupsByKeys(restore.keys || []);
+    const plan = shopeeEnglishRestoreBuildPlan(groups);
+    const statusText = restore.statusMessage || plan.errors[0] || `Ready for ${plan.targetRegions.join(', ')}`;
+    const statusStyle = (restore.statusKind === 'err' || plan.errors.length)
+      ? 'color:var(--red);'
+      : (restore.statusKind === 'ok' ? 'color:var(--green);' : 'color:var(--muted);');
+    const previewRows = plan.items.map((item) => `<tr>
+      <td class="mono">${text(item.sku || '-')}</td>
+      <td style="overflow-wrap:anywhere;">${text(item.title || '-')}</td>
+      <td class="mono">${text(item.globalItemId || '-')}</td>
+      <td>${item.errors.length ? `<span class="platform-result-err">${text(item.errors.join(', '))}</span>` : '<span class="platform-result-ok">Ready</span>'}</td>
+    </tr>`).join('');
+    const resultHtml = restore.resultRows?.length
+      ? shopeeEnglishRestoreResultsHtml(restore.resultRows)
+      : `<div class="panel table-scroll" style="margin-top:8px;">
+          <table style="min-width:760px;table-layout:auto;">
+            <colgroup><col style="width:150px;"><col><col style="width:150px;"><col style="width:160px;"></colgroup>
+            <thead><tr><th>SKU</th><th>Product</th><th>global_item_id</th><th>Status</th></tr></thead>
+            <tbody>${previewRows || '<tr><td colspan="4" class="empty">No selected products</td></tr>'}</tbody>
+          </table>
+        </div>`;
+    return `
+      <div class="platform-preview shopee-english-restore-panel">
+        <div class="platform-preview-head">
+          <div>
+            <strong>Shopee TW/TH/BR 영어 복원</strong>
+            <div class="muted" style="font-size:12px;margin-top:3px;">선택 ${text(plan.items.length)}개 · 대상 ${text(plan.targetRegions.join(', '))}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <button type="button" data-shopee-english-restore-close>닫기</button>
+            <button type="button" class="primary" data-shopee-english-restore-apply ${restore.running || !plan.valid ? 'disabled' : ''}>영어로 복원</button>
+          </div>
+        </div>
+        <div class="platform-preview-body">
+          <div style="font-size:12px;${statusStyle}">${text(statusText)}</div>
+          ${resultHtml}
+        </div>
+      </div>`;
+  }
+
+  function shopeeEnglishRestoreResultsHtml(rows = []) {
+    const body = rows.map((row) => {
+      const ok = row.ok !== false && row.status !== 'error';
+      const statusClass = row.status === 'skipped' ? 'muted' : (ok ? 'row-ok' : 'row-error');
+      return `<tr>
+        <td class="mono">${text(row.target || '')}</td>
+        <td class="mono">${text(row.action || '')}</td>
+        <td class="${statusClass}">${text(row.status || (ok ? 'ok' : 'error'))}</td>
+        <td>${text(row.message || '')}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="panel table-scroll" style="margin-top:8px;">
+      <table style="min-width:920px;table-layout:auto;">
+        <colgroup><col style="width:210px;"><col style="width:220px;"><col style="width:96px;"><col></colgroup>
+        <thead><tr><th>Target</th><th>Action</th><th>Status</th><th>Message</th></tr></thead>
+        <tbody>${body || '<tr><td colspan="4" class="empty">No results yet</td></tr>'}</tbody>
+      </table>
+    </div>`;
+  }
+
+  async function applyShopeeEnglishRestoreFromPanel() {
+    const restore = state.shopeeEnglishRestore;
+    if (!restore || restore.running) return;
+    const groups = platformGroupsByKeys(restore.keys || []);
+    const plan = shopeeEnglishRestoreBuildPlan(groups);
+    if (!plan.valid) {
+      state.shopeeEnglishRestore.statusMessage = plan.errors[0] || 'Shopee 영어 복원 값을 확인하세요.';
+      state.shopeeEnglishRestore.statusKind = 'err';
+      renderPlatformWorkbench('shopee');
+      return;
+    }
+    state.shopeeEnglishRestore.running = true;
+    state.shopeeEnglishRestore.resultRows = [];
+    state.shopeeEnglishRestore.statusMessage = 'Applying Shopee English names...';
+    state.shopeeEnglishRestore.statusKind = '';
+    renderPlatformWorkbench('shopee');
+    try {
+      await applyShopeeEnglishRestorePlan(plan, {
+        onStatus(message, kind) {
+          if (!state.shopeeEnglishRestore) return;
+          state.shopeeEnglishRestore.statusMessage = message || '';
+          state.shopeeEnglishRestore.statusKind = kind || '';
+        },
+        onResults(resultRows) {
+          if (!state.shopeeEnglishRestore) return;
+          state.shopeeEnglishRestore.resultRows = (resultRows || []).map((row) => ({ ...row }));
+          renderPlatformWorkbench('shopee');
+        },
+      });
+      await refreshPlatformLedSources().catch(() => {});
+    } catch (e) {
+      state.shopeeEnglishRestore.statusMessage = e?.message || String(e);
+      state.shopeeEnglishRestore.statusKind = 'err';
+      showToast(`Shopee 영어 복원 실패: ${e?.message || e}`, 'err');
+    } finally {
+      if (state.shopeeEnglishRestore) {
+        state.shopeeEnglishRestore.running = false;
         renderPlatformWorkbench('shopee');
       }
     }
@@ -9158,6 +9319,7 @@ LEGACY END -->
   }
 
   const SHOPEE_NAME_SYNC_REGIONS = Object.freeze(['SG', 'TW', 'TH', 'MY', 'PH', 'BR']);
+  const SHOPEE_ENGLISH_RESTORE_REGIONS = Object.freeze(['TW', 'TH', 'BR']);
   const SHOPEE_NAME_REGION_LIMITS = Object.freeze({ TW: 60 });
 
   function plMasterEditNameChars(value) {
@@ -9599,6 +9761,377 @@ LEGACY END -->
     emitStatus(`Done: ${okCount}/${regionResults.length} regions`, allOk ? 'ok' : 'err');
     showToast(`Shopee name sync done: ${okCount}/${regionResults.length} regions`, allOk ? 'ok' : 'err');
     return { ok: allOk, regionResults, resultRows };
+  }
+
+  function shopeeEnglishRestorePayload(json) {
+    return json?.response || json?.result?.response || json?.result || json || {};
+  }
+
+  function shopeeEnglishRestoreApiOk(response, json) {
+    return response.ok && !json?.error && !json?.result?.error;
+  }
+
+  async function shopeeEnglishRestoreFetch(action, params = {}) {
+    const qs = new URLSearchParams({ account_key: SHOPEE_DEFAULT_ACCOUNT_KEY, ...params });
+    const response = await fetch(`${SHOPEE_BRIDGE}/${action}?${qs.toString()}`, { headers: AUTH_HEADERS });
+    const json = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+    if (!shopeeEnglishRestoreApiOk(response, json)) {
+      throw new Error(bridgeResultMessage(json) || `${action} HTTP ${response.status}`);
+    }
+    return json;
+  }
+
+  function shopeeEnglishRestoreGlobalItemName(json) {
+    const payload = shopeeEnglishRestorePayload(json);
+    const list = payload.global_item_list || payload.item_list || [];
+    return String(Array.isArray(list) && list[0] ? (list[0].global_item_name || list[0].item_name || '') : '').replace(/\s+/g, ' ').trim();
+  }
+
+  function shopeeEnglishRestoreStandardTiers(payload) {
+    const source = Array.isArray(payload?.standardise_tier_variation) ? payload.standardise_tier_variation : [];
+    return source.map((tier) => ({
+      name: String(tier?.variation_name || tier?.name || '').replace(/\s+/g, ' ').trim(),
+      options: (Array.isArray(tier?.variation_option_list) ? tier.variation_option_list : [])
+        .map((option) => String(option?.variation_option_name || option?.option || '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean),
+    })).filter((tier) => tier.options.length);
+  }
+
+  function shopeeEnglishRestoreLegacyTiers(payload) {
+    const source = Array.isArray(payload?.tier_variation) ? payload.tier_variation : [];
+    return source.map((tier) => ({
+      name: String(tier?.name || tier?.variation_name || '').replace(/\s+/g, ' ').trim(),
+      options: (Array.isArray(tier?.option_list) ? tier.option_list : [])
+        .map((option) => String(option?.option || option?.variation_option_name || '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean),
+    })).filter((tier) => tier.options.length);
+  }
+
+  function shopeeEnglishRestoreTiers(payload) {
+    const standard = shopeeEnglishRestoreStandardTiers(payload);
+    return standard.length ? standard : shopeeEnglishRestoreLegacyTiers(payload);
+  }
+
+  function shopeeEnglishRestoreFlatOptions(tiers = []) {
+    return (tiers || []).flatMap((tier) => tier.options || []);
+  }
+
+  function shopeeEnglishRestoreOptionsMatch(actual = [], expected = []) {
+    if (actual.length !== expected.length) return false;
+    return expected.every((value, index) => plMasterEditNamesMatch(actual[index], value));
+  }
+
+  function shopeeEnglishRestoreModelList(payload) {
+    const source = Array.isArray(payload?.model_list)
+      ? payload.model_list
+      : (Array.isArray(payload?.model) ? payload.model : []);
+    return source.map((model) => ({
+      model_id: Number(model?.model_id),
+      tier_index: Array.isArray(model?.tier_index) ? model.tier_index.map((value) => Number(value)) : [],
+    })).filter((model) => (
+      Number.isFinite(model.model_id)
+      && model.model_id > 0
+      && model.tier_index.every((value) => Number.isFinite(value))
+    ));
+  }
+
+  function shopeeEnglishRestoreBuildTierUpdatePayload(shopPayload, globalTiers) {
+    const targetOptions = shopeeEnglishRestoreFlatOptions(globalTiers);
+    const currentTiers = shopeeEnglishRestoreTiers(shopPayload);
+    const currentOptions = shopeeEnglishRestoreFlatOptions(currentTiers);
+    if (!targetOptions.length) {
+      return { ok: true, skipped: true, currentOptions, targetOptions, message: 'No Global Product options' };
+    }
+    if (currentTiers.length !== globalTiers.length) {
+      return { ok: false, error: `tier count mismatch shop=${currentTiers.length}, global=${globalTiers.length}` };
+    }
+    for (let tierIndex = 0; tierIndex < globalTiers.length; tierIndex += 1) {
+      const currentCount = currentTiers[tierIndex]?.options?.length || 0;
+      const targetCount = globalTiers[tierIndex]?.options?.length || 0;
+      if (currentCount !== targetCount) {
+        return { ok: false, error: `option count mismatch tier ${tierIndex + 1}: shop=${currentCount}, global=${targetCount}` };
+      }
+    }
+    const model_list = shopeeEnglishRestoreModelList(shopPayload);
+    if (!model_list.length) return { ok: false, error: 'shop model_list is missing' };
+
+    const standardSource = Array.isArray(shopPayload?.standardise_tier_variation) ? shopPayload.standardise_tier_variation : [];
+    if (standardSource.length) {
+      const standardise_tier_variation = [];
+      for (let tierIndex = 0; tierIndex < standardSource.length; tierIndex += 1) {
+        const tier = standardSource[tierIndex] || {};
+        const variationId = Number(tier.variation_id);
+        if (!Number.isFinite(variationId) || variationId < 0) return { ok: false, error: `variation_id missing at tier ${tierIndex + 1}` };
+        const nextTier = {
+          variation_id: variationId,
+          variation_option_list: [],
+        };
+        const variationName = String(tier.variation_name || tier.name || '').trim();
+        if (variationName) nextTier.variation_name = variationName;
+        const variationGroupId = Number(tier.variation_group_id);
+        if (Number.isFinite(variationGroupId) && variationGroupId >= 0) nextTier.variation_group_id = variationGroupId;
+        const optionSource = Array.isArray(tier.variation_option_list) ? tier.variation_option_list : [];
+        for (let optionIndex = 0; optionIndex < optionSource.length; optionIndex += 1) {
+          const option = optionSource[optionIndex] || {};
+          const optionId = Number(option.variation_option_id);
+          const targetName = String(globalTiers[tierIndex]?.options?.[optionIndex] || '').trim();
+          if (!Number.isFinite(optionId) || optionId < 0) return { ok: false, error: `variation_option_id missing at tier ${tierIndex + 1} option ${optionIndex + 1}` };
+          if (!targetName) return { ok: false, error: `Global option missing at tier ${tierIndex + 1} option ${optionIndex + 1}` };
+          const nextOption = { variation_option_id: optionId, variation_option_name: targetName };
+          const imageId = String(option.image_id || option?.image?.image_id || '').trim();
+          if (imageId) nextOption.image_id = imageId;
+          nextTier.variation_option_list.push(nextOption);
+        }
+        standardise_tier_variation.push(nextTier);
+      }
+      return {
+        ok: true,
+        currentOptions,
+        targetOptions,
+        payload: { model_list, standardise_tier_variation },
+        payloadKind: 'standardise_tier_variation',
+      };
+    }
+
+    const tierSource = Array.isArray(shopPayload?.tier_variation) ? shopPayload.tier_variation : [];
+    if (!tierSource.length) return { ok: false, error: 'shop tier variation is missing' };
+    const tier_variation = tierSource.map((tier, tierIndex) => ({
+      name: String(tier?.name || tier?.variation_name || '').trim(),
+      option_list: (Array.isArray(tier?.option_list) ? tier.option_list : []).map((option, optionIndex) => {
+        const nextOption = { option: String(globalTiers[tierIndex]?.options?.[optionIndex] || '').trim() };
+        if (option?.image?.image_id) nextOption.image = { image_id: String(option.image.image_id) };
+        else if (option?.image_id) nextOption.image = { image_id: String(option.image_id) };
+        return nextOption;
+      }).filter((option) => option.option),
+    }));
+    return {
+      ok: true,
+      currentOptions,
+      targetOptions,
+      payload: { model_list, tier_variation },
+      payloadKind: 'tier_variation',
+    };
+  }
+
+  async function shopeeEnglishRestoreFetchSyncShops() {
+    const wanted = new Set(SHOPEE_ENGLISH_RESTORE_REGIONS);
+    const shops = await plMasterEditFetchNameSyncShops();
+    return shops
+      .filter((shop) => wanted.has(String(shop.shop_region || '').toUpperCase()))
+      .map((shop) => ({
+        shop_id: Number(shop.shop_id),
+        shop_region: String(shop.shop_region || '').toUpperCase(),
+        name_and_description: true,
+        media_information: false,
+        tier_variation_name_and_option: true,
+        price: false,
+        days_to_ship: false,
+      }));
+  }
+
+  async function shopeeEnglishRestoreVerifyOptions(region, itemId, expectedOptions) {
+    const json = await shopeeEnglishRestoreFetch('shop_model_list', { region, item_id: String(itemId) });
+    const payload = shopeeEnglishRestorePayload(json);
+    const tiers = shopeeEnglishRestoreTiers(payload);
+    return shopeeEnglishRestoreOptionsMatch(shopeeEnglishRestoreFlatOptions(tiers), expectedOptions);
+  }
+
+  async function applyShopeeEnglishRestorePlan(plan, hooks = {}) {
+    if (!plan?.valid) throw new Error((plan?.errors || [])[0] || 'Shopee English restore plan is not valid.');
+    const emitStatus = (message, kind = '') => {
+      if (typeof hooks.onStatus === 'function') hooks.onStatus(message, kind);
+    };
+    const resultRows = [];
+    const emitResults = () => {
+      if (typeof hooks.onResults === 'function') hooks.onResults(resultRows);
+    };
+    const addResult = (row) => {
+      resultRows.push(row);
+      emitResults();
+    };
+    const runId = `shopee-english-restore-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    emitStatus('Resolving TW/TH/BR shops...', '');
+
+    const syncShops = await shopeeEnglishRestoreFetchSyncShops();
+    if (!syncShops.length) throw new Error('No TW/TH/BR Shopee shops resolved.');
+    const shopRegionById = new Map(syncShops.map((shop) => [String(shop.shop_id), shop.shop_region]));
+    const syncJson = await callBridgeMutation('set_global_sync_fields', {
+      region: 'SG',
+      actor: 'v2-shopee-english-restore',
+      run_id: runId,
+      shop_sync_list: syncShops,
+    });
+    addResult({
+      target: syncShops.map((shop) => `${shop.shop_region}/${shop.shop_id}`).join(', '),
+      action: 'set_global_sync_fields',
+      ok: bridgeResultOk(syncJson),
+      status: bridgeResultOk(syncJson) ? 'ok' : 'error',
+      message: bridgeResultMessage(syncJson),
+    });
+
+    for (let itemIndex = 0; itemIndex < plan.items.length; itemIndex += 1) {
+      const item = plan.items[itemIndex];
+      emitStatus(`Applying ${itemIndex + 1}/${plan.items.length}: ${item.sku || item.title}`, '');
+      let globalName = '';
+      let globalTiers = [];
+      try {
+        const globalInfo = await shopeeEnglishRestoreFetch('global_item_info', { region: 'SG', global_item_id: String(item.globalItemId) });
+        globalName = shopeeEnglishRestoreGlobalItemName(globalInfo);
+        if (!globalName) throw new Error('Global Product name is empty');
+        addResult({ target: `${item.sku || item.globalItemId}`, action: 'read_global_item_name', ok: true, status: 'ok', message: globalName });
+
+        const globalModelJson = await shopeeEnglishRestoreFetch('global_model_list', { region: 'SG', global_item_id: String(item.globalItemId) });
+        globalTiers = shopeeEnglishRestoreTiers(shopeeEnglishRestorePayload(globalModelJson));
+        addResult({
+          target: `${item.sku || item.globalItemId}`,
+          action: 'read_global_options',
+          ok: true,
+          status: globalTiers.length ? 'ok' : 'skipped',
+          message: globalTiers.length ? shopeeEnglishRestoreFlatOptions(globalTiers).join(' / ') : 'No Global Product options',
+        });
+        if (!globalTiers.length && item.rows.length > 1) {
+          throw new Error('Global Product option names are missing for a grouped product');
+        }
+      } catch (e) {
+        addResult({ target: `${item.sku || item.globalItemId}`, action: 'read_global_source', ok: false, status: 'error', message: e?.message || String(e) });
+        continue;
+      }
+
+      let published = [];
+      try {
+        const publishedJson = await shopeeEnglishRestoreFetch('published_list', { region: 'SG', global_item_id: String(item.globalItemId) });
+        published = readyPublishedItemsFromResponse(publishedJson);
+        addResult({
+          target: `${item.sku || item.globalItemId}`,
+          action: 'published_list',
+          ok: true,
+          status: 'ok',
+          message: `${published.length} shop items`,
+        });
+      } catch (e) {
+        addResult({ target: `${item.sku || item.globalItemId}`, action: 'published_list', ok: false, status: 'error', message: e?.message || String(e) });
+        continue;
+      }
+
+      for (const region of SHOPEE_ENGLISH_RESTORE_REGIONS) {
+        const regionItems = published.filter((publishedItem) => {
+          const shopId = Number(publishedItem.shop_id || publishedItem.shopId || 0);
+          const itemRegion = String(publishedItem.shop_region || publishedItem.region || shopRegionById.get(String(shopId)) || '').toUpperCase();
+          return itemRegion === region;
+        });
+        if (!regionItems.length) {
+          addResult({ target: `${item.sku || item.globalItemId} ${region}`, action: 'resolve_shop_item', ok: true, status: 'skipped', message: 'No published shop item returned for this region' });
+          continue;
+        }
+
+        for (const publishedItem of regionItems) {
+          const itemId = Number(publishedItem.item_id || publishedItem.itemId || 0);
+          const target = `${item.sku || item.globalItemId} ${region}/${itemId || 'unknown'}`;
+          if (!Number.isFinite(itemId) || itemId <= 0) {
+            addResult({ target, action: 'resolve_shop_item', ok: false, status: 'error', message: 'item_id missing' });
+            continue;
+          }
+
+          try {
+            const before = await plMasterEditReadShopItemName(region, itemId);
+            const nameAlreadyOk = before.ok && plMasterEditNamesMatch(before.itemName, globalName);
+            if (nameAlreadyOk) {
+              addResult({ target, action: 'verify_item_name', ok: true, status: 'ok', message: 'already exact' });
+            } else {
+              const updateNameJson = await callBridgeMutation('update_shop_item_name', {
+                region,
+                actor: 'v2-shopee-english-restore',
+                run_id: runId,
+                item_id: itemId,
+                item_name: globalName,
+              });
+              const nameUpdateOk = bridgeResultOk(updateNameJson);
+              addResult({ target, action: 'update_shop_item_name', ok: nameUpdateOk, status: nameUpdateOk ? 'ok' : 'error', message: bridgeResultMessage(updateNameJson) });
+              if (nameUpdateOk) {
+                await new Promise((resolve) => setTimeout(resolve, 2500));
+                const after = await plMasterEditReadShopItemName(region, itemId);
+                const verified = after.ok && plMasterEditNamesMatch(after.itemName, globalName);
+                addResult({
+                  target,
+                  action: 'verify_item_name_after_update',
+                  ok: verified,
+                  status: verified ? 'ok' : 'error',
+                  message: verified ? 'exact match' : `expected "${globalName}", got "${after.itemName || 'unavailable'}"`,
+                });
+              }
+            }
+          } catch (e) {
+            addResult({ target, action: 'update_shop_item_name', ok: false, status: 'error', message: e?.message || String(e) });
+          }
+
+          try {
+            if (!globalTiers.length) {
+              addResult({ target, action: 'update_shop_option_names', ok: true, status: 'skipped', message: 'No Global Product options' });
+              continue;
+            }
+            const shopModelJson = await shopeeEnglishRestoreFetch('shop_model_list', { region, item_id: String(itemId) });
+            const shopPayload = shopeeEnglishRestorePayload(shopModelJson);
+            const updatePayload = shopeeEnglishRestoreBuildTierUpdatePayload(shopPayload, globalTiers);
+            if (!updatePayload.ok) throw new Error(updatePayload.error || 'option payload build failed');
+            if (updatePayload.skipped) {
+              addResult({ target, action: 'update_shop_option_names', ok: true, status: 'skipped', message: updatePayload.message || 'No options' });
+              continue;
+            }
+            if (shopeeEnglishRestoreOptionsMatch(updatePayload.currentOptions, updatePayload.targetOptions)) {
+              addResult({ target, action: 'verify_option_names', ok: true, status: 'ok', message: 'already exact' });
+              continue;
+            }
+            const updateOptionJson = await callBridgeMutation('update_shop_tier_variation', {
+              region,
+              actor: 'v2-shopee-english-restore',
+              run_id: runId,
+              item_id: itemId,
+              ...updatePayload.payload,
+            });
+            const optionUpdateOk = bridgeResultOk(updateOptionJson);
+            addResult({
+              target,
+              action: `update_shop_option_names:${updatePayload.payloadKind}`,
+              ok: optionUpdateOk,
+              status: optionUpdateOk ? 'ok' : 'error',
+              message: bridgeResultMessage(updateOptionJson),
+            });
+            if (!optionUpdateOk) continue;
+            let verified = false;
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+              await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 2500 : 3500));
+              verified = await shopeeEnglishRestoreVerifyOptions(region, itemId, updatePayload.targetOptions).catch(() => false);
+              if (verified) break;
+            }
+            addResult({
+              target,
+              action: 'verify_option_names_after_update',
+              ok: verified,
+              status: verified ? 'ok' : 'error',
+              message: verified ? 'exact match' : `expected "${updatePayload.targetOptions.join(' / ')}"`,
+            });
+          } catch (e) {
+            addResult({ target, action: 'update_shop_option_names', ok: false, status: 'error', message: e?.message || String(e) });
+          }
+
+          const now = new Date().toISOString();
+          for (const productId of item.productIds) {
+            await plMasterEditUpdateListingNameWithFallback(productId, region, {
+              last_pushed_name: globalName,
+              last_pushed_at: now,
+            });
+          }
+        }
+      }
+    }
+
+    await loadData();
+    renderProducts();
+    const errors = resultRows.filter((row) => row.status === 'error').length;
+    const changed = resultRows.filter((row) => /^update_/.test(row.action || '') && row.ok).length;
+    emitStatus(`Done: changed ${changed}, errors ${errors}`, errors ? 'err' : 'ok');
+    showToast(`Shopee 영어 복원 완료: 변경 ${changed}건, 오류 ${errors}건`, errors ? 'err' : 'ok');
+    return { ok: errors === 0, resultRows };
   }
 
   async function plMasterEditApplyNameSync() {

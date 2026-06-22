@@ -17275,7 +17275,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   let _mrQoo10 = {
     rows: [],
+    allRows: [],
     shippingGroups: [],
+    mainImages: [],
     detailImages: [],
     imageCandidates: [],
     selectedMainImageUrl: '',
@@ -17373,10 +17375,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return (rows || []).some((row) => productLifecycleFilterKey(row) === 'pre_order');
   }
 
-  function mrQoo10DetailImageUrls() {
-    const rows = _mrQoo10.rows || [];
+  function mrQoo10ImageRows(rows) {
+    const allRows = Array.isArray(_mrQoo10.allRows) ? _mrQoo10.allRows.filter(Boolean) : [];
+    if (allRows.length) return allRows;
+    const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+    if (list.length) return list;
+    return Array.isArray(_mrQoo10.rows) ? _mrQoo10.rows.filter(Boolean) : [];
+  }
+
+  function mrQoo10DetailImageUrls(rows) {
+    const imageRows = mrQoo10ImageRows(rows);
     const fromCrawl = Array.isArray(_mrQoo10.detailImages) ? _mrQoo10.detailImages : [];
-    const fromProducts = rows.flatMap((row) => Array.isArray(row.extra_images) ? row.extra_images : []);
+    const fromProducts = imageRows.flatMap((row) => Array.isArray(row.extra_images) ? row.extra_images : []);
     return [...new Set([...fromCrawl, ...fromProducts].map((url) => String(url || '').trim()).filter(Boolean))];
   }
 
@@ -17413,8 +17423,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function mrQoo10DetailImageRefs(rows) {
-    const first = (rows || [])[0] || {};
-    return mrQoo10DetailImageUrls()
+    const imageRows = mrQoo10ImageRows(rows);
+    const first = imageRows[0] || {};
+    return mrQoo10DetailImageUrls(imageRows)
       .map((url, idx) => {
         const src = mrQoo10NormalizeImageUrl(url, first.staronemall_url || window.location.href);
         return src ? {
@@ -17431,21 +17442,23 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   function mrQoo10ImageCandidates(rows) {
     const refs = [];
     const seen = new Set();
-    const list = Array.isArray(rows) ? rows : [];
+    const list = mrQoo10ImageRows(rows);
     list.forEach((row, idx) => {
       const suffix = list.length > 1 ? ` - ${mrQoo10OptionValue(row) || row.option_name || idx + 1}` : '';
       mrQoo10AddImageRef(refs, seen, row.main_image, row, `Representative${suffix}`, 'master-representative');
       mrQoo10AddImageRef(refs, seen, row._main_image, row, `Source main${suffix}`, 'source-main');
     });
+    const baseRow = list.find((row) => String(row?.staronemall_url || '').trim()) || list[0] || {};
+    (Array.isArray(_mrQoo10.mainImages) ? _mrQoo10.mainImages : []).forEach((url, idx) => {
+      mrQoo10AddImageRef(refs, seen, url, baseRow, `StarOne main ${idx + 1}`, 'staronemall-main');
+    });
     list.forEach((row, idx) => {
       const suffix = list.length > 1 ? ` - ${mrQoo10OptionValue(row) || row.option_name || idx + 1}` : '';
-      mrQoo10AddImageRef(refs, seen, row.shopee_option_image_url, row, `Option image${suffix}`, 'option');
       const shopeeImageId = String(row.shopee_image_id || '').trim();
       if (shopeeImageId) {
-        mrQoo10AddImageRef(refs, seen, `https://cf.shopee.sg/file/${shopeeImageId}`, row, `Shopee image_id${suffix}`, 'shopee-image-id');
+        mrQoo10AddImageRef(refs, seen, `https://cf.shopee.sg/file/${shopeeImageId}`, row, `Shopee representative image_id${suffix}`, 'shopee-image-id');
       }
     });
-    mrQoo10DetailImageRefs(list).forEach((ref) => mrQoo10AddImageRef(refs, seen, ref.src, list[0] || {}, ref.label, ref.kind));
     return refs.map((ref, idx) => ({ ...ref, idx }));
   }
 
@@ -17458,8 +17471,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function mrQoo10BuildDescription(templateHtml, row) {
-    const selectedKey = mrQoo10SelectedMainImageUrl(_mrQoo10.rows || []);
-    const imageBlock = mrQoo10DetailImageUrls().filter((url) => {
+    const imageRows = mrQoo10ImageRows(_mrQoo10.rows || []);
+    const selectedKey = mrQoo10SelectedMainImageUrl(imageRows);
+    const imageBlock = mrQoo10DetailImageUrls(imageRows).filter((url) => {
       const src = mrQoo10NormalizeImageUrl(url, row?.staronemall_url || window.location.href);
       return !selectedKey || src !== selectedKey;
     }).map((url) => (
@@ -17469,18 +17483,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function mrQoo10MainImageSource(rows) {
-    const list = Array.isArray(rows) ? rows : [];
-    for (const field of ['main_image', '_main_image', 'shopee_option_image_url']) {
-      for (const row of list) {
-        const src = mrQoo10NormalizeImageUrl(row?.[field] || '', row?.staronemall_url || window.location.href);
-        if (src) return src;
-      }
-    }
-    for (const row of list) {
-      const shopeeImageId = String(row?.shopee_image_id || '').trim();
-      if (shopeeImageId) return `https://cf.shopee.sg/file/${shopeeImageId}`;
-    }
-    return '';
+    return mrQoo10ImageRefKey(mrQoo10ImageCandidates(rows)[0]);
   }
 
   function mrQoo10SelectedMainImageUrl(rows) {
@@ -17491,11 +17494,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       _mrQoo10.selectedMainImageUrl = fallback;
       return fallback;
     }
-    const candidate = (Array.isArray(_mrQoo10.imageCandidates) && _mrQoo10.imageCandidates[0])
-      || mrQoo10ImageCandidates(rows)[0];
-    const src = mrQoo10ImageRefKey(candidate);
-    if (src) _mrQoo10.selectedMainImageUrl = src;
-    return src;
+    return '';
   }
 
   function mrQoo10RenderImageThumb(ref, label) {
@@ -17513,11 +17512,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function mrQoo10RenderImagePanel(rows) {
-    const candidates = mrQoo10ImageCandidates(rows);
+    const imageRows = mrQoo10ImageRows(rows);
+    const candidates = mrQoo10ImageCandidates(imageRows);
     _mrQoo10.imageCandidates = candidates;
-    const selectedUrl = mrQoo10SelectedMainImageUrl(rows);
+    const selectedUrl = mrQoo10SelectedMainImageUrl(imageRows);
     const selectedKey = String(selectedUrl || '').trim();
-    const detailRefs = mrQoo10DetailImageRefs(rows)
+    const detailRefs = mrQoo10DetailImageRefs(imageRows)
       .filter((ref) => !selectedKey || mrQoo10ImageRefKey(ref) !== selectedKey)
       .slice(0, 50);
     const sourceGrid = candidates.length ? candidates.map((ref, idx) => {
@@ -17573,7 +17573,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function mrQoo10RenderImagePreview() {
-    const rows = _mrQoo10.rows || [];
+    const rows = mrQoo10ImageRows(_mrQoo10.rows || []);
     const selectedUrl = mrQoo10SelectedMainImageUrl(rows);
     const selectedKey = String(selectedUrl || '').trim();
     const hidden = document.getElementById('mr-qoo10-selected-main-image-url');
@@ -17763,8 +17763,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function mrQoo10LoadDetailImages(rows) {
+    _mrQoo10.mainImages = [];
     _mrQoo10.detailImages = [];
-    const first = (rows || [])[0] || {};
+    const sourceRows = mrQoo10ImageRows(rows);
+    const first = sourceRows.find((row) => String(row?.staronemall_url || '').trim()) || sourceRows[0] || {};
     const sourceUrl = String(first.staronemall_url || '').trim();
     if (!sourceUrl) return;
     try {
@@ -17776,11 +17778,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const json = await resp.json().catch(() => null);
       if (!resp.ok || !json?.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
       const result = Array.isArray(json.results) ? json.results.find((row) => row?.ok) : null;
-      const images = result?.observed_values?.detail_image_urls;
-      _mrQoo10.detailImages = Array.isArray(images) ? images.filter(Boolean) : [];
+      const observed = result?.observed_values || {};
+      const mainImages = observed.main_image_urls;
+      const detailImages = observed.detail_image_urls;
+      _mrQoo10.mainImages = Array.isArray(mainImages) ? mainImages.filter(Boolean) : [];
+      _mrQoo10.detailImages = Array.isArray(detailImages) ? detailImages.filter(Boolean) : [];
     } catch (e) {
+      _mrQoo10.mainImages = [];
       _mrQoo10.detailImages = [];
-      console.warn('[qoo10] staronemall detail image load failed', e);
+      console.warn('[qoo10] staronemall image load failed', e);
     }
   }
 
@@ -17837,7 +17843,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const isPreOrder = mrQoo10IsPreOrder(rows);
     const qoo10CategoryDefault = productKindIsGoods(first) ? '' : '300002851';
     const selectedShipping = first.qoo10_shipping_no || '715009';
-    const detailImageCount = mrQoo10DetailImageUrls().length;
+    const detailImageCount = mrQoo10DetailImageUrls(rows).length;
     const existingItemCode = _mrQoo10.existingItemCode || '';
     _mrQoo10.selectedBrand = first.qoo10_brand_no ? { brand_no: first.qoo10_brand_no, brand_name: first.qoo10_brand_name || '' } : null;
     body.innerHTML = `
@@ -17957,7 +17963,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         header_html: headerHtml,
         description_template_html: descriptionTemplateHtml,
         lifecycle_state: availableType === '2' ? 'pre_order' : 'ready_stock',
-        main_image: mrQoo10SelectedMainImageUrl(rows),
+        main_image: mrQoo10SelectedMainImageUrl(mrQoo10ImageRows(rows)),
         description: mrQoo10BuildDescription(descriptionTemplateHtml, first) || first.description || first.components_extracted_en || '',
         options,
       },
@@ -18087,24 +18093,29 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       showToast('Qoo10 등록 대상 ID가 없습니다.', 'err');
       return;
     }
-    let { data, error } = await db.from('products').select(RSH_PRODUCT_SELECT).eq('product_group_id', targetId);
-    if (!error && (!data || data.length === 0)) {
-      const singleRes = await db.from('products').select(RSH_PRODUCT_SELECT).eq('id', targetId);
-      data = singleRes.data;
-      error = singleRes.error;
-    }
-    if (error) {
-      showToast(`Qoo10 등록 상품 로드 실패: ${error.message || error}`, 'err');
+    const [groupRes, singleRes] = await Promise.all([
+      db.from('products').select(RSH_PRODUCT_SELECT).eq('product_group_id', targetId),
+      db.from('products').select(RSH_PRODUCT_SELECT).eq('id', targetId),
+    ]);
+    if (groupRes.error && singleRes.error) {
+      showToast(`Qoo10 등록 상품 로드 실패: ${groupRes.error.message || groupRes.error}`, 'err');
       return;
     }
-    const allRows = rshSortedProducts(data || []);
+    const byId = new Map();
+    [...(singleRes.data || []), ...(groupRes.data || [])].forEach((row) => {
+      if (row?.id) byId.set(String(row.id), row);
+    });
+    const allRows = rshSortedProducts([...byId.values()]);
     const variantRows = allRows.filter(plIsGroupedVariant);
     const rows = variantRows.length ? variantRows : allRows;
     if (!rows.length) {
       showToast('Qoo10 등록할 상품이 없습니다.', 'err');
       return;
     }
+    _mrQoo10.allRows = allRows;
     _mrQoo10.rows = rows;
+    _mrQoo10.mainImages = [];
+    _mrQoo10.detailImages = [];
     _mrQoo10.imageCandidates = [];
     _mrQoo10.selectedMainImageUrl = '';
     _mrQoo10.existingItemCode = await mrQoo10LoadExistingItemCode(rows);
@@ -18114,8 +18125,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const body = mrQoo10Body();
     if (body) body.innerHTML = '<div class="muted">Qoo10 배송 템플릿을 불러오는 중...</div>';
     await mrQoo10LoadShippingGroups();
-    if (body) body.innerHTML = '<div class="muted">Loading Qoo10 templates and StarOneMall detail images...</div>';
-    await Promise.all([mrQoo10LoadDetailImages(rows), mrQoo10LoadCountrySettings()]);
+    if (body) body.innerHTML = '<div class="muted">Loading Qoo10 templates and StarOneMall images...</div>';
+    await Promise.all([mrQoo10LoadDetailImages(allRows), mrQoo10LoadCountrySettings()]);
     mrQoo10RenderModal(rows);
   }
 

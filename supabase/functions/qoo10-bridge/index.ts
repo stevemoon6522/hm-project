@@ -346,6 +346,16 @@ function normalizeAvailableDate(type: unknown, value: unknown) {
   return { type: "0", value: String(value || "3").trim() || "3" };
 }
 
+function normalizeQoo10DashDate(value: unknown) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const normalized = raw.replace(/\//g, "-");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    throw new Error("Qoo10 date must be YYYY-MM-DD");
+  }
+  return normalized;
+}
+
 function normalizeGoodsNo(raw: any): string {
   return firstNonEmpty(raw?.ResultObject?.GdNo, raw?.ResultObject?.GoodsNo, raw?.ResultObject?.ItemCode, raw?.GdNo, raw?.GoodsNo, raw?.ItemCode);
 }
@@ -758,6 +768,7 @@ async function handleCreateListing(req: Request): Promise<Response> {
   const stock = Math.max(0, Math.floor(Number(body.stock ?? body.ItemQty ?? optionStock) || 0));
   const weightKg = Math.max(0, Number(body.weight_kg || body.Weight || 0) || 0);
   const available = normalizeAvailableDate(body.available_date_type || body.AvailableDateType, body.available_date_value || body.AvailableDateValue);
+  const expireDate = normalizeQoo10DashDate(body.expire_date || body.ExpireDate);
 
   if (!categoryId || categoryId.length !== 9) return jsonResp({ ok: false, error: "SecondSubCat/category_id must be a 9-digit Qoo10 category code" }, 400);
   if (!title) return jsonResp({ ok: false, error: "ItemTitle/title required" }, 400);
@@ -777,11 +788,11 @@ async function handleCreateListing(req: Request): Promise<Response> {
     ItemPrice: String(basePrice),
     TaxRate: String(body.tax_rate || body.TaxRate || "S"),
     ItemQty: String(stock || optionStock),
-    ExpireDate: String(body.expire_date || body.ExpireDate || "2030-12-31"),
     ShippingNo: shippingNo,
     AvailableDateType: available.type,
     AvailableDateValue: available.value,
   };
+  if (expireDate) params.ExpireDate = expireDate;
   if (brandNo) params.BrandNo = brandNo;
   if (weightKg > 0) params.Weight = weightKg.toFixed(1);
   if (imageUrl) params.StandardImage = imageUrl;

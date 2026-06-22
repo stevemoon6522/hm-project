@@ -81,6 +81,10 @@ test('Qoo10 create listing contract includes official registration side fields',
   assert.match(adapter, /option_products/, 'Qoo10 create result should expose option products for platform_listings fan-out');
   assert.match(bridge, /const stockProvided = body\.stock != null \|\| body\.ItemQty != null \|\| itemTypeResult\.options\.length > 0;/, 'Qoo10 bridge should treat explicit stock=0 as a provided ItemQty value');
   assert.doesNotMatch(bridge, /if \(!stock && itemTypeResult\.options\.length <= 1\)/, 'Qoo10 bridge must not reject explicit stock=0 because ItemQty supports zero');
+  assert.match(bridge, /function\s+normalizeQoo10DashDate\s*\(/, 'Qoo10 bridge should normalize optional dash-date fields explicitly');
+  assert.match(bridge, /const expireDate = normalizeQoo10DashDate\(body\.expire_date \|\| body\.ExpireDate\);/, 'Qoo10 create should treat ExpireDate as an optional caller-provided field');
+  assert.match(bridge, /if \(expireDate\) params\.ExpireDate = expireDate;/, 'Qoo10 create should omit ExpireDate when not provided so Qoo10 applies its own default');
+  assert.doesNotMatch(bridge, /ExpireDate:\s*String\(body\.expire_date \|\| body\.ExpireDate \|\| "2030-12-31"\)/, 'Qoo10 create must not always send a default ExpireDate because Qoo10 can reject date parsing');
 });
 
 test('Qoo10 V2 modal defaults match lifecycle-aware listing policy', () => {

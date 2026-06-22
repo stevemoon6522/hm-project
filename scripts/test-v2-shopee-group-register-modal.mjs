@@ -170,6 +170,16 @@ assert(
   'group modal must upload master option images and attach them to Shopee variation options',
 );
 assert(
+  rshModal.includes("return String(product?.shopee_option_image_url || '').trim();")
+    && rshModal.includes('function rshHasExplicitOptionImages')
+    && rshModal.includes("rshHasExplicitOptionImages() && !_rsh.accountGlobalOptionImageIds")
+    && rshModal.includes("!regionsOverride && _rsh.mode === 'group' && rshHasExplicitOptionImages()")
+    && rshModal.includes("console.warn('[rsh] optional Shopee option image skipped:'")
+    && rshModal.includes("'선택 사항'")
+    && !rshModal.includes("product?._main_image || ''"),
+  'Shopee option images must be optional and must not block registration when absent or skipped',
+);
+assert(
   rshModal.includes("if (_rsh.mode === 'group')")
     && rshModal.includes('rshRegisterOptionGroupViaCbsc(session, activeRegions, dtsValues, lifecycle, errorEl)'),
   'Stage 2 must route grouped products to the direct variation register flow',

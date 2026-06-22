@@ -9796,11 +9796,12 @@ LEGACY END -->
 
       const rows = plMasterEditRowsFromModal(plMasterEditCurrentRows());
       const record = plMasterEditStoreCrawlRecord(groupId, url, result.observed_values || {});
+      const hasDraftDetailImages = plMasterEditDetailImageUrls(rows).length > 0;
       if (options.replace) {
         plMasterEditSetDetailImageState(record.detail_image_urls, url, {
           exclude: plMasterEditExcludeImageUrls(rows, record),
         });
-      } else if (record.detail_image_urls.length) {
+      } else if (record.detail_image_urls.length && !(options.auto && hasDraftDetailImages)) {
         plMasterEditMergeDetailImages(record.detail_image_urls, url);
       }
       const hasRepresentative = !!plMasterEditRepresentativeImage(rows);
@@ -11514,21 +11515,14 @@ LEGACY END -->
         components_extracted_at: components ? new Date().toISOString() : null,
         components_approved: components ? 1 : 0,
       };
-      const { data, error } = await db
-        .from('products')
-        .update(patch)
-        .in('id', rows.map((p) => p.id))
-        .select('id');
+      const { data, error } = await db.rpc('update_master_product_group', {
+        p_product_ids: rows.map((p) => p.id),
+        p_group_patch: patch,
+        p_option_patches: optionPatches,
+      });
       if (error) throw error;
       if (!Array.isArray(data) || data.length === 0) {
         throw new Error('업데이트 권한 없음 또는 대상 행 없음');
-      }
-      for (const item of optionPatches) {
-        const { error: rowErr } = await db
-          .from('products')
-          .update(item.patch)
-          .eq('id', item.id);
-        if (rowErr) throw rowErr;
       }
       const ids = new Set(rows.map((p) => String(p.id)));
       state.products.forEach((p) => {
@@ -13777,16 +13771,21 @@ LEGACY END -->
   // NAV ROUTING (plan §5-1)
   // ════════════════════════════════════════════════════════════════
   window.showView = function(viewId) {
+    const requestedViewId = String(viewId || '');
+    const canonicalViewId = requestedViewId === 'view-register' ? 'view-products' : requestedViewId;
     document.querySelectorAll('.view').forEach((v) => v.classList.remove('active'));
     document.querySelectorAll('.nav-tab').forEach((t) => t.classList.remove('active'));
-    const view = document.getElementById(viewId);
+    const view = document.getElementById(canonicalViewId);
     if (view) view.classList.add('active');
     document.querySelectorAll('.nav-tab').forEach((t) => {
-      if (t.getAttribute('onclick') && t.getAttribute('onclick').includes(`'${viewId}'`)) {
+      if (t.getAttribute('onclick') && t.getAttribute('onclick').includes(`'${canonicalViewId}'`)) {
         t.classList.add('active');
       }
     });
-    if (String(viewId || '').startsWith('view-platform-')) {
+    if (requestedViewId === 'view-register') {
+      openMasterRegisterPanel('global');
+    }
+    if (String(canonicalViewId || '').startsWith('view-platform-')) {
       renderPlatformWorkbenches();
     }
   };
@@ -30692,7 +30691,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                   inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
                   shopee_option_image_url: String(row._main_image || row.shopee_option_image_url || '').trim() || null,
                 }, Object.prototype.hasOwnProperty.call(row, '_custom_option_image_url') ? {
-                  shopee_option_image_url: row._custom_option_image_url || null,
+                  shopee_option_image_url: row._custom_option_image_url || row._main_image || null,
                 } : {}, mrMasterPatchForGroup(group)))
                 .eq('id', row.product_id);
             }
@@ -30738,7 +30737,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                   inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
                   shopee_option_image_url: String(row._main_image || row.shopee_option_image_url || '').trim() || null,
                   ...(Object.prototype.hasOwnProperty.call(row, '_custom_option_image_url')
-                    ? { shopee_option_image_url: row._custom_option_image_url || null }
+                    ? { shopee_option_image_url: row._custom_option_image_url || row._main_image || null }
                     : {}),
                   cost_updated_at: new Date().toISOString(),
                 })

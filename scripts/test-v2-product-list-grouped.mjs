@@ -39,6 +39,8 @@ assert(productView.includes('Vars'), 'master table must expose variation count')
 assert(productView.includes('WMS'), 'master table must expose WMS match status');
 assert(!productView.includes('data-master-register-open="custom"'), 'custom registration must live inside the new master registration panel');
 assert(!productView.includes('data-master-register-open="url"'), 'URL bulk registration must live inside the new master registration panel');
+assert(html.includes("requestedViewId === 'view-register' ? 'view-products' : requestedViewId"), 'legacy register view routing must activate the master product page');
+assert(html.includes("if (requestedViewId === 'view-register')") && html.includes("openMasterRegisterPanel('global')"), 'legacy register view routing must open the unified master register panel');
 assert(html.includes('.pl-group-row'), 'group row styling must exist');
 assert(html.includes('.pl-option-row'), 'option row styling must exist');
 assert(html.includes('productListExpandedGroups: new Set()'), 'expanded group state must be tracked');

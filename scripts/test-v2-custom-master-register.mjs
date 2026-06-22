@@ -37,7 +37,8 @@ assert.match(registerView, /id="custom-master-product-kind"/, 'custom panel must
 assert.match(registerView, /<option value="album" selected>Album<\/option>/, 'custom product type selector must default to Album');
 assert.match(registerView, /<option value="goods">Goods \/ Idol Collectibles<\/option>/, 'custom product type selector must expose Goods / Idol Collectibles');
 
-assert.match(html, /data-master-register-open="custom"/, 'product list action bar must open custom registration');
+assert.match(html, /data-master-register-open="global"/, 'product list action bar must open the unified master registration panel');
+assert.doesNotMatch(html, /data-master-register-open="custom"/, 'custom registration must live inside the unified master registration panel');
 assert.match(html, /target === 'custom' \? '커스텀 마스터 등록'/, 'master register panel title must handle custom');
 assert.match(html, /window\.sdRegisterWorkbenchActivate\(\['url', 'custom', 'wms', 'retry'\]\.includes\(target\) \? target : 'global'\)/, 'panel opener must route custom target');
 
@@ -50,7 +51,7 @@ assert.match(masterRegister, /_product_kind: productKind/, 'custom preview rows 
 assert.match(masterRegister, /source: 'custom_master'/, 'custom preview rows must be marked as custom source');
 assert.match(masterRegister, /_staronemall_url: ''/, 'custom preview rows must not carry a StarOneMall URL');
 assert.match(masterRegister, /_custom_option_image_url/, 'custom option images must be tracked separately');
-assert.match(masterRegister, /row\._custom_option_image_url \|\| null/, 'custom option image URL must persist when present and clear when absent');
+assert.match(masterRegister, /row\._custom_option_image_url \|\| row\._main_image \|\| null/, 'custom option image URL must fall back to the representative image when no per-option file is attached');
 assert.match(masterRegister, /비우면 대표 이미지 사용/, 'custom option image fallback must use the representative image');
 assert.match(masterRegister, /function mrIsCustomGroup\(group\)/, 'custom groups must be distinguishable');
 assert.match(masterRegister, /if \(mrIsCustomGroup\(group\)\) return '';/, 'custom groups must not trigger StarOneMall image recrawl');

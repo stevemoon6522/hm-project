@@ -16,6 +16,10 @@ function sliceBetween(source, start, end) {
 }
 
 const html = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
+const atomicSaveMigration = readFileSync(
+  join(root, 'supabase', 'migrations', '202606220002_update_master_product_group_rpc.sql'),
+  'utf8',
+);
 const modalHtml = sliceBetween(
   html,
   '<div class="modal-overlay" id="pl-master-edit-modal"',
@@ -119,6 +123,10 @@ for (const token of [
   '마스터 옵션 이미지 추가',
   'shopee_days_to_ship',
   'shopee_extra_attributes',
+  "db.rpc('update_master_product_group'",
+  'p_product_ids: rows.map((p) => p.id)',
+  'p_group_patch: patch',
+  'p_option_patches: optionPatches',
   'const productKind = productKindOfRow(rows[0]);',
   'const categoryDefaults = productKindDefaults(productKind);',
   'product_kind: productKind',
@@ -147,6 +155,8 @@ for (const removedToken of [
   "document.getElementById('pl-master-edit-description')",
   'shopee_description:',
   'mrUploadMasterImageFile(file',
+  'for (const item of optionPatches)',
+  '.update(item.patch)',
 ]) {
   assert(!editCode.includes(removedToken), `master edit save/open flow still reads removed field: ${removedToken}`);
 }
@@ -162,6 +172,17 @@ assert(
 assert(
   editCode.includes('row?.shopee_option_image_url || row?.main_image || row?._main_image'),
   'master edit option image display must fall back to persisted main_image for older StarOneMall-created rows',
+);
+assert(
+  editCode.includes('const hasDraftDetailImages = plMasterEditDetailImageUrls(rows).length > 0')
+    && editCode.includes('!(options.auto && hasDraftDetailImages)'),
+  'master edit auto StarOneMall crawl must not merge new detail images over an existing draft detail image list',
+);
+assert(
+  atomicSaveMigration.includes('create or replace function public.update_master_product_group')
+    && atomicSaveMigration.includes('duplicate_sku_existing_product')
+    && atomicSaveMigration.includes('grant execute on function public.update_master_product_group(uuid[], jsonb, jsonb) to authenticated'),
+  'master edit atomic save RPC migration must validate SKU conflicts and grant authenticated execute',
 );
 
 console.log('v2 master edit draft modal checks passed');

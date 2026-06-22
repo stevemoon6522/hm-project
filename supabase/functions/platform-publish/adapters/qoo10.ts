@@ -12,6 +12,7 @@ const SUPABASE_SERVICE_ROLE_KEY = (Deno as any).env.get('SUPABASE_SERVICE_ROLE_K
 const QOO10_BRIDGE_URL = (Deno as any).env.get('QOO10_BRIDGE_URL') || (SUPABASE_URL ? `${SUPABASE_URL}/functions/v1/qoo10-bridge` : '');
 const QOO10_GOODS_CATEGORY_ID = '300002855';
 const QOO10_DEFAULT_SHIPPING_NO = '715009';
+const QOO10_SHOP_LAYER_VERSION = 'qoo10-shop-layer-v1';
 const QOO10_SHIPPING_FEE_TABLE_JPY = Object.freeze([
   { maxWeightG: 100, feeJpy: 450 },
   { maxWeightG: 250, feeJpy: 525 },
@@ -26,6 +27,31 @@ const QOO10_SHIPPING_FEE_TABLE_JPY = Object.freeze([
 
 function norm(value: unknown): string {
   return String(value || '').trim();
+}
+
+function truthy(value: unknown): boolean {
+  const normalized = norm(value).toLowerCase();
+  return value === true || value === 1 || normalized === 'true' || normalized === '1' || normalized === 'yes';
+}
+
+function isQoo10LayeredMainImageUrl(value: unknown): boolean {
+  const url = norm(value);
+  return /^https:\/\//i.test(url)
+    && /\/storage\/v1\/object\/public\/product-images\/q10\//i.test(url)
+    && /-cover-[0-9a-f-]{8,}\.(png|jpe?g|webp)(\?|$)/i.test(url);
+}
+
+function validateQoo10LayeredMainImage(qoo10: Record<string, any>, imageUrl: string): { ok: true } | { ok: false; message: string } {
+  if (!imageUrl) {
+    return { ok: false, message: 'Qoo10 representative image is required before registration.' };
+  }
+  if (!truthy(qoo10.main_image_layered) || norm(qoo10.layer_version) !== QOO10_SHOP_LAYER_VERSION || !isQoo10LayeredMainImageUrl(imageUrl)) {
+    return {
+      ok: false,
+      message: 'Qoo10 StandardImage must be generated through the shop-layer upload path before registration.',
+    };
+  }
+  return { ok: true };
 }
 
 function normalizeQoo10PriceEnding90(value: unknown): number {
@@ -311,6 +337,7 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
   const basePrice = reconciledPricing.basePrice;
   const options = reconciledPricing.options;
   const userAuthToken = norm((ctx as any).userAuthToken);
+  const mainImage = norm(qoo10.main_image);
 
   if (!userAuthToken) return { ok: false, listingStatus: 'not_listed', errorCode: 'AUTH_NOT_VERIFIED', errorMsg: 'Missing authenticated user token for qoo10-bridge create-listing' };
   if (!categoryId) return { ok: false, listingStatus: 'not_listed', errorCode: 'QOO10_CATEGORY_UNMAPPED', errorMsg: 'Qoo10 category_id is required' };
@@ -321,6 +348,10 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
   if (available.type === '2' && !/^\d{4}[/-]\d{2}[/-]\d{2}$/.test(available.value)) {
     return { ok: false, listingStatus: 'not_listed', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: 'Qoo10 release date is required as YYYY-MM-DD for pre-order listings' };
   }
+  const mainImageValidation = validateQoo10LayeredMainImage(qoo10, mainImage);
+  if (!mainImageValidation.ok) {
+    return { ok: false, listingStatus: 'not_listed', errorCode: 'PLATFORM_VALIDATION_ERROR', errorMsg: mainImageValidation.message };
+  }
 
   const payload = {
     category_id: categoryId,
@@ -328,7 +359,9 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
     seller_code: sellerCode,
     brand_no: brandNo,
     shipping_no: shippingNo,
-    main_image: qoo10.main_image || ctx.masterProduct?.main_image,
+    main_image: mainImage,
+    main_image_layered: true,
+    layer_version: QOO10_SHOP_LAYER_VERSION,
     description: defaultDescription(ctx, qoo10),
     base_price_jpy: basePrice,
     stock: Math.max(0, options.reduce((sum, row) => sum + Number(row.stock || 0), 0)),

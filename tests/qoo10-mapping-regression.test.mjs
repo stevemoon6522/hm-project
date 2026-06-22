@@ -79,6 +79,11 @@ test('Qoo10 create listing contract includes official registration side fields',
   assert.match(adapter, /production_place:\s*norm\(qoo10\.production_place \|\| 'KR'\)/, 'Qoo10 create payload should default overseas origin to South Korea');
   assert.match(adapter, /force_options:\s*options\.length > 1/, 'Qoo10 grouped create payload should force ItemType option creation');
   assert.match(adapter, /option_products/, 'Qoo10 create result should expose option products for platform_listings fan-out');
+  assert.match(adapter, /function\s+validateQoo10LayeredMainImage\s*\(/, 'Qoo10 adapter must validate that StandardImage came from the shop-layer upload path');
+  assert.doesNotMatch(adapter, /main_image:\s*qoo10\.main_image \|\| ctx\.masterProduct\?\.main_image/, 'Qoo10 adapter must not silently fall back to the raw master image for StandardImage');
+  assert.match(bridge, /function\s+validateQoo10LayeredStandardImage\s*\(/, 'Qoo10 bridge must reject raw StandardImage URLs before SetNewGoods');
+  assert.match(bridge, /QOO10_SHOP_LAYER_VERSION = "qoo10-shop-layer-v1"/, 'Qoo10 bridge must require the shop-layer version marker');
+  assert.match(bridge, /validateQoo10LayeredStandardImage\(body,\s*standardImage\)/, 'Qoo10 edit-image must also reject raw StandardImage replacements');
   assert.ok(bridge.includes('const normalized = String(value || "").trim().replace(/\\//g, "-");'), 'Qoo10 bridge should send preorder release dates as YYYY-MM-DD for Qoo10 DateTime parsing');
   assert.doesNotMatch(bridge, /replace\(\/-\/g,\s*"\/"\)/, 'Qoo10 bridge must not convert preorder release dates to slash format');
   assert.match(bridge, /const stockProvided = body\.stock != null \|\| body\.ItemQty != null \|\| itemTypeResult\.options\.length > 0;/, 'Qoo10 bridge should treat explicit stock=0 as a provided ItemQty value');
@@ -127,6 +132,8 @@ test('Qoo10 V2 modal defaults match lifecycle-aware listing policy', () => {
   assert.match(html, /mrBuildMarketplaceLayeredMainImageUrl\('qoo10',\s*mainImageUrl,\s*first\)/, 'Qoo10 layered representative image should use the shared marketplace upload helper');
   assert.match(html, /sdUploadProductImageFile\(file,\s*uploadRow,\s*\{[\s\S]*kind:\s*'cover'[\s\S]*prefix:\s*platformKey === 'qoo10' \? 'q10' : platformKey[\s\S]*\}\)/, 'Qoo10 layered representative image should be uploaded as a short public product cover URL');
   assert.match(html, /payload\.publish\.main_image\s*=\s*await mrQoo10BuildLayeredMainImageUrl\(_mrQoo10\.rows \|\| \[\]\)/, 'Qoo10 create request should send the uploaded layered representative image URL');
+  assert.match(html, /payload\.publish\.main_image_layered\s*=\s*true;/, 'Qoo10 create request should mark the representative image as shop-layered');
+  assert.match(html, /payload\.publish\.layer_version\s*=\s*QOO10_SHOP_LAYER_VERSION;/, 'Qoo10 create request should send the required shop-layer version marker');
   assert.match(html, /if \(!payload\.publish\.main_image\) \{[\s\S]*if \(!_mrQoo10\.existingItemCode\) throw new Error\('Qoo10 representative image is required before registration\.'\);[\s\S]*\} else \{[\s\S]*payload\.publish\.main_image = await mrQoo10BuildLayeredMainImageUrl\(_mrQoo10\.rows \|\| \[\]\);[\s\S]*\}/, 'Qoo10 new registrations should require and layer a representative image');
   assert.match(html, /mrQoo10LoadExistingItemCode/, 'Qoo10 modal should detect existing item codes before deciding create vs repair');
   assert.match(html, /mrQoo10RepairExistingListing/, 'Qoo10 modal should repair existing items instead of duplicate-registering them');

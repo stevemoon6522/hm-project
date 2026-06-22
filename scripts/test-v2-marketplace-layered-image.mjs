@@ -42,6 +42,10 @@ assert(
   qoo10LayerFn.includes("return await mrBuildMarketplaceLayeredMainImageUrl('qoo10', mainImageUrl, first);"),
   'Qoo10 representative image builder must use the shared layered URL helper',
 );
+assert(
+  html.includes("const QOO10_SHOP_LAYER_VERSION = 'qoo10-shop-layer-v1';"),
+  'Qoo10 layered StandardImage submissions must use a stable layer version marker',
+);
 
 const qoo10SubmitFn = extractFunctionBlock(html, 'mrQoo10Submit');
 assert(
@@ -50,6 +54,11 @@ assert(
     && qoo10SubmitFn.indexOf('payload.publish.main_image = await mrQoo10BuildLayeredMainImageUrl(_mrQoo10.rows || [])')
       < qoo10SubmitFn.indexOf('await mrQoo10PersistProductFields(payload)'),
   'Qoo10 submit must replace payload.publish.main_image with the layered URL before persisting and publishing',
+);
+assert(
+  qoo10SubmitFn.includes('payload.publish.main_image_layered = true;')
+    && qoo10SubmitFn.includes('payload.publish.layer_version = QOO10_SHOP_LAYER_VERSION;'),
+  'Qoo10 submit must send layered-image guard metadata with the publish payload',
 );
 
 const ebayImageUrlsFn = extractFunctionBlock(html, 'mrEbayImageUrls');

@@ -5095,6 +5095,7 @@ LEGACY END -->
   const STARONE_CRAWL_URL = `${SUPABASE_URL}/functions/v1/starone-crawl`;
   const SD_PRODUCT_IMAGE_BUCKET = 'product-images';
   const QOO10_DEFAULT_HEADER_IMAGE_URL = 'https://res.cloudinary.com/dybau67eb/image/upload/v1780901679/%ED%81%90%ED%85%90_%ED%97%A4%EB%8D%94_%EA%B3%B5%EC%A7%80_pwduin.jpg';
+  const QOO10_SHOP_LAYER_VERSION = 'qoo10-shop-layer-v1';
   const QOO10_DEFAULT_DESCRIPTION_TEMPLATE = `<div>💿{{MASTER_PRODUCT_NAME}}<br><br>100％公式・正規品 / 特典付き / HANTEO・CIRCLEチャート反映商品<br><br>🎁 無料特典付き<br><br>アルバム1枚ごとに、ホログラムスリーブ2枚をプレゼントいたします。（※無くなり次第終了）<br><br>💯 100％正規品保証<br><br>当店で販売している商品はすべて、公式流通を通じて仕入れた正規品です。安心してご購入ください。<br><br>📊 HANTEO・CIRCLEチャート反映対応<br><br>当ショップでのご購入は、HANTEOチャートおよびCIRCLE（旧GAON）チャートに反映されます。<br>あなたの応援がアーティストの記録に貢献します！<br><br>🚚 迅速な発送対応<br><br>・「即時発送」表示の商品は、営業日基準で1～2日以内に発送いたします。<br>・「予約商品」は商品が入荷次第、できるだけ早く発送いたします。<br><br>📦 丁寧で安心な梱包<br><br>フォトカード商品は、トップローダー＋厚紙補強でしっかりと保護し、韓国郵便局より追跡可能な方法で発送いたします。<br><br>🔔 ご予約注文についての大切なご案内<br><br>事前予約商品のご注文は、注文締切時間までにお支払いが完了している必要があります。<br>※決済待ちのままのご注文は無効となります。<br><br>また、締切後のキャンセルや返金は理由を問わず一切お受けできません。<br>恐れ入りますが、こちらにご同意いただける方のみご注文をお願いいたします。<br><br>🛡️ 構成品の欠品対応について<br><br>商品開封時は、必ず動画撮影をお願いいたします。<br>構成品の欠落に関しては、動画がない場合、対応が難しいことがございます。<br>在庫がある場合は迅速に交換対応いたしますが、在庫切れの場合は交換できない可能性がございます。<br><br>🏷️ 現地購入商品に関して<br><br>現地状況により、セット内容や在庫が変更となる場合がございます。<br>そのため、後日オンラインにて追加注文をご案内することがございます。あらかじめご了承ください。<br><br>📩 お問い合わせについて<br><br>ご不明な点がございましたら、いつでもお気軽にお問い合わせください。<br><br><br><br></div>`;
   // AUTH_HEADERS.Authorization starts at the anon JWT so the Supabase platform
   // JWT verification (verify_jwt=true on all our Edge Functions) lets requests
@@ -18156,6 +18157,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       } else {
         mrQoo10Status('Building Qoo10 layered representative image...');
         payload.publish.main_image = await mrQoo10BuildLayeredMainImageUrl(_mrQoo10.rows || []);
+        payload.publish.main_image_layered = true;
+        payload.publish.layer_version = QOO10_SHOP_LAYER_VERSION;
       }
       mrQoo10Status('상품 설정 저장 중...');
       await mrQoo10PersistProductFields(payload);

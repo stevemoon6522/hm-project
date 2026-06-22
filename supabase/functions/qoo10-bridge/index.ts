@@ -19,6 +19,7 @@ import { AUTH_CORS, requireAuthenticatedUser } from "../_shared/auth.ts";
 const QOO10_API_BASE = (Deno as any).env.get("QOO10_API_BASE") || "https://api.qoo10.jp/GMKT.INC.Front.QAPIService/ebayjapan.qapi";
 const QOO10_API_KEY = (Deno as any).env.get("QOO10_API_KEY") || (Deno as any).env.get("QOO10_CERT_KEY") || "";
 const QOO10_DELETE_CONFIRM_PHRASE = "DELETE_QOO10_LISTING";
+const QOO10_SHOP_LAYER_VERSION = "qoo10-shop-layer-v1";
 const QOO10_SCAN_STATUSES = String((Deno as any).env.get("QOO10_SCAN_STATUSES") || "S2,S1,S3,S0,S4,S5,S8")
   .split(",")
   .map((s) => s.trim())
@@ -326,6 +327,28 @@ function clampString(value: unknown, max: number): string {
   return String(value || "").trim().slice(0, max);
 }
 
+function truthy(value: unknown): boolean {
+  const normalized = String(value || "").trim().toLowerCase();
+  return value === true || value === 1 || normalized === "true" || normalized === "1" || normalized === "yes";
+}
+
+function isQoo10LayeredStandardImageUrl(value: unknown): boolean {
+  const url = String(value || "").trim();
+  return /^https:\/\//i.test(url)
+    && /\/storage\/v1\/object\/public\/product-images\/q10\//i.test(url)
+    && /-cover-[0-9a-f-]{8,}\.(png|jpe?g|webp)(\?|$)/i.test(url);
+}
+
+function validateQoo10LayeredStandardImage(body: any, imageUrl: string): string {
+  if (!imageUrl) return "Qoo10 StandardImage is required before registration.";
+  const layered = truthy(body.main_image_layered ?? body.MainImageLayered);
+  const layerVersion = String(body.layer_version || body.LayerVersion || "").trim();
+  if (!layered || layerVersion !== QOO10_SHOP_LAYER_VERSION || !isQoo10LayeredStandardImageUrl(imageUrl)) {
+    return "Qoo10 StandardImage must be generated through the shop-layer upload path before registration.";
+  }
+  return "";
+}
+
 function normalizeQoo10PriceEnding90(value: unknown): number {
   const n = Number(value);
   if (!Number.isFinite(n) || n <= 0) return 0;
@@ -567,6 +590,8 @@ async function handleEditImage(req: Request): Promise<Response> {
   const standardImage = String(body.standard_image || body.StandardImage || body.main_image || "").trim();
   if (!itemCode) return jsonResp({ ok: false, error: "ItemCode/item_code required" }, 400);
   if (!standardImage) return jsonResp({ ok: false, error: "StandardImage/standard_image required" }, 400);
+  const imageValidationError = validateQoo10LayeredStandardImage(body, standardImage);
+  if (imageValidationError) return jsonResp({ ok: false, error: imageValidationError }, 400);
   const result = await applyGoodsImage(itemCode, sellerCode, standardImage);
   if (!result?.ok) return jsonResp(result || { ok: false, error: "qoo10_goods_image_failed" }, 502);
   return jsonResp({ ok: true, item_code: itemCode, seller_code: sellerCode || null, standard_image: standardImage, raw: result.raw });
@@ -776,6 +801,8 @@ async function handleCreateListing(req: Request): Promise<Response> {
   if (!basePrice) return jsonResp({ ok: false, error: "ItemPrice/base_price_jpy required" }, 400);
   if (!shippingNo) return jsonResp({ ok: false, error: "ShippingNo/shipping_no required; select a registered Qoo10 shipping template" }, 400);
   if (!stockProvided && itemTypeResult.options.length <= 1) return jsonResp({ ok: false, error: "ItemQty/stock required" }, 400);
+  const imageValidationError = validateQoo10LayeredStandardImage(body, imageUrl);
+  if (imageValidationError) return jsonResp({ ok: false, error: imageValidationError }, 400);
 
   const params: Record<string, string> = {
     SecondSubCat: categoryId,

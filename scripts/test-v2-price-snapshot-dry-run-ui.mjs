@@ -19,7 +19,7 @@ const snapshotInput = sliceBetween(
 const snapshotRpc = sliceBetween(
   html,
   'async function catRecordPriceDryRunSnapshots(payloads, nowIso)',
-  '/**\n   * Execute dry-run:',
+  'async function catExecuteDryRun(payloads)',
 );
 const dryRun = sliceBetween(
   html,

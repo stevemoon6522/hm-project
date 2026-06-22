@@ -51,7 +51,7 @@ export function resolveQoo10AvailableDate(lifecycleState: unknown, releaseDate: 
 
   return {
     type: QOO10_PRE_ORDER_AVAILABLE_DATE_TYPE,
-    value: String(releaseDate || '').trim().replace(/-/g, '/'),
+    value: String(releaseDate || '').trim().replace(/\//g, '-'),
     requires_release_date: true,
   };
 }

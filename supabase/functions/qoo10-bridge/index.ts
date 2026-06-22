@@ -337,9 +337,9 @@ function normalizeQoo10PriceEnding90(value: unknown): number {
 function normalizeAvailableDate(type: unknown, value: unknown) {
   const t = String(type || "0").trim();
   if (t === "2") {
-    const normalized = String(value || "").trim().replace(/-/g, "/");
-    if (!/^\d{4}\/\d{2}\/\d{2}$/.test(normalized)) {
-      throw new Error("Qoo10 release date must be YYYY/MM/DD when AvailableDateType=2");
+    const normalized = String(value || "").trim().replace(/\//g, "-");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+      throw new Error("Qoo10 release date must be YYYY-MM-DD when AvailableDateType=2");
     }
     return { type: "2", value: normalized };
   }

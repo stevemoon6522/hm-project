@@ -79,6 +79,8 @@ test('Qoo10 create listing contract includes official registration side fields',
   assert.match(adapter, /production_place:\s*norm\(qoo10\.production_place \|\| 'KR'\)/, 'Qoo10 create payload should default overseas origin to South Korea');
   assert.match(adapter, /force_options:\s*options\.length > 1/, 'Qoo10 grouped create payload should force ItemType option creation');
   assert.match(adapter, /option_products/, 'Qoo10 create result should expose option products for platform_listings fan-out');
+  assert.ok(bridge.includes('const normalized = String(value || "").trim().replace(/\\//g, "-");'), 'Qoo10 bridge should send preorder release dates as YYYY-MM-DD for Qoo10 DateTime parsing');
+  assert.doesNotMatch(bridge, /replace\(\/-\/g,\s*"\/"\)/, 'Qoo10 bridge must not convert preorder release dates to slash format');
   assert.match(bridge, /const stockProvided = body\.stock != null \|\| body\.ItemQty != null \|\| itemTypeResult\.options\.length > 0;/, 'Qoo10 bridge should treat explicit stock=0 as a provided ItemQty value');
   assert.doesNotMatch(bridge, /if \(!stock && itemTypeResult\.options\.length <= 1\)/, 'Qoo10 bridge must not reject explicit stock=0 because ItemQty supports zero');
   assert.match(bridge, /function\s+normalizeQoo10DashDate\s*\(/, 'Qoo10 bridge should normalize optional dash-date fields explicitly');

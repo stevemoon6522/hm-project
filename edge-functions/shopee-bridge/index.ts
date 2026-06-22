@@ -766,6 +766,7 @@ const V2_MUTATION_ACTIONS = new Set([
   'update_shop_days_to_ship',
   'update_shop_item_name',
   'update_shop_item_description',
+  'update_shop_tier_variation',
   'set_global_sync_fields',
   'set_price_sync_on',
 ]);
@@ -1409,14 +1410,14 @@ async function runV2MutationAction(action: string, body: any) {
     if (imageIdList.length) requestPayload.image = { image_id_list: imageIdList };
     if (attribute_list.length) requestPayload.attribute_list = attribute_list;
     if (!global_item_id) return { ok: false, error: 'global_item_id required' };
-    if (!global_item_sku && !item_name && !description && !requestPayload.pre_order && !requestPayload.weight && !attribute_list.length) {
-      return { ok: false, error: 'at least one of global_item_sku, global_item_name, description, days_to_ship, weight, attribute_list required' };
+    if (!global_item_sku && !item_name && !description && !requestPayload.pre_order && !requestPayload.weight && !attribute_list.length && !imageIdList.length) {
+      return { ok: false, error: 'at least one of global_item_sku, global_item_name, description, days_to_ship, weight, attribute_list, image_id_list required' };
     }
 
     const preflight = await enforceV2ProbePreflight(action, requestPayload, body);
     if (!preflight.ok) return { ok: false, ...preflight };
     const finalPayload = await hydrateUpdateGlobalItemPayload(r, preflight.requestPayload, accountKey);
-    if (!finalPayload.global_item_sku && !finalPayload.global_item_name && !finalPayload.item_name && !finalPayload.description && !finalPayload.pre_order && !finalPayload.weight && !finalPayload.attribute_list) {
+    if (!finalPayload.global_item_sku && !finalPayload.global_item_name && !finalPayload.item_name && !finalPayload.description && !finalPayload.pre_order && !finalPayload.weight && !finalPayload.attribute_list && !finalPayload.image?.image_id_list?.length) {
       return { ok: false, error: 'v2_degraded_payload_empty', message: 'All requested fields were blocked by probe preflight.' };
     }
     const response = await executeLoggedMutation(action, r, finalPayload, body, payload =>
@@ -1526,6 +1527,80 @@ async function runV2MutationAction(action: string, body: any) {
     return { ...response, item_id, sent_description_length: description.length };
   }
 
+  if (action === 'update_shop_tier_variation') {
+    const item_id = parseInt(body.item_id || body.shop_item_id);
+    if (!item_id) return { ok: false, error: 'shop_item_id required' };
+
+    const modelSource = Array.isArray(body.model_list)
+      ? body.model_list
+      : (Array.isArray(body.model) ? body.model : []);
+    const model_list = modelSource
+      .map((m: any) => ({
+        model_id: parseInt(m?.model_id),
+        tier_index: Array.isArray(m?.tier_index) ? m.tier_index.map((v: any) => Number(v)) : [],
+      }))
+      .filter((m: any) => (
+        Number.isFinite(m.model_id)
+        && m.model_id > 0
+        && Array.isArray(m.tier_index)
+        && m.tier_index.every((v: any) => Number.isFinite(v))
+      ));
+
+    const standardiseSource = Array.isArray(body.standardise_tier_variation) ? body.standardise_tier_variation : [];
+    const standardise_tier_variation = standardiseSource
+      .map((tier: any) => {
+        const out: Record<string, any> = {
+          variation_id: Number(tier?.variation_id),
+          variation_option_list: Array.isArray(tier?.variation_option_list)
+            ? tier.variation_option_list.map((option: any) => {
+              const next: Record<string, any> = {
+                variation_option_id: Number(option?.variation_option_id),
+                variation_option_name: String(option?.variation_option_name || '').trim(),
+              };
+              const imageId = String(option?.image_id || option?.image?.image_id || '').trim();
+              if (imageId) next.image_id = imageId;
+              return next;
+            }).filter((option: any) => (
+              Number.isFinite(option.variation_option_id)
+              && option.variation_option_id >= 0
+              && option.variation_option_name
+            ))
+            : [],
+        };
+        const variationName = String(tier?.variation_name || tier?.name || '').trim();
+        if (variationName) out.variation_name = variationName;
+        const variationGroupId = Number(tier?.variation_group_id);
+        if (Number.isFinite(variationGroupId) && variationGroupId >= 0) out.variation_group_id = variationGroupId;
+        return out;
+      })
+      .filter((tier: any) => (
+        Number.isFinite(tier.variation_id)
+        && tier.variation_id >= 0
+        && Array.isArray(tier.variation_option_list)
+        && tier.variation_option_list.length
+      ));
+
+    if (!model_list.length) return { ok: false, error: 'model_list[] required (model_id + tier_index)' };
+    if (!standardise_tier_variation.length) {
+      return { ok: false, error: 'standardise_tier_variation[] required' };
+    }
+
+    const requestPayload: Record<string, any> = { item_id, model_list, standardise_tier_variation };
+
+    // Official local doc:
+    // C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\product\v2.product.update_tier_variation.json
+    const response = await executeLoggedMutation(action, r, requestPayload, body, payload =>
+      shopApiCall(r, '/api/v2/product/update_tier_variation', { method: 'POST', body: payload, account_key: accountKey })
+    );
+    return {
+      ...response,
+      item_id,
+      sent_model_count: model_list.length,
+      sent_tier_count: standardise_tier_variation.length,
+      tier_payload_kind: 'standardise_tier_variation',
+    };
+  }
+
   const item_id = parseInt(body.item_id || body.shop_item_id);
   const days_to_ship = Number(body.days_to_ship);
   if (!item_id) return { ok: false, error: 'shop_item_id required' };
@@ -1613,6 +1688,60 @@ function imageBlockFrom(body: any) {
     image.image_url_list = [String(body.image_url)];
   }
   return image;
+}
+
+function hasShopeeProductImageInput(body: any) {
+  return stringArray(body?.image?.image_id_list || body?.image_id_list).length > 0
+    || stringArray(body?.image?.image_url_list || body?.image_url_list).length > 0
+    || !!String(body?.image_id || body?.image_url || '').trim();
+}
+
+function registerModelStock(model: any, fallbackStock: number) {
+  return Math.floor(Number(model?.seller_stock?.[0]?.stock ?? model?.stock ?? fallbackStock ?? 0));
+}
+
+function registerModelPrice(model: any, fallbackPrice: number) {
+  return Number(model?.global_original_price ?? model?.original_price ?? fallbackPrice ?? 0);
+}
+
+function validateRegisterStockInput(body: any, normalizedVariation: any, targets: any[] = []) {
+  const fallbackStock = Number(body.stock ?? targets[0]?.stock ?? 0);
+  if (normalizedVariation?.model?.length) {
+    const invalid = normalizedVariation.model
+      .map((model: any, index: number) => ({
+        sku: String(model?.global_model_sku || model?.model_sku || `model ${index + 1}`).trim(),
+        stock: registerModelStock(model, fallbackStock),
+      }))
+      .filter((row: any) => !Number.isFinite(row.stock) || row.stock < 1);
+    if (invalid.length) {
+      return `Shopee registration requires option stock >= 1: ${invalid.slice(0, 5).map((row: any) => row.sku).join(', ')}`;
+    }
+    return '';
+  }
+  if (!Number.isFinite(fallbackStock) || Math.floor(fallbackStock) < 1) {
+    return 'Shopee registration requires stock >= 1.';
+  }
+  return '';
+}
+
+function validateRegisterPriceInput(body: any, normalizedVariation: any, targets: any[] = []) {
+  const fallbackPrice = Number(body.global_price ?? body.price ?? targets[0]?.price ?? 0);
+  if (normalizedVariation?.model?.length) {
+    const invalid = normalizedVariation.model
+      .map((model: any, index: number) => ({
+        sku: String(model?.global_model_sku || model?.model_sku || `model ${index + 1}`).trim(),
+        price: registerModelPrice(model, fallbackPrice),
+      }))
+      .filter((row: any) => !Number.isFinite(row.price) || row.price <= 0);
+    if (invalid.length) {
+      return `Shopee registration requires option price > 0: ${invalid.slice(0, 5).map((row: any) => row.sku).join(', ')}`;
+    }
+    return '';
+  }
+  if (!Number.isFinite(fallbackPrice) || fallbackPrice <= 0) {
+    return 'Shopee registration requires price > 0.';
+  }
+  return '';
 }
 
 function normalizeTierVariation(variation: any) {
@@ -3576,6 +3705,35 @@ Deno.serve(async (req) => {
       }
       const isOptionGroupRegistration = String(body.registration_kind || '').toLowerCase() === 'option_group' || !!preflightVariation;
       if (!body.sku && !isOptionGroupRegistration) return jsonResp({ ok: false, error: 'sku required' }, 400);
+      if (!hasShopeeProductImageInput(body)) {
+        return jsonResp({
+          ok: false,
+          region: r,
+          stage: 'image_preflight',
+          error: 'image_id_list_required',
+          message: 'Product image_id_list or image_url is required before Shopee registration.',
+        }, 400);
+      }
+      const stockPreflightMessage = validateRegisterStockInput(body, preflightVariation, targetInputs);
+      if (stockPreflightMessage) {
+        return jsonResp({
+          ok: false,
+          region: r,
+          stage: 'stock_preflight',
+          error: 'invalid_stock',
+          message: stockPreflightMessage,
+        }, 400);
+      }
+      const pricePreflightMessage = validateRegisterPriceInput(body, preflightVariation, targetInputs);
+      if (pricePreflightMessage) {
+        return jsonResp({
+          ok: false,
+          region: r,
+          stage: 'price_preflight',
+          error: 'invalid_price',
+          message: pricePreflightMessage,
+        }, 400);
+      }
 
       return withPublishRequestId(action, `${accountKey}:${r}`, _cbscIdempotencyToken, body, async () => {
       const stage_logs: string[] = [];

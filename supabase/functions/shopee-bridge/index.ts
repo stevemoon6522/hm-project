@@ -1690,6 +1690,60 @@ function imageBlockFrom(body: any) {
   return image;
 }
 
+function hasShopeeProductImageInput(body: any) {
+  return stringArray(body?.image?.image_id_list || body?.image_id_list).length > 0
+    || stringArray(body?.image?.image_url_list || body?.image_url_list).length > 0
+    || !!String(body?.image_id || body?.image_url || '').trim();
+}
+
+function registerModelStock(model: any, fallbackStock: number) {
+  return Math.floor(Number(model?.seller_stock?.[0]?.stock ?? model?.stock ?? fallbackStock ?? 0));
+}
+
+function registerModelPrice(model: any, fallbackPrice: number) {
+  return Number(model?.global_original_price ?? model?.original_price ?? fallbackPrice ?? 0);
+}
+
+function validateRegisterStockInput(body: any, normalizedVariation: any, targets: any[] = []) {
+  const fallbackStock = Number(body.stock ?? targets[0]?.stock ?? 0);
+  if (normalizedVariation?.model?.length) {
+    const invalid = normalizedVariation.model
+      .map((model: any, index: number) => ({
+        sku: String(model?.global_model_sku || model?.model_sku || `model ${index + 1}`).trim(),
+        stock: registerModelStock(model, fallbackStock),
+      }))
+      .filter((row: any) => !Number.isFinite(row.stock) || row.stock < 1);
+    if (invalid.length) {
+      return `Shopee registration requires option stock >= 1: ${invalid.slice(0, 5).map((row: any) => row.sku).join(', ')}`;
+    }
+    return '';
+  }
+  if (!Number.isFinite(fallbackStock) || Math.floor(fallbackStock) < 1) {
+    return 'Shopee registration requires stock >= 1.';
+  }
+  return '';
+}
+
+function validateRegisterPriceInput(body: any, normalizedVariation: any, targets: any[] = []) {
+  const fallbackPrice = Number(body.global_price ?? body.price ?? targets[0]?.price ?? 0);
+  if (normalizedVariation?.model?.length) {
+    const invalid = normalizedVariation.model
+      .map((model: any, index: number) => ({
+        sku: String(model?.global_model_sku || model?.model_sku || `model ${index + 1}`).trim(),
+        price: registerModelPrice(model, fallbackPrice),
+      }))
+      .filter((row: any) => !Number.isFinite(row.price) || row.price <= 0);
+    if (invalid.length) {
+      return `Shopee registration requires option price > 0: ${invalid.slice(0, 5).map((row: any) => row.sku).join(', ')}`;
+    }
+    return '';
+  }
+  if (!Number.isFinite(fallbackPrice) || fallbackPrice <= 0) {
+    return 'Shopee registration requires price > 0.';
+  }
+  return '';
+}
+
 function normalizeTierVariation(variation: any) {
   if (!variation?.tier_variation?.length) return [];
   return variation.tier_variation.slice(0, 2).map((t: any) => ({
@@ -3651,6 +3705,35 @@ Deno.serve(async (req) => {
       }
       const isOptionGroupRegistration = String(body.registration_kind || '').toLowerCase() === 'option_group' || !!preflightVariation;
       if (!body.sku && !isOptionGroupRegistration) return jsonResp({ ok: false, error: 'sku required' }, 400);
+      if (!hasShopeeProductImageInput(body)) {
+        return jsonResp({
+          ok: false,
+          region: r,
+          stage: 'image_preflight',
+          error: 'image_id_list_required',
+          message: 'Product image_id_list or image_url is required before Shopee registration.',
+        }, 400);
+      }
+      const stockPreflightMessage = validateRegisterStockInput(body, preflightVariation, targetInputs);
+      if (stockPreflightMessage) {
+        return jsonResp({
+          ok: false,
+          region: r,
+          stage: 'stock_preflight',
+          error: 'invalid_stock',
+          message: stockPreflightMessage,
+        }, 400);
+      }
+      const pricePreflightMessage = validateRegisterPriceInput(body, preflightVariation, targetInputs);
+      if (pricePreflightMessage) {
+        return jsonResp({
+          ok: false,
+          region: r,
+          stage: 'price_preflight',
+          error: 'invalid_price',
+          message: pricePreflightMessage,
+        }, 400);
+      }
 
       return withPublishRequestId(action, `${accountKey}:${r}`, _cbscIdempotencyToken, body, async () => {
       const stage_logs: string[] = [];

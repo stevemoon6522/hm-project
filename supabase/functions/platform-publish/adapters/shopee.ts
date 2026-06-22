@@ -731,7 +731,12 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     return ids.map((id: unknown) => String(id || '').trim()).filter(Boolean).length;
   });
   const bestExistingImageCount = Math.max(cachedMasterImageIds.length, ...existingImageCounts, 0);
-  const needsDetailImageUpload = imageRefs.length > bestExistingImageCount;
+  const missingRegionImageUpload = regions.some((region: string) => {
+    const ids = Array.isArray(regionImageIds[region]) ? regionImageIds[region] : [];
+    const count = ids.map((id: unknown) => String(id || '').trim()).filter(Boolean).length;
+    return region === 'BR' ? count < 2 : count < 1;
+  });
+  const needsDetailImageUpload = imageRefs.length > bestExistingImageCount || missingRegionImageUpload;
   if (!ctx.dryRun && imageRefs.length && needsDetailImageUpload) {
     try {
       const uploadedEntries = await uploadShopeeImageRefsForRegions({
@@ -761,6 +766,20 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
         errorMsg,
       };
     }
+  }
+  const missingRequiredRegionImages = regions.filter((region: string) => {
+    const ids = Array.isArray(regionImageIds[region]) ? regionImageIds[region] : [];
+    const count = ids.map((id: unknown) => String(id || '').trim()).filter(Boolean).length;
+    return region === 'BR' ? count < 2 : count < 1;
+  });
+  if (!ctx.dryRun && missingRequiredRegionImages.length) {
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'PLATFORM_VALIDATION_ERROR',
+      errorMsg: `Shopee target-region product images are missing or insufficient for: ${missingRequiredRegionImages.join(', ')}`,
+      rawResponse: { missing_region_images: missingRequiredRegionImages, supplied_region_image_ids: regionImageIds },
+    };
   }
   // Bridge `register_cbsc` derives the Global Product base context from
   // body.region. Use the first requested region, with SG as the empty-list
@@ -825,6 +844,49 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   const registerStock = Number.isFinite(stockOverride) && stockOverride > 0
     ? Math.floor(stockOverride)
     : groupedInventory;
+  const invalidOptionStock = variationBundle
+    ? variationBundle.items
+      .map((item: any) => ({
+        sku: String(item?.row?.sku || item?.optionValue || '').trim(),
+        stock: Math.floor(Number(item?.row?.inventory || 0)),
+      }))
+      .filter((item: any) => !Number.isFinite(item.stock) || item.stock < 1)
+    : [];
+  if (invalidOptionStock.length) {
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'PLATFORM_VALIDATION_ERROR',
+      errorMsg: `Shopee registration requires option stock >= 1: ${invalidOptionStock.slice(0, 5).map((item: any) => item.sku || 'option').join(', ')}`,
+      rawResponse: { invalid_option_stock: invalidOptionStock },
+    };
+  }
+  const invalidOptionPrice = variationBundle
+    ? variationBundle.items
+      .map((item: any) => ({
+        sku: String(item?.row?.sku || item?.optionValue || '').trim(),
+        price: Number(item?.row?.cost_krw || cost_krw),
+      }))
+      .filter((item: any) => !Number.isFinite(item.price) || item.price <= 0)
+    : [];
+  if (invalidOptionPrice.length) {
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'PLATFORM_VALIDATION_ERROR',
+      errorMsg: `Shopee registration requires option price > 0: ${invalidOptionPrice.slice(0, 5).map((item: any) => item.sku || 'option').join(', ')}`,
+      rawResponse: { invalid_option_price: invalidOptionPrice },
+    };
+  }
+  if (!variationBundle && registerStock < 1) {
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'PLATFORM_VALIDATION_ERROR',
+      errorMsg: 'Shopee registration requires stock >= 1.',
+      rawResponse: { stock: registerStock },
+    };
+  }
   const bridgeParentSku = variationBundle
     ? (parentSku(variationRows) || `${master.sku}-P`).slice(0, 100)
     : master.sku;
@@ -840,7 +902,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
           tier_index: item.tierIndex,
           global_model_sku: String(row.shopee_global_model_sku || row.sku || '').trim(),
           original_price: Number(row.cost_krw || cost_krw),
-          seller_stock: [{ stock: Math.max(0, Math.floor(Number(row.inventory || 0))) }],
+          seller_stock: [{ stock: Math.max(1, Math.floor(Number(row.inventory || 0))) }],
           weight_g: Number(row.weight_g || master.weight_g || 0),
         };
       }).filter((model: any) => model.global_model_sku),
@@ -1153,7 +1215,7 @@ async function handleCreateListing(ctx: ShopeeAdapterContext): Promise<AdapterRe
   const stock = (masterProduct as any).stock
     ?? (masterProduct as any).available_stock
     ?? (masterProduct as any).inventory;     // products.inventory is the live qty column
-  if (price == null || price <= 0 || stock == null) {
+  if (price == null || price <= 0 || stock == null || Number(stock) < 1) {
     return {
       ok: false,
       listingStatus: 'error',

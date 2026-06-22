@@ -4759,7 +4759,7 @@
             </div>
             <div class="field">
               <label for="rsh-var-bulk-stock">Stock</label>
-              <input id="rsh-var-bulk-stock" type="number" min="0" step="1" placeholder="5">
+              <input id="rsh-var-bulk-stock" type="number" min="1" step="1" placeholder="5">
             </div>
             <button type="button" id="rsh-apply-variants" class="primary" style="height:35px;">Apply To All</button>
           </div>
@@ -16834,10 +16834,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const hasImage = _rsh.cachedImageId || _rsh.selectedImages.length > 0;
     const rows = _rsh.products && _rsh.products.length ? _rsh.products : [_rsh.master].filter(Boolean);
     const variantInputs = _rsh.mode === 'group' ? rshReadVariantInputs(rows) : [];
+    const variantErrors = _rsh.mode === 'group' ? rshVariantValidationErrors(rows) : [];
     const hasCost = _rsh.mode === 'group'
       ? variantInputs.every((v) => Number(v.price || 0) > 0)
       : Number(document.getElementById('rsh-cost-krw')?.value) > 0;
-    const hasStock = _rsh.mode === 'group' ? true : rshReadSingleStock() > 0;
+    const hasStock = _rsh.mode === 'group'
+      ? variantInputs.every((v) => Number(v.stock || 0) > 0)
+      : rshReadSingleStock() > 0;
     const hasWeight = rows.every((p) => Number(p.weight_g || 0) > 0);
     const hasSku = _rsh.mode === 'group'
       ? variantInputs.every((v) => String(v.sku || '').trim())
@@ -16848,7 +16851,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // P1-4a: block if staronemall URL is missing (banner already shown)
     const staronemallMissing = $rsh('no-staronemall') && $rsh('no-staronemall').style.display !== 'none';
 
-    btn.disabled = !hasImage || !hasCost || !hasStock || !hasWeight || !hasSku || !hasProductName || !hasRequiredSpecs || staronemallMissing;
+    btn.disabled = !hasImage || !hasCost || !hasStock || variantErrors.length > 0 || !hasWeight || !hasSku || !hasProductName || !hasRequiredSpecs || staronemallMissing;
   }
 
   // Show cached image preview strip.
@@ -17055,6 +17058,46 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     });
   }
 
+  function rshVariantValidationErrors(products = _rsh.products) {
+    const rows = rshSortedProducts(products || []);
+    if (_rsh.mode !== 'group' || rows.length <= 1) return [];
+    const variantInputs = rshReadVariantInputs(rows);
+    const errors = [];
+    let variationSpec = null;
+    try {
+      variationSpec = rshBuildVariationSpec(rows);
+    } catch (e) {
+      errors.push(e?.message || String(e));
+    }
+    const seenTierKeys = new Set();
+    variantInputs.forEach((variant, index) => {
+      const label = String(variant.option || variant.sku || `Option ${index + 1}`).trim();
+      const price = Number(variant.price || 0);
+      if (!Number.isFinite(price) || price <= 0) errors.push(`${label}: Option price must be 1 or more.`);
+      const stock = Math.floor(Number(variant.stock || 0));
+      if (!Number.isFinite(stock) || stock < 1) errors.push(`${label}: Option stock must be 1 or more.`);
+      if (!String(variant.sku || '').trim()) errors.push(`${label}: Option SKU is required.`);
+      const weight = Number(variant.weight_g || 0);
+      if (!Number.isFinite(weight) || weight <= 0) errors.push(`${label}: Option weight must be greater than 0.`);
+      if (variationSpec && variationSpec.tierVariation?.length) {
+        const tierIndex = variationSpec.tierIndexForProduct(variant.product || rows[index], index);
+        const tierKey = Array.isArray(tierIndex) ? tierIndex.join('|') : '';
+        if (!tierKey) errors.push(`${label}: Option tier index is required.`);
+        else if (seenTierKeys.has(tierKey)) errors.push(`${label}: Option combination must be unique.`);
+        else seenTierKeys.add(tierKey);
+      }
+    });
+    return Array.from(new Set(errors));
+  }
+
+  function rshGroupVariantPreflightMessage(products = _rsh.products) {
+    const errors = rshVariantValidationErrors(products);
+    if (!errors.length) return '';
+    const visible = errors.slice(0, 5).join(' / ');
+    const suffix = errors.length > 5 ? ` / +${errors.length - 5} more` : '';
+    return `Option values are not ready for Shopee registration: ${visible}${suffix}`;
+  }
+
   function rshRefreshVariantRegionPrices(index) {
     const rows = rshSortedProducts(_rsh.products || []);
     const p = rows[index] || {};
@@ -17128,7 +17171,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         <td><input id="${rshVariantInputId('sourcing', index)}" type="number" min="0" step="1" value="${text(String(sourcing || ''))}"></td>
         <td><input id="${rshVariantInputId('price', index)}" type="number" min="1" step="1" value="${text(String(price || ''))}"></td>
         ${regionCells}
-        <td><input id="${rshVariantInputId('stock', index)}" type="number" min="0" step="1" value="${text(String(stock))}"></td>
+        <td><input id="${rshVariantInputId('stock', index)}" type="number" min="1" step="1" value="${text(String(stock))}"></td>
         <td><input id="${rshVariantInputId('sku', index)}" type="text" maxlength="100" value="${text(sku)}"></td>
         <td style="text-align:right;font-family:var(--mono);">${text(weight ? weight.toLocaleString() : '0')}</td>
       </tr>
@@ -17264,11 +17307,45 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         return true;
       }
       if (_rsh.master?.main_image) return await rshUseMasterImages(_rsh.master, key);
-      if (key === SHOPEE_DEFAULT_ACCOUNT_KEY && _rsh.cachedImageId) return true;
+      if ((_rsh.selectedImages || []).length) return true;
+      if (key === SHOPEE_DEFAULT_ACCOUNT_KEY && _rsh.cachedImageId) {
+        throw new Error(`${sdShopeeAccountDisplayName(key)}: cached image_id cannot satisfy missing target-region image uploads. Re-upload product images from the master image before registration.`);
+      }
       throw new Error(`${sdShopeeAccountDisplayName(key)}: source image is required for account-specific layer upload.`);
     } finally {
       _rsh.executionAccountKey = previousExecution;
     }
+  }
+
+  function rshProductImageIdsForRegion(region) {
+    const key = String(region || '').toUpperCase();
+    return Array.isArray(_rsh.regionImageIds?.[key])
+      ? _rsh.regionImageIds[key].map((id) => String(id || '').trim()).filter(Boolean)
+      : [];
+  }
+
+  function rshRegionHasRequiredProductImages(region) {
+    const ids = rshProductImageIdsForRegion(region);
+    region = String(region || '').toUpperCase();
+    return region === 'BR' ? ids.length >= 2 : ids.length >= 1;
+  }
+
+  function rshMissingProductImageRegions(regions) {
+    return Array.from(new Set((regions || []).map((r) => String(r || '').toUpperCase()).filter(Boolean)))
+      .filter((region) => !rshRegionHasRequiredProductImages(region));
+  }
+
+  function rshMergeRegionImageIds(uploadResult) {
+    _rsh.regionImageIds = {
+      ...(_rsh.regionImageIds || {}),
+      ...(uploadResult?.regionImageIds || {}),
+    };
+    return _rsh.regionImageIds;
+  }
+
+  function rshMissingRegionImageMessage(regions) {
+    const missing = (regions || []).join(', ');
+    return `Product images must be uploaded to each target Shopee region before registration. Missing or insufficient image_id_list: ${missing}`;
   }
 
   function plBuildJoomPublishGroupFromProducts(rows) {
@@ -19555,6 +19632,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           .update({
             sourcing_price: Number(variant.sourcing_price || 0),
             cost_krw: Number(variant.price || 0),
+            inventory: Math.max(1, Math.floor(Number(variant.stock || 0))),
             cost_updated_at: new Date().toISOString(),
           })
           .eq('id', variant.product.id);
@@ -19562,8 +19640,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           if (errorEl) { errorEl.textContent = `Option price save failed: ${pricePersistErr.message}`; errorEl.style.display = 'block'; }
           throw pricePersistErr;
         }
-        variant.product.sourcing_price = Number(variant.sourcing_price || 0);
-        variant.product.cost_krw = Number(variant.price || 0);
+          variant.product.sourcing_price = Number(variant.sourcing_price || 0);
+          variant.product.cost_krw = Number(variant.price || 0);
+          variant.product.inventory = Math.max(1, Math.floor(Number(variant.stock || 0)));
       }
     }
   }
@@ -19710,6 +19789,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       rshShowStage2Buttons(false);
       return;
     }
+    const variantMessage = rshGroupVariantPreflightMessage(_rsh.products);
+    if (variantMessage) {
+      _rsh.publishInFlight = false;
+      if (errorEl) { errorEl.textContent = variantMessage; errorEl.style.display = 'block'; }
+      targets.forEach((target) => rshSetTargetStatus(target.accountKey, target.region, 'pending', '#94a3b8', variantMessage));
+      rshShowStage2Buttons(false);
+      return;
+    }
 
     if (!isRetry) {
       try {
@@ -19732,14 +19819,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         _rsh.regionImageIds = _rsh.accountRegionImageIds?.[accountKey] || {};
         _rsh.globalOptionImageIds = _rsh.accountGlobalOptionImageIds?.[accountKey] || {};
 
-        const hasRegionImages = accountRegions.every((region) => Array.isArray(_rsh.regionImageIds?.[region]) && _rsh.regionImageIds[region].length);
+        const missingImageRegions = rshMissingProductImageRegions(accountRegions);
+        const hasRegionImages = missingImageRegions.length === 0;
         if (!hasRegionImages) {
           accountRegions.forEach((region) => rshSetTargetStatus(accountKey, region, 'uploading images', '#6610d4', ''));
           try {
             await rshPrepareImagesForAccount(accountKey);
-            const uploadResult = await rshUploadImages(session, accountRegions, accountKey, { persistProductImages: false });
-            _rsh.accountRegionImageIds[accountKey] = { ...(_rsh.accountRegionImageIds[accountKey] || {}), ...(uploadResult.regionImageIds || {}) };
+            const uploadResult = await rshUploadImages(session, missingImageRegions, accountKey, { persistProductImages: false });
+            rshMergeRegionImageIds(uploadResult);
+            _rsh.accountRegionImageIds[accountKey] = { ...(_rsh.accountRegionImageIds[accountKey] || {}), ..._rsh.regionImageIds };
             _rsh.regionImageIds = _rsh.accountRegionImageIds[accountKey];
+            const stillMissing = rshMissingProductImageRegions(accountRegions);
+            if (stillMissing.length) throw new Error(rshMissingRegionImageMessage(stillMissing));
           } catch (uploadErr) {
             anyFailed = true;
             const msg = uploadErr?.message || String(uploadErr);
@@ -19842,14 +19933,27 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return;
     }
 
+    const variantMessage = rshGroupVariantPreflightMessage(_rsh.products);
+    if (variantMessage) {
+      _rsh.publishInFlight = false;
+      if (errorEl) { errorEl.textContent = variantMessage; errorEl.style.display = 'block'; }
+      activeRegions.forEach((r) => rshSetTargetStatus(sdSelectedShopeeAccountKey(), r, 'pending', '#94a3b8', variantMessage));
+      rshShowStage2Buttons(false);
+      return;
+    }
+
     // If user picked new images, upload them first (only on initial call, not retry)
     // Per-region upload: KRSC requires images in target region image space, BR needs 2.
-    if (!regionsOverride && _rsh.uploadMode && _rsh.selectedImages.length > 0) {
+    const missingImageRegions = !regionsOverride ? rshMissingProductImageRegions(activeRegions) : [];
+    if (!regionsOverride && (_rsh.uploadMode || missingImageRegions.length) && _rsh.selectedImages.length > 0) {
+      const uploadRegions = missingImageRegions.length ? missingImageRegions : activeRegions;
       activeRegions.forEach((r) => { const el = document.getElementById(`rsh-status-${r}`); if (el) { el.textContent = '이미지 업로드 중...'; el.style.color = '#6610d4'; } });
       try {
-        const uploadResult = await rshUploadImages(session, activeRegions);
-        _rsh.regionImageIds = uploadResult.regionImageIds || {};
+        const uploadResult = await rshUploadImages(session, uploadRegions);
+        rshMergeRegionImageIds(uploadResult);
         _rsh.uploadMode = false;
+        const stillMissing = rshMissingProductImageRegions(activeRegions);
+        if (stillMissing.length) throw new Error(rshMissingRegionImageMessage(stillMissing));
       } catch (uploadErr) {
         _rsh.publishInFlight = false;
         // Fix1: preserve selectedImages so retry can re-use them without reopening the modal
@@ -19861,6 +19965,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         rshShowStage2Buttons(false);
         return;
       }
+    } else if (!regionsOverride && missingImageRegions.length) {
+      const msg = rshMissingRegionImageMessage(missingImageRegions);
+      _rsh.publishInFlight = false;
+      if (errorEl) { errorEl.textContent = msg; errorEl.style.display = 'block'; }
+      missingImageRegions.forEach((r) => rshSetTargetStatus(sdSelectedShopeeAccountKey(), r, 'pending', '#94a3b8', msg));
+      rshShowStage2Buttons(false);
+      return;
     }
 
     if (!regionsOverride && _rsh.mode === 'group' && rshHasExplicitOptionImages()) {
@@ -19947,6 +20058,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             .update({
               sourcing_price: Number(variant.sourcing_price || 0),
               cost_krw: Number(variant.price || 0),
+              inventory: Math.max(1, Math.floor(Number(variant.stock || 0))),
               cost_updated_at: new Date().toISOString(),
             })
             .eq('id', variant.product.id);
@@ -19957,11 +20069,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             rshShowStage2Buttons(false);
             return;
           }
-          variant.product.sourcing_price = Number(variant.sourcing_price || 0);
-          variant.product.cost_krw = Number(variant.price || 0);
-        }
+        variant.product.sourcing_price = Number(variant.sourcing_price || 0);
+        variant.product.cost_krw = Number(variant.price || 0);
+        variant.product.inventory = Math.max(1, Math.floor(Number(variant.stock || 0)));
       }
     }
+  }
 
     if (_rsh.mode === 'group') {
       await rshRegisterOptionGroupViaCbsc(session, activeRegions, dtsValues, lifecycle, errorEl);
@@ -20209,7 +20322,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       try {
         const uploadResult = await rshUploadImages(session, RSH_REGIONS);
-        _rsh.regionImageIds = uploadResult.regionImageIds || {};
+        rshMergeRegionImageIds(uploadResult);
         _rsh.uploadMode = false;
       } catch (uploadErr) {
         _rsh.publishInFlight = false;
@@ -20225,7 +20338,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       // Upload succeeded — continue with platform-publish dispatch
       console.log('[rsh] upload retry succeeded, continuing dispatch');
       _rsh.publishInFlight = false; // rshProceedToStage2 will set it back to true
-      // Call without regionsOverride to dispatch all regions (uploadMode path is skipped because cachedImageId is now set)
+      // Call without regionsOverride; existing target-region image IDs now satisfy the upload preflight.
       rshProceedToStage2();
     });
 

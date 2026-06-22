@@ -5456,6 +5456,7 @@ LEGACY END -->
   const PLATFORM_ACTION_LABELS = Object.freeze({
     register: '대량 등록',
     edit: '가격 수정',
+    master_sync: '마스터 변경 적용',
     delete: '플랫폼 삭제',
   });
   const PLATFORM_DELETE_CONFIRM = Object.freeze({
@@ -8059,6 +8060,7 @@ LEGACY END -->
             </span>
             <button type="button" data-platform-preview="register" class="primary" ${shopeeActionEnabled ? '' : 'disabled'}>등록</button>
             <button type="button" data-platform-preview="edit" ${shopeeActionEnabled ? '' : 'disabled'}>가격 수정</button>
+            <button type="button" data-platform-preview="master_sync" ${shopeeActionEnabled ? '' : 'disabled'}>마스터 변경 적용</button>
             <button type="button" data-platform-sync ${shopeeActionEnabled ? '' : 'disabled'}>SKU 매핑</button>
             <button type="button" class="platform-danger-action" data-platform-preview="delete" ${shopeeActionEnabled ? '' : 'disabled'}>삭제/초기화</button>
             <span class="platform-more-wrap">
@@ -8086,6 +8088,7 @@ LEGACY END -->
             <button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>
             <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(registerActionLabel)}</button>
             <button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>가격 수정</button>
+            <button type="button" data-platform-preview="master_sync" ${canRunSelectionAction && !isAlibaba ? '' : 'disabled'}>마스터 변경 적용</button>
             <button type="button" class="platform-danger-action" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>삭제</button>
             ${platform === 'shopee' ? `<button type="button" data-shopee-name-sync ${canRunSelectionAction ? '' : 'disabled'}>영문명 동기화</button>` : ''}
             <button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>${text(label)} SKU 매핑</button>
@@ -8632,6 +8635,135 @@ LEGACY END -->
     return (details || []).find((detail) => String(detail.product_id || '') === String(productId)) || null;
   }
 
+  function platformMasterSyncMainImage(rows) {
+    const first = (rows || [])[0] || {};
+    const normalized = typeof rshMasterMainImageUrl === 'function'
+      ? rshMasterMainImageUrl(first)
+      : '';
+    return String(normalized || first.main_image || first.shopee_option_image_url || '').trim();
+  }
+
+  function platformMasterSyncDetailImages(rows) {
+    const first = (rows || [])[0] || {};
+    return plMasterEditNormalizeImageList(
+      (rows || []).flatMap((row) => Array.isArray(row.extra_images) ? row.extra_images : []),
+      first.staronemall_url || window.location.href,
+      { exclude: [platformMasterSyncMainImage(rows)], filterBanners: true },
+    );
+  }
+
+  function platformMasterSyncProductImages(rows) {
+    return [platformMasterSyncMainImage(rows), ...platformMasterSyncDetailImages(rows)].filter(Boolean).slice(0, REGISTER_MAX_IMAGE_IDS || 9);
+  }
+
+  function platformMasterSyncOptionImageRows(group) {
+    return rshSortedProducts(group?.rows || [])
+      .map((row) => ({
+        row,
+        sku: String(row?.sku || '').trim(),
+        imageUrl: String(row?.shopee_option_image_url || row?.ebay_variation_image_url || '').trim(),
+      }))
+      .filter((entry) => entry.sku && entry.imageUrl);
+  }
+
+  function platformMasterSyncProductName(group) {
+    const first = group?.rows?.[0] || {};
+    const sku = platformGroupSku(group) || first.sku || '';
+    return normalizeMasterProductNameForLifecycle(first.product_name || platformGroupTitle(group), first.lifecycle_state || 'ready_stock', sku);
+  }
+
+  function platformMasterSyncShopeeDescription(group) {
+    const first = group?.rows?.[0] || {};
+    const name = platformMasterSyncProductName(group);
+    return rshShopeeSafeDescription(rshDescriptionTemplate(name, first.lifecycle_state || 'ready_stock', first.components_extracted_en || first.description || ''));
+  }
+
+  function platformMasterSyncPlainDescription(group) {
+    const first = group?.rows?.[0] || {};
+    const components = rshRawComponentsBlock(first.components_extracted_en || '');
+    return rshPlainTextDescription(first.description || components || platformGroupTitle(group));
+  }
+
+  function platformMasterSyncQoo10Description(group) {
+    const rows = group?.rows || [];
+    const first = rows[0] || {};
+    const title = mrQoo10FormatTitle(first);
+    const template = String(mrQoo10DefaultDescriptionTemplate() || '')
+      .replace(/\{\{\s*(MASTER_PRODUCT_NAME|MASTER_TITLE)\s*\}\}/gi, text(first.product_name || title))
+      .replace(/\{\{\s*(TITLE|PRODUCT_TITLE)\s*\}\}/gi, text(title));
+    const imageBlock = platformMasterSyncDetailImages(rows).map((url) => (
+      `<p style="margin:0;text-align:center;"><img src="${text(url)}" style="max-width:100%;height:auto;"></p>`
+    )).join('');
+    return [template.trim(), imageBlock].filter(Boolean).join('\n') || text(first.description || first.components_extracted_en || '');
+  }
+
+  function platformMasterSyncShopeeGlobalItemId(group) {
+    const rows = group?.rows || [];
+    const productIds = new Set(platformGroupProductIds(group).map(String));
+    const details = platformGroupListingDetails(group, 'shopee');
+    const localRows = (state.listings || []).filter((row) => productIds.has(String(row.product_id || '')));
+    return platformUniqueValues([
+      ...details.map((detail) => detail.global_item_id),
+      ...localRows.map((row) => row.global_item_id),
+    ])[0] || '';
+  }
+
+  function platformMasterSyncFieldLabels(platform, group) {
+    const rows = group?.rows || [];
+    const labels = [];
+    if (platformMasterSyncPlainDescription(group)) labels.push('상품 설명');
+    if (platformMasterSyncMainImage(rows)) labels.push('대표 이미지');
+    if (platformMasterSyncDetailImages(rows).length) labels.push('상세 이미지');
+    if (platformMasterSyncOptionImageRows(group).length) labels.push('옵션 이미지');
+    if (platform === 'joom') labels.push('상품명');
+    if (platform === 'ebay') labels.push('eBay 미구현');
+    return Array.from(new Set(labels));
+  }
+
+  function platformMasterSyncValidation(platform, group) {
+    const errors = [];
+    const warnings = [];
+    const rows = group?.rows || [];
+    if (!rows.length) errors.push('상품 행이 없습니다.');
+    if (platform === 'alibaba') errors.push('Alibaba는 이번 마스터 변경 적용 범위에서 제외했습니다.');
+    if (!platformGroupHasListings(group, platform)) errors.push(`${PLATFORM_LABELS[platform] || platform}에 등록된 상품 매핑이 없습니다.`);
+
+    const fields = platformMasterSyncFieldLabels(platform, group);
+    if (!fields.length) warnings.push('마스터에서 적용할 설명/이미지 변경 데이터를 찾지 못했습니다.');
+
+    if (platform === 'shopee') {
+      if (!platformMasterSyncShopeeGlobalItemId(group)) errors.push('Shopee global_item_id를 찾지 못했습니다.');
+      warnings.push('Shopee: 설명/대표/상세 이미지는 Global Product에 적용하고, 옵션 이미지는 등록된 Shop Item별로 보정합니다.');
+    } else if (platform === 'joom') {
+      if (!platformGroupSku(group)) errors.push('Joom 업데이트에 사용할 SKU를 찾지 못했습니다.');
+      warnings.push('Joom: 상품명/설명/대표 이미지/상세 이미지를 /products/update로 적용합니다. 옵션 이미지는 variant update 검증 후 별도 연결이 필요합니다.');
+    } else if (platform === 'qoo10') {
+      if (!platformDeleteTargets(platform, group).length) errors.push('Qoo10 ItemCode 매핑을 찾지 못했습니다.');
+      warnings.push('Qoo10: 대표 이미지는 EditGoodsImage, 상세 이미지는 EditGoodsMultiImage, 상세 설명은 EditGoodsContents로 적용합니다. 옵션 이미지는 아직 미연결입니다.');
+    } else if (platform === 'ebay') {
+      errors.push('eBay 대표/상세/설명 업데이트는 bridge 안전 실행 경로가 아직 없어 이번 버튼에서 실행하지 않습니다.');
+    }
+
+    return { errors, warnings };
+  }
+
+  function platformMasterSyncItemHtml(platform, group) {
+    const rows = group?.rows || [];
+    const fields = platformMasterSyncFieldLabels(platform, group);
+    const mainImage = platformMasterSyncMainImage(rows);
+    const detailCount = platformMasterSyncDetailImages(rows).length;
+    const optionCount = platformMasterSyncOptionImageRows(group).length;
+    const description = platform === 'shopee'
+      ? platformMasterSyncShopeeDescription(group)
+      : (platform === 'qoo10' ? platformMasterSyncQoo10Description(group) : platformMasterSyncPlainDescription(group));
+    return `
+      <div style="display:grid;gap:4px;margin-top:8px;font-size:12px;">
+        <div>적용 대상 필드: ${text(fields.join(', ') || '-')}</div>
+        <div>대표 이미지: ${mainImage ? '1장' : '없음'} · 상세 이미지: ${text(detailCount)}장 · 옵션 이미지: ${text(optionCount)}장</div>
+        <div>설명 길이: ${text(String(description || '').length)}자</div>
+      </div>`;
+  }
+
   function platformDeleteTargets(platform, group) {
     if (platform === 'alibaba') return [];
     const rows = group?.rows || [];
@@ -8704,6 +8836,9 @@ LEGACY END -->
       else warnings.push('원격 플랫폼에서 리스팅을 삭제/종료하고 로컬 매핑을 비워 다시 등록 가능한 상태로 만듭니다.');
       return { errors, warnings };
     }
+    if (action === 'master_sync') {
+      return platformMasterSyncValidation(platform, group);
+    }
     rows.forEach((row) => {
       if (!String(row.sku || '').trim()) errors.push(`${plProductName(row) || row.id}: SKU가 비어 있습니다.`);
       if (/[^\x00-\x7F]/.test(String(row.sku || ''))) errors.push(`${row.sku}: SKU는 ASCII만 허용됩니다.`);
@@ -8771,6 +8906,7 @@ LEGACY END -->
       const rows = group.rows || [];
       const canDirect = platformCanUseDispatcher(platform, action, group);
       const result = state.platformLastResults[`${platform}:${platformGroupKey(group)}`];
+      const masterSyncHtml = action === 'master_sync' ? platformMasterSyncItemHtml(platform, group) : '';
       const errorsHtml = validation.errors.length
         ? `<div class="platform-result-err">${validation.errors.map(text).join('<br>')}</div>`
         : '<div class="platform-result-ok">기본 검증 통과</div>';
@@ -8787,6 +8923,7 @@ LEGACY END -->
             <div>선택 단위: 마스터 상품 1개 · SKU/옵션 ${rows.length}개 · 실행 방식: ${canDirect ? 'dispatcher 직접 실행' : '기존 검증 모달 연결'}</div>
             ${platform === 'shopee' ? `<div>대상 region: ${text(regions.join(', ') || '-')} · 제외: ${SHOPEE_PLATFORM_EXCLUDED_REGIONS.map((r) => `${r.region}(${r.reason})`).join(', ')}</div>` : ''}
             <div>수정 가능 필드: ${text(platformSafeFieldsLabel(platform))}</div>
+            ${masterSyncHtml}
             ${errorsHtml}
             ${warningsHtml}
             ${resultHtml}
@@ -8794,7 +8931,7 @@ LEGACY END -->
         </details>`;
     }).join('');
     const allErrors = groups.some((group) => platformGroupValidation(platform, action, group).errors.length);
-    const executeLabel = action === 'edit' ? '가격 수정 열기' : (action === 'delete' ? '삭제 실행' : '실행');
+    const executeLabel = action === 'edit' ? '가격 수정 열기' : (action === 'delete' ? '삭제 실행' : (action === 'master_sync' ? '마스터 변경 적용' : '실행'));
     return `
       <div class="platform-preview">
         <div class="platform-preview-head">
@@ -8837,6 +8974,10 @@ LEGACY END -->
       const label = PLATFORM_LABELS[platform] || platform;
       if (!confirm(`${label} 원격 리스팅을 삭제/종료하고 로컬 매핑을 비웁니다.\n\n이후 같은 Master Product를 다시 등록할 수 있습니다.\n계속할까요?`)) return;
     }
+    if (action === 'master_sync') {
+      const label = PLATFORM_LABELS[platform] || platform;
+      if (!confirm(`${label}에 선택한 마스터 상품의 설명/이미지 변경을 적용합니다.\n\n대상 상품: ${groups.length}개\n계속할까요?`)) return;
+    }
     preview.running = true;
     renderPlatformWorkbench(platform);
     const results = [];
@@ -8852,6 +8993,10 @@ LEGACY END -->
           const json = await platformDeleteRemoteListing(platform, group);
           shouldReloadData = true;
           results.push({ key, ok: true, message: json.message || '삭제/정리 완료' });
+        } else if (action === 'master_sync') {
+          const json = await platformApplyMasterSync(platform, group);
+          shouldReloadData = true;
+          results.push({ key, ok: json.ok !== false, message: json.message || '마스터 변경 적용 완료' });
         } else if (platformCanUseDispatcher(platform, action, group)) {
           const row = group.rows[0];
           const json = await platformPublishDirect(platform, row, action);
@@ -8876,6 +9021,280 @@ LEGACY END -->
     }
     renderPlatformWorkbench(platform);
     renderProducts();
+  }
+
+  async function platformPostJson(url, body) {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify(body || {}),
+    });
+    const json = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+    if (!response.ok || json.ok === false || json.error) {
+      throw new Error(json.error_msg || json.message || json.error || `HTTP ${response.status}`);
+    }
+    return json;
+  }
+
+  async function platformTouchMasterSyncCheckpoint(platform, group, regions = []) {
+    const productIds = platformGroupProductIds(group);
+    if (!productIds.length) return;
+    const now = new Date().toISOString();
+    if (platform === 'shopee') {
+      let query = db.from('product_shopee_listings').update({ last_synced_at: now }).in('product_id', productIds);
+      if (Array.isArray(regions) && regions.length) query = query.in('region', regions);
+      await query;
+      return;
+    }
+    const column = platform === 'joom'
+      ? 'joom_last_synced_at'
+      : (platform === 'qoo10' ? 'qoo10_last_synced_at' : (platform === 'ebay' ? 'ebay_last_synced_at' : ''));
+    if (!column) return;
+    await db.from('products').update({ [column]: now }).in('id', productIds);
+  }
+
+  async function platformShopeeFetchMasterSyncShops(regions) {
+    const wanted = new Set((regions || SHOPEE_PLATFORM_ACTIVE_REGIONS).map((region) => String(region || '').toUpperCase()));
+    const response = await fetch(`${SHOPEE_BRIDGE}/tokens?region=SG&account_key=${encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)}`, { headers: AUTH_HEADERS });
+    const json = await response.json().catch(() => ({ ok: false, error: `HTTP ${response.status}` }));
+    if (!response.ok || json.error) throw new Error(json.message || json.error || `tokens HTTP ${response.status}`);
+    const regionOrder = new Map(SHOPEE_PLATFORM_ACTIVE_REGIONS.map((region, index) => [region, index]));
+    const shops = [];
+    (Array.isArray(json.tokens) ? json.tokens : []).forEach((token) => {
+      const region = String(token.region || token.shop_region || '').toUpperCase();
+      const shopId = Number(token.shop_id || token.shopId);
+      if (!wanted.has(region)) return;
+      if (!Number.isFinite(shopId) || shopId <= 0) return;
+      shops.push({
+        shop_id: shopId,
+        shop_region: region,
+        name_and_description: true,
+        media_information: true,
+        tier_variation_name_and_option: true,
+        price: false,
+        days_to_ship: false,
+      });
+    });
+    shops.sort((a, b) => (regionOrder.get(a.shop_region) || 99) - (regionOrder.get(b.shop_region) || 99));
+    return shops;
+  }
+
+  async function platformShopeeUploadImageUrl(region, imageUrl, runId, actor = 'v2-platform-master-sync') {
+    const dataUrl = await rshFetchImageDataUrl(imageUrl);
+    const body = {
+      region,
+      account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
+      image_base64: rshDataUrlToBase64(dataUrl),
+      source_url: imageUrl,
+      actor,
+      run_id: runId,
+    };
+    const json = await callBridgeMutation('upload_image', body);
+    if (!bridgeResultOk(json) || !json.image_id) {
+      throw new Error(`${region} 이미지 업로드 실패: ${bridgeResultMessage(json)}`);
+    }
+    return String(json.image_id);
+  }
+
+  async function platformShopeeUploadProductImageIds(imageUrls, runId) {
+    const ids = [];
+    for (const imageUrl of imageUrls || []) {
+      ids.push(await platformShopeeUploadImageUrl('SG', imageUrl, runId, 'v2-platform-master-product-image'));
+    }
+    return ids.filter(Boolean).slice(0, REGISTER_MAX_IMAGE_IDS);
+  }
+
+  async function platformShopeeUploadOptionImageIds(region, group, runId) {
+    const rows = rshSortedProducts(group?.rows || []);
+    const ids = [];
+    for (const row of rows) {
+      const imageUrl = String(row?.shopee_option_image_url || '').trim();
+      ids.push(imageUrl ? await platformShopeeUploadImageUrl(region, imageUrl, runId, 'v2-platform-master-option-image') : '');
+    }
+    return ids;
+  }
+
+  function platformShopeeBuildTierImageUpdatePayload(shopPayload, optionImageIds) {
+    const model_list = shopeeEnglishRestoreModelList(shopPayload);
+    if (!model_list.length) return { ok: false, error: 'shop model_list is missing' };
+    const standardSource = Array.isArray(shopPayload?.standardise_tier_variation) ? shopPayload.standardise_tier_variation : [];
+    if (!standardSource.length) return { ok: false, error: 'shop standardise_tier_variation IDs are missing' };
+    const imageIds = Array.isArray(optionImageIds) ? optionImageIds : [];
+    let injected = 0;
+    const standardise_tier_variation = standardSource.map((tier, tierIndex) => {
+      const nextTier = {
+        variation_id: Number(tier?.variation_id),
+        variation_option_list: [],
+      };
+      const variationName = String(tier?.variation_name || tier?.name || '').trim();
+      if (variationName) nextTier.variation_name = variationName;
+      const variationGroupId = Number(tier?.variation_group_id);
+      if (Number.isFinite(variationGroupId) && variationGroupId >= 0) nextTier.variation_group_id = variationGroupId;
+      const options = Array.isArray(tier?.variation_option_list) ? tier.variation_option_list : [];
+      options.forEach((option, optionIndex) => {
+        const nextOption = {
+          variation_option_id: Number(option?.variation_option_id),
+          variation_option_name: String(option?.variation_option_name || option?.option || '').trim(),
+        };
+        const imageId = tierIndex === 0 ? String(imageIds[optionIndex] || '').trim() : String(option?.image_id || option?.image?.image_id || '').trim();
+        if (imageId) {
+          nextOption.image_id = imageId;
+          if (tierIndex === 0) injected += 1;
+        }
+        nextTier.variation_option_list.push(nextOption);
+      });
+      return nextTier;
+    }).filter((tier) => (
+      Number.isFinite(tier.variation_id)
+      && tier.variation_id >= 0
+      && tier.variation_option_list.every((option) => Number.isFinite(option.variation_option_id) && option.variation_option_id >= 0 && option.variation_option_name)
+    ));
+    if (!standardise_tier_variation.length) return { ok: false, error: 'standardise_tier_variation payload is empty' };
+    if (!injected) return { ok: true, skipped: true, message: 'No option image_id to apply' };
+    return { ok: true, payload: { model_list, standardise_tier_variation }, injected };
+  }
+
+  async function platformApplyShopeeMasterSync(group) {
+    const rows = group?.rows || [];
+    const regions = (platformFilter('shopee').regions || SHOPEE_PLATFORM_ACTIVE_REGIONS)
+      .filter((region) => SHOPEE_PLATFORM_ACTIVE_REGIONS.includes(region));
+    const globalItemId = platformMasterSyncShopeeGlobalItemId(group);
+    if (!globalItemId) throw new Error('Shopee global_item_id를 찾지 못했습니다.');
+    const runId = `platform-master-sync-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const results = [];
+    const add = (row) => results.push(row);
+
+    const syncShops = await platformShopeeFetchMasterSyncShops(regions);
+    if (!syncShops.length) throw new Error('선택 region에 활성 Shopee shop token이 없습니다.');
+    const syncJson = await callBridgeMutation('set_global_sync_fields', {
+      region: 'SG',
+      actor: 'v2-platform-master-sync',
+      run_id: runId,
+      shop_sync_list: syncShops,
+    });
+    add({ action: 'set_global_sync_fields', ok: bridgeResultOk(syncJson), message: bridgeResultMessage(syncJson) });
+    if (!bridgeResultOk(syncJson)) throw new Error(bridgeResultMessage(syncJson));
+
+    const productImageIds = await platformShopeeUploadProductImageIds(platformMasterSyncProductImages(rows), runId);
+    const description = platformMasterSyncShopeeDescription(group);
+    if (description || productImageIds.length) {
+      const globalJson = await callBridgeMutation('update_global_item', {
+        region: 'SG',
+        actor: 'v2-platform-master-sync',
+        run_id: runId,
+        global_item_id: globalItemId,
+        description,
+        image_id_list: productImageIds,
+      });
+      add({ action: 'update_global_item', ok: bridgeResultOk(globalJson), message: bridgeResultMessage(globalJson) });
+      if (!bridgeResultOk(globalJson)) throw new Error(bridgeResultMessage(globalJson));
+    }
+
+    const published = readyPublishedItemsFromResponse(await shopeeEnglishRestoreFetch('published_list', {
+      region: 'SG',
+      global_item_id: String(globalItemId),
+    }));
+    const shopRegionById = new Map(syncShops.map((shop) => [String(shop.shop_id), shop.shop_region]));
+    const optionRows = platformMasterSyncOptionImageRows(group);
+    for (const publishedItem of published) {
+      const shopId = Number(publishedItem.shop_id || publishedItem.shopId || 0);
+      const region = String(publishedItem.shop_region || publishedItem.region || shopRegionById.get(String(shopId)) || '').toUpperCase();
+      if (!regions.includes(region)) continue;
+      const itemId = Number(publishedItem.item_id || publishedItem.itemId || 0);
+      if (!Number.isFinite(itemId) || itemId <= 0) {
+        add({ action: 'resolve_shop_item', ok: false, message: `${region}: item_id missing` });
+        continue;
+      }
+      if (description) {
+        const descJson = await callBridgeMutation('update_shop_item_description', {
+          region,
+          actor: 'v2-platform-master-sync',
+          run_id: runId,
+          item_id: itemId,
+          description,
+        });
+        add({ action: `update_shop_description:${region}`, ok: bridgeResultOk(descJson), message: bridgeResultMessage(descJson) });
+      }
+      if (optionRows.length && rows.length > 1) {
+        const optionImageIds = await platformShopeeUploadOptionImageIds(region, group, runId);
+        const shopModelJson = await shopeeEnglishRestoreFetch('shop_model_list', { region, item_id: String(itemId) });
+        const payloadResult = platformShopeeBuildTierImageUpdatePayload(shopeeEnglishRestorePayload(shopModelJson), optionImageIds);
+        if (!payloadResult.ok) {
+          add({ action: `build_option_image_payload:${region}`, ok: false, message: payloadResult.error || 'payload build failed' });
+        } else if (!payloadResult.skipped) {
+          const optionJson = await callBridgeMutation('update_shop_tier_variation', {
+            region,
+            actor: 'v2-platform-master-sync',
+            run_id: runId,
+            item_id: itemId,
+            ...payloadResult.payload,
+          });
+          add({ action: `update_shop_option_images:${region}`, ok: bridgeResultOk(optionJson), message: bridgeResultMessage(optionJson) });
+        }
+      }
+    }
+
+    await platformTouchMasterSyncCheckpoint('shopee', group, regions);
+    const failed = results.filter((row) => row.ok === false);
+    return { ok: failed.length === 0, message: `Shopee 마스터 변경 적용: ${results.length - failed.length}/${results.length} 단계 성공`, results };
+  }
+
+  async function platformApplyJoomMasterSync(group) {
+    const rows = group?.rows || [];
+    const sku = platformGroupSku(group);
+    if (!sku) throw new Error('Joom 업데이트 SKU가 없습니다.');
+    const json = await platformPostJson(`${coverageBridgeUrl('joom')}/update-master-fields`, {
+      sku,
+      name: platformMasterSyncProductName(group),
+      description: platformMasterSyncPlainDescription(group),
+      mainImage: platformMasterSyncMainImage(rows),
+      extraImages: platformMasterSyncDetailImages(rows),
+    });
+    await platformTouchMasterSyncCheckpoint('joom', group);
+    return { ok: true, message: `Joom 마스터 변경 적용: ${(json.updated_fields || []).join(', ') || 'updated'}`, raw: json };
+  }
+
+  async function platformApplyQoo10MasterSync(group) {
+    const rows = group?.rows || [];
+    const targets = platformDeleteTargets('qoo10', group);
+    if (!targets.length) throw new Error('Qoo10 ItemCode 매핑을 찾지 못했습니다.');
+    const target = targets[0];
+    const bridge = coverageBridgeUrl('qoo10');
+    const calls = [];
+    const mainImage = platformMasterSyncMainImage(rows);
+    const detailImages = platformMasterSyncDetailImages(rows).slice(0, 50);
+    const description = platformMasterSyncQoo10Description(group);
+    if (mainImage) {
+      calls.push(await platformPostJson(`${bridge}/edit-image`, {
+        item_code: target.item_code,
+        seller_code: target.seller_code || platformGroupSku(group),
+        standard_image: mainImage,
+      }));
+    }
+    if (detailImages.length) {
+      calls.push(await platformPostJson(`${bridge}/edit-multi-image`, {
+        item_code: target.item_code,
+        seller_code: target.seller_code || platformGroupSku(group),
+        images: detailImages,
+      }));
+    }
+    if (description) {
+      calls.push(await platformPostJson(`${bridge}/edit-contents`, {
+        item_code: target.item_code,
+        seller_code: target.seller_code || platformGroupSku(group),
+        contents: description,
+      }));
+    }
+    if (!calls.length) throw new Error('Qoo10에 적용할 대표/상세/설명 데이터가 없습니다.');
+    await platformTouchMasterSyncCheckpoint('qoo10', group);
+    return { ok: true, message: `Qoo10 마스터 변경 적용: ${calls.length}개 API 호출 완료`, raw: calls };
+  }
+
+  async function platformApplyMasterSync(platform, group) {
+    if (platform === 'shopee') return platformApplyShopeeMasterSync(group);
+    if (platform === 'joom') return platformApplyJoomMasterSync(group);
+    if (platform === 'qoo10') return platformApplyQoo10MasterSync(group);
+    throw new Error(`${PLATFORM_LABELS[platform] || platform} 마스터 변경 적용은 아직 실행 경로가 없습니다.`);
   }
 
   async function platformDeleteRemoteListing(platform, group) {
@@ -20641,7 +21060,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     while (true) {
       const url = SUPABASE_URL + '/rest/v1/products'
         + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,cost_updated_at,created_at,main_image,shopee_option_image_url,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id,qoo10_last_synced_price,qoo10_last_synced_at'
-        + '&order=lifecycle_state.asc,cost_updated_at.asc.nullsfirst';
+        + '&order=created_at.desc';
       const res = await fetch(url, {
         headers: Object.assign({}, AUTH_HEADERS, {
           'Range-Unit': 'items',
@@ -20657,7 +21076,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           const res2 = await fetch(
             SUPABASE_URL + '/rest/v1/products'
               + '?select=id,sku,product_kind,product_name,option_name,sourcing_price,cost_krw,weight_g,staronemall_url,shopee_item_id,lifecycle_state,created_at,main_image,shopee_option_image_url,product_group_id,variation_tier_names,variation_option_names,variation_tier_index,global_model_id,shopee_global_model_sku,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,qoo10_category_id,qoo10_last_synced_price,qoo10_last_synced_at'
-              + '&order=lifecycle_state.asc,created_at.asc',
+              + '&order=created_at.desc',
             {
               headers: Object.assign({}, AUTH_HEADERS, {
                 'Range-Unit': 'items',
@@ -20736,23 +21155,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // ── Sort logic ──────────────────────────────────────────────────
 
   /**
-   * Default sort: lifecycle_state pre_order first, then ready_stock, then null.
-   * Within same state: cost_updated_at oldest first (nulls first = stale at top).
+   * Default sort: newest product first. Group builders keep the first visible
+   * row index, so grouped masters also surface by their newest option row.
    */
+  function catProductCreatedTime(product) {
+    const ts = new Date((product || {}).created_at || 0).getTime();
+    return Number.isFinite(ts) ? ts : 0;
+  }
+
   function catSortProducts(products) {
-    const orderLc = function(lc) {
-      const v = String(lc || '').toLowerCase();
-      if (v === 'pre_order') return 0;
-      if (v === 'ready_stock') return 1;
-      return 2;
-    };
     return products.slice().sort(function(a, b) {
-      const lDiff = orderLc(a.lifecycle_state) - orderLc(b.lifecycle_state);
-      if (lDiff !== 0) return lDiff;
-      // oldest cost_updated_at first (nulls first)
-      const aTs = a.cost_updated_at ? new Date(a.cost_updated_at).getTime() : 0;
-      const bTs = b.cost_updated_at ? new Date(b.cost_updated_at).getTime() : 0;
-      return aTs - bTs;
+      const createdDiff = catProductCreatedTime(b) - catProductCreatedTime(a);
+      if (createdDiff !== 0) return createdDiff;
+      return String(b.id || '').localeCompare(String(a.id || ''));
     });
   }
 
@@ -21731,14 +22146,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const lifecycleEl = document.getElementById('cat-lifecycle-filter');
     if (lifecycleEl) lifecycleEl.value = '';
 
-    if (_catCache && ids.length) {
-      const selected = new Set(ids);
-      catBuildProductGroups(_catCache.products || []).forEach((group) => {
-        if ((group.rows || []).some((row) => selected.has(String(row.id)))) {
-          state.priceSyncExpandedGroups.add(group.key);
-        }
-      });
-    }
+    state.priceSyncExpandedGroups.clear();
   }
 
   /** Inject/update region column headers into the table thead. */
@@ -24318,7 +24726,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     window.showView = function(viewId) {
       _origSV2(viewId);
       if (String(viewId || '').startsWith('view-platform-')) renderPlatformWorkbenches();
-      if (viewId === 'view-price-sync') renderCatalogView(false);
+      if (viewId === 'view-price-sync') {
+        state.priceSyncExpandedGroups.clear();
+        renderCatalogView(false);
+      }
       if (viewId === 'view-coverage') renderCoverageView(false);
       if (viewId === 'view-daily-close') renderDailyClose(false);
       if (viewId === 'view-b2b-catalog') renderB2bCatalogView(false);

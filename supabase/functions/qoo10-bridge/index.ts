@@ -459,6 +459,36 @@ async function applyGoodsContents(itemCode: string, sellerCode: string, contents
   return { ok: true, raw: res.raw };
 }
 
+async function applyGoodsImage(itemCode: string, sellerCode: string, standardImage: string) {
+  const imageUrl = clampString(standardImage, 200);
+  if (!imageUrl) return null;
+  const res = await qoo10Fetch("ItemsContents.EditGoodsImage", {
+    ItemCode: itemCode,
+    SellerCode: sellerCode,
+    StandardImage: imageUrl,
+  });
+  if (res.status < 200 || res.status >= 300 || !qoo10Success(res.raw)) return failureFromRaw(res.raw, `qoo10_goods_image_http_${res.status}`);
+  return { ok: true, raw: res.raw };
+}
+
+async function applyGoodsMultiImage(itemCode: string, sellerCode: string, images: string[]) {
+  const imageUrls = (Array.isArray(images) ? images : [])
+    .map((url) => clampString(url, 200))
+    .filter(Boolean)
+    .slice(0, 50);
+  if (!imageUrls.length) return null;
+  const params: Record<string, string> = {
+    ItemCode: itemCode,
+    SellerCode: sellerCode,
+  };
+  imageUrls.forEach((url, index) => {
+    params[`EnlargedImage${index + 1}`] = url;
+  });
+  const res = await qoo10Fetch("ItemsContents.EditGoodsMultiImage", params);
+  if (res.status < 200 || res.status >= 300 || !qoo10Success(res.raw)) return failureFromRaw(res.raw, `qoo10_goods_multi_image_http_${res.status}`);
+  return { ok: true, raw: res.raw, image_count: imageUrls.length };
+}
+
 async function updateGoodsBasic(body: any) {
   const itemCode = clampString(body.item_code || body.ItemCode, 10);
   const categoryId = clampString(body.category_id || body.SecondSubCat, 20);
@@ -516,6 +546,36 @@ async function handleEditContents(req: Request): Promise<Response> {
   const result = await applyGoodsContents(itemCode, sellerCode, contents);
   if (!result?.ok) return jsonResp(result || { ok: false, error: "qoo10_goods_contents_failed" }, 502);
   return jsonResp({ ok: true, item_code: itemCode, seller_code: sellerCode || null, raw: result.raw });
+}
+
+async function handleEditImage(req: Request): Promise<Response> {
+  if (!QOO10_API_KEY) return jsonResp({ ok: false, error: "QOO10_API_KEY missing" }, 500);
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object") return jsonResp({ ok: false, error: "JSON body required" }, 400);
+  const itemCode = clampString(body.item_code || body.ItemCode, 10);
+  const sellerCode = clampString(body.seller_code || body.SellerCode, 100);
+  const standardImage = String(body.standard_image || body.StandardImage || body.main_image || "").trim();
+  if (!itemCode) return jsonResp({ ok: false, error: "ItemCode/item_code required" }, 400);
+  if (!standardImage) return jsonResp({ ok: false, error: "StandardImage/standard_image required" }, 400);
+  const result = await applyGoodsImage(itemCode, sellerCode, standardImage);
+  if (!result?.ok) return jsonResp(result || { ok: false, error: "qoo10_goods_image_failed" }, 502);
+  return jsonResp({ ok: true, item_code: itemCode, seller_code: sellerCode || null, standard_image: standardImage, raw: result.raw });
+}
+
+async function handleEditMultiImage(req: Request): Promise<Response> {
+  if (!QOO10_API_KEY) return jsonResp({ ok: false, error: "QOO10_API_KEY missing" }, 500);
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== "object") return jsonResp({ ok: false, error: "JSON body required" }, 400);
+  const itemCode = clampString(body.item_code || body.ItemCode, 10);
+  const sellerCode = clampString(body.seller_code || body.SellerCode, 100);
+  const images = Array.isArray(body.images)
+    ? body.images
+    : (Array.isArray(body.extra_images) ? body.extra_images : []);
+  if (!itemCode) return jsonResp({ ok: false, error: "ItemCode/item_code required" }, 400);
+  if (!images.length) return jsonResp({ ok: false, error: "images/extra_images required" }, 400);
+  const result = await applyGoodsMultiImage(itemCode, sellerCode, images);
+  if (!result?.ok) return jsonResp(result || { ok: false, error: "qoo10_goods_multi_image_failed" }, 502);
+  return jsonResp({ ok: true, item_code: itemCode, seller_code: sellerCode || null, image_count: result.image_count || 0, raw: result.raw });
 }
 
 async function handleHeaderFooter(req: Request): Promise<Response> {
@@ -764,6 +824,8 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === "create-listing" && req.method === "POST") return await handleCreateListing(req);
     if (action === "update-goods" && req.method === "POST") return await handleUpdateGoods(req);
     if (action === "edit-contents" && req.method === "POST") return await handleEditContents(req);
+    if (action === "edit-image" && req.method === "POST") return await handleEditImage(req);
+    if (action === "edit-multi-image" && req.method === "POST") return await handleEditMultiImage(req);
     if (action === "edit-inventory" && req.method === "POST") return await handleEditInventory(req);
     if (action === "set-price" && req.method === "POST") return await handleSetPrice(req);
     if (action === "header-footer" && req.method === "POST") return await handleHeaderFooter(req);

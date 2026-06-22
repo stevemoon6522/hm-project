@@ -1410,14 +1410,14 @@ async function runV2MutationAction(action: string, body: any) {
     if (imageIdList.length) requestPayload.image = { image_id_list: imageIdList };
     if (attribute_list.length) requestPayload.attribute_list = attribute_list;
     if (!global_item_id) return { ok: false, error: 'global_item_id required' };
-    if (!global_item_sku && !item_name && !description && !requestPayload.pre_order && !requestPayload.weight && !attribute_list.length) {
-      return { ok: false, error: 'at least one of global_item_sku, global_item_name, description, days_to_ship, weight, attribute_list required' };
+    if (!global_item_sku && !item_name && !description && !requestPayload.pre_order && !requestPayload.weight && !attribute_list.length && !imageIdList.length) {
+      return { ok: false, error: 'at least one of global_item_sku, global_item_name, description, days_to_ship, weight, attribute_list, image_id_list required' };
     }
 
     const preflight = await enforceV2ProbePreflight(action, requestPayload, body);
     if (!preflight.ok) return { ok: false, ...preflight };
     const finalPayload = await hydrateUpdateGlobalItemPayload(r, preflight.requestPayload, accountKey);
-    if (!finalPayload.global_item_sku && !finalPayload.global_item_name && !finalPayload.item_name && !finalPayload.description && !finalPayload.pre_order && !finalPayload.weight && !finalPayload.attribute_list) {
+    if (!finalPayload.global_item_sku && !finalPayload.global_item_name && !finalPayload.item_name && !finalPayload.description && !finalPayload.pre_order && !finalPayload.weight && !finalPayload.attribute_list && !finalPayload.image?.image_id_list?.length) {
       return { ok: false, error: 'v2_degraded_payload_empty', message: 'All requested fields were blocked by probe preflight.' };
     }
     const response = await executeLoggedMutation(action, r, finalPayload, body, payload =>

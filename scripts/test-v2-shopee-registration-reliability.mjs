@@ -33,7 +33,9 @@ const brandForPublish = extractFunction(html, 'rshBrandForShopeePublish');
 const mrUploadRegionImages = extractFunction(html, 'mrUploadRegionImages');
 const regionBatchOrder = extractFunction(html, 'shopeeRegionBatchOrder');
 const batchRegister = extractFunction(html, 'shopeeRegisterCbscWithRegionBatches');
+const updateDifferentWeightShipping = extractFunction(html, 'rshUpdateDifferentWeightShipping');
 const renderModal = html.slice(html.indexOf('<section class="rsh-seller-section grid" id="rsh-info-section"'), html.indexOf('<!-- Description -->'));
+const variantSection = html.slice(html.indexOf('<!-- Sales Information -->'), html.indexOf('<!-- Shipping + region pre-order/DTS -->'));
 const shippingSection = html.slice(html.indexOf('<!-- Shipping + region pre-order/DTS -->'), html.indexOf('<!-- Others -->'));
 const masterPromoteBlock = html.slice(html.indexOf('// 6. Insert product_shopee_listings'), html.indexOf('// 9. ok:true'));
 const masterPromoteRegisterBlock = html.slice(html.indexOf('const doRegisterCbsc = async'), html.indexOf('// Decode all relevant fields upfront'));
@@ -132,6 +134,21 @@ assert.match(
   html,
   /function rshUpdateDifferentWeightShipping/,
   'Shopee modal must update Different weight/shipping fields from option weights',
+);
+assert.match(
+  updateDifferentWeightShipping,
+  /packageFields\.style\.display = optionWeights \? 'none' : 'contents'[\s\S]*differentWeight\.textContent = optionWeights \? 'ON' : 'OFF'/,
+  'Shipping section must hide item-level package fields and enable Different weight when every option has a weight',
+);
+assert.match(
+  variantSection,
+  /style="display:none;"[\s\S]*id="rsh-var-bulk-sourcing"[\s\S]*style="display:none;"[\s\S]*id="rsh-var-bulk-price"/,
+  'Shopee register modal must hide wholesale/settlement KRW bulk inputs from the operator-facing registration UI',
+);
+assert.match(
+  html,
+  /<td style="display:none;"><input id="\$\{rshVariantInputId\('sourcing', index\)\}[\s\S]*<td style="display:none;"><input id="\$\{rshVariantInputId\('price', index\)\}/,
+  'Shopee register modal must keep option wholesale/settlement inputs hidden while preserving calculation values',
 );
 assert.match(
   buildGroupPayload,

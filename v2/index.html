@@ -4741,11 +4741,11 @@
               <label for="rsh-variation-name">Variation1 name</label>
               <input id="rsh-variation-name" type="text" maxlength="14" value="VERSION">
             </div>
-            <div class="field">
+            <div class="field" style="display:none;">
               <label for="rsh-var-bulk-sourcing">도매가 KRW</label>
               <input id="rsh-var-bulk-sourcing" type="number" min="0" step="1" placeholder="도매가">
             </div>
-            <div class="field">
+            <div class="field" style="display:none;">
               <label for="rsh-var-bulk-price">정산가 KRW</label>
               <input id="rsh-var-bulk-price" type="number" min="1" step="1" placeholder="가격">
             </div>
@@ -4761,8 +4761,8 @@
                 <tr>
                   <th style="text-align:left;width:170px;">VERSION</th>
                   <th style="text-align:left;width:120px;">Image</th>
-                  <th style="text-align:left;width:110px;">도매가</th>
-                  <th style="text-align:left;width:110px;">정산가</th>
+                  <th style="display:none;text-align:left;width:110px;">도매가</th>
+                  <th style="display:none;text-align:left;width:110px;">정산가</th>
                   <th style="text-align:right;width:78px;">SG</th>
                   <th style="text-align:right;width:78px;">TW</th>
                   <th style="text-align:right;width:78px;">TH</th>
@@ -17364,8 +17364,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       <tr>
         <td><span class="rsh-option-chip">${text(option)}</span></td>
         <td style="color:${optionImage ? 'var(--green)' : 'var(--muted)'};">${optionImage ? '있음' : '선택 사항'}</td>
-        <td><input id="${rshVariantInputId('sourcing', index)}" type="number" min="0" step="1" value="${text(String(sourcing || ''))}"></td>
-        <td><input id="${rshVariantInputId('price', index)}" type="number" min="1" step="1" value="${text(String(price || ''))}"></td>
+        <td style="display:none;"><input id="${rshVariantInputId('sourcing', index)}" type="number" min="0" step="1" value="${text(String(sourcing || ''))}"></td>
+        <td style="display:none;"><input id="${rshVariantInputId('price', index)}" type="number" min="1" step="1" value="${text(String(price || ''))}"></td>
         ${regionCells}
         <td><input id="${rshVariantInputId('stock', index)}" type="number" min="1" step="1" value="${text(String(stock))}"></td>
         <td><input id="${rshVariantInputId('sku', index)}" type="text" maxlength="100" value="${text(sku)}"></td>

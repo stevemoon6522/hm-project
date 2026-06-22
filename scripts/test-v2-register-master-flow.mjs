@@ -103,6 +103,18 @@ assert(!saveHandler.includes('showWizModal'), 'default save must not open Shopee
 assert(!saveHandler.includes('/register_cbsc'), 'default save must not call legacy direct register path');
 assert(!saveHandler.includes('callBridgeMutation'), 'default save must not call Shopee bridge mutations');
 
+const registerRows = sliceBetween(html, 'function registerMasterRowsFromPayloads(payloads) {', 'function registerProductPayload');
+assert(registerRows.includes('const representativeImageUrl = registerMasterRepresentativeImageUrl()'), 'master save rows must preserve the applied representative image URL');
+assert(registerRows.includes('const detailImageUrls = registerMasterDetailImageUrls()'), 'master save rows must preserve StarOneMall detail images');
+assert(registerRows.includes('...(representativeImageUrl ? { main_image: representativeImageUrl } : {})'), 'master save rows must write products.main_image when an applied URL exists');
+assert(registerRows.includes('...(detailImageUrls.length ? { extra_images: detailImageUrls } : {})'), 'master save rows must write products.extra_images when detail images exist');
+assert(registerRows.includes('...(imageIds[0] ? { shopee_image_id: imageIds[0] } : {})'), 'master save rows must retain the applied Shopee cover image_id');
+
+const registerPayload = sliceBetween(html, 'function registerProductPayload(row, mode = \'insert\', includeLifecycle = true) {', 'async function registerUpdateProductWithFallback');
+assert(registerPayload.includes("Object.prototype.hasOwnProperty.call(row, 'main_image')"), 'products insert/update payload must include representative image URL only when provided');
+assert(registerPayload.includes("Object.prototype.hasOwnProperty.call(row, 'extra_images')"), 'products insert/update payload must include detail images only when provided');
+assert(registerPayload.includes("Object.prototype.hasOwnProperty.call(row, 'shopee_image_id')"), 'products insert/update payload must include Shopee cover image_id only when provided');
+
 const publishHandler = sliceBetween(html, 'window.handleWizLiveSubmit', 'let _lastWizPayloads = null;');
 assert(publishHandler.includes('state.registerFlow.savedAt'), 'Shopee publish must require completed master save');
 assert(publishHandler.includes('state.registerFlow.dirty'), 'Shopee publish must block dirty unsaved edits');

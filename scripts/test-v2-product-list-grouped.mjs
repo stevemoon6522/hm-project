@@ -51,6 +51,7 @@ for (const token of [
   'function renderProductGroup(group)',
   'function renderProductOptionRow(p, groupKey, isGroupChild)',
   'function plParentSku(rows)',
+  'function plGroupMainImage(rows)',
   'function plProductName(product)',
   'function plSetProductSelected(productId, selected)',
   'function plVisibleRenderedProductIds()',
@@ -72,6 +73,18 @@ for (const token of [
 assert(
   productList.includes('group.isGrouped ? renderProductGroup(group) : renderProductOptionRow'),
   'renderProducts must route grouped variants through the master group renderer',
+);
+assert(
+  productList.includes('const shopeeImageId = String(product?.shopee_image_id || \'\').trim()')
+    && productList.includes('https://cf.shopee.sg/file/${shopeeImageId}'),
+  'product thumbnails must fall back to saved Shopee image_id when no master image URL exists',
+);
+assert(
+  productList.includes('function plGroupMainImage(rows)')
+    && productList.includes("list.map((row) => String(row?.main_image || '').trim()).find(Boolean)")
+    && productList.includes("list.map((row) => String(row?.shopee_option_image_url || '').trim()).find(Boolean)")
+    && productList.includes('${plProductThumb(first, rows)}'),
+  'group master thumbnails must derive a representative image from any option row, not only the first row',
 );
 assert(
   productList.includes('rows.map((row) => renderProductOptionRow(row, group.key, true))'),

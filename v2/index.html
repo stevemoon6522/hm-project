@@ -7227,7 +7227,21 @@ LEGACY END -->
   }
 
   function plMainImage(product) {
-    return String(product?.main_image || product?.shopee_option_image_url || '').trim();
+    const directUrl = String(product?.main_image || product?.shopee_option_image_url || '').trim();
+    if (directUrl) return directUrl;
+    const shopeeImageId = String(product?.shopee_image_id || '').trim();
+    return shopeeImageId ? `https://cf.shopee.sg/file/${shopeeImageId}` : '';
+  }
+
+  function plGroupMainImage(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    return list.map((row) => String(row?.main_image || '').trim()).find(Boolean)
+      || list.map((row) => String(row?.shopee_option_image_url || '').trim()).find(Boolean)
+      || list.map((row) => {
+        const shopeeImageId = String(row?.shopee_image_id || '').trim();
+        return shopeeImageId ? `https://cf.shopee.sg/file/${shopeeImageId}` : '';
+      }).find(Boolean)
+      || '';
   }
 
   function plArtistInitial(product) {
@@ -7236,8 +7250,8 @@ LEGACY END -->
     return (clean.split(/\s+/)[0] || 'SPC').slice(0, 6).toUpperCase();
   }
 
-  function plProductThumb(product) {
-    const src = plMainImage(product);
+  function plProductThumb(product, groupRows = null) {
+    const src = Array.isArray(groupRows) ? (plGroupMainImage(groupRows) || plMainImage(product)) : plMainImage(product);
     if (src) {
       return `<span class="pl-master-thumb"><img src="${text(src)}" alt="" loading="lazy" onerror="this.remove();"></span>`;
     }
@@ -7363,7 +7377,7 @@ LEGACY END -->
         <td class="pl-product-cell">
           <div class="pl-group-main">
             <button type="button" class="pl-group-toggle" data-group-toggle="1" data-group-key="${text(group.key)}" title="${collapsed ? '옵션 펼치기' : '옵션 접기'}">${collapsed ? '▸' : '▾'}</button>
-            ${plProductThumb(first)}
+            ${plProductThumb(first, rows)}
             <div class="pl-product-copy">
               <div class="pl-master-title-row">
                 <span class="pl-master-title">${text(productName)}</span>
@@ -13995,6 +14009,36 @@ LEGACY END -->
     field.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
+  function normalizeRegisterImageUrlList(values, baseUrl = '') {
+    const raw = Array.isArray(values) ? values : [values];
+    const seen = new Set();
+    const urls = [];
+    raw.forEach((value) => {
+      const url = _normalizeShopeeImageUrl(value, baseUrl);
+      if (!/^https?:\/\//i.test(url) || seen.has(url)) return;
+      seen.add(url);
+      urls.push(url);
+    });
+    return urls;
+  }
+
+  function registerAppliedStaronemallImageMeta() {
+    const coverImageId = readRegisterImageIds()[0] || '';
+    if (!coverImageId) return null;
+    const generated = state.registerFlow?.staronemallImage || null;
+    return generated && String(generated.imageId || '') === coverImageId ? generated : null;
+  }
+
+  function registerMasterRepresentativeImageUrl() {
+    const meta = registerAppliedStaronemallImageMeta();
+    return String(meta?.imageUrl || meta?.mainImageUrl || '').trim();
+  }
+
+  function registerMasterDetailImageUrls() {
+    const meta = registerAppliedStaronemallImageMeta();
+    return normalizeRegisterImageUrlList(meta?.detailImageUrls || [], meta?.sourceUrl || '');
+  }
+
   async function sha256TextHex(value) {
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(value || '')));
     return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -14025,6 +14069,8 @@ LEGACY END -->
     const current = readRegisterImageIds();
     if (current.length === 0) current.push(pendingImageId);
     else current[0] = pendingImageId;
+    const appliedMeta = pending ? { ...pending, imageId: pendingImageId, applied: true, pending: false } : null;
+    if (state.registerFlow && appliedMeta) state.registerFlow.staronemallImage = appliedMeta;
     field.dataset.staronemallImageId = pendingImageId;
     writeRegisterImageIds(current);
     clearPendingRegisterCoverImage();
@@ -14113,6 +14159,10 @@ LEGACY END -->
       if (seq !== registerStaronemallImageSeq) return { ok: false, skipped: 'stale' };
       const mainImage = _normalizeShopeeImageUrl(assets.mainImage, normalizedUrl);
       if (!mainImage) throw new Error('mainImage URL missing from StarOneMall scrape.');
+      const detailImageUrls = normalizeRegisterImageUrlList(
+        assets.detailImages || assets.detail_image_urls || assets.detail_image_url_list || [],
+        normalizedUrl,
+      ).filter((url) => url !== mainImage);
 
       setRegisterStaronemallStatus('Shopee Media 업로드 실행됨: 대표이미지 레이어 합성 중...');
       const candidates = [mainImage];
@@ -14141,6 +14191,7 @@ LEGACY END -->
       const imageUpdate = updateRegisterRepresentativeImageId(uploaded.image_id, {
         sourceUrl: normalizedUrl,
         mainImageUrl: mainImage,
+        detailImageUrls,
         imageUrl: uploaded.image_url || '',
         uploadRegion: uploaded.uploadRegion,
         cached: !!uploaded.cached,
@@ -14154,6 +14205,8 @@ LEGACY END -->
       state.registerFlow.staronemallImage = {
         sourceUrl: normalizedUrl,
         imageId: uploaded.image_id,
+        mainImageUrl: mainImage,
+        detailImageUrls,
         imageUrl: uploaded.image_url || '',
         uploadRegion: uploaded.uploadRegion,
         cached: !!uploaded.cached,
@@ -14715,6 +14768,14 @@ LEGACY END -->
     const baseCostKrw = Math.round(Number(addItemPayload.original_price || 0));
     const sourceUrlRaw = (g('w-staronemall-url').value || '').trim();
     const sourceUrl = sourceUrlRaw && isValidStaronemallUrl(sourceUrlRaw) ? normalizeStaronemallInput(sourceUrlRaw) : null;
+    const imageIds = readRegisterImageIds();
+    const representativeImageUrl = registerMasterRepresentativeImageUrl();
+    const detailImageUrls = registerMasterDetailImageUrls();
+    const imagePatch = {
+      ...(representativeImageUrl ? { main_image: representativeImageUrl } : {}),
+      ...(detailImageUrls.length ? { extra_images: detailImageUrls } : {}),
+      ...(imageIds[0] ? { shopee_image_id: imageIds[0] } : {}),
+    };
 
     if (variants.length) {
       return variants.map((variant, index) => ({
@@ -14724,6 +14785,7 @@ LEGACY END -->
         cost_krw: Math.round(Number(variant.originalPrice || addItemPayload.original_price || 0)),
         weight_g: Math.round(Number(variant.weight || addItemPayload.weight || 0) * 1000),
         staronemall_url: sourceUrl,
+        ...imagePatch,
       }));
     }
 
@@ -14734,6 +14796,7 @@ LEGACY END -->
       cost_krw: baseCostKrw,
       weight_g: baseWeightG,
       staronemall_url: sourceUrl,
+      ...imagePatch,
     }];
   }
 
@@ -14746,6 +14809,9 @@ LEGACY END -->
       weight_g: row.weight_g || 0,
       staronemall_url: row.staronemall_url || null,
     };
+    if (Object.prototype.hasOwnProperty.call(row, 'main_image')) payload.main_image = row.main_image || null;
+    if (Object.prototype.hasOwnProperty.call(row, 'extra_images')) payload.extra_images = Array.isArray(row.extra_images) ? row.extra_images : [];
+    if (Object.prototype.hasOwnProperty.call(row, 'shopee_image_id')) payload.shopee_image_id = row.shopee_image_id || null;
     if (mode === 'insert') {
       payload.position = 0;
       payload.shopee_item_id = null;

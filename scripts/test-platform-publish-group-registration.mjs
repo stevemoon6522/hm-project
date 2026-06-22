@@ -40,6 +40,10 @@ assert.match(shopee, /image_base64: imageData\.image_base64/, 'Shopee adapter mu
 assert.match(shopee, /SHOPEE_IMAGE_UPLOAD_FAILED/, 'Shopee adapter must surface image upload failures before register_cbsc');
 assert.match(shopee, /function normalizeShopeeAttributeList/, 'Shopee adapter must normalize stored extra attributes before register_cbsc');
 assert.match(shopee, /else if \(originalValueName\) entry\.value_id = 0/, 'Shopee adapter must send custom attribute values as value_id=0 plus original_value_name');
+assert.match(shopee, /function registerCbscInRegionBatches[\s\S]*register_cbsc[\s\S]*publish_to_region[\s\S]*global_item_id/, 'Shopee adapter must split large multi-region publishes into timeout-safe bridge batches');
+assert.match(shopee, /const raw = await registerCbscInRegionBatches/, 'Shopee adapter multi-region create must use the batch helper');
+assert.match(shopee, /BR:\s*0[\s\S]*SG:\s*1/, 'Shopee adapter batch ordering must prioritize BR');
+assert.match(shopee, /rowGlobalItemId[\s\S]*hasOwnProperty\.call\(r \|\| \{\}, 'global_item_id'\)[\s\S]*global_item_id:\s*rowGlobalItemId \? Number\(rowGlobalItemId\) : null/, 'Shopee adapter must preserve row-level null global_item_id for shop-level fallback listings');
 assert.match(shopee, /const failedSummary = regionSummary/, 'Shopee adapter must surface a top-level failure summary when every region fails');
 
 assert.match(joom, /inferKpopBrandName/, 'Joom adapter must infer a usable brand when Shopee brand is No Brand');

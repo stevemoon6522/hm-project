@@ -74,7 +74,7 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 // v51: treat CBSC publish task "permission"/empty failed results as async-pending until published_list proves final state.
-const SOURCE_VERSION = 56;
+const SOURCE_VERSION = 70;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -88,6 +88,7 @@ const SHOPEE_HEADLESS_DELETE_CONFIRM_PHRASE = 'DELETE_SHOPEE_GLOBAL_ITEM';
 const SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT = 3.5;
 const SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS = 3;
 const SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_EVERY_POLLS = 3;
+const SHOPEE_BR_MAX_PUBLISH_POLLS = 36;
 const PROXY_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
 const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
 const UPLOAD_IMAGE_MIN_DIMENSION = 300;
@@ -769,6 +770,7 @@ const V2_MUTATION_ACTIONS = new Set([
   'update_shop_days_to_ship',
   'update_shop_item_name',
   'update_shop_item_description',
+  'init_shop_tier_variation',
   'update_shop_tier_variation',
   'set_global_sync_fields',
   'set_price_sync_on',
@@ -1530,6 +1532,55 @@ async function runV2MutationAction(action: string, body: any) {
     return { ...response, item_id, sent_description_length: description.length };
   }
 
+  if (action === 'init_shop_tier_variation') {
+    const item_id = parseInt(body.item_id || body.shop_item_id);
+    if (!item_id) return { ok: false, error: 'shop_item_id required' };
+
+    let variation: any = null;
+    try {
+      variation = normalizeVariation(body.variation);
+    } catch (e: any) {
+      return { ok: false, stage: 'variation_preflight', error: 'invalid_variation', message: String(e?.message || e) };
+    }
+    if (!variation) return { ok: false, error: 'variation required' };
+
+    const standardise_tier_variation = buildStandardiseTierVariation(variation.tier_variation);
+    const model = variation.model.map((m: any) => {
+      const stock = Number(m?.seller_stock?.[0]?.stock ?? m?.stock ?? body.stock ?? 0);
+      const entry: Record<string, any> = {
+        tier_index: Array.isArray(m?.tier_index) ? m.tier_index.map((v: any) => Number(v)) : [],
+        model_sku: String(m?.model_sku || m?.global_model_sku || '').trim(),
+        original_price: Number(m?.original_price ?? body.price ?? 0),
+        seller_stock: [{ stock }],
+      };
+      if (m?.weight_g != null && Number(m.weight_g) > 0) entry.weight = Number(m.weight_g) / 1000;
+      else if (m?.weight != null && Number(m.weight) > 0) entry.weight = Number(m.weight);
+      return entry;
+    }).filter((m: any) => (
+      Array.isArray(m.tier_index)
+      && m.tier_index.every((v: any) => Number.isFinite(v))
+      && m.model_sku
+      && Number.isFinite(m.original_price)
+    ));
+    if (!standardise_tier_variation.length) return { ok: false, error: 'standardise_tier_variation[] required' };
+    if (!model.length) return { ok: false, error: 'model[] required (tier_index + model_sku + original_price)' };
+
+    const requestPayload: Record<string, any> = { item_id, standardise_tier_variation, model };
+
+    // Official local doc:
+    // C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\product\v2.product.init_tier_variation.json
+    const response = await executeLoggedMutation(action, r, requestPayload, body, payload =>
+      shopApiCall(r, '/api/v2/product/init_tier_variation', { method: 'POST', body: payload, account_key: accountKey })
+    );
+    return {
+      ...response,
+      item_id,
+      sent_model_count: model.length,
+      sent_tier_count: standardise_tier_variation.length,
+      tier_payload_kind: 'standardise_tier_variation',
+    };
+  }
+
   if (action === 'update_shop_tier_variation') {
     const item_id = parseInt(body.item_id || body.shop_item_id);
     if (!item_id) return { ok: false, error: 'shop_item_id required' };
@@ -2210,8 +2261,8 @@ async function getRegionShopId(region: string, accountKey = DEFAULT_SHOPEE_ACCOU
 async function getPublishLogistics(region: string, isPreOrder = false, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   const result = await shopApiCall(region, '/api/v2/logistics/get_channel_list', { account_key: accountKey });
   const channels: any[] = result?.response?.logistics_channel_list || [];
-  const pickId = (ch: any) => ch?.logistic_id ?? ch?.logistics_channel_id ?? ch?.channel_id ?? ch?.id;
-  const pickName = (ch: any) => ch?.logistic_name ?? ch?.name ?? `channel_${pickId(ch)}`;
+  const pickId = (ch: any) => ch?.logistics_channel_id ?? ch?.logistic_id ?? ch?.channel_id ?? ch?.id;
+  const pickName = (ch: any) => ch?.logistics_channel_name ?? ch?.logistic_name ?? ch?.name ?? `channel_${pickId(ch)}`;
   let enabled = channels.filter(ch => pickId(ch) != null && (ch.enabled ?? true));
   // Pre-order items can only use channels that explicitly support_pre_order=true.
   // (Verified 2026-05-22 — PH channel 48023 returned
@@ -2219,6 +2270,11 @@ async function getPublishLogistics(region: string, isPreOrder = false, accountKe
   if (isPreOrder) {
     enabled = enabled.filter(ch => ch.support_pre_order === true);
   }
+  const deliveryOnly = enabled.filter((ch: any) => {
+    const name = String(pickName(ch) || '').toLowerCase();
+    return !isPickupOrLockerLogisticsName(name);
+  });
+  if (deliveryOnly.length) enabled = deliveryOnly;
   const out = enabled.map(ch => ({
     logistic_id: Number(pickId(ch)),
     logistic_name: String(pickName(ch)),
@@ -2226,6 +2282,91 @@ async function getPublishLogistics(region: string, isPreOrder = false, accountKe
     is_free: false,
   }));
   return out.length ? out : [{ logistic_id: 80007, logistic_name: 'Default', enabled: true, is_free: false }];
+}
+
+function logisticsIdFrom(row: any): number {
+  return Number(row?.logistics_channel_id ?? row?.logistic_id ?? row?.channel_id ?? row?.id);
+}
+
+function logisticsNameFrom(row: any): string {
+  const id = logisticsIdFrom(row);
+  return String(row?.logistics_channel_name ?? row?.logistic_name ?? row?.name ?? `channel_${id}`);
+}
+
+function isPickupOrLockerLogisticsName(name: string): boolean {
+  return /(self\s*collection|self\s*collect|collection\s*points?|locker|pick[-\s]?up|xpress\s*collect)/i.test(String(name || ''));
+}
+
+function deliveryOnlyLogisticPatch(logistics: any[] = []) {
+  const rows = (Array.isArray(logistics) ? logistics : [])
+    .map((row: any) => {
+      const logistic_id = logisticsIdFrom(row);
+      if (!Number.isFinite(logistic_id) || logistic_id <= 0) return null;
+      const logistic_name = logisticsNameFrom(row);
+      const wasEnabled = row?.enabled !== false;
+      const isPickup = isPickupOrLockerLogisticsName(logistic_name);
+      const next: Record<string, unknown> = {
+        logistic_id,
+        enabled: wasEnabled && !isPickup,
+        is_free: row?.is_free === true,
+      };
+      if (row?.shipping_fee !== undefined && row?.shipping_fee !== null && row?.shipping_fee !== '') {
+        const shipping_fee = Number(row.shipping_fee);
+        if (Number.isFinite(shipping_fee) && shipping_fee >= 0) next.shipping_fee = shipping_fee;
+      }
+      if (row?.size_id !== undefined && row?.size_id !== null && row?.size_id !== '') {
+        const size_id = Number(row.size_id);
+        if (Number.isFinite(size_id) && size_id >= 0) next.size_id = size_id;
+      }
+      return { next, wasEnabled, isPickup };
+    })
+    .filter(Boolean) as Array<{ next: Record<string, unknown>; wasEnabled: boolean; isPickup: boolean }>;
+  const hasDeliveryEnabled = rows.some((row) => row.next.enabled === true);
+  const changed = hasDeliveryEnabled && rows.some((row) => row.wasEnabled && row.isPickup);
+  return {
+    changed,
+    reason: hasDeliveryEnabled ? null : 'no_delivery_channel_left_enabled',
+    logistic_info: changed ? rows.map((row) => row.next) : [],
+  };
+}
+
+async function repairPublishedItemLogisticsForGlobalItem(globalItemId: number, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, lookupRegion = 'SG') {
+  if (!globalItemId) return { ok: false, skipped: true, error: 'global_item_id required' };
+  const publishedRes = await merchantApiCall(lookupRegion || 'SG', '/api/v2/global_product/get_published_list', { query: { global_item_id: globalItemId }, account_key: accountKey });
+  const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
+  const repairs: any[] = [];
+  await mapWithConcurrency(pubItems, 2, async (published: any) => {
+    const itemId = Number(published?.item_id);
+    const itemRegion = String(published?.shop_region || published?.region || '').toUpperCase();
+    if (!itemId || !itemRegion) return;
+    try {
+      const infoRes = await shopApiCall(itemRegion, '/api/v2/product/get_item_base_info', { query: { item_id_list: itemId }, account_key: accountKey });
+      const item = Array.isArray(infoRes?.response?.item_list) ? infoRes.response.item_list[0] : null;
+      const patch = deliveryOnlyLogisticPatch(item?.logistic_info || item?.logistic || []);
+      if (!patch.changed) {
+        repairs.push({ ok: true, region: itemRegion, item_id: itemId, skipped: true, reason: patch.reason || 'already_delivery_only' });
+        return;
+      }
+      const updateRes = await shopApiCall(itemRegion, '/api/v2/product/update_item', {
+        method: 'POST',
+        body: { item_id: itemId, logistic_info: patch.logistic_info },
+        account_key: accountKey,
+      });
+      repairs.push({
+        ok: !updateRes?.error,
+        region: itemRegion,
+        item_id: itemId,
+        stage: 'repair_published_item_logistics',
+        disabled_logistic_ids: patch.logistic_info.filter((row: any) => row.enabled === false).map((row: any) => row.logistic_id),
+        kept_logistic_ids: patch.logistic_info.filter((row: any) => row.enabled === true).map((row: any) => row.logistic_id),
+        error: updateRes?.error || null,
+        message: updateRes?.message || null,
+      });
+    } catch (e: any) {
+      repairs.push({ ok: false, region: itemRegion, item_id: itemId, stage: 'repair_published_item_logistics_exception', error: String(e?.message || e) });
+    }
+  });
+  return { ok: repairs.every((row) => row.ok !== false), count: repairs.length, repairs };
 }
 
 function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
@@ -2247,6 +2388,7 @@ function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
     image: imageBlockFrom(body),
     category_id: Number(body.category_id),
     logistic: logistics,
+    logistic_info: logistics,
     pre_order: { is_pre_order: isPreOrder, days_to_ship: dts },
   };
   const attributeList = normalizeAttributeList(target.attribute_list || body.attribute_list);
@@ -2319,7 +2461,7 @@ function parsePublishOutcome(region: string, shopId: number, publishTaskId: numb
 }
 
 async function verifyPublishedListOutcome(region: string, shopId: number, globalItemId: number, publishTaskId: number, task: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const retries = region === 'BR' ? 8 : ((region === 'TW') ? 4 : 3);
+  const retries = region === 'BR' ? 4 : ((region === 'TW') ? 4 : 3);
   const sleepMs = 5000;
   for (let attempt = 0; attempt < retries; attempt += 1) {
     if (attempt > 0) await new Promise(s => setTimeout(s, sleepMs));
@@ -2348,10 +2490,67 @@ async function verifyPublishedListOutcomeOnce(region: string, shopId: number, gl
   return null;
 }
 
+async function reconcilePublishResultsWithPublishedList(globalItemId: number, targets: any[] = [], results: any[] = [], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, lookupRegion = 'SG', stageLogs?: string[]) {
+  const requested = (targets || [])
+    .map((target: any) => ({ target, region: String(target?.region || '').toUpperCase() }))
+    .filter((row: any) => row.region);
+  if (!globalItemId || !requested.length) return results;
+
+  const byRegion = new Map<string, { row: any; index: number }>();
+  (results || []).forEach((row: any, index: number) => {
+    const region = String(row?.region || '').toUpperCase();
+    if (region && !byRegion.has(region)) byRegion.set(region, { row, index });
+  });
+  const needsReconcile = requested.some(({ region }: any) => {
+    const existing = byRegion.get(region)?.row;
+    return !existing || !existing.ok || !existing.item_id;
+  });
+  if (!needsReconcile) return results;
+
+  try {
+    const publishedRes = await merchantApiCall(lookupRegion || 'SG', '/api/v2/global_product/get_published_list', { query: { global_item_id: globalItemId }, account_key: accountKey });
+    const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
+    if (!pubItems.length) return results;
+    const next = (results || []).slice();
+    for (const { target, region } of requested) {
+      const existingInfo = byRegion.get(region);
+      const existing = existingInfo?.row;
+      if (existing?.ok && existing?.item_id) continue;
+      let shopId = Number(target?.shop_id || existing?.shop_id || 0);
+      if (!shopId) {
+        try { shopId = await getRegionShopId(region, accountKey); } catch (_) { shopId = 0; }
+      }
+      const hit = pubItems.find((item: any) =>
+        (shopId && Number(item?.shop_id) === Number(shopId))
+        || String(item?.shop_region || item?.region || '').toUpperCase() === region
+      );
+      if (!hit?.item_id) continue;
+      const reconciled = {
+        ...(existing || {}),
+        ok: true,
+        region,
+        shop_id: Number(hit.shop_id || shopId || existing?.shop_id || 0) || null,
+        item_id: Number(hit.item_id),
+        publish_status: 'verified_via_final_published_list_reconcile',
+        error: null,
+        message: null,
+        previous_result: existing || null,
+      };
+      if (existingInfo) next[existingInfo.index] = reconciled;
+      else next.push(reconciled);
+      if (stageLogs) stageLogs.push(`published_list_reconcile: ${region}:${hit.item_id}`);
+    }
+    return next;
+  } catch (e: any) {
+    if (stageLogs) stageLogs.push(`published_list_reconcile_failed: ${String(e?.message || e)}`);
+    return results;
+  }
+}
+
 async function verifyPublishedSkuOutcome(region: string, shopId: number, publishTaskId: number, task: any, sku: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   const needle = shopeeSkuValue(sku);
   if (!needle) return null;
-  const retries = (region === 'BR' || region === 'TW') ? 8 : 5;
+  const retries = (region === 'BR' || region === 'TW') ? 4 : 5;
   const sleepMs = 5000;
   for (let attempt = 0; attempt < retries; attempt += 1) {
     if (attempt > 0) await new Promise(s => setTimeout(s, sleepMs));
@@ -2452,14 +2651,45 @@ function isVariationInvalidPublishFailure(...parts: any[]): boolean {
     && (/invalid/.test(text) || /current category/.test(text) || /under current category/.test(text));
 }
 
+function isVariationDuplicateNamePublishFailure(...parts: any[]): boolean {
+  const text = publishFailureText(...parts);
+  return /规格选项名称重复/.test(text)
+    || /variation option name.*duplicate/.test(text)
+    || /option name.*duplicate/.test(text)
+    || /duplicate.*variation/.test(text);
+}
+
 function isCrossuploadPermissionPublishFailure(...parts: any[]): boolean {
   const text = publishFailureText(...parts);
   return /crossupload\.api error:partner does not have permission to operate shop/.test(text)
     || /partner does not have permission to operate shop/.test(text);
 }
 
+function hasOptionVariationPayload(target: any, body: any): boolean {
+  const variation = target?.variation || body?.variation;
+  return Array.isArray(variation?.tier_variation)
+    && variation.tier_variation.length > 0
+    && Array.isArray(variation?.model)
+    && variation.model.length > 0;
+}
+
+function markBrOptionCrossuploadBlocked(outcome: any, task: any, publishRes: any) {
+  return {
+    ...outcome,
+    ok: false,
+    error: 'BR_OPTION_CROSSUPLOAD_PERMISSION_BLOCKED',
+    message: 'Shopee BR currently rejects CBSC option Global Product crossupload for this account. No shop-level option fallback is allowed by Shopee (product.cnsc_shop_block).',
+    br_option_crossupload_blocked: true,
+    retry_suppressed: true,
+    raw_task: task || outcome?.raw_task || null,
+    raw_create: publishRes || outcome?.raw_create || null,
+  };
+}
+
 function shouldRetryMinimalPublish(...parts: any[]): boolean {
-  return isVariationInvalidPublishFailure(...parts) || isCrossuploadPermissionPublishFailure(...parts);
+  return isVariationInvalidPublishFailure(...parts)
+    || isVariationDuplicateNamePublishFailure(...parts)
+    || isCrossuploadPermissionPublishFailure(...parts);
 }
 
 async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
@@ -2478,7 +2708,7 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item
 
 async function retryMinimalPublish(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, reason = 'minimal_publish_retry') {
   const region = String(target?.region || '').toUpperCase();
-  const retryBody = { global_item_id: globalItemId, shop_id: shopId, shop_region: region, item: { logistic: logistics } };
+  const retryBody = { global_item_id: globalItemId, shop_id: shopId, shop_region: region, item: { logistic: logistics, logistic_info: logistics } };
   const retryCreate = await merchantApiCall(region, '/api/v2/global_product/create_publish_task', { method: 'POST', body: retryBody, account_key: accountKey });
   if (retryCreate.error || !retryCreate.response?.publish_task_id) {
     return { ok: false, region, shop_id: shopId, stage: 'minimal_publish_create', error: retryCreate.error || 'publish_task_id missing', message: retryCreate.message, raw_retry_create: retryCreate, minimal_retry_reason: reason };
@@ -2516,6 +2746,95 @@ async function retryMinimalPublish(globalItemId: number, shopId: number, target:
     }
   }
   return retryOutcome;
+}
+
+async function createShopLevelFallbackItem(region: string, shopId: number, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, reason = 'global_publish_crossupload_fallback') {
+  const targetRegion = String(region || target?.region || '').toUpperCase();
+  const logistics = await getPublishLogistics(targetRegion, body.is_pre_order === true || body.lifecycle_state === 'pre_order', accountKey);
+  const price = Number(target?.price ?? body.price ?? body.global_price ?? 0);
+  const stock = Number(target?.stock ?? body.stock ?? 0);
+  const isPreOrder = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
+  const dts = isPreOrder ? clampPreOrderRegionDts(target?.days_to_ship ?? body.days_to_ship) : clampReadyStockDts(target?.days_to_ship ?? body.days_to_ship);
+  const sku = String(target?.sku || body.sku || '').trim();
+  if (!sku) return { ok: false, region: targetRegion, shop_id: shopId, stage: 'shop_level_fallback_preflight', error: 'sku required' };
+  const payload: any = {
+    item_name: body.name,
+    description: sanitizeShopeePlainTextDescription(target?.description ?? body.description) || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`,
+    item_sku: sku,
+    category_id: Number(body.category_id),
+    condition: body.condition || 'NEW',
+    weight: Number(target?.weight ?? body.weight ?? body.weight_kg ?? ((target?.weight_g ?? body.weight_g ?? 100) / 1000)) || 0.1,
+    dimension: {
+      package_length: Number(target?.package_length_cm ?? body.package_length_cm ?? body.package_length ?? 20) || 20,
+      package_width: Number(target?.package_width_cm ?? body.package_width_cm ?? body.package_width ?? 15) || 15,
+      package_height: Number(target?.package_height_cm ?? body.package_height_cm ?? body.package_height ?? 5) || 5,
+    },
+    image: imageBlockFrom({ ...body, image_id: target?.image_id || body.image_id, image_url: target?.image_url || body.image_url, image_id_list: target?.image_id_list || body.image_id_list, image_url_list: target?.image_url_list || body.image_url_list }),
+    original_price: price,
+    seller_stock: [{ stock }],
+    logistic_info: logistics,
+    item_status: body.shop_level_item_status || body.item_status || 'NORMAL',
+    days_to_ship: dts,
+    pre_order: { is_pre_order: isPreOrder, days_to_ship: dts },
+    brand: body.brand && body.brand.original_brand_name
+      ? { brand_id: Number(body.brand.brand_id || 0), original_brand_name: String(body.brand.original_brand_name) }
+      : { brand_id: 0, original_brand_name: 'No Brand' },
+    attribute_list: normalizeAttributeList(target?.attribute_list || body.attribute_list),
+  };
+  const normalizedVariation = normalizeVariation(target?.variation || body.variation);
+  const fallbackVariationPayload = normalizedVariation
+    ? {
+      standardise_tier_variation: buildStandardiseTierVariation(normalizedVariation.tier_variation),
+      model: normalizedVariation.model.map((model: any) => {
+        const entry: any = {
+          tier_index: Array.isArray(model?.tier_index) ? model.tier_index.map((x: any) => Number(x)) : [],
+          model_sku: String(model?.model_sku || model?.global_model_sku || '').trim(),
+          original_price: Number(model?.original_price ?? price),
+          seller_stock: [{ stock: Number(model?.seller_stock?.[0]?.stock ?? model?.stock ?? stock) }],
+        };
+        if (model?.weight_g != null && Number(model.weight_g) > 0) entry.weight = Number(model.weight_g) / 1000;
+        else if (model?.weight != null && Number(model.weight) > 0) entry.weight = Number(model.weight);
+        return entry;
+      }),
+    }
+    : null;
+  const result = await shopApiCall(targetRegion, '/api/v2/product/add_item', { method: 'POST', body: payload, account_key: accountKey });
+  const itemId = Number(result?.response?.item_id || 0) || null;
+  let initVariationResult: any = null;
+  let cleanupResult: any = null;
+  if (!result?.error && itemId && fallbackVariationPayload) {
+    initVariationResult = await shopApiCall(targetRegion, '/api/v2/product/init_tier_variation', {
+      method: 'POST',
+      body: { item_id: itemId, ...fallbackVariationPayload },
+      account_key: accountKey,
+    });
+    if (initVariationResult?.error) {
+      cleanupResult = await shopApiCall(targetRegion, '/api/v2/product/delete_item', {
+        method: 'POST',
+        body: { item_id: itemId },
+        account_key: accountKey,
+      }).catch((e: any) => ({ ok: false, error: String(e?.message || e) }));
+    }
+  }
+  const fallbackOk = !result?.error && !!itemId && (!fallbackVariationPayload || !initVariationResult?.error);
+  return {
+    ok: fallbackOk,
+    region: targetRegion,
+    shop_id: shopId,
+    item_id: itemId,
+    stage: fallbackVariationPayload ? 'shop_level_fallback_init_tier_variation' : 'shop_level_fallback_add_item',
+    shop_level_fallback: true,
+    global_item_id: null,
+    publish_status: fallbackOk ? 'shop_level_fallback' : null,
+    error: result?.error || initVariationResult?.error || (itemId ? null : 'item_id missing'),
+    message: result?.message || initVariationResult?.message || null,
+    fallback_reason: reason,
+    sent: payload,
+    sent_init_tier_variation: fallbackVariationPayload ? { item_id: itemId, ...fallbackVariationPayload } : null,
+    raw: result,
+    raw_init_tier_variation: initVariationResult,
+    cleanup_after_init_failure: cleanupResult,
+  };
 }
 
 async function retryTwMinimalPublish(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
@@ -3532,9 +3851,18 @@ Deno.serve(async (req) => {
         .map((t: any) => ({ ...t, region: String(t.region || '').toUpperCase() }))
         .filter((t: any) => t.region);
       if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
+      const brTargetPriceAdjustments = normalizeBrTargetModelPriceRatio(targetInputs);
       if (!body.name) return jsonResp({ ok: false, error: 'name required (publish item payload)' }, 400);
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       const _isPreOrderRepublish = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
+      const shouldRepairPublishedLogistics = targetInputs.some((target: any) => String(target.region || '').toUpperCase() !== 'BR');
+      const publishLogisticsRepair = shouldRepairPublishedLogistics
+        ? await repairPublishedItemLogisticsForGlobalItem(global_item_id, reqAccountKey, region).catch((e: any) => ({
+          ok: false,
+          stage: 'repair_published_item_logistics_exception',
+          error: String(e?.message || e),
+        }))
+        : { ok: true, skipped: true, reason: 'br_only_publish_no_existing_logistics_repair' };
       const results: any[] = [];
       await mapWithConcurrency(targetInputs, 2, async (target: any) => {
         const targetRegion = String(target.region || '').toUpperCase();
@@ -3551,6 +3879,10 @@ Deno.serve(async (req) => {
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: reqAccountKey });
           if (publishRes.error) {
             const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
+            if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
+              results.push(markBrOptionCrossuploadBlocked(createFailure, null, publishRes));
+              return;
+            }
             if (shouldRetryMinimalPublish(createFailure, publishRes)) {
               const retryReason = isCrossuploadPermissionPublishFailure(createFailure, publishRes) ? 'crossupload_permission_create_retry' : 'variation_invalid_create_retry';
               const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
@@ -3566,7 +3898,7 @@ Deno.serve(async (req) => {
           let pollAttempts = 0;
           let earlyPublishedOutcome: any = null;
           // BR publish async is slower — double the polling window for BR only
-          const maxPoll = (targetRegion === 'BR') ? 60 : 30;
+          const maxPoll = (targetRegion === 'BR') ? SHOPEE_BR_MAX_PUBLISH_POLLS : 30;
           for (let i = 0; i < maxPoll; i++) {
             await new Promise(s => setTimeout(s, 2000));
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id }, account_key: reqAccountKey });
@@ -3584,7 +3916,21 @@ Deno.serve(async (req) => {
             if (!shouldContinuePublishPolling(taskRes)) break;
           }
           let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
+          if (!outcome.ok && targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(outcome, task, publishRes)) {
+            outcome = markBrOptionCrossuploadBlocked(outcome, task, publishRes);
+          }
+          if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldRetryMinimalPublish(outcome, task, publishRes)) {
+            const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
+            const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+            if (retryOutcome?.ok) outcome = retryOutcome;
+            else (outcome as any).minimal_item_retry = retryOutcome;
+          }
           // Fallback verification: query published_list — BR gets 3 retries (5s apart), others get 1
+          if (!outcome.ok && targetRegion === 'BR' && !(outcome as any).br_option_crossupload_blocked && isCrossuploadPermissionPublishFailure(outcome, (outcome as any).minimal_item_retry, task, publishRes)) {
+            const fallback = await createShopLevelFallbackItem(targetRegion, shop_id, target, body, reqAccountKey, 'br_crossupload_permission_global_publish_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'shop_level_fallback_exception', error: String(e?.message || e), shop_level_fallback: true }));
+            if (fallback?.ok) outcome = { ...outcome, ...fallback, ok: true, error: null, message: null };
+            else (outcome as any).shop_level_fallback = fallback;
+          }
           if (!outcome.ok) {
             const fbRetries = (targetRegion === 'BR') ? 3 : 1;
             const fbSleep = (targetRegion === 'BR') ? 5000 : 0;
@@ -3608,12 +3954,6 @@ Deno.serve(async (req) => {
           if (!outcome.ok) {
             const verified = await verifyPublishedSkuOutcome(targetRegion, shop_id, publish_task_id, task, body?.sku || target?.sku || '', reqAccountKey).catch(() => null);
             if (verified) outcome = verified;
-          }
-          if (!outcome.ok && shouldRetryMinimalPublish(outcome, task, publishRes)) {
-            const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
-            const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
-            if (retryOutcome?.ok) outcome = retryOutcome;
-            else (outcome as any).minimal_item_retry = retryOutcome;
           }
           if (!outcome.ok && targetRegion === 'TW' && !(outcome as any).minimal_item_retry) {
             const retryOutcome = await retryTwMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'tw_minimal_publish_exception', error: String(e?.message || e) }));
@@ -3646,7 +3986,9 @@ Deno.serve(async (req) => {
           results.push({ ok: false, region: targetRegion, stage: 'publish_exception', error: String(e?.message || e) });
         }
       });
-      return jsonResp({ ok: true, account_key: reqAccountKey, global_item_id, results: results.map((row) => ({ account_key: reqAccountKey, ...row })) });
+      const reconciledResults = await reconcilePublishResultsWithPublishedList(global_item_id, targetInputs, results, reqAccountKey, region);
+      const responseResults = reconciledResults.map((row) => ({ account_key: reqAccountKey, ...row }));
+      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: reqAccountKey, global_item_id, logistics_repairs: publishLogisticsRepair, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults });
     }
     if (action === 'oauth_exchange') {
       const code = url.searchParams.get('code') || '';
@@ -4138,6 +4480,10 @@ Deno.serve(async (req) => {
               }
             }
             const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
+            if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
+              results.push(markBrOptionCrossuploadBlocked(createFailure, null, publishRes));
+              return;
+            }
             if (shouldRetryMinimalPublish(createFailure, publishRes)) {
               const retryReason = isCrossuploadPermissionPublishFailure(createFailure, publishRes) ? 'crossupload_permission_create_retry' : 'variation_invalid_create_retry';
               const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
@@ -4154,7 +4500,7 @@ Deno.serve(async (req) => {
           let pollAttempts = 0;
           let earlyPublishedOutcome: any = null;
           // BR publish async is slower — double the polling window for BR only
-          const maxPoll = (targetRegion === 'BR') ? 60 : 30;
+          const maxPoll = (targetRegion === 'BR') ? SHOPEE_BR_MAX_PUBLISH_POLLS : 30;
           for (let i = 0; i < maxPoll; i++) {
             await new Promise(s => setTimeout(s, 2000));
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id }, account_key: accountKey });
@@ -4173,6 +4519,20 @@ Deno.serve(async (req) => {
           }
           console.log(`[register_cbsc] region=${targetRegion} publish_task_id=${publish_task_id} poll_attempts=${pollAttempts} final_task=${JSON.stringify(task).slice(0, 1200)}`);
           let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
+          if (!outcome.ok && targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(outcome, task, publishRes)) {
+            outcome = markBrOptionCrossuploadBlocked(outcome, task, publishRes);
+          }
+          if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldRetryMinimalPublish(outcome, task, publishRes)) {
+            const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
+            const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+            if (retryOutcome?.ok) outcome = retryOutcome;
+            else (outcome as any).minimal_item_retry = retryOutcome;
+          }
+          if (!outcome.ok && targetRegion === 'BR' && !(outcome as any).br_option_crossupload_blocked && isCrossuploadPermissionPublishFailure(outcome, (outcome as any).minimal_item_retry, task, publishRes)) {
+            const fallback = await createShopLevelFallbackItem(targetRegion, shop_id, target, body, accountKey, 'br_crossupload_permission_global_publish_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'shop_level_fallback_exception', error: String(e?.message || e), shop_level_fallback: true }));
+            if (fallback?.ok) outcome = { ...outcome, ...fallback, ok: true, error: null, message: null };
+            else (outcome as any).shop_level_fallback = fallback;
+          }
           outcome.raw_create = publishRes;
           outcome.raw_task = task;
           outcome.poll_attempts = pollAttempts;
@@ -4213,12 +4573,6 @@ Deno.serve(async (req) => {
             const verified = await verifyPublishedSkuOutcome(targetRegion, shop_id, publish_task_id, task, body?.sku || target?.sku || '', accountKey).catch(() => null);
             if (verified) outcome = verified;
           }
-          if (!outcome.ok && shouldRetryMinimalPublish(outcome, task, publishRes)) {
-            const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
-            const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
-            if (retryOutcome?.ok) outcome = retryOutcome;
-            else (outcome as any).minimal_item_retry = retryOutcome;
-          }
           if (!outcome.ok && targetRegion === 'TW' && !(outcome as any).minimal_item_retry) {
             const retryOutcome = await retryTwMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'tw_minimal_publish_exception', error: String(e?.message || e) }));
             if (retryOutcome?.ok) outcome = retryOutcome;
@@ -4248,7 +4602,9 @@ Deno.serve(async (req) => {
           results.push({ ok: false, region: target.region || r, stage: 'publish_exception', error: String(e?.message || e) });
         }
       });
-      return jsonResp({ ok: true, account_key: accountKey, region: r, global_item_id, stage_logs, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: results.map((row) => ({ account_key: accountKey, ...row })), publishable_shops, publishable_status });
+      const reconciledResults = await reconcilePublishResultsWithPublishedList(global_item_id, targetInputs, results, accountKey, r, stage_logs);
+      const responseResults = reconciledResults.map((row) => ({ account_key: accountKey, ...row }));
+      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id, stage_logs, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, publishable_shops, publishable_status });
       }); // end withPublishRequestId for register_cbsc
     }
     if (action === 'item_info') {
@@ -4257,7 +4613,7 @@ Deno.serve(async (req) => {
       const result = await shopApiCall(region, '/api/v2/product/get_item_base_info', { query: { item_id_list: item_id }, account_key: accountKey });
       return jsonResp({ ok: !result.error, account_key: accountKey, region, item_id, result });
     }
-    if (action === 'lookup-sku') {
+    if (action === 'lookup-sku' && req.method === 'POST') {
       const sku = shopeeSkuValue(url.searchParams.get('sku'));
       if (!sku) return jsonResp({ ok: false, error: 'sku required' }, 400);
       const requestedRegions = String(url.searchParams.get('regions') || url.searchParams.get('region') || region || 'SG')
@@ -5040,8 +5396,8 @@ Deno.serve(async (req) => {
       // Fetch available logistics channels. Field per Shopee SDK is logistic_info[] with logistic_id+logistic_name+enabled+is_free.
       const logisticsResp = await shopApiCall(r, '/api/v2/logistics/get_channel_list', { account_key: reqAccountKey });
       const allCh: any[] = logisticsResp.response?.logistics_channel_list || [];
-      const pickId = (ch: any) => ch?.logistic_id ?? ch?.logistics_channel_id ?? ch?.channel_id ?? ch?.id;
-      const pickName = (ch: any) => ch?.logistic_name ?? ch?.name ?? `channel_${pickId(ch)}`;
+      const pickId = (ch: any) => ch?.logistics_channel_id ?? ch?.logistic_id ?? ch?.channel_id ?? ch?.id;
+      const pickName = (ch: any) => ch?.logistics_channel_name ?? ch?.logistic_name ?? ch?.name ?? `channel_${pickId(ch)}`;
       const eligibleCh = allCh.filter(ch => pickId(ch) != null && (ch.enabled ?? true));
       let logistic_info = eligibleCh.map(ch => ({
         logistic_id: Number(pickId(ch)),

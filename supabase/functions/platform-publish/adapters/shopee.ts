@@ -178,7 +178,102 @@ async function bridgePost(action: string, body: Record<string, unknown>, userTok
     },
     body: JSON.stringify(body),
   });
-  return res.json();
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch (_) {
+    return { ok: false, error: `HTTP ${res.status}`, message: text.slice(0, 600), status: res.status };
+  }
+}
+
+const SHOPEE_REGISTER_REGION_BATCH_SIZE = 3;
+
+function shopeeTargetRegion(target: any): string {
+  return String(target?.region || target?.shop_region || '').toUpperCase();
+}
+
+function shopeeOrderedTargets(targets: any[]): any[] {
+  const priority: Record<string, number> = { BR: 0, SG: 1, MY: 2, TH: 3, PH: 4, TW: 5 };
+  return (Array.isArray(targets) ? targets : []).slice().sort((a, b) => {
+    const ar = shopeeTargetRegion(a);
+    const br = shopeeTargetRegion(b);
+    return (priority[ar] ?? 99) - (priority[br] ?? 99);
+  });
+}
+
+function shopeeTargetBatches(targets: any[], size = SHOPEE_REGISTER_REGION_BATCH_SIZE): any[][] {
+  const ordered = shopeeOrderedTargets(targets);
+  const batches: any[][] = [];
+  for (let i = 0; i < ordered.length; i += size) batches.push(ordered.slice(i, i + size));
+  return batches;
+}
+
+function shopeeFailedResultsForBatch(targets: any[], reason: string, stage = 'publish_batch'): any[] {
+  return (targets || [])
+    .map((target: any) => ({
+      ok: false,
+      region: shopeeTargetRegion(target),
+      shop_id: target?.shop_id || null,
+      stage,
+      error: reason || 'publish batch failed',
+      message: reason || 'publish batch failed',
+    }))
+    .filter((row: any) => row.region);
+}
+
+async function registerCbscInRegionBatches(bridgeBody: Record<string, unknown>, userToken: string): Promise<any> {
+  const targets = Array.isArray((bridgeBody as any).targets) ? (bridgeBody as any).targets : [];
+  if (targets.length <= SHOPEE_REGISTER_REGION_BATCH_SIZE) {
+    return await bridgePost('register_cbsc', bridgeBody, userToken) as any;
+  }
+
+  const batches = shopeeTargetBatches(targets);
+  const firstTargets = batches[0] || [];
+  const first = await bridgePost('register_cbsc', { ...bridgeBody, targets: firstTargets }, userToken) as any;
+  const globalItemId = first?.global_item_id || null;
+  const results = Array.isArray(first?.results) ? first.results.slice() : [];
+  const publishBatches: any[] = [{
+    action: 'register_cbsc',
+    index: 0,
+    regions: firstTargets.map((target: any) => shopeeTargetRegion(target)),
+    ok: first?.ok === true,
+    error: first?.ok === true ? null : (first?.error || first?.message || null),
+  }];
+
+  if (!first?.ok || !globalItemId) {
+    return { ...first, batched_publish: true, publish_batches: publishBatches };
+  }
+
+  for (let i = 1; i < batches.length; i += 1) {
+    const batch = batches[i];
+    let raw: any;
+    try {
+      raw = await bridgePost('publish_to_region', { ...bridgeBody, global_item_id: globalItemId, targets: batch }, userToken) as any;
+    } catch (e) {
+      raw = { ok: false, error: e?.message || String(e) };
+    }
+    if (Array.isArray(raw?.results)) {
+      results.push(...raw.results);
+    } else {
+      results.push(...shopeeFailedResultsForBatch(batch, raw?.error || raw?.message || 'publish_to_region returned no results'));
+    }
+    publishBatches.push({
+      action: 'publish_to_region',
+      index: i,
+      regions: batch.map((target: any) => shopeeTargetRegion(target)),
+      ok: raw?.ok === true,
+      error: raw?.ok === true ? null : (raw?.error || raw?.message || 'publish_to_region failed'),
+    });
+  }
+
+  return {
+    ...first,
+    ok: true,
+    global_item_id: globalItemId,
+    results,
+    batched_publish: true,
+    publish_batches: publishBatches,
+  };
 }
 
 // GET from shopee-bridge/{action} with query params.
@@ -1023,7 +1118,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   // ------------------------------------------------------------------
   // STEP D: POST to shopee-bridge /register_cbsc.
   // ------------------------------------------------------------------
-  const raw = await bridgePost('register_cbsc', bridgeBody, ctx.userAuthToken || '') as any;
+  const raw = await registerCbscInRegionBatches(bridgeBody, ctx.userAuthToken || '') as any;
 
   // Bridge-level error (before any publish task).
   if (!raw.ok || raw.error) {
@@ -1092,12 +1187,13 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     // Upsert product_shopee_listings (primary key: product_id + account_key + region).
     const listingProducts = variationRows.length > 1 ? variationRows : [master];
     for (const listingProduct of listingProducts) {
+      const rowGlobalItemId = Object.prototype.hasOwnProperty.call(r || {}, 'global_item_id') ? r.global_item_id : global_item_id;
       const upsertPayload: Record<string, unknown> = {
         product_id: listingProduct.id || master.id,
         account_key,
         region: regionCode,
         shop_id: shopId || null,
-        global_item_id: global_item_id ? Number(global_item_id) : null,
+        global_item_id: rowGlobalItemId ? Number(rowGlobalItemId) : null,
         shop_item_id: shopItemId ? Number(shopItemId) : null,
         status: regionOk ? 'mapped' : 'failed',
         last_error: errorMsg || null,

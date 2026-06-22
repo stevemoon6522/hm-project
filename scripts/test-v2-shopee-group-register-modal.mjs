@@ -65,7 +65,7 @@ for (const token of [
   'rshBuildGroupRegisterPayload',
   'rshRegisterOptionGroupViaCbsc',
   'rshRegisterGroupViaCbsc',
-  '/register_cbsc',
+  'shopeeRegisterCbscWithRegionBatches',
   'variation: {',
   'tier_variation: tierVariation',
   'condition: rshReadCondition()',
@@ -73,6 +73,8 @@ for (const token of [
 ]) {
   assert(rshModal.includes(token), `group Shopee modal missing token: ${token}`);
 }
+
+assert(html.includes("'publish_to_region'") || html.includes('"publish_to_region"'), 'Shopee batch helper must call publish_to_region for follow-up region batches');
 
 assert(
   rshModal.includes('product_group_id')

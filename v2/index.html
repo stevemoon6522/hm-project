@@ -13417,6 +13417,116 @@ LEGACY END -->
     return info.error || info.message || info.stage || 'No item_id returned.';
   }
 
+  const SHOPEE_REGISTER_REGION_BATCH_SIZE = 3;
+
+  function shopeeRegionBatchOrder(targets) {
+    const rows = Array.isArray(targets) ? targets : [];
+    const priority = { BR: 0, SG: 1, MY: 2, TH: 3, PH: 4, TW: 5 };
+    return rows.slice().sort((a, b) => {
+      const ar = String(a?.region || '').toUpperCase();
+      const br = String(b?.region || '').toUpperCase();
+      return (priority[ar] ?? 99) - (priority[br] ?? 99);
+    });
+  }
+
+  function shopeeChunkTargets(targets, size = SHOPEE_REGISTER_REGION_BATCH_SIZE) {
+    const ordered = shopeeRegionBatchOrder(targets);
+    const chunks = [];
+    for (let i = 0; i < ordered.length; i += size) chunks.push(ordered.slice(i, i + size));
+    return chunks;
+  }
+
+  function shopeeFailedResultsForTargets(targets, reason, stage = 'publish_batch') {
+    return (targets || []).map((target) => ({
+      ok: false,
+      region: String(target?.region || '').toUpperCase(),
+      shop_id: target?.shop_id || null,
+      stage,
+      error: reason || 'publish batch failed',
+      message: reason || 'publish batch failed',
+    })).filter((row) => row.region);
+  }
+
+  async function shopeeBridgePostJson(action, body, headers) {
+    const resp = await fetch(`${SHOPEE_BRIDGE}/${action}`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+    });
+    const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+    return { resp, json };
+  }
+
+  async function shopeeRegisterCbscWithRegionBatches(payload, headers, options = {}) {
+    const targets = Array.isArray(payload?.targets) ? payload.targets : [];
+    if (targets.length <= SHOPEE_REGISTER_REGION_BATCH_SIZE) {
+      return shopeeBridgePostJson('register_cbsc', payload, headers);
+    }
+
+    const batches = shopeeChunkTargets(targets);
+    const firstBatch = batches[0] || [];
+    if (typeof options.onBatchStart === 'function') options.onBatchStart(0, firstBatch, 'register_cbsc');
+    const first = await shopeeBridgePostJson('register_cbsc', { ...payload, targets: firstBatch }, headers);
+    const firstJson = first.json || {};
+    const globalItemId = firstJson.global_item_id || null;
+    const results = Array.isArray(firstJson.results) ? firstJson.results.slice() : [];
+    const publishBatches = [{
+      action: 'register_cbsc',
+      index: 0,
+      regions: firstBatch.map((target) => String(target.region || '').toUpperCase()),
+      ok: firstJson.ok === true,
+      status: first.resp?.status || null,
+    }];
+    if (typeof options.onBatchResult === 'function') options.onBatchResult(0, firstBatch, firstJson);
+
+    if (!firstJson.ok || !globalItemId) {
+      firstJson.batched_publish = true;
+      firstJson.publish_batches = publishBatches;
+      return { resp: first.resp, json: firstJson };
+    }
+
+    for (let i = 1; i < batches.length; i += 1) {
+      const batch = batches[i];
+      if (typeof options.onBatchStart === 'function') options.onBatchStart(i, batch, 'publish_to_region');
+      const publishPayload = { ...payload, global_item_id: globalItemId, targets: batch };
+      let batchJson;
+      let status = null;
+      try {
+        const batchResult = await shopeeBridgePostJson('publish_to_region', publishPayload, headers);
+        batchJson = batchResult.json || {};
+        status = batchResult.resp?.status || null;
+      } catch (e) {
+        batchJson = { ok: false, error: e?.message || String(e) };
+      }
+      if (Array.isArray(batchJson.results)) {
+        results.push(...batchJson.results);
+      } else {
+        results.push(...shopeeFailedResultsForTargets(batch, batchJson.error || batchJson.message || 'publish_to_region returned no results'));
+      }
+      publishBatches.push({
+        action: 'publish_to_region',
+        index: i,
+        regions: batch.map((target) => String(target.region || '').toUpperCase()),
+        ok: batchJson.ok === true,
+        status,
+        error: batchJson.ok === true ? null : (batchJson.error || batchJson.message || 'publish_to_region failed'),
+      });
+      if (typeof options.onBatchResult === 'function') options.onBatchResult(i, batch, batchJson);
+    }
+
+    return {
+      resp: first.resp,
+      json: {
+        ...firstJson,
+        ok: true,
+        global_item_id: globalItemId,
+        results,
+        batched_publish: true,
+        publish_batches: publishBatches,
+      },
+    };
+  }
+
   async function fetchShopModels(region, itemId, accountKeyOverride) {
     const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     const statuses = ['UNLIST', 'NORMAL'];
@@ -13501,6 +13611,7 @@ LEGACY END -->
     for (const info of [...resultByRegion.values(), ...missingResultRows]) {
       const region = String(info.region || payload.region || 'SG').toUpperCase();
       const hasItemId = !!info.item_id;
+      const rowGlobalItemId = Object.prototype.hasOwnProperty.call(info, 'global_item_id') ? info.global_item_id : globalItemId;
       const listingStatus = hasItemId && info.ok !== false ? 'mapped' : 'failed';
       const lastError = listingStatus === 'mapped' ? null : resultMessage(info);
 
@@ -13509,7 +13620,7 @@ LEGACY END -->
           shop_item_id: hasItemId ? info.item_id : null,
           shop_model_id: null,
           shop_id: info.shop_id || null,
-          global_item_id: globalItemId,
+          global_item_id: rowGlobalItemId || null,
           global_model_id: null,
           status: listingStatus,
           last_error: lastError,
@@ -13542,7 +13653,7 @@ LEGACY END -->
           shop_item_id: hasItemId ? info.item_id : null,
           shop_model_id: shopModel.model_id || null,
           shop_id: info.shop_id || null,
-          global_item_id: globalItemId,
+          global_item_id: rowGlobalItemId || null,
           global_model_id: globalModel.global_model_id || null,
           status: listingStatus,
           last_error: lastError,
@@ -13557,7 +13668,7 @@ LEGACY END -->
           shop_item_id: hasItemId ? info.item_id : null,
           shop_model_id: null,
           shop_id: info.shop_id || null,
-          global_item_id: globalItemId,
+          global_item_id: rowGlobalItemId || null,
           global_model_id: null,
           status: listingStatus,
           last_error: lastError,
@@ -19500,16 +19611,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     try {
       payload = rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKey);
       console.log('[rsh] group register_cbsc payload:', JSON.stringify(payload).slice(0, 2000));
-      const resp = await fetch(`${SHOPEE_BRIDGE}/register_cbsc`, {
-        method: 'POST',
-        headers: {
+      const { json: batchJson } = await shopeeRegisterCbscWithRegionBatches(payload, {
           Authorization: `Bearer ${session.access_token}`,
           apikey: SUPABASE_ANON,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(payload),
-      });
-      json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+        {
+          onBatchStart: (_idx, batch, action) => {
+            batch.forEach((target) => rshSetTargetStatus(accountKey, String(target.region || '').toUpperCase(), action === 'register_cbsc' ? 'creating' : 'publishing', '#2563eb', ''));
+          },
+        }
+      );
+      json = batchJson;
     } catch (networkErr) {
       _rsh.publishInFlight = false;
       const msg = networkErr.message || String(networkErr);
@@ -19833,16 +19946,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const products = rshSortedProducts(_rsh.products || []);
     const payload = rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKey);
     payload.idempotency_token = rshAccountPublishRequestId(accountKey);
-    const resp = await fetch(`${SHOPEE_BRIDGE}/register_cbsc`, {
-      method: 'POST',
-      headers: {
+    const { json } = await shopeeRegisterCbscWithRegionBatches(payload, {
         Authorization: `Bearer ${session.access_token}`,
         apikey: SUPABASE_ANON,
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
-    });
-    const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+      {
+        onBatchStart: (_idx, batch, action) => {
+          batch.forEach((target) => rshSetTargetStatus(accountKey, String(target.region || '').toUpperCase(), action === 'register_cbsc' ? 'creating' : 'publishing', '#2563eb', ''));
+        },
+      }
+    );
     if (!json.ok) {
       const details = Array.isArray(json.missing_attributes)
         ? json.missing_attributes.map((a) => a.attribute_name || a.attribute_id).filter(Boolean).join(', ')
@@ -31252,13 +31366,23 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               // If Shopee rejects at add_global_item or init_tier_variation with an image-related error,
               // retry once without option images (path A fallback).
               const doRegisterCbsc = async (body) => {
-                const resp = await fetch(`${SHOPEE_BRIDGE}/register_cbsc`, {
-                  method: 'POST',
-                  headers: Object.assign({}, AUTH_HEADERS, { 'Content-Type': 'application/json' }),
-                  body: JSON.stringify(body),
-                });
-                const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
-                return { resp, json };
+                return await shopeeRegisterCbscWithRegionBatches(
+                  body,
+                  Object.assign({}, AUTH_HEADERS, { 'Content-Type': 'application/json' }),
+                  {
+                    onBatchStart: (_idx, batch, action) => {
+                      console.log('[mrPromoteAll] Shopee publish batch start:', action, batch.map((target) => target.region).join(','));
+                    },
+                    onBatchResult: (_idx, batch, batchJson) => {
+                      console.log('[mrPromoteAll] Shopee publish batch result:', batch.map((target) => target.region).join(','), JSON.stringify({
+                        ok: batchJson?.ok,
+                        global_item_id: batchJson?.global_item_id,
+                        regions: Array.isArray(batchJson?.results) ? batchJson.results.map((row) => `${row.region}:${row.ok ? 'ok' : 'fail'}`) : [],
+                        error: batchJson?.error || batchJson?.message || null,
+                      }).slice(0, 1200));
+                    },
+                  }
+                );
               };
 
               let { resp: cbscResp, json: cbscJson } = await doRegisterCbsc(cbscBody);

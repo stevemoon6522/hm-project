@@ -31,11 +31,24 @@ const normalizeBrGlobalModelPrices = extractFunction(html, 'rshNormalizeBrGlobal
 const normalizeBrTargetModelPrices = extractFunction(html, 'rshNormalizeBrTargetModelPrices');
 const brandForPublish = extractFunction(html, 'rshBrandForShopeePublish');
 const mrUploadRegionImages = extractFunction(html, 'mrUploadRegionImages');
+const regionBatchOrder = extractFunction(html, 'shopeeRegionBatchOrder');
+const batchRegister = extractFunction(html, 'shopeeRegisterCbscWithRegionBatches');
 const renderModal = html.slice(html.indexOf('<section class="rsh-seller-section grid" id="rsh-info-section"'), html.indexOf('<!-- Description -->'));
 const shippingSection = html.slice(html.indexOf('<!-- Shipping + region pre-order/DTS -->'), html.indexOf('<!-- Others -->'));
 const masterPromoteBlock = html.slice(html.indexOf('// 6. Insert product_shopee_listings'), html.indexOf('// 9. ok:true'));
+const masterPromoteRegisterBlock = html.slice(html.indexOf('const doRegisterCbsc = async'), html.indexOf('// Decode all relevant fields upfront'));
 const publishToRegionBlock = bridge.slice(bridge.indexOf("if (action === 'publish_to_region' && req.method === 'POST')"), bridge.indexOf("if (action === 'oauth_exchange')"));
 const registerCbscBlock = bridge.slice(bridge.indexOf("if (action === 'register_cbsc' && req.method === 'POST')"), bridge.indexOf("if (action === 'item_info')"));
+const reconcilePublishedList = extractFunction(bridge, 'reconcilePublishResultsWithPublishedList');
+const getPublishLogistics = extractFunction(bridge, 'getPublishLogistics');
+const repairPublishedItemLogistics = extractFunction(bridge, 'repairPublishedItemLogisticsForGlobalItem');
+const buildPublishItemPayload = extractFunction(bridge, 'buildPublishItemPayload');
+const retryMinimalPublish = extractFunction(bridge, 'retryMinimalPublish');
+const shopLevelFallback = extractFunction(bridge, 'createShopLevelFallbackItem');
+const initShopTierVariationBlock = bridge.slice(
+  bridge.indexOf("if (action === 'init_shop_tier_variation')"),
+  bridge.indexOf("if (action === 'update_shop_tier_variation')"),
+);
 
 assert.match(
   persistMappings,
@@ -155,6 +168,21 @@ assert.match(
   /return rshNormalizeBrTargetModelPrices\(targetModels,\s*region\)/,
   'group payload must apply BR-safe target model price normalization for each region variation',
 );
+assert.match(
+  batchRegister,
+  /SHOPEE_REGISTER_REGION_BATCH_SIZE[\s\S]*register_cbsc[\s\S]*publish_to_region[\s\S]*global_item_id/,
+  'V2 group registration must split large region publishes into register_cbsc + publish_to_region batches',
+);
+assert.match(
+  regionBatchOrder,
+  /BR:\s*0[\s\S]*SG:\s*1/,
+  'V2 batch ordering must prioritize BR so its longer polling window overlaps other regions',
+);
+assert.match(
+  masterPromoteRegisterBlock,
+  /shopeeRegisterCbscWithRegionBatches/,
+  'master promote registration must use the same timeout-safe Shopee batch helper',
+);
 
 assert.match(
   mrUploadRegionImages,
@@ -193,9 +221,19 @@ assert.match(
   'register_cbsc must apply and log BR target model price ratio normalization',
 );
 assert.match(
+  publishToRegionBlock,
+  /normalizeBrTargetModelPriceRatio\(targetInputs\)[\s\S]*br_target_price_adjustments/,
+  'publish_to_region must also normalize BR target-region option prices for missing-region retries',
+);
+assert.match(
   bridge,
-  /const retries = region === 'BR' \? 8/,
-  'BR published_list verification must wait longer because publish_task_result can report false failure',
+  /const retries = region === 'BR' \? 4/,
+  'BR published_list verification must stay bounded so single-region retries finish inside the Edge timeout',
+);
+assert.match(
+  bridge,
+  /const SHOPEE_BR_MAX_PUBLISH_POLLS = 36[\s\S]*const maxPoll = \(targetRegion === 'BR'\) \? SHOPEE_BR_MAX_PUBLISH_POLLS : 30/,
+  'BR publish polling must use a bounded constant instead of an unbounded or oversized inline window',
 );
 assert.match(
   bridge,
@@ -218,9 +256,119 @@ assert.match(
   'register_cbsc must return BR target-region price-ratio adjustments for diagnosis',
 );
 assert.match(
+  reconcilePublishedList,
+  /verified_via_final_published_list_reconcile[\s\S]*previous_result/,
+  'Shopee bridge must reconcile failed or missing region results against final published_list before returning',
+);
+assert.match(
+  getPublishLogistics,
+  /deliveryOnly[\s\S]*isPickupOrLockerLogisticsName/,
+  'Shopee bridge publish logistics must exclude pickup/locker/collection-point channels when delivery channels are available',
+);
+assert.match(
+  bridge,
+  /function isPickupOrLockerLogisticsName[\s\S]*collection\\s\*points\?/,
+  'Shopee bridge logistics filter must also catch Collection Points channels, not only self-collection labels',
+);
+assert.match(
+  getPublishLogistics,
+  /ch\?\.logistics_channel_id \?\? ch\?\.logistic_id/,
+  'Shopee bridge publish logistics must prefer docs-backed logistics_channel_id over legacy logistic_id',
+);
+assert.match(
+  repairPublishedItemLogistics,
+  /get_published_list[\s\S]*get_item_base_info[\s\S]*update_item[\s\S]*logistic_info/,
+  'Shopee bridge must repair existing published local item logistics before adding more regions',
+);
+assert.match(
+  publishToRegionBlock,
+  /repairPublishedItemLogisticsForGlobalItem[\s\S]*logistics_repairs/,
+  'publish_to_region must run and report existing published-item logistics repair',
+);
+assert.match(
+  publishToRegionBlock,
+  /shouldRepairPublishedLogistics[\s\S]*br_only_publish_no_existing_logistics_repair/,
+  'publish_to_region must skip unrelated existing-region logistics repair for BR-only publishes to reduce registration time',
+);
+assert.match(
+  bridge,
+  /action === 'lookup-sku' && req\.method === 'POST'[\s\S]*action === 'lookup-sku' && req\.method === 'GET'/,
+  'Shopee bridge GET lookup-sku must use the DB-first handler instead of the legacy remote scan handler',
+);
+assert.match(
+  `${publishToRegionBlock}\n${registerCbscBlock}`,
+  /reconcilePublishResultsWithPublishedList/,
+  'publish_to_region and register_cbsc must apply final published_list reconciliation',
+);
+assert.match(
   publishToRegionBlock,
   /shouldRetryMinimalPublish[\s\S]*retryMinimalPublish/,
   'publish_to_region must retry variation-invalid and crossupload-permission failures with minimal publish',
+);
+assert.match(
+  publishToRegionBlock,
+  /parsePublishOutcome[\s\S]*shouldRetryMinimalPublish[\s\S]*retryMinimalPublish[\s\S]*Fallback verification/,
+  'publish_to_region must run minimal retry before slower fallback verification loops',
+);
+assert.match(
+  bridge,
+  /isVariationDuplicateNamePublishFailure[\s\S]*规格选项名称重复[\s\S]*shouldRetryMinimalPublish[\s\S]*isVariationDuplicateNamePublishFailure/,
+  'Shopee bridge must treat duplicate variation option-name publish failures as minimal-retryable',
+);
+assert.match(
+  shopLevelFallback,
+  /product\/add_item[\s\S]*product\/init_tier_variation[\s\S]*product\/delete_item[\s\S]*shop_level_fallback[\s\S]*global_item_id:\s*null/,
+  'Shopee bridge must provide a BR shop-level fallback that creates option listings with init_tier_variation and cleans up failed local items',
+);
+assert.doesNotMatch(
+  shopLevelFallback,
+  /payload\.tier_variation|payload\.model\s*=/,
+  'Shopee bridge shop-level fallback must not send variation fields directly to product/add_item',
+);
+assert.match(
+  shopLevelFallback,
+  /standardise_tier_variation[\s\S]*model[\s\S]*weight[\s\S]*sent_init_tier_variation/,
+  'Shopee bridge shop-level fallback must preserve option model prices, stock, SKU, and per-model weight in init_tier_variation payload',
+);
+assert.match(
+  initShopTierVariationBlock,
+  /standardise_tier_variation[\s\S]*model_sku[\s\S]*weight[\s\S]*product\/init_tier_variation/,
+  'Shopee bridge must expose a docs-backed shop init_tier_variation mutation for BR no-option publish then option-injection fallback',
+);
+assert.match(
+  `${publishToRegionBlock}\n${registerCbscBlock}`,
+  /createShopLevelFallbackItem[\s\S]*br_crossupload_permission_global_publish_failed/,
+  'publish_to_region and register_cbsc must call shop-level fallback for BR crossupload permission failures',
+);
+assert.match(
+  bridge,
+  /BR_OPTION_CROSSUPLOAD_PERMISSION_BLOCKED[\s\S]*product\.cnsc_shop_block/,
+  'Shopee bridge must surface the proven BR CBSC option crossupload permission blocker instead of reporting a generic publish failure',
+);
+assert.match(
+  `${publishToRegionBlock}\n${registerCbscBlock}`,
+  /br_option_crossupload_blocked[\s\S]*createShopLevelFallbackItem/,
+  'Shopee bridge must suppress invalid shop-level fallback after BR option crossupload is classified as a permanent Shopee permission block',
+);
+assert.match(
+  `${publishToRegionBlock}\n${registerCbscBlock}`,
+  /responseResults\.every\(\(row: any\) => row\.ok === true\)/,
+  'Shopee bridge top-level ok must reflect per-region failures after final reconciliation',
+);
+assert.match(
+  html,
+  /rowGlobalItemId[\s\S]*Object\.prototype\.hasOwnProperty\.call\(info,\s*'global_item_id'\)[\s\S]*global_item_id:\s*rowGlobalItemId \|\| null/,
+  'V2 mapping persistence must respect row-level null global_item_id for shop-level fallback mappings',
+);
+assert.match(
+  registerCbscBlock,
+  /parsePublishOutcome[\s\S]*shouldRetryMinimalPublish[\s\S]*retryMinimalPublish[\s\S]*BR gets 3 retries/,
+  'register_cbsc must run minimal retry before slower fallback verification loops',
+);
+assert.match(
+  `${buildPublishItemPayload}\n${retryMinimalPublish}`,
+  /logistic:\s*logistics,\s*[\r\n\s]*logistic_info:\s*logistics/,
+  'Shopee global publish payloads must send both logistic and logistic_info to avoid falling back to unavailable default channels',
 );
 assert.match(
   registerCbscBlock,

@@ -8666,6 +8666,13 @@ LEGACY END -->
       .filter((entry) => entry.sku && entry.imageUrl);
   }
 
+  function platformMasterSyncJoomVariantImages(group) {
+    return platformMasterSyncOptionImageRows(group).map((entry) => ({
+      sku: entry.sku,
+      mainImage: entry.imageUrl,
+    }));
+  }
+
   function platformMasterSyncProductName(group) {
     const first = group?.rows?.[0] || {};
     const sku = platformGroupSku(group) || first.sku || '';
@@ -8736,7 +8743,7 @@ LEGACY END -->
       warnings.push('Shopee: 설명/대표/상세 이미지는 Global Product에 적용하고, 옵션 이미지는 등록된 Shop Item별로 보정합니다.');
     } else if (platform === 'joom') {
       if (!platformGroupSku(group)) errors.push('Joom 업데이트에 사용할 SKU를 찾지 못했습니다.');
-      warnings.push('Joom: 상품명/설명/대표 이미지/상세 이미지를 /products/update로 적용합니다. 옵션 이미지는 variant update 검증 후 별도 연결이 필요합니다.');
+      warnings.push('Joom: 상품명/설명/대표 이미지/상세 이미지와 SKU가 매칭되는 옵션 이미지를 /products/update로 적용합니다.');
     } else if (platform === 'qoo10') {
       if (!platformDeleteTargets(platform, group).length) errors.push('Qoo10 ItemCode 매핑을 찾지 못했습니다.');
       warnings.push('Qoo10: 대표 이미지는 EditGoodsImage, 상세 이미지는 EditGoodsMultiImage, 상세 설명은 EditGoodsContents로 적용합니다. 옵션 이미지는 아직 미연결입니다.');
@@ -9243,12 +9250,15 @@ LEGACY END -->
     const rows = group?.rows || [];
     const sku = platformGroupSku(group);
     if (!sku) throw new Error('Joom 업데이트 SKU가 없습니다.');
+    const productId = platformUniqueValues(rows.map((row) => row?.joom_product_id))[0] || '';
     const json = await platformPostJson(`${coverageBridgeUrl('joom')}/update-master-fields`, {
       sku,
+      productId,
       name: platformMasterSyncProductName(group),
       description: platformMasterSyncPlainDescription(group),
       mainImage: platformMasterSyncMainImage(rows),
       extraImages: platformMasterSyncDetailImages(rows),
+      variants: platformMasterSyncJoomVariantImages(group),
     });
     await platformTouchMasterSyncCheckpoint('joom', group);
     return { ok: true, message: `Joom 마스터 변경 적용: ${(json.updated_fields || []).join(', ') || 'updated'}`, raw: json };

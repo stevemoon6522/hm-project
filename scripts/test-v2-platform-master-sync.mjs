@@ -24,6 +24,7 @@ assertIncludes(html, 'platformApplyShopeeMasterSync', 'Shopee executor');
 assertIncludes(html, 'platformApplyJoomMasterSync', 'Joom executor');
 assertIncludes(html, 'platformApplyQoo10MasterSync', 'Qoo10 executor');
 assertIncludes(html, 'update_shop_tier_variation', 'Shopee option image update');
+assertIncludes(html, 'platformMasterSyncJoomVariantImages(group)', 'Joom variant image payload');
 assertIncludes(html, 'edit-image', 'Qoo10 representative image update');
 assertIncludes(html, 'edit-multi-image', 'Qoo10 detail image update');
 assertIncludes(html, 'update-master-fields', 'Joom master field update');
@@ -43,5 +44,7 @@ assertIncludes(shopeeBridge, "finalPayload.image?.image_id_list?.length", 'Shope
 assertIncludes(qoo10Bridge, 'ItemsContents.EditGoodsImage', 'Qoo10 EditGoodsImage bridge');
 assertIncludes(qoo10Bridge, 'ItemsContents.EditGoodsMultiImage', 'Qoo10 EditGoodsMultiImage bridge');
 assertIncludes(joomBridge, 'operation: "update-master-fields"', 'Joom update-master-fields bridge');
+assertIncludes(joomBridge, 'variant_image_audit', 'Joom variant image audit');
+assertIncludes(joomBridge, 'updatePayload.variants = matchedVariants', 'Joom safe variant image update');
 
 console.log('v2 platform master sync checks passed');

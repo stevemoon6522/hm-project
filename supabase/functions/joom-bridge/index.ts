@@ -1041,6 +1041,7 @@ async function handleRequest(req: Request): Promise<Response> {
       if (denied) return denied;
       const body = await req.json();
       const sku = String(body.sku || "").trim();
+      const productId = String(body.productId || body.product_id || body.id || "").trim();
       if (!sku) return jsonResp({ ok: false, error: "sku required" }, 400);
 
       const updatePayload: Record<string, unknown> = {};
@@ -1052,6 +1053,17 @@ async function handleRequest(req: Request): Promise<Response> {
         detailImages: Array.isArray(body.detailImages) ? body.detailImages : [],
         extraImages: Array.isArray(body.extraImages) ? body.extraImages : (Array.isArray(body.extra_images) ? body.extra_images : []),
       });
+      const requestedVariantImages = (Array.isArray(body.variants) ? body.variants : [])
+        .map((variant: any) => ({
+          sku: String(variant?.sku || variant?.variantSku || "").trim(),
+          mainImage: String(variant?.mainImage || variant?.main_image || variant?.imageUrl || "").trim(),
+        }))
+        .filter((variant: any) => variant.sku && variant.mainImage);
+      const variantImageAudit: Record<string, unknown> = {
+        requested: requestedVariantImages.length,
+        matched: [],
+        skipped: [],
+      };
 
       if (name) updatePayload.name = name;
       if (description) updatePayload.description = description;
@@ -1067,6 +1079,31 @@ async function handleRequest(req: Request): Promise<Response> {
           }
         }
         if (processedExtras.length) updatePayload.extraImages = processedExtras;
+      }
+
+      if (requestedVariantImages.length) {
+        try {
+          const lookupParam = productId
+            ? `id=${encodeURIComponent(productId)}`
+            : `sku=${encodeURIComponent(sku)}`;
+          const currentProduct = await joomFetch(`/products?${lookupParam}`);
+          const currentVariants = Array.isArray(currentProduct?.variants) ? currentProduct.variants : [];
+          const currentVariantSkus = new Set(currentVariants.map((variant: any) => String(variant?.sku || "").trim()).filter(Boolean));
+          const matchedVariants: Record<string, string>[] = [];
+          const skippedVariants: string[] = [];
+          for (const variant of requestedVariantImages) {
+            if (!currentVariantSkus.has(variant.sku)) {
+              skippedVariants.push(variant.sku);
+              continue;
+            }
+            matchedVariants.push({ sku: variant.sku, mainImage: variant.mainImage });
+          }
+          if (matchedVariants.length) updatePayload.variants = matchedVariants;
+          variantImageAudit.matched = matchedVariants.map((variant) => variant.sku);
+          variantImageAudit.skipped = skippedVariants;
+        } catch (e) {
+          variantImageAudit.error = e instanceof Error ? e.message : String(e);
+        }
       }
 
       if (!Object.keys(updatePayload).length) return jsonResp({ ok: false, error: "no supported master fields requested" }, 400);
@@ -1088,6 +1125,7 @@ async function handleRequest(req: Request): Promise<Response> {
         updated_fields: Object.keys(updatePayload),
         requested_extra_images: rawExtraImages,
         updated_extra_images: Array.isArray(updatePayload.extraImages) ? updatePayload.extraImages : [],
+        variant_image_audit: variantImageAudit,
         image_audit: {
           mainImage: imageBundleSummary(data?.mainImage),
           extraImages: (Array.isArray(data?.extraImages) ? data.extraImages : []).map(imageBundleSummary),

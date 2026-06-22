@@ -48,7 +48,10 @@ function tierSortKey(row: ProductRow): string {
 }
 
 export function sortGroupRows(rows: ProductRow[] = []): ProductRow[] {
-  return rows.slice().sort((a, b) => tierSortKey(a).localeCompare(tierSortKey(b)));
+  return rows.slice().sort((a, b) => (
+    Number(rowIsSetOption(a)) - Number(rowIsSetOption(b))
+    || tierSortKey(a).localeCompare(tierSortKey(b))
+  ));
 }
 
 export function parentSku(rows: ProductRow[] = []): string {
@@ -68,10 +71,18 @@ function rowHasPublishableStock(row: ProductRow, master: ProductRow): boolean {
   return Number.isFinite(inventory) && inventory > 0;
 }
 
+function optionValueIsSet(value: unknown): boolean {
+  return /(^|[^A-Z0-9])(?:FULL\s*)?SET(?:\s*VER(?:SION)?\.?)?([^A-Z0-9]|$)/.test(text(value).toUpperCase());
+}
+
+function sortOptionValuesSetLast(values: string[]): string[] {
+  return values.slice().sort((a, b) => Number(optionValueIsSet(a)) - Number(optionValueIsSet(b)));
+}
+
 function rowIsSetOption(row: ProductRow): boolean {
   const optionNames = Array.isArray(row.variation_option_names) ? row.variation_option_names : [];
   const haystack = [row.option_name, row.sku, ...optionNames].map(text).join(' ').toUpperCase();
-  return /(^|[^A-Z0-9])(?:FULL\s*)?SET(?:\s*VER(?:SION)?\.?)?([^A-Z0-9]|$)/.test(haystack);
+  return optionValueIsSet(haystack);
 }
 
 export function publishableGroupRows(master: ProductRow = {}, groupProducts: ProductRow[] = []): ProductRow[] {
@@ -139,7 +150,7 @@ export function effectiveVariationSpec(rows: ProductRow[] = [], defaultTierName 
     return {
       sourceAxis: axisIndex,
       name: (storedTierNames[axisIndex] || (axisIndex === 0 ? defaultTierName : `Option ${axisIndex + 1}`)).slice(0, 14),
-      values,
+      values: sortOptionValuesSetLast(values),
     };
   }).filter((axis) => axis.values.length > 0);
   if (!rawAxes.length) return emptySpec;

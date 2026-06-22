@@ -98,9 +98,15 @@ test('Qoo10 V2 modal defaults match lifecycle-aware listing policy', () => {
   assert.match(html, /mrQoo10BuildDescription\(descriptionTemplateHtml,\s*first\)/, 'Qoo10 description should combine template HTML with detail images');
   assert.match(html, /sdv2:qoo10:description_template_html/, 'Qoo10 description template should be persisted for reuse');
   assert.match(html, /function\s+mrQoo10MainImageSource\s*\(/, 'Qoo10 modal should derive the representative image source before registration');
-  assert.match(html, /main_image:\s*mrQoo10MainImageSource\(rows\)/, 'Qoo10 create payload should start from the master representative image');
+  assert.match(html, /function\s+mrQoo10SelectedMainImageUrl\s*\(/, 'Qoo10 modal should track the operator-selected representative image');
+  assert.match(html, /id="mr-qoo10-image-grid"/, 'Qoo10 modal should expose source thumbnails like the Shopee registration UI');
+  assert.match(html, /id="mr-qoo10-cover-preview"/, 'Qoo10 modal should preview the selected Qoo10 representative image');
+  assert.match(html, /id="mr-qoo10-detail-preview"/, 'Qoo10 modal should preview detail images that will be appended to the description');
+  assert.match(html, /id="mr-qoo10-manual-image-url"/, 'Qoo10 modal should offer a manual image URL fallback');
+  assert.match(html, /main_image:\s*mrQoo10SelectedMainImageUrl\(rows\)/, 'Qoo10 create payload should use the selected representative image');
   assert.match(html, /function\s+mrQoo10BuildLayeredMainImageUrl\s*\(/, 'Qoo10 modal should build a layered representative image URL');
   assert.match(html, /rshBuildLayeredCoverDataUrl\(sourceUrl\)/, 'Qoo10 representative image should reuse the Shopee layered-cover composition logic');
+  assert.match(html, /mrQoo10SelectedMainImageUrl\(sortedRows\)/, 'Qoo10 layered image builder should respect the selected representative image');
   assert.match(html, /mrBuildMarketplaceLayeredMainImageUrl\('qoo10',\s*mainImageUrl,\s*first\)/, 'Qoo10 layered representative image should use the shared marketplace upload helper');
   assert.match(html, /sdUploadProductImageFile\(file,\s*uploadRow,\s*\{[\s\S]*kind:\s*'cover'[\s\S]*prefix:\s*platformKey === 'qoo10' \? 'q10' : platformKey[\s\S]*\}\)/, 'Qoo10 layered representative image should be uploaded as a short public product cover URL');
   assert.match(html, /payload\.publish\.main_image\s*=\s*await mrQoo10BuildLayeredMainImageUrl\(_mrQoo10\.rows \|\| \[\]\)/, 'Qoo10 create request should send the uploaded layered representative image URL');
@@ -117,7 +123,7 @@ test('Qoo10 V2 modal defaults match lifecycle-aware listing policy', () => {
 
 test('Qoo10 registration prices are normalized to 90-ending JPY values', () => {
   assert.match(html, /normalizeQoo10PriceEnding90\(mrQoo10ReadNumber\('mr-qoo10-base-price', 0\)\)/, 'Qoo10 modal base price should normalize manual input to a 90-ending price');
-  assert.match(html, /price_jpy:\s*normalizeQoo10PriceEnding90\(mrQoo10ReadNumber\(`mr-qoo10-price-\$\{idx\}`,\s*basePrice\)\)/, 'Qoo10 modal option prices should normalize manual input to 90-ending prices');
+  assert.match(html, /price_jpy:\s*mrQoo10ClampOptionPriceForBase\(mrQoo10ReadNumber\(`mr-qoo10-price-\$\{idx\}`,\s*basePrice\),\s*basePrice\)/, 'Qoo10 modal option prices should normalize and clamp manual input to platform-safe values');
   assert.match(adapter, /function normalizeQoo10PriceEnding90/, 'platform-publish should defensively normalize Qoo10 prices');
   assert.match(bridge, /function normalizeQoo10PriceEnding90/, 'qoo10-bridge should defensively normalize Qoo10 prices');
 });

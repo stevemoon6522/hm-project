@@ -17277,6 +17277,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     rows: [],
     shippingGroups: [],
     detailImages: [],
+    imageCandidates: [],
+    selectedMainImageUrl: '',
     existingItemCode: '',
     selectedBrand: null,
     publishInFlight: false,
@@ -17378,6 +17380,75 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return [...new Set([...fromCrawl, ...fromProducts].map((url) => String(url || '').trim()).filter(Boolean))];
   }
 
+  function mrQoo10NormalizeImageUrl(url, baseUrl = '') {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    if (typeof rshNormalizeImageUrl === 'function') {
+      return rshNormalizeImageUrl(raw, baseUrl || window.location.href);
+    }
+    if (/^https?:\/\//i.test(raw)) return raw;
+    try {
+      return new URL(raw, baseUrl || window.location.href).href;
+    } catch (_) {
+      return '';
+    }
+  }
+
+  function mrQoo10ImageRefKey(ref) {
+    return String(ref?.sourceUrl || ref?.src || ref || '').trim();
+  }
+
+  function mrQoo10AddImageRef(refs, seen, url, row, label, kind) {
+    const src = mrQoo10NormalizeImageUrl(url, row?.staronemall_url || window.location.href);
+    if (!src || seen.has(src)) return;
+    seen.add(src);
+    refs.push({
+      src,
+      sourceUrl: src,
+      staronemallUrl: row?.staronemall_url || '',
+      sku: row?.sku || '',
+      kind,
+      label,
+    });
+  }
+
+  function mrQoo10DetailImageRefs(rows) {
+    const first = (rows || [])[0] || {};
+    return mrQoo10DetailImageUrls()
+      .map((url, idx) => {
+        const src = mrQoo10NormalizeImageUrl(url, first.staronemall_url || window.location.href);
+        return src ? {
+          src,
+          sourceUrl: src,
+          staronemallUrl: first.staronemall_url || '',
+          kind: 'detail',
+          label: `Detail ${idx + 1}`,
+        } : null;
+      })
+      .filter(Boolean);
+  }
+
+  function mrQoo10ImageCandidates(rows) {
+    const refs = [];
+    const seen = new Set();
+    const list = Array.isArray(rows) ? rows : [];
+    list.forEach((row, idx) => {
+      const suffix = list.length > 1 ? ` - ${mrQoo10OptionValue(row) || row.option_name || idx + 1}` : '';
+      mrQoo10AddImageRef(refs, seen, row.main_image, row, `Representative${suffix}`, 'master-representative');
+      mrQoo10AddImageRef(refs, seen, row._main_image, row, `Source main${suffix}`, 'source-main');
+    });
+    list.forEach((row, idx) => {
+      const suffix = list.length > 1 ? ` - ${mrQoo10OptionValue(row) || row.option_name || idx + 1}` : '';
+      mrQoo10AddImageRef(refs, seen, row.shopee_option_image_url, row, `Option image${suffix}`, 'option');
+      const shopeeImageId = String(row.shopee_image_id || '').trim();
+      if (shopeeImageId) {
+        mrQoo10AddImageRef(refs, seen, `https://cf.shopee.sg/file/${shopeeImageId}`, row, `Shopee image_id${suffix}`, 'shopee-image-id');
+      }
+    });
+    mrQoo10DetailImageRefs(list).forEach((ref) => mrQoo10AddImageRef(refs, seen, ref.src, list[0] || {}, ref.label, ref.kind));
+    return refs.map((ref, idx) => ({ ...ref, idx }));
+  }
+
   function mrQoo10ApplyDescriptionTemplate(templateHtml, row) {
     const masterProductName = String(row?.product_name || mrQoo10FormatTitle(row || {}) || '').trim();
     const title = String(document.getElementById('mr-qoo10-title')?.value || mrQoo10FormatTitle(row || {}) || '').trim();
@@ -17387,22 +17458,183 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function mrQoo10BuildDescription(templateHtml, row) {
-    const imageBlock = mrQoo10DetailImageUrls().map((url) => (
+    const selectedKey = mrQoo10SelectedMainImageUrl(_mrQoo10.rows || []);
+    const imageBlock = mrQoo10DetailImageUrls().filter((url) => {
+      const src = mrQoo10NormalizeImageUrl(url, row?.staronemall_url || window.location.href);
+      return !selectedKey || src !== selectedKey;
+    }).map((url) => (
       `<p style="margin:0;text-align:center;"><img src="${text(url)}" style="max-width:100%;height:auto;"></p>`
     )).join('');
     return [mrQoo10ApplyDescriptionTemplate(templateHtml, row).trim(), imageBlock].filter(Boolean).join('\n');
   }
 
   function mrQoo10MainImageSource(rows) {
-    const first = (rows || [])[0] || {};
-    const masterMain = typeof rshMasterMainImageUrl === 'function'
-      ? rshMasterMainImageUrl(first)
-      : rshNormalizeImageUrl(first.main_image || '', first.staronemall_url || window.location.href);
-    const fallback = rshNormalizeImageUrl(
-      first.main_image || first._main_image || first.shopee_option_image_url || '',
-      first.staronemall_url || window.location.href,
-    );
-    return String(masterMain || fallback || '').trim();
+    const list = Array.isArray(rows) ? rows : [];
+    for (const field of ['main_image', '_main_image', 'shopee_option_image_url']) {
+      for (const row of list) {
+        const src = mrQoo10NormalizeImageUrl(row?.[field] || '', row?.staronemall_url || window.location.href);
+        if (src) return src;
+      }
+    }
+    for (const row of list) {
+      const shopeeImageId = String(row?.shopee_image_id || '').trim();
+      if (shopeeImageId) return `https://cf.shopee.sg/file/${shopeeImageId}`;
+    }
+    return '';
+  }
+
+  function mrQoo10SelectedMainImageUrl(rows) {
+    const selected = String(_mrQoo10.selectedMainImageUrl || '').trim();
+    if (selected) return selected;
+    const fallback = mrQoo10MainImageSource(rows);
+    if (fallback) {
+      _mrQoo10.selectedMainImageUrl = fallback;
+      return fallback;
+    }
+    const candidate = (Array.isArray(_mrQoo10.imageCandidates) && _mrQoo10.imageCandidates[0])
+      || mrQoo10ImageCandidates(rows)[0];
+    const src = mrQoo10ImageRefKey(candidate);
+    if (src) _mrQoo10.selectedMainImageUrl = src;
+    return src;
+  }
+
+  function mrQoo10RenderImageThumb(ref, label) {
+    const src = ref?.src || ref?.sourceUrl || '';
+    const origin = ref?.sourceUrl || ref?.staronemallUrl || '';
+    if (!src) return '';
+    return `
+      <div style="min-width:0;">
+        <div style="border:1px solid var(--border);border-radius:6px;overflow:hidden;aspect-ratio:1;background:#f8fafc;">
+          <img src="${text(src)}" alt="${text(label || ref?.label || 'Image')}" style="width:100%;height:100%;object-fit:cover;" loading="lazy" onerror="this.parentElement.style.opacity='0.35'">
+        </div>
+        <div style="font-size:11px;font-weight:700;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${text(label || ref?.label || 'Image')}</div>
+        ${origin ? `<div class="muted" style="font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${text(origin)}</div>` : ''}
+      </div>`;
+  }
+
+  function mrQoo10RenderImagePanel(rows) {
+    const candidates = mrQoo10ImageCandidates(rows);
+    _mrQoo10.imageCandidates = candidates;
+    const selectedUrl = mrQoo10SelectedMainImageUrl(rows);
+    const selectedKey = String(selectedUrl || '').trim();
+    const detailRefs = mrQoo10DetailImageRefs(rows)
+      .filter((ref) => !selectedKey || mrQoo10ImageRefKey(ref) !== selectedKey)
+      .slice(0, 50);
+    const sourceGrid = candidates.length ? candidates.map((ref, idx) => {
+      const active = selectedKey && mrQoo10ImageRefKey(ref) === selectedKey;
+      return `
+        <button type="button" data-qoo10-image-idx="${idx}" id="mr-qoo10-image-cell-${idx}"
+          style="cursor:pointer;border:2px solid ${active ? 'var(--accent)' : 'var(--border)'};border-radius:6px;overflow:hidden;position:relative;aspect-ratio:1;background:#f5f5f5;padding:0;text-align:left;">
+          <img src="${text(ref.src)}" alt="${text(ref.label || 'Qoo10 source image')}" style="width:100%;height:100%;object-fit:cover;" loading="lazy" onerror="this.parentElement.style.opacity='0.35'">
+          <span id="mr-qoo10-image-badge-${idx}" style="display:${active ? 'block' : 'none'};position:absolute;top:4px;left:4px;background:var(--accent);color:#fff;font-size:10px;font-weight:700;padding:1px 5px;border-radius:4px;">Representative</span>
+        </button>`;
+    }).join('') : '<div class="notice" style="font-size:12px;">No source images found. Paste a public image URL below.</div>';
+    return `
+      <section id="mr-qoo10-image-section" class="rsh-seller-section" style="margin-top:12px;">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:6px;">
+          <strong style="font-size:13px;">Images</strong>
+          <span id="mr-qoo10-img-count" class="muted" style="font-size:12px;">${text(candidates.length)} source / ${text(detailRefs.length)} detail</span>
+        </div>
+        <div id="mr-qoo10-image-missing" class="notice error" style="display:${selectedUrl ? 'none' : 'block'};font-size:12px;margin-bottom:8px;">Qoo10 StandardImage is required before new registration. Select a source image or paste a public image URL.</div>
+        <div id="mr-qoo10-image-source-label" style="margin-top:8px;font-size:12px;font-weight:700;color:var(--text);">
+          Source thumbnails - click one thumbnail to set the Qoo10 representative image.
+        </div>
+        <div id="mr-qoo10-image-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:8px;">${sourceGrid}</div>
+        <div id="mr-qoo10-manual-url-section" style="margin-top:8px;">
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input id="mr-qoo10-manual-image-url" type="url" placeholder="https://...image URL..." style="flex:1;padding:6px 8px;font-size:12px;">
+            <button type="button" id="mr-qoo10-manual-url-add" style="font-size:12px;padding:5px 10px;">Use URL</button>
+          </div>
+        </div>
+        <input type="hidden" id="mr-qoo10-selected-main-image-url" value="${text(selectedUrl)}">
+        <div id="mr-qoo10-image-upload-label" style="margin-top:12px;font-size:12px;font-weight:700;color:var(--text);">
+          Qoo10 upload preview
+        </div>
+        <div id="mr-qoo10-image-role-note" class="notice ok" style="font-size:12px;margin-top:6px;margin-bottom:0;">
+          Representative image is layered and uploaded as StandardImage. Detail images are appended to ItemDescription.
+        </div>
+        <div id="mr-qoo10-image-role-layout" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-top:10px;align-items:start;">
+          <div id="mr-qoo10-cover-role-card" style="border:2px solid var(--accent);border-radius:8px;padding:10px;background:#fff;">
+            <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:8px;">
+              <strong style="font-size:12px;">1. Representative image</strong>
+              <small class="muted">Qoo10 StandardImage</small>
+            </div>
+            <div id="mr-qoo10-cover-preview">${selectedUrl ? mrQoo10RenderImageThumb({ src: selectedUrl, sourceUrl: selectedUrl }, 'Cover') : '<div class="rsh-muted-box" style="font-size:12px;">No representative image selected</div>'}</div>
+          </div>
+          <div id="mr-qoo10-detail-role-card" style="border:1px solid var(--border);border-radius:8px;padding:10px;background:#fff;">
+            <div style="display:flex;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:8px;">
+              <strong style="font-size:12px;">2. Detail images</strong>
+              <small class="muted">ItemDescription images</small>
+            </div>
+            <div id="mr-qoo10-detail-preview" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(78px,1fr));gap:8px;">${detailRefs.length ? detailRefs.map((ref, i) => mrQoo10RenderImageThumb(ref, `Detail ${i + 1}`)).join('') : '<div class="rsh-muted-box" style="font-size:12px;">No detail images selected</div>'}</div>
+          </div>
+        </div>
+      </section>`;
+  }
+
+  function mrQoo10RenderImagePreview() {
+    const rows = _mrQoo10.rows || [];
+    const selectedUrl = mrQoo10SelectedMainImageUrl(rows);
+    const selectedKey = String(selectedUrl || '').trim();
+    const hidden = document.getElementById('mr-qoo10-selected-main-image-url');
+    if (hidden) hidden.value = selectedUrl || '';
+    const missing = document.getElementById('mr-qoo10-image-missing');
+    if (missing) missing.style.display = selectedUrl ? 'none' : 'block';
+    const coverEl = document.getElementById('mr-qoo10-cover-preview');
+    if (coverEl) {
+      coverEl.innerHTML = selectedUrl
+        ? mrQoo10RenderImageThumb({ src: selectedUrl, sourceUrl: selectedUrl }, 'Cover')
+        : '<div class="rsh-muted-box" style="font-size:12px;">No representative image selected</div>';
+    }
+    const detailRefs = mrQoo10DetailImageRefs(rows)
+      .filter((ref) => !selectedKey || mrQoo10ImageRefKey(ref) !== selectedKey)
+      .slice(0, 50);
+    const detailEl = document.getElementById('mr-qoo10-detail-preview');
+    if (detailEl) {
+      detailEl.innerHTML = detailRefs.length
+        ? detailRefs.map((ref, i) => mrQoo10RenderImageThumb(ref, `Detail ${i + 1}`)).join('')
+        : '<div class="rsh-muted-box" style="font-size:12px;">No detail images selected</div>';
+    }
+    (_mrQoo10.imageCandidates || []).forEach((ref, idx) => {
+      const active = selectedKey && mrQoo10ImageRefKey(ref) === selectedKey;
+      const cell = document.getElementById(`mr-qoo10-image-cell-${idx}`);
+      const badge = document.getElementById(`mr-qoo10-image-badge-${idx}`);
+      if (cell) cell.style.borderColor = active ? 'var(--accent)' : 'var(--border)';
+      if (badge) badge.style.display = active ? 'block' : 'none';
+    });
+  }
+
+  function mrQoo10BindImageControls() {
+    document.querySelectorAll('[data-qoo10-image-idx]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const ref = (_mrQoo10.imageCandidates || [])[Number(btn.dataset.qoo10ImageIdx)];
+        const src = mrQoo10ImageRefKey(ref);
+        if (!src) return;
+        _mrQoo10.selectedMainImageUrl = src;
+        mrQoo10RenderImagePreview();
+      });
+    });
+    document.getElementById('mr-qoo10-manual-url-add')?.addEventListener('click', () => {
+      const input = document.getElementById('mr-qoo10-manual-image-url');
+      const src = mrQoo10NormalizeImageUrl(input?.value || '', window.location.href);
+      if (!src) {
+        showToast('Qoo10 image URL is required.', 'err');
+        return;
+      }
+      const exists = (_mrQoo10.imageCandidates || []).some((ref) => mrQoo10ImageRefKey(ref) === src);
+      if (!exists) {
+        _mrQoo10.imageCandidates = [...(_mrQoo10.imageCandidates || []), {
+          src,
+          sourceUrl: src,
+          kind: 'manual-cover',
+          label: 'Manual image',
+          idx: (_mrQoo10.imageCandidates || []).length,
+        }];
+      }
+      _mrQoo10.selectedMainImageUrl = src;
+      if (input) input.value = '';
+      mrQoo10RenderImagePreview();
+    });
   }
 
   async function mrQoo10DataUrlToFile(dataUrl, fileName = 'qoo10-layered-cover.png') {
@@ -17441,7 +17673,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   async function mrQoo10BuildLayeredMainImageUrl(rows) {
     const sortedRows = rows || [];
     const first = sortedRows[0] || {};
-    const mainImageUrl = mrQoo10MainImageSource(sortedRows);
+    const mainImageUrl = mrQoo10SelectedMainImageUrl(sortedRows);
     if (!mainImageUrl) throw new Error('Qoo10 representative image is required before registration.');
     return await mrBuildMarketplaceLayeredMainImageUrl('qoo10', mainImageUrl, first);
   }
@@ -17653,6 +17885,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         </label>
       </div>
       <div id="mr-qoo10-brand-results" style="margin:8px 0 12px;"></div>
+      ${mrQoo10RenderImagePanel(rows)}
       <div style="margin-top:12px;">
         <strong style="font-size:13px;">옵션</strong>
         <table class="mini-table" style="width:100%;margin-top:6px;">
@@ -17669,6 +17902,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       </label>
     `;
     document.getElementById('mr-qoo10-brand-search')?.addEventListener('click', mrQoo10SearchBrand);
+    mrQoo10BindImageControls();
     document.getElementById('mr-qoo10-base-price')?.addEventListener('input', () => {
       const newBase = mrQoo10ReadNumber('mr-qoo10-base-price', basePrice);
       document.getElementById('mr-qoo10-options').innerHTML = mrQoo10RenderOptions(rows, newBase);
@@ -17723,7 +17957,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         header_html: headerHtml,
         description_template_html: descriptionTemplateHtml,
         lifecycle_state: availableType === '2' ? 'pre_order' : 'ready_stock',
-        main_image: mrQoo10MainImageSource(rows),
+        main_image: mrQoo10SelectedMainImageUrl(rows),
         description: mrQoo10BuildDescription(descriptionTemplateHtml, first) || first.description || first.components_extracted_en || '',
         options,
       },
@@ -17871,6 +18105,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return;
     }
     _mrQoo10.rows = rows;
+    _mrQoo10.imageCandidates = [];
+    _mrQoo10.selectedMainImageUrl = '';
     _mrQoo10.existingItemCode = await mrQoo10LoadExistingItemCode(rows);
     _mrQoo10.publishInFlight = false;
     const overlay = mrQoo10Overlay();

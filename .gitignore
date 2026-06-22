@@ -11,3 +11,5 @@ tmp-*
 sketches/
 docs/sessions/
 supabase/.temp/
+
+.vercel

@@ -4406,7 +4406,11 @@
           </div>
           <div class="pl-master-edit-field-grid">
             <div class="field span-12">
-              <label for="pl-master-edit-components">상품 구성품</label>
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+                <label for="pl-master-edit-components" style="margin:0;">상품 구성품</label>
+                <button type="button" id="pl-master-edit-components-extract" style="font-size:11px;padding:4px 9px;">Extract from detail images</button>
+                <span id="pl-master-edit-components-status" class="muted" style="font-size:11px;"></span>
+              </div>
               <textarea id="pl-master-edit-components" rows="8" placeholder="예: CD, Photobook, Photocard..."></textarea>
               <div class="subhead">마스터 상품에는 구성품만 저장합니다. Shopee/Joom 등 플랫폼별 description 초안은 등록/전송 모달에서 자동 생성됩니다.</div>
             </div>
@@ -9567,7 +9571,101 @@ LEGACY END -->
   }
 
   function plMasterEditOptionImageUrl(row) {
-    return String(row?.shopee_option_image_url || row?._main_image || '').trim();
+    if (row?._optionImageInputActive) return String(row?.shopee_option_image_url || '').trim();
+    return String(row?.shopee_option_image_url || row?.main_image || row?._main_image || '').trim();
+  }
+
+  function plMasterEditSetComponentsStatus(message, kind = '') {
+    const el = document.getElementById('pl-master-edit-components-status');
+    if (!el) return;
+    el.textContent = message || '';
+    el.style.color = kind === 'err' ? '#b91c1c' : (kind === 'ok' ? '#166534' : 'var(--muted)');
+  }
+
+  function plMasterEditNormalizeComponentsText(value) {
+    const seen = new Set();
+    const lines = [];
+    String(value || '').split(/\r?\n/).forEach((rawLine) => {
+      const body = String(rawLine || '').trim().replace(/^[-•]\s*/, '').trim();
+      if (!body) return;
+      const key = body.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      lines.push(`- ${body}`);
+    });
+    return lines.length ? lines.join('\n') : String(value || '').trim();
+  }
+
+  async function plMasterEditBuildComponentImageDataUrls(componentImageUrls) {
+    const urls = (componentImageUrls || []).map((url) => String(url || '').trim()).filter(Boolean);
+    if (!urls.length || typeof rshSplitDetailImageRef !== 'function') return [];
+    const dataUrls = [];
+    const maxSources = 20;
+    try {
+      for (const url of urls) {
+        const remaining = maxSources - dataUrls.length;
+        if (remaining <= 0) break;
+        const refs = await rshSplitDetailImageRef({ src: url, sourceUrl: url }, Math.min(6, remaining));
+        refs.forEach((ref) => {
+          const value = String(ref?.src || ref?.dataUrl || '').trim();
+          if (/^data:image\/(?:jpeg|png|webp);base64,/i.test(value)) dataUrls.push(value);
+        });
+      }
+    } catch (e) {
+      console.warn('[pl-master-edit] component image preparation failed; falling back to URL sources', e);
+      return [];
+    }
+    return dataUrls.slice(0, maxSources);
+  }
+
+  async function plMasterEditExtractComponentsFromImages(fallbackRows = []) {
+    const btn = document.getElementById('pl-master-edit-components-extract');
+    const input = document.getElementById('pl-master-edit-components');
+    const sourceUrl = String(document.getElementById('pl-master-edit-staronemall-url')?.value || fallbackRows?.[0]?.staronemall_url || '').trim();
+    const rows = plMasterEditRowsFromModal((fallbackRows && fallbackRows.length) ? fallbackRows : plMasterEditCurrentRows());
+    if (!sourceUrl || !isValidStaronemallUrl(sourceUrl)) {
+      plMasterEditSetComponentsStatus('Enter a valid StarOneMall URL first.', 'err');
+      return;
+    }
+    const componentImageUrls = plMasterEditDetailImageUrls(rows);
+    if (!componentImageUrls.length) {
+      plMasterEditSetComponentsStatus('No detail images available. Recrawl StarOneMall first.', 'err');
+      return;
+    }
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Extracting...';
+    }
+    plMasterEditSetComponentsStatus(`Preparing ${componentImageUrls.length} detail image(s)...`);
+    try {
+      const imageDataUrls = await plMasterEditBuildComponentImageDataUrls(componentImageUrls);
+      plMasterEditSetComponentsStatus('Extracting components with Vision...');
+      const resp = await fetch(`${STARONEMALL_VISION_URL}/extract`, {
+        method: 'POST',
+        headers: AUTH_HEADERS,
+        body: JSON.stringify({
+          master_row_id: 0,
+          staronemall_url: sourceUrl,
+          image_url: componentImageUrls[0] || '',
+          image_urls: componentImageUrls,
+          image_data_urls: imageDataUrls,
+        }),
+      });
+      const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+      if (!resp.ok || !json.ok) throw new Error(json.error || json.message || `HTTP ${resp.status}`);
+      const components = plMasterEditNormalizeComponentsText(json.components_en || '');
+      if (!components) throw new Error('Vision returned an empty component list.');
+      if (input) input.value = components;
+      plMasterEditSetComponentsStatus('Extracted. Save to persist.', 'ok');
+      showToast('Components extracted from detail images. Save to persist.', 'ok');
+    } catch (e) {
+      plMasterEditSetComponentsStatus(`Extraction failed: ${e?.message || e}`, 'err');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Extract from detail images';
+      }
+    }
   }
 
   function plMasterEditRepresentativeStateUrl() {
@@ -11021,6 +11119,7 @@ LEGACY END -->
         id,
         main_image: representativeUrl || String(existing.main_image || '').trim(),
         shopee_option_image_url: String(tr.querySelector('[data-field="shopee_option_image_url"]')?.value || '').trim(),
+        _optionImageInputActive: true,
       };
     });
   }
@@ -11302,6 +11401,13 @@ LEGACY END -->
     }
     const componentsInput = document.getElementById('pl-master-edit-components');
     if (componentsInput) componentsInput.value = first.components_extracted_en || '';
+    plMasterEditSetComponentsStatus('');
+    const componentsExtractBtn = document.getElementById('pl-master-edit-components-extract');
+    if (componentsExtractBtn) {
+      componentsExtractBtn.disabled = false;
+      componentsExtractBtn.textContent = 'Extract from detail images';
+      componentsExtractBtn.onclick = () => plMasterEditExtractComponentsFromImages(rows);
+    }
     const daysInput = document.getElementById('pl-master-edit-days');
     if (daysInput) daysInput.value = plMasterEditJsonText(first.shopee_days_to_ship, {});
     const attrsInput = document.getElementById('pl-master-edit-attrs');
@@ -30584,6 +30690,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                   sourcing_price: vOpt.sourcing_price || 0,
                   cost_krw: vOpt.cost_krw || 0,
                   inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
+                  shopee_option_image_url: String(row._main_image || row.shopee_option_image_url || '').trim() || null,
                 }, Object.prototype.hasOwnProperty.call(row, '_custom_option_image_url') ? {
                   shopee_option_image_url: row._custom_option_image_url || null,
                 } : {}, mrMasterPatchForGroup(group)))
@@ -30629,6 +30736,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                   sourcing_price: Number(row._sourcing_price || row.sourcing_price || 0),
                   cost_krw: Number(row._cost_krw || row.cost_krw || 0),
                   inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
+                  shopee_option_image_url: String(row._main_image || row.shopee_option_image_url || '').trim() || null,
                   ...(Object.prototype.hasOwnProperty.call(row, '_custom_option_image_url')
                     ? { shopee_option_image_url: row._custom_option_image_url || null }
                     : {}),

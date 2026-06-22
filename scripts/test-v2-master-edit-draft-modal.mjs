@@ -46,6 +46,8 @@ for (const token of [
   'id="pl-master-edit-staronemall-url"',
   'id="pl-master-edit-lifecycle"',
   'id="pl-master-edit-components"',
+  'id="pl-master-edit-components-extract"',
+  'id="pl-master-edit-components-status"',
   'data-master-components-only="pl-master-components-only"',
   'id="pl-master-edit-days"',
   'id="pl-master-edit-attrs"',
@@ -78,6 +80,9 @@ for (const token of [
   '.select(RSH_PRODUCT_SELECT)',
   'plMasterEditRenderImageSummary(rows)',
   'plMasterEditRenderOptions(rows)',
+  'function plMasterEditExtractComponentsFromImages',
+  'image_urls: componentImageUrls',
+  'image_data_urls: imageDataUrls',
   'plMasterEditReadOptionPatches(rows)',
   'variation_option_names',
   'rawOptionName',
@@ -153,6 +158,10 @@ assert(
 assert(
   representativeSetter.includes('plMasterEditRepresentativeInput()'),
   'representative image changes must use the independent representative-image state',
+);
+assert(
+  editCode.includes('row?.shopee_option_image_url || row?.main_image || row?._main_image'),
+  'master edit option image display must fall back to persisted main_image for older StarOneMall-created rows',
 );
 
 console.log('v2 master edit draft modal checks passed');

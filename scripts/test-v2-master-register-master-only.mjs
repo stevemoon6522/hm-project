@@ -84,6 +84,10 @@ assert(masterRegister.includes('_components_image_url'), 'selected component ima
 assert(masterRegister.includes('_components_image_urls'), 'selected component image URLs must be stored on the preview rows');
 assert(masterRegister.includes('components_extracted_en'), 'components must be persisted into products');
 assert(masterRegister.includes('components_approved: components ? 1 : 0'), 'operator-entered components must be saved as approved');
+assert(
+  masterRegister.includes("shopee_option_image_url: String(row._main_image || row.shopee_option_image_url || '').trim() || null"),
+  'StarOneMall-created option rows must persist the option image into products.shopee_option_image_url',
+);
 assert(masterRegister.includes('function mrConvertGroupToSingleProduct'), 'last option-row removal must convert the card to single-product mode');
 assert(masterRegister.includes('_singleProductMode'), 'single-product mode must be stored on the remaining preview row');
 assert(masterRegister.includes('const isLastOptionRow = group.rows.length <= 1'), 'row delete must detect the last option row separately');

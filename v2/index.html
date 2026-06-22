@@ -9893,23 +9893,9 @@ LEGACY END -->
       };
     }
 
-    const tierSource = Array.isArray(shopPayload?.tier_variation) ? shopPayload.tier_variation : [];
-    if (!tierSource.length) return { ok: false, error: 'shop tier variation is missing' };
-    const tier_variation = tierSource.map((tier, tierIndex) => ({
-      name: String(tier?.name || tier?.variation_name || '').trim(),
-      option_list: (Array.isArray(tier?.option_list) ? tier.option_list : []).map((option, optionIndex) => {
-        const nextOption = { option: String(globalTiers[tierIndex]?.options?.[optionIndex] || '').trim() };
-        if (option?.image?.image_id) nextOption.image = { image_id: String(option.image.image_id) };
-        else if (option?.image_id) nextOption.image = { image_id: String(option.image_id) };
-        return nextOption;
-      }).filter((option) => option.option),
-    }));
     return {
-      ok: true,
-      currentOptions,
-      targetOptions,
-      payload: { model_list, tier_variation },
-      payloadKind: 'tier_variation',
+      ok: false,
+      error: 'shop standardise_tier_variation IDs are missing; update_tier_variation requires variation_id and variation_option_id',
     };
   }
 

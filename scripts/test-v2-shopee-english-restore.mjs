@@ -72,11 +72,20 @@ for (const token of [
   "'update_shop_tier_variation'",
   "if (action === 'update_shop_tier_variation')",
   "/api/v2/product/update_tier_variation",
-  'standardise_tier_variation[] or tier_variation[] required',
+  'standardise_tier_variation[] required',
   'sent_tier_count',
   'v2.product.update_tier_variation.json',
 ]) {
   assert(bridge.includes(token), `Shopee bridge tier variation action missing token: ${token}`);
 }
+
+assert(
+  !bridge.includes("else requestPayload.tier_variation = tier_variation"),
+  'Shopee bridge must not send legacy tier_variation for update_tier_variation',
+);
+assert(
+  !restoreApplyCode.includes("payloadKind: 'tier_variation'"),
+  'Shopee English restore must only write standardise_tier_variation payloads',
+);
 
 console.log('v2 Shopee English restore checks passed');

@@ -1580,29 +1580,12 @@ async function runV2MutationAction(action: string, body: any) {
         && tier.variation_option_list.length
       ));
 
-    const tierSource = Array.isArray(body.tier_variation) ? body.tier_variation : [];
-    const tier_variation = tierSource
-      .map((tier: any) => ({
-        name: String(tier?.name || '').trim(),
-        option_list: Array.isArray(tier?.option_list)
-          ? tier.option_list.map((option: any) => {
-            const next: Record<string, any> = { option: String(option?.option || '').trim() };
-            if (option?.image?.image_id) next.image = { image_id: String(option.image.image_id) };
-            else if (option?.image_id) next.image = { image_id: String(option.image_id) };
-            return next;
-          }).filter((option: any) => option.option)
-          : [],
-      }))
-      .filter((tier: any) => tier.option_list.length);
-
     if (!model_list.length) return { ok: false, error: 'model_list[] required (model_id + tier_index)' };
-    if (!standardise_tier_variation.length && !tier_variation.length) {
-      return { ok: false, error: 'standardise_tier_variation[] or tier_variation[] required' };
+    if (!standardise_tier_variation.length) {
+      return { ok: false, error: 'standardise_tier_variation[] required' };
     }
 
-    const requestPayload: Record<string, any> = { item_id, model_list };
-    if (standardise_tier_variation.length) requestPayload.standardise_tier_variation = standardise_tier_variation;
-    else requestPayload.tier_variation = tier_variation;
+    const requestPayload: Record<string, any> = { item_id, model_list, standardise_tier_variation };
 
     // Official local doc:
     // C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\product\v2.product.update_tier_variation.json
@@ -1613,8 +1596,8 @@ async function runV2MutationAction(action: string, body: any) {
       ...response,
       item_id,
       sent_model_count: model_list.length,
-      sent_tier_count: standardise_tier_variation.length || tier_variation.length,
-      tier_payload_kind: standardise_tier_variation.length ? 'standardise_tier_variation' : 'tier_variation',
+      sent_tier_count: standardise_tier_variation.length,
+      tier_payload_kind: 'standardise_tier_variation',
     };
   }
 

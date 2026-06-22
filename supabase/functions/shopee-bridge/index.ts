@@ -74,7 +74,7 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 // v51: treat CBSC publish task "permission"/empty failed results as async-pending until published_list proves final state.
-const SOURCE_VERSION = 53;
+const SOURCE_VERSION = 54;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -85,6 +85,7 @@ const DEFAULT_REFRESH_THRESHOLD_SEC = 7200;
 const DEFAULT_REFRESH_ATTEMPTS = 3;
 const DEFAULT_RETRY_BASE_MS = 1000;
 const SHOPEE_HEADLESS_DELETE_CONFIRM_PHRASE = 'DELETE_SHOPEE_GLOBAL_ITEM';
+const SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT = 3.5;
 const PROXY_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
 const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
 const UPLOAD_IMAGE_MIN_DIMENSION = 300;
@@ -1704,6 +1705,53 @@ function registerModelPrice(model: any, fallbackPrice: number) {
   return Number(model?.global_original_price ?? model?.original_price ?? fallbackPrice ?? 0);
 }
 
+function hasBrPublishTarget(targets: any[] = []) {
+  return targets.some((target: any) => String(target?.region || '').toUpperCase() === 'BR');
+}
+
+function normalizeBrGlobalModelPriceRatio(body: any, targets: any[] = []) {
+  if (!hasBrPublishTarget(targets)) return [];
+  const brTargetsHaveRegionVariation = targets
+    .filter((target: any) => String(target?.region || '').toUpperCase() === 'BR')
+    .some((target: any) => {
+      try {
+        return !!normalizeVariation(target?.variation);
+      } catch (_) {
+        return false;
+      }
+    });
+  const models = Array.isArray(body?.variation?.model) ? body.variation.model : [];
+  if (models.length < 2) return [];
+  const rows = models
+    .map((model: any, index: number) => ({
+      model,
+      index,
+      sku: String(model?.global_model_sku || model?.model_sku || `model-${index + 1}`).trim(),
+      price: registerModelPrice(model, Number(body.global_price ?? body.price ?? targets[0]?.price ?? 0)),
+    }))
+    .filter((row: any) => Number.isFinite(row.price) && row.price > 0);
+  if (rows.length < 2) return [];
+  const maxPrice = Math.max(...rows.map((row: any) => row.price));
+  const minPrice = Math.min(...rows.map((row: any) => row.price));
+  if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) return [];
+
+  const safeMinimum = Math.ceil(maxPrice / SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT);
+  const adjustments: any[] = [];
+  for (const row of rows) {
+    if (row.price >= safeMinimum) continue;
+    row.model.global_original_price = safeMinimum;
+    if (!brTargetsHaveRegionVariation) row.model.original_price = safeMinimum;
+    adjustments.push({
+      sku: row.sku,
+      from: row.price,
+      to: safeMinimum,
+      max_price: maxPrice,
+      safe_ratio: SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT,
+    });
+  }
+  return adjustments;
+}
+
 function validateRegisterStockInput(body: any, normalizedVariation: any, targets: any[] = []) {
   const fallbackStock = Number(body.stock ?? targets[0]?.stock ?? 0);
   if (normalizedVariation?.model?.length) {
@@ -2222,7 +2270,7 @@ function parsePublishOutcome(region: string, shopId: number, publishTaskId: numb
 }
 
 async function verifyPublishedListOutcome(region: string, shopId: number, globalItemId: number, publishTaskId: number, task: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const retries = (region === 'BR' || region === 'TW') ? 4 : 3;
+  const retries = region === 'BR' ? 8 : ((region === 'TW') ? 4 : 3);
   const sleepMs = 5000;
   for (let attempt = 0; attempt < retries; attempt += 1) {
     if (attempt > 0) await new Promise(s => setTimeout(s, sleepMs));
@@ -3755,6 +3803,7 @@ Deno.serve(async (req) => {
       if (!body.name) return jsonResp({ ok: false, error: 'name required' }, 400);
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
+      const brGlobalPriceAdjustments = normalizeBrGlobalModelPriceRatio(body, targetInputs);
 
       let preflightVariation: any = null;
       try {
@@ -3806,6 +3855,9 @@ Deno.serve(async (req) => {
 
       return withPublishRequestId(action, `${accountKey}:${r}`, _cbscIdempotencyToken, body, async () => {
       const stage_logs: string[] = [];
+      if (brGlobalPriceAdjustments.length) {
+        stage_logs.push(`br_global_model_price_ratio_normalized: ${brGlobalPriceAdjustments.length} model(s), safe_ratio=${SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT}`);
+      }
       const catAttrs = await buildCategoryAttributeListForRegions(r, targetInputs.map((target: any) => target.region), Number(body.category_id), Array.isArray(body.attribute_list) ? body.attribute_list : [], accountKey);
       if (catAttrs.missing.length > 0) {
         return jsonResp({

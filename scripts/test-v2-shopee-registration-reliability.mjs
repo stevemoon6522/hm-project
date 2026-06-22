@@ -27,6 +27,7 @@ const persistMappings = extractFunction(html, 'persistMappings');
 const applyPublishState = extractFunction(html, 'rshApplyShopeePublishState');
 const publishStateFromRows = extractFunction(html, 'rshPublishStateFromMappingRows');
 const buildGroupPayload = extractFunction(html, 'rshBuildGroupRegisterPayload');
+const normalizeBrGlobalModelPrices = extractFunction(html, 'rshNormalizeBrGlobalModelPrices');
 const brandForPublish = extractFunction(html, 'rshBrandForShopeePublish');
 const mrUploadRegionImages = extractFunction(html, 'mrUploadRegionImages');
 const renderModal = html.slice(html.indexOf('<section class="rsh-seller-section grid" id="rsh-info-section"'), html.indexOf('<!-- Description -->'));
@@ -133,6 +134,16 @@ assert.match(
   /rshBrandForShopeePublish\(rshReadBrandObject\(\),\s*activeRegions\)/,
   'group payload must apply BR-safe brand normalization',
 );
+assert.match(
+  normalizeBrGlobalModelPrices,
+  /RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT[\s\S]*global_original_price:\s*safeMinimum/,
+  'group payload must normalize Global Product model prices when BR would reject the option price ratio',
+);
+assert.match(
+  buildGroupPayload,
+  /const model = rshNormalizeBrGlobalModelPrices\(modelRaw,\s*activeRegions\)/,
+  'group payload must apply BR-safe global model price normalization before register_cbsc',
+);
 
 assert.match(
   mrUploadRegionImages,
@@ -149,6 +160,21 @@ assert.match(
   bridge,
   /function isVariationInvalidPublishFailure[\s\S]*function isCrossuploadPermissionPublishFailure[\s\S]*function shouldRetryMinimalPublish[\s\S]*async function retryMinimalPublish/,
   'Shopee bridge must detect retryable variation/permission publish failures and expose a minimal publish retry',
+);
+assert.match(
+  bridge,
+  /SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT = 3\.5[\s\S]*function normalizeBrGlobalModelPriceRatio/,
+  'Shopee bridge must defensively normalize BR Global Product option price ratios',
+);
+assert.match(
+  registerCbscBlock,
+  /normalizeBrGlobalModelPriceRatio\(body,\s*targetInputs\)[\s\S]*br_global_model_price_ratio_normalized/,
+  'register_cbsc must apply and log BR global model price ratio normalization',
+);
+assert.match(
+  bridge,
+  /const retries = region === 'BR' \? 8/,
+  'BR published_list verification must wait longer because publish_task_result can report false failure',
 );
 assert.match(
   publishToRegionBlock,

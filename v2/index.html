@@ -19316,6 +19316,33 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return rshBuildVariationSpec(products).tierVariation;
   }
 
+  const RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT = 3.5;
+
+  function rshNormalizeBrGlobalModelPrices(models, activeRegions) {
+    const regions = new Set((activeRegions || []).map((region) => String(region || '').toUpperCase()));
+    if (!regions.has('BR') || !Array.isArray(models) || models.length < 2) return models;
+    const rows = models
+      .map((model) => ({
+        model,
+        price: Number(model.global_original_price ?? model.original_price ?? 0),
+      }))
+      .filter((row) => Number.isFinite(row.price) && row.price > 0);
+    if (rows.length < 2) return models;
+    const maxPrice = Math.max(...rows.map((row) => row.price));
+    const minPrice = Math.min(...rows.map((row) => row.price));
+    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) return models;
+    const safeMinimum = Math.ceil(maxPrice / RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT);
+    return models.map((model) => {
+      const price = Number(model.global_original_price ?? model.original_price ?? 0);
+      if (!Number.isFinite(price) || price <= 0 || price >= safeMinimum) return model;
+      return {
+        ...model,
+        global_original_price: safeMinimum,
+        br_global_original_price_adjusted_from: price,
+      };
+    });
+  }
+
   function rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKeyOverride) {
     const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     const products = rshSortedProducts(_rsh.products || []);
@@ -19343,7 +19370,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const variationSpec = rshBuildVariationSpec(products);
     const tierVariation = variationSpec.tierVariation;
 
-    const model = variantInputs.map((v, index) => {
+    const modelRaw = variantInputs.map((v, index) => {
       const p = v.product || {};
       const price = Number(v.price || basePrice);
       return {
@@ -19356,6 +19383,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         weight_g: Number(v.weight_g || 0),
       };
     });
+    const model = rshNormalizeBrGlobalModelPrices(modelRaw, activeRegions);
     const totalStock = model.reduce((sum, m) => sum + (Number(m.stock) || 0), 0);
     const packageLength = hasOptionWeights ? 15 : Number(document.getElementById('rsh-package-length')?.value || 15);
     const packageWidth = hasOptionWeights ? 20 : Number(document.getElementById('rsh-package-width')?.value || 20);

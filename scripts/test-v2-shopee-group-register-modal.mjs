@@ -60,6 +60,7 @@ for (const token of [
   'rshComputeRegionPrice',
   'rshBuildSingleRegionPrices',
   'rshBuildTierVariation',
+  'rshNormalizeBrGlobalModelPrices',
   'Shopee option name must be English before registration',
   'rshBuildGroupRegisterPayload',
   'rshRegisterOptionGroupViaCbsc',

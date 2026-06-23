@@ -24182,6 +24182,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           listing: listing,
           globalItemId: globalItemId || null,
           globalModelId: globalModelId || null,
+          globalModelSku: product.shopee_global_model_sku || null,
           needsModel: needsModel,
           newCost: newCost,
           newWeightG: newWeightG,
@@ -24461,7 +24462,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       info.models.map(function(m) { return Number(m && m.model_id); })
         .filter(function(v) { return Number.isFinite(v) && v > 0; })
     );
-    return { ok: true, hasModel: modelIds.size > 0, modelIds: modelIds };
+    return { ok: true, hasModel: modelIds.size > 0, modelIds: modelIds, models: info.models };
   }
 
   async function catPreflightShopeePayloads(payloads) {
@@ -24489,7 +24490,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!Number.isFinite(itemId) || itemId <= 0) continue;
       const key = p.region + ':' + itemId;
       if (!allKeys.has(key)) allKeys.set(key, { region: p.region, itemId: itemId });
-      if (!isTrustedListing(p.listing)) mixedKeys.add(key);
+      if (!isTrustedListing(p.listing) || p.needsModel) mixedKeys.add(key);
     }
 
     const trustedModelIds = new Map();
@@ -24500,7 +24501,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const key = p.region + ':' + itemId;
       if (mixedKeys.has(key)) continue;
       const modelId = p.listing && p.listing.shop_model_id ? Number(p.listing.shop_model_id) : null;
-      if (modelId) {
+      if (modelId && !p.needsModel) {
         if (!trustedModelIds.has(key)) trustedModelIds.set(key, new Set());
         trustedModelIds.get(key).add(modelId);
       } else if (!p.needsModel) {
@@ -24543,6 +24544,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (p.needsModel && !p.modelId) {
         blocked.push(Object.assign({}, p, { reason: 'variant mapping requires shop_model_id' }));
         continue;
+      }
+      if (p.needsModel && p.modelId) {
+        const matchedModel = (info.models || []).find(function(m) { return Number(m && m.model_id) === Number(p.modelId); });
+        if (!catShopeeModelMatchesPayloadSku(matchedModel, p)) {
+          blocked.push(Object.assign({}, p, { reason: 'model_id ' + p.modelId + ' does not match SKU ' + (p.sku || '') }));
+          continue;
+        }
       }
       if (info.hasModel && !p.modelId) {
         blocked.push(Object.assign({}, p, { reason: 'item has models but shop_model_id mapping is missing' }));
@@ -24625,6 +24633,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (modelName && optionName && modelName === optionName) return true;
     if (productTierIndex && modelTierIndex && productTierIndex === modelTierIndex) return true;
     return false;
+  }
+
+  function catShopeeModelMatchesPayloadSku(model, payload) {
+    const sku = catNormalizeSkuText(payload && payload.sku);
+    const globalSku = catNormalizeSkuText(payload && payload.globalModelSku);
+    const modelSku = catNormalizeSkuText(model && model.model_sku);
+    return !!(modelSku && (modelSku === sku || modelSku === globalSku));
   }
 
   function catProductGlobalItemId(product, byRegion) {
@@ -24797,23 +24812,57 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const skuLookupItems = sku ? (skuLookupCache.get(sku) || []) : [];
       for (const r of targetRegions) {
         const existing = byRegion.get(r);
-        if (existing && existing.shop_item_id && (!needsModel || existing.shop_model_id)) continue;
-        if (!shopIndex) shopIndex = await catFetchShopeeShopRegionIndex();
-        const published = catShopeePublishedCandidateForRegion(publishedItems, r, shopIndex)
-          || catShopeePublishedCandidateForRegion(skuLookupItems, r, shopIndex);
-        const itemId = Number(published && (published.shop_item_id || published.item_id || published.shopItemId));
+        let published = existing || null;
+        let itemId = Number(existing && (existing.shop_item_id || existing.item_id || existing.shopItemId));
+        if (!Number.isFinite(itemId) || itemId <= 0) itemId = null;
+
+        let modelId = Number(existing && (existing.shop_model_id || existing.model_id || existing.shopModelId));
+        if (!Number.isFinite(modelId) || modelId <= 0) modelId = null;
+        let modelInfo = null;
+
+        if (itemId && !needsModel) continue;
+
+        if (itemId && needsModel) {
+          const existingModelKey = r + ':' + itemId;
+          if (!modelCache.has(existingModelKey)) modelCache.set(existingModelKey, await catFetchShopeeModelRows(r, itemId));
+          modelInfo = modelCache.get(existingModelKey);
+          if (modelInfo && modelInfo.ok && modelInfo.models.length) {
+            const existingModel = modelId
+              ? modelInfo.models.find(function(m) { return Number(m && m.model_id) === Number(modelId); })
+              : null;
+            if (existingModel && catShopeeModelMatchesProduct(existingModel, product)) continue;
+            const matchedModel = modelInfo.models.find(function(m) { return catShopeeModelMatchesProduct(m, product); });
+            modelId = matchedModel && matchedModel.model_id ? Number(matchedModel.model_id) : null;
+          }
+        }
+
+        if (!itemId || (needsModel && !modelId)) {
+          if (!shopIndex) shopIndex = await catFetchShopeeShopRegionIndex();
+          published = catShopeePublishedCandidateForRegion(publishedItems, r, shopIndex)
+            || catShopeePublishedCandidateForRegion(skuLookupItems, r, shopIndex);
+          itemId = Number(published && (published.shop_item_id || published.item_id || published.shopItemId));
+          if (!Number.isFinite(itemId) || itemId <= 0) continue;
+
+          modelId = null;
+          if (published.shop_model_id || published.model_id || published.shopModelId) {
+            const rawModelId = Number(published.shop_model_id || published.model_id || published.shopModelId);
+            if (Number.isFinite(rawModelId) && rawModelId > 0) modelId = rawModelId;
+          }
+          modelInfo = null;
+        }
+
         if (!Number.isFinite(itemId) || itemId <= 0) continue;
 
-        let modelId = null;
-        if (published.shop_model_id || published.model_id || published.shopModelId) {
-          const rawModelId = Number(published.shop_model_id || published.model_id || published.shopModelId);
-          if (Number.isFinite(rawModelId) && rawModelId > 0) modelId = rawModelId;
-        }
         const modelKey = r + ':' + itemId;
-        if (!modelCache.has(modelKey)) modelCache.set(modelKey, await catFetchShopeeModelRows(r, itemId));
-        const modelInfo = modelCache.get(modelKey);
+        if (!modelInfo) {
+          if (!modelCache.has(modelKey)) modelCache.set(modelKey, await catFetchShopeeModelRows(r, itemId));
+          modelInfo = modelCache.get(modelKey);
+        }
         if (modelInfo && modelInfo.ok && modelInfo.models.length) {
-          if (!modelId || !modelInfo.models.some(function(m) { return Number(m?.model_id) === Number(modelId); })) {
+          const mappedModelMatches = modelId && modelInfo.models.some(function(m) {
+            return Number(m && m.model_id) === Number(modelId) && catShopeeModelMatchesProduct(m, product);
+          });
+          if (!mappedModelMatches) {
             const model = modelInfo.models.find(function(m) { return catShopeeModelMatchesProduct(m, product); });
             modelId = model && model.model_id ? Number(model.model_id) : null;
           }

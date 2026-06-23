@@ -47,7 +47,6 @@ const getPublishLogistics = extractFunction(bridge, 'getPublishLogistics');
 const repairPublishedItemLogistics = extractFunction(bridge, 'repairPublishedItemLogisticsForGlobalItem');
 const buildPublishItemPayload = extractFunction(bridge, 'buildPublishItemPayload');
 const retryMinimalPublish = extractFunction(bridge, 'retryMinimalPublish');
-const brSingleThenGlobalFallback = extractFunction(bridge, 'publishBrOptionViaSingleThenGlobalModels');
 const resolveProductIdForMapping = extractFunction(bridge, 'resolveProductIdForMapping');
 const recordRegistrationMapping = extractFunction(bridge, 'recordRegistrationMapping');
 const handleCreateListingMultiRegion = extractFunction(shopeeAdapter, 'handleCreateListingMultiRegion');
@@ -379,17 +378,17 @@ assert.match(
 assert.match(
   initShopTierVariationBlock,
   /standardise_tier_variation[\s\S]*model_sku[\s\S]*weight[\s\S]*product\/init_tier_variation/,
-  'Shopee bridge must expose a docs-backed shop init_tier_variation mutation for BR no-option publish then option-injection fallback',
+  'Shopee bridge must expose a docs-backed shop init_tier_variation mutation for explicit shop-level repair flows',
 );
-assert.match(
+assert.doesNotMatch(
   `${publishToRegionBlock}\n${registerCbscBlock}`,
-  /publishBrOptionViaSingleThenGlobalModels[\s\S]*br_create_publish_task_crossupload_failed[\s\S]*publishBrOptionViaSingleThenGlobalModels[\s\S]*br_publish_task_crossupload_failed/,
-  'publish_to_region and register_cbsc must use the proven BR single-then-global-option fallback for option crossupload failures',
+  /publishBrOptionViaSingleThenGlobalModels|br_single_then_global_option_fallback|fallbackGlobalItemId|original_global_item_cleanup/,
+  'publish_to_region and register_cbsc must not create or switch to a replacement Global Product for BR option crossupload failures',
 );
 assert.match(
   bridge,
-  /BR_OPTION_CROSSUPLOAD_PERMISSION_BLOCKED[\s\S]*direct CBSC option Global Product crossupload/,
-  'Shopee bridge must surface the BR direct option Global Product crossupload blocker instead of a generic publish failure',
+  /BR_OPTION_CROSSUPLOAD_PERMISSION_BLOCKED[\s\S]*requested existing global_item_id[\s\S]*replacement Global Product is intentionally disabled/,
+  'Shopee bridge must surface that BR option crossupload is blocked while preserving the existing global_item_id policy',
 );
 assert.doesNotMatch(
   `${publishToRegionBlock}\n${registerCbscBlock}`,
@@ -397,19 +396,19 @@ assert.doesNotMatch(
   'Shopee bridge must not revive the rejected shop-level fallback after BR option crossupload failures',
 );
 assert.match(
-  brSingleThenGlobalFallback,
-  /add_global_item[\s\S]*create_publish_task[\s\S]*init_tier_variation[\s\S]*add_global_model[\s\S]*waitForShopModelsWithDetails[\s\S]*syncShopModelPricesAfterPublish/,
-  'BR fallback must publish a single Global Product first, then initialize global variation, add remaining global models, wait for shop model hydration, and sync model prices',
+  `${publishToRegionBlock}\n${registerCbscBlock}`,
+  /retryMinimalPublish[\s\S]*br_existing_global_crossupload_create_retry[\s\S]*retryMinimalPublish[\s\S]*br_existing_global_crossupload_task_retry/,
+  'BR option crossupload recovery must retry only with the existing global_item_id',
 );
 assert.match(
-  brSingleThenGlobalFallback,
-  /br_single_then_global_option_fallback:\s*true[\s\S]*shop_model_count/,
-  'BR fallback result must be clearly marked and include shop model evidence',
+  bridge,
+  /new_global_fallback_suppressed:\s*true[\s\S]*reuse_existing_global_item_only:\s*true/,
+  'BR blocked result must explicitly show that new Global Product fallback is suppressed',
 );
 assert.match(
   handleCreateListingMultiRegion,
   /sku:\s*bridgeParentSku[\s\S]*variation:\s*shopeeVariation \|\| undefined/,
-  'platform-publish option group registration must send the parent SKU to the bridge so the BR fallback has a stable parent item_sku',
+  'platform-publish option group registration must send the parent SKU to the bridge so BR existing-global publish has a stable parent item_sku',
 );
 assert.match(
   `${resolveProductIdForMapping}\n${recordRegistrationMapping}`,

@@ -74,7 +74,7 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 // v78: Shopee SKU lookup maps Global Product global_model_sku separately from shop listing price sync ids.
-const SOURCE_VERSION = 78;
+const SOURCE_VERSION = 79;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -2692,14 +2692,18 @@ function hasOptionVariationPayload(target: any, body: any): boolean {
     && variation.model.length > 0;
 }
 
-function markBrOptionCrossuploadBlocked(outcome: any, task: any, publishRes: any) {
+function markBrOptionCrossuploadBlocked(outcome: any, task: any, publishRes: any, details: any = {}) {
   return {
     ...outcome,
     ok: false,
     error: 'BR_OPTION_CROSSUPLOAD_PERMISSION_BLOCKED',
-    message: 'Shopee BR rejected direct CBSC option Global Product crossupload. Use the BR single-then-global-option fallback path.',
+    message: 'Shopee BR rejected direct CBSC option Global Product crossupload. The bridge will only retry the requested existing global_item_id; creating a replacement Global Product is intentionally disabled.',
     br_option_crossupload_blocked: true,
-    retry_suppressed: true,
+    new_global_fallback_suppressed: true,
+    reuse_existing_global_item_only: true,
+    retry_suppressed: !details?.minimal_item_retry,
+    global_item_id: details?.global_item_id ?? outcome?.global_item_id ?? null,
+    minimal_item_retry: details?.minimal_item_retry ?? outcome?.minimal_item_retry ?? null,
     raw_task: task || outcome?.raw_task || null,
     raw_create: publishRes || outcome?.raw_create || null,
   };
@@ -2780,186 +2784,6 @@ function variationModelGlobalPrice(model: any, fallback = 0): number {
 function variationModelTargetPrice(model: any, fallback = 0): number {
   const price = Number(model?.original_price ?? model?.price ?? fallback ?? 0);
   return Number.isFinite(price) && price > 0 ? price : Number(fallback || 0);
-}
-
-function brFallbackParentSku(target: any, body: any, variation: any): string {
-  const explicit = String(target?.sku || body?.sku || body?.global_item_sku || '').trim();
-  if (explicit) return explicit.slice(0, 100);
-  const firstSku = String(variation?.model?.[0]?.model_sku || variation?.model?.[0]?.global_model_sku || '').trim();
-  return (firstSku ? firstSku.replace(/[-_][^-_]+$/, '') : `BR-OPTION-${Date.now()}`).slice(0, 100);
-}
-
-async function cleanupGlobalItemBestEffort(region: string, globalItemId: number, accountKey: string) {
-  if (!globalItemId) return null;
-  try {
-    return await merchantApiCall(region, '/api/v2/global_product/delete_global_item', {
-      method: 'POST',
-      body: { global_item_id: globalItemId },
-      account_key: accountKey,
-    });
-  } catch (e: any) {
-    return { error: 'cleanup_exception', message: String(e?.message || e) };
-  }
-}
-
-async function waitForShopModelsWithDetails(region: string, itemId: number, expectedCount: number, accountKey: string) {
-  let last: any = null;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    if (attempt > 0) await new Promise(s => setTimeout(s, 5000));
-    last = await shopApiCall(region, '/api/v2/product/get_model_list', { query: { item_id: itemId }, account_key: accountKey });
-    const models = Array.isArray(last?.response?.model) ? last.response.model : [];
-    const detailed = models.filter((model: any) => (
-      model?.model_id
-      && model?.model_sku
-      && Array.isArray(model?.tier_index)
-      && model.tier_index.length > 0
-      && Array.isArray(model?.price_info)
-      && model.price_info.length > 0
-    ));
-    if (models.length >= expectedCount && detailed.length >= expectedCount) {
-      return { ok: true, models, raw: last, attempts: attempt + 1 };
-    }
-  }
-  return {
-    ok: false,
-    error: 'shop_models_not_ready',
-    models: Array.isArray(last?.response?.model) ? last.response.model : [],
-    raw: last,
-  };
-}
-
-async function publishBrOptionViaSingleThenGlobalModels(shopId: number, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, reason = 'br_direct_option_crossupload_failed') {
-  const region = String(target?.region || 'BR').toUpperCase();
-  const variation = normalizeVariation(target?.variation || body?.variation);
-  if (region !== 'BR' || !variation?.model?.length) {
-    return { ok: false, region, shop_id: shopId, stage: 'br_single_option_fallback_preflight', error: 'BR option variation required' };
-  }
-  const parentSku = brFallbackParentSku(target, body, variation);
-  const firstModel = variation.model[0];
-  const firstGlobalPrice = variationModelGlobalPrice(firstModel, Number(body.global_price ?? body.price ?? 0));
-  const firstTargetPrice = variationModelTargetPrice(firstModel, Number(target?.price ?? body.price ?? 0));
-  const totalStock = variation.model.reduce((sum: number, model: any) => sum + variationModelStock(model, body.stock), 0);
-  const fallbackBody = {
-    ...body,
-    sku: parentSku,
-    variation: undefined,
-    price: firstGlobalPrice,
-    global_price: firstGlobalPrice,
-    stock: totalStock || variationModelStock(firstModel, body.stock),
-    weight_g: Number(firstModel?.weight_g ?? body.weight_g ?? 100),
-    image_id: target?.image_id || body.image_id,
-    image_id_list: target?.image_id_list || body.image_id_list,
-    image_url: target?.image_url || body.image_url,
-    image_url_list: target?.image_url_list || body.image_url_list,
-  };
-  const addPayload = buildGlobalItemPayload(fallbackBody);
-  const addRes = await merchantApiCall(region, '/api/v2/global_product/add_global_item', { method: 'POST', body: addPayload, account_key: accountKey });
-  const fallbackGlobalItemId = Number(addRes?.response?.global_item_id || 0);
-  if (addRes.error || !fallbackGlobalItemId) {
-    return { ok: false, region, shop_id: shopId, stage: 'br_single_option_add_global_item', error: addRes.error || 'global_item_id missing', message: addRes.message, raw_add_global_item: addRes };
-  }
-
-  try {
-    const logistics = await getPublishLogistics(region, body.is_pre_order === true || body.lifecycle_state === 'pre_order', accountKey);
-    const singleTarget = {
-      ...target,
-      variation: undefined,
-      price: firstTargetPrice,
-      stock: totalStock || variationModelStock(firstModel, target.stock),
-    };
-    const item = buildPublishItemPayload(fallbackBody, singleTarget, logistics);
-    const publishBody = { global_item_id: fallbackGlobalItemId, shop_id: shopId, shop_region: region, item };
-    const publishRes = await merchantApiCall(region, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: accountKey });
-    if (publishRes.error || !publishRes.response?.publish_task_id) {
-      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-      return { ok: false, region, shop_id: shopId, stage: 'br_single_option_publish_single', error: publishRes.error || 'publish_task_id missing', message: publishRes.message, raw_create: publishRes, cleanup };
-    }
-    const publishTaskId = Number(publishRes.response.publish_task_id);
-    let task: any = null;
-    let pollAttempts = 0;
-    for (let i = 0; i < 5; i += 1) {
-      await new Promise(s => setTimeout(s, 2000));
-      task = await merchantApiCall(region, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id: publishTaskId }, account_key: accountKey });
-      pollAttempts = i + 1;
-      if (isCrossuploadPermissionPublishFailure(task)) break;
-      if (!shouldContinuePublishPolling(task)) break;
-    }
-    let outcome = parsePublishOutcome(region, shopId, publishTaskId, task);
-    if (!outcome.ok) {
-      const verified = await verifyPublishedListOutcome(region, shopId, fallbackGlobalItemId, publishTaskId, task, accountKey).catch(() => null);
-      if (verified) outcome = verified;
-    }
-    if (!outcome.ok || !outcome.item_id) {
-      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-      return { ...outcome, ok: false, stage: 'br_single_option_verify_single_publish', raw_create: publishRes, raw_task: task, cleanup };
-    }
-
-    const firstVariation = { tier_variation: variation.tier_variation, model: [firstModel] };
-    const firstGlobalModels = buildGlobalModels(firstVariation, firstGlobalPrice, variationModelStock(firstModel, body.stock));
-    const initRes = await merchantApiCall(region, '/api/v2/global_product/init_tier_variation', {
-      method: 'POST',
-      body: { global_item_id: fallbackGlobalItemId, tier_variation: variation.tier_variation, global_model: [firstGlobalModels[0]] },
-      account_key: accountKey,
-    });
-    if (initRes.error) {
-      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-      return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_init_global_tier', error: initRes.error, message: initRes.message, raw_init_tier_variation: initRes, cleanup };
-    }
-
-    const remainingModels = variation.model.slice(1);
-    let addModelRes: any = null;
-    if (remainingModels.length) {
-      const addPayloadModels = buildAddGlobalModelPayload(
-        fallbackGlobalItemId,
-        buildGlobalModels({ tier_variation: variation.tier_variation, model: remainingModels }, firstGlobalPrice, 0),
-        fallbackBody,
-        target,
-      );
-      addModelRes = await merchantApiCall(region, '/api/v2/global_product/add_global_model', {
-        method: 'POST',
-        body: addPayloadModels,
-        account_key: accountKey,
-      });
-      if (addModelRes.error) {
-        const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-        return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_add_global_model', error: addModelRes.error, message: addModelRes.message, raw_add_global_model: addModelRes, cleanup };
-      }
-    }
-
-    const modelsReady = await waitForShopModelsWithDetails(region, Number(outcome.item_id), variation.model.length, accountKey);
-    if (!modelsReady.ok) {
-      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-      return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_wait_shop_models', error: modelsReady.error, raw_models: modelsReady.raw, cleanup };
-    }
-
-    const priceSync = await syncShopModelPricesAfterPublish(region, Number(outcome.item_id), { ...target, variation }, { ...body, variation }, accountKey);
-    if (priceSync?.ok === false) {
-      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-      return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_price_sync', error: priceSync.error || 'price sync failed', price_sync: priceSync, cleanup };
-    }
-
-    return {
-      ...outcome,
-      ok: true,
-      region,
-      shop_id: shopId,
-      global_item_id: fallbackGlobalItemId,
-      item_id: Number(outcome.item_id),
-      publish_status: 'br_single_then_global_option_fallback',
-      br_single_then_global_option_fallback: true,
-      fallback_reason: reason,
-      raw_create: publishRes,
-      raw_task: task,
-      raw_init_tier_variation: initRes,
-      raw_add_global_model: addModelRes,
-      price_sync: priceSync,
-      poll_attempts: pollAttempts,
-      shop_model_count: modelsReady.models.length,
-    };
-  } catch (e: any) {
-    const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-    return { ok: false, region, shop_id: shopId, global_item_id: fallbackGlobalItemId, stage: 'br_single_option_fallback_exception', error: String(e?.message || e), cleanup };
-  }
 }
 
 async function retryTwMinimalPublish(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
@@ -4279,9 +4103,9 @@ Deno.serve(async (req) => {
           if (publishRes.error) {
             const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
             if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
-              const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, reqAccountKey, 'br_create_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
-              if (fallback?.ok) results.push(fallback);
-              else results.push({ ...markBrOptionCrossuploadBlocked(createFailure, null, publishRes), br_single_then_global_option_fallback: fallback });
+              const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, 'br_existing_global_crossupload_create_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+              if (retryOutcome?.ok) results.push(await finalizePublishOutcomeAfterSuccess(retryOutcome, targetRegion, target, body, reqAccountKey));
+              else results.push(markBrOptionCrossuploadBlocked({ ...createFailure, minimal_item_retry: retryOutcome }, null, publishRes, { global_item_id, minimal_item_retry: retryOutcome }));
               return;
             }
             if (shouldRetryMinimalPublish(createFailure, publishRes)) {
@@ -4318,10 +4142,10 @@ Deno.serve(async (req) => {
           }
           let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
           if (!outcome.ok && targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(outcome, task, publishRes)) {
-            const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, reqAccountKey, 'br_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
-            outcome = fallback?.ok
-              ? fallback
-              : { ...markBrOptionCrossuploadBlocked(outcome, task, publishRes), br_single_then_global_option_fallback: fallback };
+            const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, 'br_existing_global_crossupload_task_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+            outcome = retryOutcome?.ok
+              ? retryOutcome
+              : markBrOptionCrossuploadBlocked({ ...outcome, minimal_item_retry: retryOutcome }, task, publishRes, { global_item_id, minimal_item_retry: retryOutcome });
           }
           if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldRetryMinimalPublish(outcome, task, publishRes)) {
             const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
@@ -4359,7 +4183,7 @@ Deno.serve(async (req) => {
             if (retryOutcome?.ok) outcome = retryOutcome;
             else (outcome as any).tw_minimal_item_retry = retryOutcome;
           }
-          // BR-only: if still failing after fallback, re-issue create_publish_task once more
+          // BR-only: if still failing and no minimal retry ran, re-issue create_publish_task for the same global_item_id once more.
           if (!outcome.ok && targetRegion === 'BR' && !(outcome as any).minimal_item_retry) {
             try {
               const retryPublishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: reqAccountKey });
@@ -4883,16 +4707,9 @@ Deno.serve(async (req) => {
             }
             const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
             if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
-              const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, accountKey, 'br_create_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
-              if (fallback?.ok) {
-                if (targetInputs.length === 1 && Number(fallback.global_item_id) !== Number(global_item_id)) {
-                  fallback.original_global_item_id = global_item_id;
-                  fallback.original_global_item_cleanup = await cleanupGlobalItemBestEffort(r, global_item_id, accountKey);
-                }
-                results.push(fallback);
-              } else {
-                results.push({ ...markBrOptionCrossuploadBlocked(createFailure, null, publishRes), br_single_then_global_option_fallback: fallback });
-              }
+              const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, 'br_existing_global_crossupload_create_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+              if (retryOutcome?.ok) results.push(await finalizePublishOutcomeAfterSuccess(retryOutcome, targetRegion, target, body, accountKey));
+              else results.push(markBrOptionCrossuploadBlocked({ ...createFailure, minimal_item_retry: retryOutcome }, null, publishRes, { global_item_id, minimal_item_retry: retryOutcome }));
               return;
             }
             if (shouldRetryMinimalPublish(createFailure, publishRes)) {
@@ -4931,16 +4748,10 @@ Deno.serve(async (req) => {
           console.log(`[register_cbsc] region=${targetRegion} publish_task_id=${publish_task_id} poll_attempts=${pollAttempts} final_task=${JSON.stringify(task).slice(0, 1200)}`);
           let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
           if (!outcome.ok && targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(outcome, task, publishRes)) {
-            const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, accountKey, 'br_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
-            if (fallback?.ok) {
-              if (targetInputs.length === 1 && Number(fallback.global_item_id) !== Number(global_item_id)) {
-                fallback.original_global_item_id = global_item_id;
-                fallback.original_global_item_cleanup = await cleanupGlobalItemBestEffort(r, global_item_id, accountKey);
-              }
-              outcome = fallback;
-            } else {
-              outcome = { ...markBrOptionCrossuploadBlocked(outcome, task, publishRes), br_single_then_global_option_fallback: fallback };
-            }
+            const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, 'br_existing_global_crossupload_task_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+            outcome = retryOutcome?.ok
+              ? retryOutcome
+              : markBrOptionCrossuploadBlocked({ ...outcome, minimal_item_retry: retryOutcome }, task, publishRes, { global_item_id, minimal_item_retry: retryOutcome });
           }
           if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldRetryMinimalPublish(outcome, task, publishRes)) {
             const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
@@ -4993,7 +4804,7 @@ Deno.serve(async (req) => {
             if (retryOutcome?.ok) outcome = retryOutcome;
             else (outcome as any).tw_minimal_item_retry = retryOutcome;
           }
-          // BR-only: if still failing after fallback retries, re-issue create_publish_task once more
+          // BR-only: if still failing and no minimal retry ran, re-issue create_publish_task for the same global_item_id once more.
           if (!outcome.ok && targetRegion === 'BR' && !(outcome as any).minimal_item_retry) {
             try {
               stage_logs.push('BR retry: re-creating publish_task');
@@ -5019,9 +4830,7 @@ Deno.serve(async (req) => {
       });
       const reconciledResults = await reconcilePublishResultsWithPublishedList(global_item_id, targetInputs, results, accountKey, r, stage_logs);
       const responseResults = reconciledResults.map((row) => ({ account_key: accountKey, ...row }));
-      const fallbackGlobalItemId = responseResults.find((row: any) => row?.br_single_then_global_option_fallback && row?.global_item_id)?.global_item_id;
-      const responseGlobalItemId = fallbackGlobalItemId || global_item_id;
-      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id: responseGlobalItemId, original_global_item_id: fallbackGlobalItemId ? global_item_id : undefined, stage_logs, regional_global_price_adjustments: regionalGlobalPriceAdjustments, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, publishable_shops, publishable_status });
+      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id, stage_logs, regional_global_price_adjustments: regionalGlobalPriceAdjustments, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, publishable_shops, publishable_status });
       }); // end withPublishRequestId for register_cbsc
     }
     if (action === 'item_info') {

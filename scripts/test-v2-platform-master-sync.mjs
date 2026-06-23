@@ -25,6 +25,9 @@ assertIncludes(html, 'platformApplyJoomMasterSync', 'Joom executor');
 assertIncludes(html, 'platformApplyQoo10MasterSync', 'Qoo10 executor');
 assertIncludes(html, 'rshBuildLayeredCoverDataUrl', 'Shopee layered representative image upload');
 assertIncludes(html, 'platformShopeeUploadProductImageRefs', 'Shopee product image ref uploader');
+assertIncludes(html, 'platformApplyShopeeOptionImageSync', 'Shopee option image sync executor');
+assertIncludes(html, 'platformShopeeBuildOptionImageAssignments', 'Shopee option image assignment mapper');
+assertIncludes(html, 'verify_shop_option_images_after_update', 'Shopee option image readback verification');
 assertIncludes(html, 'platformMasterSyncJoomVariantImages(group)', 'Joom variant image payload');
 assertIncludes(html, 'edit-image', 'Qoo10 representative image update');
 assertIncludes(html, 'edit-multi-image', 'Qoo10 detail image update');
@@ -46,11 +49,27 @@ if (shopeeApplyStart < 0 || shopeeApplyEnd <= shopeeApplyStart) {
   throw new Error('Shopee master sync executor block missing');
 }
 const shopeeApplyBlock = html.slice(shopeeApplyStart, shopeeApplyEnd);
-if (shopeeApplyBlock.includes('update_shop_item_description') || shopeeApplyBlock.includes('update_shop_tier_variation')) {
-  throw new Error('Shopee master sync must update Global Product only; shop-level repair belongs in a separate workflow');
+if (shopeeApplyBlock.includes('update_shop_item_description')) {
+  throw new Error('Shopee master sync must not repair shop-level descriptions; Global Product owns descriptions');
 }
 if (!shopeeApplyBlock.includes("callBridgeMutation('update_global_item'")) {
   throw new Error('Shopee master sync must call update_global_item');
+}
+if (!shopeeApplyBlock.includes('platformApplyShopeeOptionImageSync')) {
+  throw new Error('Shopee master sync must call shop-level option image sync because Global Product update has no option-image field');
+}
+
+const shopeeOptionImageSyncStart = html.indexOf('async function platformApplyShopeeOptionImageSync');
+const shopeeOptionImageSyncEnd = html.indexOf('async function platformApplyShopeeMasterSync', shopeeOptionImageSyncStart);
+if (shopeeOptionImageSyncStart < 0 || shopeeOptionImageSyncEnd <= shopeeOptionImageSyncStart) {
+  throw new Error('Shopee option image sync block missing');
+}
+const shopeeOptionImageSyncBlock = html.slice(shopeeOptionImageSyncStart, shopeeOptionImageSyncEnd);
+if (!shopeeOptionImageSyncBlock.includes("callBridgeMutation('update_shop_tier_variation'")) {
+  throw new Error('Shopee option image sync must use update_shop_tier_variation');
+}
+if (!shopeeOptionImageSyncBlock.includes('platformShopeeBuildTierImageUpdatePayload')) {
+  throw new Error('Shopee option image sync must preserve current tier payload IDs while injecting image IDs');
 }
 
 const shopeeUploadStart = html.indexOf('async function platformShopeeUploadImageRef');

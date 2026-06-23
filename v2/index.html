@@ -2621,7 +2621,7 @@
 <header>
   <div>
     <h1>shopee-dashboard v2<span class="badge-krsc">KRSC</span></h1>
-    <div class="subhead">Global Product API only — shop-level API blocked</div>
+    <div class="subhead">Global Product sync + shop-level updates</div>
   </div>
   <div id="conn-status" class="status">connecting...</div>
 </header>
@@ -2713,7 +2713,7 @@
           <h2>상품 등록 워크벤치</h2>
           <p>왼쪽에서 등록 방식을 선택하고, 오른쪽에서 해당 작업만 집중해서 완료합니다.</p>
         </div>
-        <span class="pill">Global Product API only</span>
+        <span class="pill">Global Product + shop sync</span>
       </div>
 
       <div class="register-workbench">
@@ -5685,6 +5685,7 @@ LEGACY END -->
     }),
   });
   const SHOPEE_PLATFORM_ACTIVE_REGIONS = Object.freeze(['SG', 'TW', 'TH', 'MY', 'PH', 'BR']);
+  const SHOPEE_BANNED_SHOP_IDS = new Set(['1002269093']);
   const SHOPEE_PLATFORM_EXCLUDED_REGIONS = Object.freeze([
     { region: 'VN', reason: 'out of scope' },
     { region: 'MX', reason: 'out of scope' },
@@ -9177,7 +9178,16 @@ LEGACY END -->
       .map((row) => ({
         row,
         sku: String(row?.sku || '').trim(),
-        imageUrl: String(row?.shopee_option_image_url || row?.ebay_variation_image_url || '').trim(),
+        imageUrl: String(
+          row?.shopee_option_image_url
+          || row?._custom_option_image_url
+          || row?._main_image
+          || row?.main_image
+          || row?._wms_image_url
+          || row?.image_url
+          || row?.ebay_variation_image_url
+          || ''
+        ).trim(),
       }))
       .filter((entry) => entry.sku && entry.imageUrl);
   }
@@ -9256,7 +9266,7 @@ LEGACY END -->
 
     if (platform === 'shopee') {
       if (!platformMasterSyncShopeeGlobalItemId(group)) errors.push('Shopee global_item_id를 찾지 못했습니다.');
-      warnings.push('Shopee: 설명/대표/상세 이미지는 Global Product만 수정합니다. 옵션 이미지는 공식 Global Product update API에 필드가 없어 이 버튼에서 직접 수정하지 않습니다.');
+      warnings.push('Shopee: 설명/대표/상세 이미지는 Global Product에 적용하고, 옵션 이미지는 게시된 각 shop 상품에 update_tier_variation으로 적용합니다.');
     } else if (platform === 'joom') {
       if (!platformGroupSku(group)) errors.push('Joom 업데이트에 사용할 SKU를 찾지 못했습니다.');
       warnings.push('Joom: 상품명/설명/대표 이미지/상세 이미지와 SKU가 매칭되는 옵션 이미지를 /products/update로 적용합니다.');
@@ -9277,7 +9287,7 @@ LEGACY END -->
     const detailCount = platformMasterSyncDetailImages(rows).length;
     const optionCount = platformMasterSyncOptionImageRows(group).length;
     const optionText = platform === 'shopee'
-      ? (optionCount ? 'Global update API 없음' : '없음')
+      ? (optionCount ? `${optionCount}장 · shop-level update` : '없음')
       : `${optionCount}장`;
     const description = platform === 'shopee'
       ? platformMasterSyncShopeeDescription(group)
@@ -9591,6 +9601,7 @@ LEGACY END -->
       const shopId = Number(token.shop_id || token.shopId);
       if (!wanted.has(region)) return;
       if (!Number.isFinite(shopId) || shopId <= 0) return;
+      if (SHOPEE_BANNED_SHOP_IDS.has(String(shopId))) return;
       shops.push({
         shop_id: shopId,
         shop_region: region,
@@ -9648,10 +9659,60 @@ LEGACY END -->
     const rows = rshSortedProducts(group?.rows || []);
     const ids = [];
     for (const row of rows) {
-      const imageUrl = String(row?.shopee_option_image_url || '').trim();
+      const imageUrl = String(row?.shopee_option_image_url || row?._custom_option_image_url || row?._main_image || row?.main_image || row?._wms_image_url || row?.image_url || '').trim();
       ids.push(imageUrl ? await platformShopeeUploadImageUrl(region, imageUrl, runId, 'v2-platform-master-option-image') : '');
     }
     return ids;
+  }
+
+  function platformShopeeParseTierIndex(value) {
+    if (Array.isArray(value)) return value.map((entry) => Number(entry)).filter((entry) => Number.isFinite(entry));
+    if (typeof value === 'string' && value.trim()) {
+      try {
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) return parsed.map((entry) => Number(entry)).filter((entry) => Number.isFinite(entry));
+      } catch (_) {
+        return value.split(',').map((entry) => Number(entry.trim())).filter((entry) => Number.isFinite(entry));
+      }
+    }
+    return [];
+  }
+
+  function platformShopeeGlobalModelId(row) {
+    return String(
+      row?.global_model_id
+      || row?.shopee_global_model_id
+      || row?.shopee_global_model_raw_payload?.global_model_id
+      || row?.raw_payload?.global_model_id
+      || ''
+    ).trim();
+  }
+
+  function platformShopeeBuildOptionImageAssignments(group, globalModels) {
+    const byGlobalModelId = new Map();
+    sgArray(globalModels).forEach((model) => {
+      const id = String(model?.global_model_id || model?.model_id || '').trim();
+      const tierIndex = platformShopeeParseTierIndex(model?.tier_index);
+      if (id && tierIndex.length) byGlobalModelId.set(id, tierIndex);
+    });
+    return platformMasterSyncOptionImageRows(group)
+      .map((entry) => {
+        const row = entry.row || {};
+        let tierIndex = platformShopeeParseTierIndex(row.variation_tier_index || row.tier_index || row.shopee_global_model_raw_payload?.tier_index);
+        const globalModelId = platformShopeeGlobalModelId(row);
+        if (!tierIndex.length && globalModelId && byGlobalModelId.has(globalModelId)) {
+          tierIndex = byGlobalModelId.get(globalModelId);
+        }
+        const optionIndex = Number(tierIndex[0]);
+        return {
+          ...entry,
+          globalModelId,
+          tierIndex,
+          optionIndex,
+          optionName: String(row.option_name || row.member || row.variation_value || '').trim(),
+        };
+      })
+      .filter((entry) => Number.isFinite(entry.optionIndex) && entry.optionIndex >= 0 && entry.imageUrl);
   }
 
   function platformShopeeBuildTierImageUpdatePayload(shopPayload, optionImageIds) {
@@ -9659,7 +9720,11 @@ LEGACY END -->
     if (!model_list.length) return { ok: false, error: 'shop model_list is missing' };
     const standardSource = Array.isArray(shopPayload?.standardise_tier_variation) ? shopPayload.standardise_tier_variation : [];
     if (!standardSource.length) return { ok: false, error: 'shop standardise_tier_variation IDs are missing' };
-    const imageIds = Array.isArray(optionImageIds) ? optionImageIds : [];
+    const imageIdForOption = (optionIndex, option) => {
+      if (optionImageIds instanceof Map && optionImageIds.has(Number(optionIndex))) return String(optionImageIds.get(Number(optionIndex)) || '').trim();
+      if (Array.isArray(optionImageIds) && optionImageIds[optionIndex]) return String(optionImageIds[optionIndex] || '').trim();
+      return String(option?.image_id || option?.image?.image_id || '').trim();
+    };
     let injected = 0;
     const standardise_tier_variation = standardSource.map((tier, tierIndex) => {
       const nextTier = {
@@ -9676,10 +9741,11 @@ LEGACY END -->
           variation_option_id: Number(option?.variation_option_id),
           variation_option_name: String(option?.variation_option_name || option?.option || '').trim(),
         };
-        const imageId = tierIndex === 0 ? String(imageIds[optionIndex] || '').trim() : String(option?.image_id || option?.image?.image_id || '').trim();
+        const imageId = tierIndex === 0 ? imageIdForOption(optionIndex, option) : String(option?.image_id || option?.image?.image_id || '').trim();
         if (imageId) {
           nextOption.image_id = imageId;
-          if (tierIndex === 0) injected += 1;
+          if (tierIndex === 0 && optionImageIds instanceof Map && optionImageIds.has(Number(optionIndex))) injected += 1;
+          else if (tierIndex === 0 && Array.isArray(optionImageIds) && optionImageIds[optionIndex]) injected += 1;
         }
         nextTier.variation_option_list.push(nextOption);
       });
@@ -9692,6 +9758,113 @@ LEGACY END -->
     if (!standardise_tier_variation.length) return { ok: false, error: 'standardise_tier_variation payload is empty' };
     if (!injected) return { ok: true, skipped: true, message: 'No option image_id to apply' };
     return { ok: true, payload: { model_list, standardise_tier_variation }, injected };
+  }
+
+  function platformShopeePublishedItemsForRegions(published, syncShops, regions) {
+    const byShopId = new Map((syncShops || []).map((shop) => [String(shop.shop_id), String(shop.shop_region || '').toUpperCase()]));
+    const wanted = new Set((regions || []).map((region) => String(region || '').toUpperCase()));
+    return (published || [])
+      .map((item) => {
+        const shopId = Number(item.shop_id || item.shopId || 0);
+        const region = String(item.shop_region || item.region || byShopId.get(String(shopId)) || '').toUpperCase();
+        const itemId = Number(item.item_id || item.itemId || 0);
+        return { shopId, region, itemId };
+      })
+      .filter((item) => (
+        wanted.has(item.region)
+        && Number.isFinite(item.itemId)
+        && item.itemId > 0
+        && !SHOPEE_BANNED_SHOP_IDS.has(String(item.shopId))
+      ));
+  }
+
+  function platformShopeeOptionImageIdsFromShopPayload(shopPayload, optionIndexes) {
+    const wanted = new Set((optionIndexes || []).map((entry) => Number(entry)).filter((entry) => Number.isFinite(entry)));
+    const tier = Array.isArray(shopPayload?.standardise_tier_variation) ? shopPayload.standardise_tier_variation[0] : null;
+    const options = Array.isArray(tier?.variation_option_list) ? tier.variation_option_list : [];
+    const out = new Map();
+    options.forEach((option, index) => {
+      if (!wanted.has(index)) return;
+      const imageId = String(option?.image_id || option?.image?.image_id || '').trim();
+      if (imageId) out.set(index, imageId);
+    });
+    return out;
+  }
+
+  async function platformApplyShopeeOptionImageSync(globalItemId, group, regions, syncShops, runId) {
+    const resultRows = [];
+    const globalModelJson = await shopeeEnglishRestoreFetch('global_model_list', { region: 'SG', global_item_id: String(globalItemId) });
+    const globalModels = sgExtractModelList(globalModelJson);
+    const assignments = platformShopeeBuildOptionImageAssignments(group, globalModels);
+    if (!assignments.length) {
+      return { ok: true, skipped: true, results: [{ action: 'update_shop_option_images', ok: true, message: 'No master option images with tier mapping' }] };
+    }
+
+    const imageIdByUrl = new Map();
+    const imageIdByOptionIndex = new Map();
+    for (const assignment of assignments) {
+      if (!imageIdByUrl.has(assignment.imageUrl)) {
+        imageIdByUrl.set(assignment.imageUrl, await platformShopeeUploadImageRef('SG', { imageUrl: assignment.imageUrl, layered: false }, runId, 'v2-platform-master-option-image'));
+      }
+      imageIdByOptionIndex.set(Number(assignment.optionIndex), imageIdByUrl.get(assignment.imageUrl));
+    }
+    resultRows.push({
+      action: 'upload_option_images',
+      ok: true,
+      message: `${imageIdByOptionIndex.size} option image ids prepared`,
+      assignments,
+    });
+
+    const publishedJson = await shopeeEnglishRestoreFetch('published_list', { region: 'SG', global_item_id: String(globalItemId) });
+    const publishedTargets = platformShopeePublishedItemsForRegions(readyPublishedItemsFromResponse(publishedJson), syncShops, regions);
+    if (!publishedTargets.length) {
+      return { ok: false, results: [...resultRows, { action: 'published_list', ok: false, message: 'No published shop items for selected regions' }] };
+    }
+
+    for (const target of publishedTargets) {
+      const label = `${target.region}/${target.itemId}`;
+      const shopModelJson = await shopeeEnglishRestoreFetch('shop_model_list', { region: target.region, item_id: String(target.itemId) });
+      const shopPayload = shopeeEnglishRestorePayload(shopModelJson);
+      const updatePayload = platformShopeeBuildTierImageUpdatePayload(shopPayload, imageIdByOptionIndex);
+      if (!updatePayload.ok) {
+        resultRows.push({ target: label, action: 'build_shop_option_image_payload', ok: false, message: updatePayload.error || 'payload build failed' });
+        continue;
+      }
+      if (updatePayload.skipped) {
+        resultRows.push({ target: label, action: 'update_shop_option_images', ok: true, message: updatePayload.message || 'skipped' });
+        continue;
+      }
+      const updateJson = await callBridgeMutation('update_shop_tier_variation', {
+        region: target.region,
+        actor: 'v2-platform-master-option-image',
+        run_id: runId,
+        item_id: target.itemId,
+        ...updatePayload.payload,
+      });
+      const updateOk = bridgeResultOk(updateJson);
+      resultRows.push({ target: label, action: 'update_shop_option_images', ok: updateOk, message: bridgeResultMessage(updateJson) });
+      if (!updateOk) continue;
+
+      let verified = false;
+      let actual = new Map();
+      const expectedIndexes = Array.from(imageIdByOptionIndex.keys());
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 2500 : 3500));
+        const verifyJson = await shopeeEnglishRestoreFetch('shop_model_list', { region: target.region, item_id: String(target.itemId) });
+        actual = platformShopeeOptionImageIdsFromShopPayload(shopeeEnglishRestorePayload(verifyJson), expectedIndexes);
+        verified = expectedIndexes.every((optionIndex) => actual.get(optionIndex) === imageIdByOptionIndex.get(optionIndex));
+        if (verified) break;
+      }
+      resultRows.push({
+        target: label,
+        action: 'verify_shop_option_images_after_update',
+        ok: verified,
+        message: verified ? 'image_id match' : `expected ${JSON.stringify(Object.fromEntries(imageIdByOptionIndex))}, got ${JSON.stringify(Object.fromEntries(actual))}`,
+      });
+    }
+
+    const failed = resultRows.filter((row) => row.ok === false);
+    return { ok: failed.length === 0, results: resultRows };
   }
 
   async function platformApplyShopeeMasterSync(group) {
@@ -9728,6 +9901,13 @@ LEGACY END -->
       });
       add({ action: 'update_global_item', ok: bridgeResultOk(globalJson), message: bridgeResultMessage(globalJson) });
       if (!bridgeResultOk(globalJson)) throw new Error(bridgeResultMessage(globalJson));
+    }
+
+    const optionImageSync = await platformApplyShopeeOptionImageSync(globalItemId, group, regions, syncShops, runId);
+    (optionImageSync.results || []).forEach((row) => add(row));
+    if (!optionImageSync.ok) {
+      const firstError = (optionImageSync.results || []).find((row) => row.ok === false);
+      throw new Error(firstError?.message || 'Shopee option image sync failed');
     }
 
     await platformTouchMasterSyncCheckpoint('shopee', group, regions);
@@ -11597,6 +11777,7 @@ LEGACY END -->
                           <input data-master-option-image-file type="file" accept="image/*">
                         </label>
                         <input data-field="shopee_option_image_url" type="hidden" value="${text(optionImageUrl)}">
+                        <button type="button" data-clear-option-image="1" class="ghost-btn tiny" ${optionImageUrl ? '' : 'disabled'}>Remove</button>
                         <div data-option-image-file-name="1" class="pl-master-edit-option-file-name">${optionImageUrl ? '업로드 이미지 사용 중' : '선택된 파일 없음'}</div>
                       </div>
                     </div>
@@ -11632,10 +11813,12 @@ LEGACY END -->
     const input = tr?.querySelector('[data-field="shopee_option_image_url"]');
     const preview = tr?.querySelector('[data-option-image-preview]');
     const fileName = tr?.querySelector('[data-option-image-file-name]');
+    const clearBtn = tr?.querySelector('[data-clear-option-image="1"]');
     if (!preview) return;
     const url = String(input?.value || '').trim();
     preview.innerHTML = plMasterEditRenderOptionImagePreview(url);
     if (fileName) fileName.textContent = url ? '업로드 이미지 사용 중' : '선택된 파일 없음';
+    if (clearBtn) clearBtn.disabled = !url;
     const rows = plGroupRowsById(document.getElementById('pl-master-edit-modal')?.dataset.productGroupId || '');
     const renderedRows = plMasterEditRowsFromModal(rows);
     if (renderedRows.length) plMasterEditRenderImageSummary(renderedRows);
@@ -11798,6 +11981,7 @@ LEGACY END -->
     document.querySelectorAll('#pl-master-edit-options tr[data-product-id]').forEach((tr) => {
       const input = tr.querySelector('[data-field="shopee_option_image_url"]');
       const fileInput = tr.querySelector('[data-master-option-image-file]');
+      const clearBtn = tr.querySelector('[data-clear-option-image="1"]');
       const skuInput = tr.querySelector('[data-field="sku"]');
       const optionInput = tr.querySelector('[data-field="option_name"]');
       const autoSkuBtn = tr.querySelector('[data-auto-sku-apply="1"]');
@@ -11812,6 +11996,10 @@ LEGACY END -->
         plMasterEditRefreshSkuInput(tr, true);
       });
       input?.addEventListener('input', () => plMasterEditRefreshOptionImagePreview(tr));
+      clearBtn?.addEventListener('click', () => {
+        if (input) input.value = '';
+        plMasterEditRefreshOptionImagePreview(tr);
+      });
       fileInput?.addEventListener('change', (e) => {
         const file = e.target.files && e.target.files[0];
         if (!file) return;
@@ -12427,8 +12615,6 @@ LEGACY END -->
   // Step 1c (plan v2.2 §E.1): 5-platform LED + popover.
   // Rollup row shape: { master_product_id, platform, listed_count,
   // pending_count, error_count, total_count, per_shop_detail }.
-  const SHOPEE_BANNED_SHOP_IDS = new Set(['1002269093']);
-
   function rollupFor(productId, platform) {
     return (state.rollups || []).find((r) =>
       String(r.master_product_id) === String(productId) && r.platform === platform);

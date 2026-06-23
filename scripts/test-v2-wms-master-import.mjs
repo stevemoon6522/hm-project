@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import assertModule from 'node:assert/strict';
 
 const root = process.cwd();
 const html = readFileSync(join(root, 'v2/index.html'), 'utf8');
@@ -13,6 +14,22 @@ const arrayGuardMigration = readFileSync(join(migrationsDir, '202606160003_wms_j
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
+}
+
+function extractFunction(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  if (start < 0) throw new Error(`Missing function ${name}`);
+  const open = source.indexOf('{', start);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  throw new Error(`Could not parse function ${name}`);
 }
 
 for (const token of [
@@ -115,6 +132,56 @@ assert(
     && html.includes('mrWmsMergeUniqueRows(rows.concat(bundleRows))'),
   'WMS preview loading must re-fetch SET rows linked to a barcode component group',
 );
+assert(
+  html.includes('mrWmsSetAggregateForRow')
+    && html.includes('mrWmsApplySetAggregates')
+    && html.includes('mrWmsBundleComponentQuantity'),
+  'WMS SET preview must include explicit bundle aggregate helpers',
+);
+
+{
+  const helperNames = [
+    'mrWmsCostCandidate',
+    'mrWmsBundleComponents',
+    'mrWmsIsBundleRow',
+    'mrWmsBundleComponentSkus',
+    'mrWmsBundleComponentQuantity',
+    'mrWmsBundleComponentQuantities',
+    'mrWmsPositiveNumber',
+    'mrWmsCurrentSourcing',
+    'mrWmsCurrentCost',
+    'mrWmsCurrentWeight',
+    'mrWmsSetAggregateForRow',
+    'mrWmsApplySetAggregates',
+    'mrWmsInventorySort',
+    'mrWmsMergeUniqueRows',
+  ];
+  const helperSource = helperNames.map((name) => extractFunction(html, name)).join('\n');
+  const helpers = Function(`${helperSource}; return { ${helperNames.join(', ')} };`)();
+  const rows = [
+    { id: 'set', sku: 'M4-AAA-SET', version: '2 VER SET', member: '', cost_krw: 999, weight_g: 1, bundle_components: [{ sku: 'M4-AAA-A' }, { sku: 'M4-AAA-B', quantity: 2 }] },
+    { id: 'a', sku: 'M4-AAA-A', version: 'A', member: '', _sourcing_price: 1000, _cost_krw: 1300, _weight_g: 100 },
+    { id: 'b', sku: 'M4-AAA-B', version: 'B', member: '', _sourcing_price: 1500, _cost_krw: 1800, _weight_g: 120 },
+  ];
+  const sortedSkus = helpers.mrWmsMergeUniqueRows(rows).map((row) => row.sku);
+  assertModule.deepEqual(sortedSkus, ['M4-AAA-A', 'M4-AAA-B', 'M4-AAA-SET'], 'WMS inventory sorting must keep SET rows last');
+  const aggregate = helpers.mrWmsSetAggregateForRow(rows[0], rows);
+  assertModule.deepEqual(
+    {
+      complete: aggregate.complete,
+      component_count: aggregate.component_count,
+      sourcing_price: aggregate.sourcing_price,
+      cost_krw: aggregate.cost_krw,
+      weight_g: aggregate.weight_g,
+    },
+    { complete: true, component_count: 3, sourcing_price: 4000, cost_krw: 4900, weight_g: 340 },
+    'WMS SET aggregate must multiply component quantities and sum purchase price, settlement price, and weight',
+  );
+  helpers.mrWmsApplySetAggregates(rows);
+  assertModule.equal(rows[0]._sourcing_price, 4000, 'SET purchase price must be written back to preview row');
+  assertModule.equal(rows[0]._cost_krw, 4900, 'SET settlement price must be written back to preview row');
+  assertModule.equal(rows[0]._weight_g, 340, 'SET weight must be written back to preview row');
+}
 
 for (const token of [
   "'wms_inventory'",

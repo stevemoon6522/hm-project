@@ -28847,7 +28847,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }
         groupMap.get(key).rows.push(row);
       }
-      return Array.from(groupMap.values());
+      const groups = Array.from(groupMap.values());
+      groups.forEach((group) => {
+        if ((group.rows || []).some(row => row?._source_kind === 'wms_inventory' || row?.observed?.source === 'wms_inventory' || mrWmsIsBundleRow(row))) {
+          group.rows.sort(mrWmsInventorySort);
+        }
+      });
+      return groups;
     }
 
     // mrBuildTierIndex — compute tier_index[] for an option row inside a card group.
@@ -29314,22 +29320,119 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     function mrWmsBundleComponents(row) {
-      const raw = row?.bundle_components ?? row?.bundleComponents;
+      const raw = row?.bundle_components ?? row?.bundleComponents ?? row?._wms_bundle_components;
       return Array.isArray(raw) ? raw : [];
     }
 
     function mrWmsIsBundleRow(row) {
-      return mrWmsBundleComponents(row).length > 0;
+      return row?._wms_is_bundle === true || mrWmsBundleComponents(row).length > 0;
     }
 
     function mrWmsBundleComponentSkus(row) {
       return mrWmsBundleComponents(row)
-        .map(c => String(c?.sku || '').trim())
+        .map(c => String((typeof c === 'string' ? c : (c?.sku || c?.component_sku || c?.item_sku || c?.barcode || '')) || '').trim())
         .filter(Boolean);
     }
 
+    function mrWmsBundleComponentQuantity(component) {
+      if (component == null || typeof component !== 'object') return 1;
+      const candidates = [component.quantity, component.qty, component.count, component.units, component.amount, component.ea];
+      for (const value of candidates) {
+        const n = Number(value);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return 1;
+    }
+
+    function mrWmsBundleComponentQuantities(row) {
+      const quantities = new Map();
+      mrWmsBundleComponents(row).forEach((component) => {
+        const sku = String((typeof component === 'string' ? component : (component?.sku || component?.component_sku || component?.item_sku || component?.barcode || '')) || '').trim();
+        if (!sku) return;
+        quantities.set(sku, (quantities.get(sku) || 0) + mrWmsBundleComponentQuantity(component));
+      });
+      return quantities;
+    }
+
+    function mrWmsPositiveNumber(...values) {
+      for (const value of values) {
+        const n = Number(value);
+        if (Number.isFinite(n) && n > 0) return n;
+      }
+      return 0;
+    }
+
+    function mrWmsCurrentSourcing(row) {
+      return mrWmsPositiveNumber(row?._sourcing_price, row?.sourcing_price, mrWmsCostCandidate(row));
+    }
+
+    function mrWmsCurrentCost(row) {
+      return mrWmsPositiveNumber(row?._cost_krw, row?.cost_krw, mrWmsCostCandidate(row));
+    }
+
+    function mrWmsCurrentWeight(row) {
+      return mrWmsPositiveNumber(row?._weight_g, row?.weight_g, row?.weight);
+    }
+
+    function mrWmsSetAggregateForRow(bundleRow, rows) {
+      const quantities = mrWmsBundleComponentQuantities(bundleRow);
+      if (!quantities.size) return null;
+      const bySku = new Map();
+      (rows || []).forEach((row) => {
+        const sku = String(row?._sku || row?.sku || '').trim();
+        if (sku) bySku.set(sku, row);
+      });
+      let sourcingPrice = 0;
+      let costKrw = 0;
+      let weightG = 0;
+      let componentCount = 0;
+      const missing = [];
+      quantities.forEach((qty, sku) => {
+        const componentRow = bySku.get(sku);
+        if (!componentRow || componentRow === bundleRow) {
+          missing.push(sku);
+          return;
+        }
+        componentCount += qty;
+        sourcingPrice += mrWmsCurrentSourcing(componentRow) * qty;
+        costKrw += mrWmsCurrentCost(componentRow) * qty;
+        weightG += mrWmsCurrentWeight(componentRow) * qty;
+      });
+      return {
+        complete: missing.length === 0,
+        missing_components: missing,
+        component_count: componentCount,
+        sourcing_price: Math.round(sourcingPrice),
+        cost_krw: Math.round(costKrw),
+        weight_g: Math.round(weightG),
+      };
+    }
+
+    function mrWmsApplySetAggregates(rows) {
+      let changed = false;
+      (rows || []).forEach((row) => {
+        if (!mrWmsIsBundleRow(row)) return;
+        const aggregate = mrWmsSetAggregateForRow(row, rows);
+        row._wms_set_aggregate = aggregate;
+        row._wms_set_missing_components = aggregate?.missing_components || [];
+        row._wms_set_component_count = aggregate?.component_count || 0;
+        if (!aggregate || !aggregate.complete) return;
+        row.sourcing_price = aggregate.sourcing_price;
+        row._sourcing_price = aggregate.sourcing_price;
+        row.cost_krw = aggregate.cost_krw;
+        row._cost_krw = aggregate.cost_krw;
+        row.weight_g = aggregate.weight_g;
+        row._weight_g = aggregate.weight_g;
+        changed = true;
+      });
+      return changed;
+    }
+
     function mrWmsInventorySort(a, b) {
-      return String(a?.version || '').localeCompare(String(b?.version || ''))
+      const aSet = mrWmsIsBundleRow(a) ? 1 : 0;
+      const bSet = mrWmsIsBundleRow(b) ? 1 : 0;
+      return (aSet - bSet)
+        || String(a?.version || '').localeCompare(String(b?.version || ''))
         || String(a?.member || '').localeCompare(String(b?.member || ''))
         || String(a?.sku || '').localeCompare(String(b?.sku || ''));
     }
@@ -29592,6 +29695,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         row._linked_master_product_id = duplicateInfo?.sourceRecord?.linked_master_product_id || row._linked_master_product_id || null;
         if (row.status === 'failed' && !row.error) row.status = 'preview';
       });
+      mrWmsApplySetAggregates(rows);
     }
 
     async function mrWmsLoadStaronemallForGroup(group, inputEl, buttonEl) {
@@ -29930,7 +30034,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return { tierNames: ['Option'], twoAxis: false };
     }
 
-    function mrWmsToPreviewRow(row, tierMeta, lifecycle, releaseDate, observedValues, sourceMeta, duplicateSignals) {
+    function mrWmsToPreviewRow(row, tierMeta, lifecycle, releaseDate, observedValues, sourceMeta, duplicateSignals, allRows = []) {
       const version = String(row.version || '').trim();
       const member = String(row.member || '').trim();
       const option0 = tierMeta.twoAxis ? version : (version || member || row.sku || 'Option');
@@ -29946,8 +30050,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const detailImages = mrJoomNormalizeImageList(mrObservedArray(staroneObserved.detail_image_urls), staronemallUrl || window.location.href);
       const observedPrice = Number(staroneObserved.price_krw || 0);
       const wmsCost = mrWmsCostCandidate(row);
-      const sourcingPrice = observedPrice > 0 ? observedPrice : wmsCost;
-      const costKrw = observedPrice > 0 ? rshSettlementFromSourcing(observedPrice) : wmsCost;
+      const isWmsBundle = mrWmsIsBundleRow(row);
+      const setAggregate = isWmsBundle ? mrWmsSetAggregateForRow(row, allRows) : null;
+      const setAggregateComplete = !!(setAggregate && setAggregate.complete);
+      const sourcingPrice = setAggregateComplete ? setAggregate.sourcing_price : (observedPrice > 0 ? observedPrice : wmsCost);
+      const costKrw = setAggregateComplete ? setAggregate.cost_krw : (observedPrice > 0 ? rshSettlementFromSourcing(observedPrice) : wmsCost);
+      const weightG = setAggregateComplete ? setAggregate.weight_g : Number(row.weight_g || 0);
       const observed = Object.assign({
         title,
         artist: row.idol || '',
@@ -30009,7 +30117,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         _skuLocked: true,
         _wms_inventory_id: row.inventory_id || null,
         _wms_bundle_components: mrWmsBundleComponents(row),
-        _wms_is_bundle: mrWmsIsBundleRow(row),
+        _wms_is_bundle: isWmsBundle,
+        _wms_set_aggregate: setAggregate,
+        _wms_set_component_count: setAggregate?.component_count || 0,
+        _wms_set_missing_components: setAggregate?.missing_components || [],
         _source_kind: 'wms_inventory',
         _source_record_status: sourceMeta?.status || row.source_status || '',
         _linked_master_product_id: sourceMeta?.linked_master_product_id || row.linked_master_product_id || null,
@@ -30022,8 +30133,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         _cost_krw: costKrw,
         sourcing_price: sourcingPrice,
         cost_krw: costKrw,
-        weight_g: Number(row.weight_g || 0),
-        _weight_g: Number(row.weight_g || 0),
+        weight_g: weightG,
+        _weight_g: weightG,
         _main_image: mainImages[0] || row.image_url || '',
         _extra_images: detailImages.slice(),
         _detail_image_urls: detailImages,
@@ -30055,7 +30166,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           p_observed: null,
         });
         if (error) throw error;
-        const rows = Array.isArray(data) ? data : [];
+        const rows = mrWmsMergeUniqueRows(Array.isArray(data) ? data : []);
         if (!rows.length) throw new Error('No WMS inventory rows returned.');
         const tierMeta = mrWmsTierMeta(rows);
         const sourceRecordId = rows[0]?.source_record_id;
@@ -30068,7 +30179,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           null,
           duplicateInfo.sourceRecord,
           duplicateInfo.signals,
+          rows,
         ));
+        mrWmsApplySetAggregates(MR_PREV);
         MR_PROMOTE_DESELECTED.clear();
         await mrLoadExistingSkus();
         mrSetLifecycleValue(lifecycle);
@@ -30859,6 +30972,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (any(row => !(Number(row._weight_g || row.weight_g || 0) > 0))) blockers.push('Weight is missing or zero.');
       if (any(row => !(Number(row._cost_krw || row.cost_krw || 0) > 0))) blockers.push('Cost is missing or zero.');
       if (any(row => !String(row._main_image || '').trim())) blockers.push('Main image is missing.');
+      const incompleteSet = rows.find(row => mrWmsIsBundleRow(row) && Array.isArray(row._wms_set_missing_components) && row._wms_set_missing_components.length > 0);
+      if (incompleteSet) blockers.push(`SET components missing in WMS preview: ${incompleteSet._wms_set_missing_components.join(', ')}`);
       if (lifecycle === 'pre_order' && !/^\d{4}-\d{2}-\d{2}$/.test(firstRow._qoo10_release_date || '')) {
         blockers.push('PRE ORDER requires Qoo10 release date.');
       }
@@ -30979,6 +31094,24 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
     }
 
+    function mrSyncWmsSetAggregateInputs(card, group) {
+      if (!mrIsWmsGroup(group)) return;
+      mrWmsApplySetAggregates(group.rows || []);
+      (group.rows || []).forEach((row) => {
+        if (!mrWmsIsBundleRow(row)) return;
+        const rowKey = mrRowKey(row);
+        const fields = [
+          [`[data-sourcing-row-key="${rowKey}"]`, row._sourcing_price],
+          [`[data-cost-row-key="${rowKey}"]`, row._cost_krw],
+          [`[data-weight-row-key="${rowKey}"]`, row._weight_g],
+        ];
+        fields.forEach(([selector, value]) => {
+          const input = card?.querySelector(selector);
+          if (input) input.value = Number(value || 0) > 0 ? String(value) : '';
+        });
+      });
+    }
+
     function mrRenderPreviewCards() {
       const wrap = $('mr-preview-cards');
       wrap.innerHTML = '';
@@ -30994,7 +31127,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       console.log('[mrRenderPreviewCards] groups:', groups.length, groups.map(g => ({ key: g.source_record_id, rows: g.rows.length, token: g.idempotency_token })));
 
       groups.forEach((group, gIdx) => {
-        const firstRow = group.rows[0] || {};
+        let firstRow = group.rows[0] || {};
         group.rows.forEach(row => {
           if (row._opt0 == null) row._opt0 = row.member || '';
           if (row._opt1 == null) row._opt1 = '';
@@ -31002,6 +31135,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           row._sku = mrComputeSku(row);
           row._product_name = mrMasterProductName(row);
         });
+        if (mrIsWmsGroup(group)) {
+          group.rows.sort(mrWmsInventorySort);
+          mrWmsApplySetAggregates(group.rows);
+          firstRow = group.rows[0] || firstRow;
+        }
         const cardStatus = group.rows.every(r => r.status === 'done') ? 'done'
           : group.rows.some(r => r.status === 'failed') ? 'failed'
           : group.rows.some(r => r.status === 'promoting') ? 'promoting'
@@ -31089,6 +31227,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           if (!(Number(row.cost_krw) > 0)) row.cost_krw = initialDefaultCost;
           if (!(Number(row._cost_krw) > 0)) row._cost_krw = Number(row.cost_krw || initialDefaultCost || 0);
         });
+        if (mrIsWmsGroup(group)) mrWmsApplySetAggregates(group.rows);
 
         const fieldGrid = el('div', { style: 'display:grid;grid-template-columns:repeat(3,1fr);gap:6px;' });
         const mkCardField = (label, key) => {
@@ -31133,6 +31272,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             if (sourcingInput) sourcingInput.value = nextSourcing ? String(nextSourcing) : '';
           });
           defCostInp.value = nextCost ? String(nextCost) : '';
+          mrSyncWmsSetAggregateInputs(card, group);
         });
         defSourcingLab.appendChild(defSourcingInp);
         defaultsRow.appendChild(defSourcingLab);
@@ -31153,6 +31293,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             }
             row._costTouched = true;
           });
+          mrSyncWmsSetAggregateInputs(card, group);
         });
         defCostLab.appendChild(defCostInp);
         defaultsRow.appendChild(defCostLab);
@@ -31160,7 +31301,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const defWLab = el('label', { style: 'display:flex;gap:3px;align-items:center;' });
         defWLab.appendChild(el('span', { style: 'color:var(--muted);' }, '무게(g)'));
         const defWInp = el('input', { type: 'number', min: '1', step: '1', style: 'font-size:12px;padding:3px 6px;width:75px;text-align:right;', value: String(firstRow.weight_g || '') });
-        defWInp.addEventListener('input', (e) => { firstRow.weight_g = Number(e.target.value) || 0; });
+        defWInp.addEventListener('input', (e) => {
+          firstRow.weight_g = Number(e.target.value) || 0;
+          firstRow._weight_g = firstRow.weight_g;
+          mrSyncWmsSetAggregateInputs(card, group);
+        });
         defWLab.appendChild(defWInp);
         defaultsRow.appendChild(defWLab);
 
@@ -31510,14 +31655,21 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             return wr;
           };
 
-          const mkNumField = (label, val, setter, w) => {
+          const mkNumField = (label, val, setter, w, options = {}) => {
             const wr = el('div', { style: 'display:flex;flex-direction:column;gap:1px;' });
             wr.appendChild(el('label', { style: 'font-size:10px;color:var(--muted);' }, label));
-            const inp = el('input', { type: 'number', min: '0', step: '1', style: `font-size:12px;padding:3px 6px;width:${w}px;text-align:right;`, value: String(val || '') });
-            inp.addEventListener('input', (e) => setter(Number(e.target.value) || 0));
+            const attrs = { type: 'number', min: '0', step: '1', style: `font-size:12px;padding:3px 6px;width:${w}px;text-align:right;`, value: String(val || '') };
+            if (options.disabled) attrs.disabled = 'disabled';
+            if (options.title) attrs.title = options.title;
+            const inp = el('input', attrs);
+            if (!options.disabled) inp.addEventListener('input', (e) => setter(Number(e.target.value) || 0));
             wr.appendChild(inp);
             return wr;
           };
+          const isWmsSetRow = mrIsWmsGroup(group) && mrWmsIsBundleRow(row);
+          const setAutoTitle = isWmsSetRow
+            ? `Calculated from ${Number(row._wms_set_component_count || 0).toLocaleString()} WMS SET component(s).`
+            : '';
 
           const axis0Name = group.tierNames[0] || '멤버';
           if (isSingleProduct) {
@@ -31592,16 +31744,28 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               const costInput = optRow.querySelector(`[data-cost-row-key="${rowKey}"]`);
               if (costInput) costInput.value = row._cost_krw ? String(row._cost_krw) : '';
             }
-          }, 90);
+            mrSyncWmsSetAggregateInputs(card, group);
+          }, 90, { disabled: isWmsSetRow, title: setAutoTitle });
           const sourcingInput = sourcingField.querySelector('input[type="number"]');
           if (sourcingInput) sourcingInput.dataset.sourcingRowKey = rowKey;
           optRow.appendChild(sourcingField);
 
-          const costField = mkNumField('정산가(KRW)', row._cost_krw, (v) => { row._cost_krw = v; row._costTouched = true; }, 90);
+          const costField = mkNumField('정산가(KRW)', row._cost_krw, (v) => {
+            row._cost_krw = v;
+            row._costTouched = true;
+            mrSyncWmsSetAggregateInputs(card, group);
+          }, 90, { disabled: isWmsSetRow, title: setAutoTitle });
           const costInput = costField.querySelector('input[type="number"]');
           if (costInput) costInput.dataset.costRowKey = rowKey;
           optRow.appendChild(costField);
-          optRow.appendChild(mkNumField('무게(g)', row._weight_g, (v) => { row._weight_g = v; }, 70));
+          const weightField = mkNumField('무게(g)', row._weight_g, (v) => {
+            row._weight_g = v;
+            row.weight_g = v;
+            mrSyncWmsSetAggregateInputs(card, group);
+          }, 70, { disabled: isWmsSetRow, title: setAutoTitle });
+          const weightInput = weightField.querySelector('input[type="number"]');
+          if (weightInput) weightInput.dataset.weightRowKey = rowKey;
+          optRow.appendChild(weightField);
 
           // Product/option image: exactly one operator-created attachment.
           const imgWr = el('div', { style: 'display:flex;flex-direction:column;gap:4px;flex:2;min-width:240px;' });
@@ -32104,6 +32268,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       // Phase A category whitelist (must stay in sync with render-side SHOPEE_CATEGORY_WHITELIST)
       const VALID_CATEGORY_IDS = new Set([100740, 101390]);
       for (const group of activeGroups) {
+        if (mrIsWmsGroup(group)) mrWmsApplySetAggregates(group.rows || []);
         const activeRows = group.rows.filter(r => r.status === 'preview' || r.status === 'failed');
         const firstRowHdr = group.rows[0]; // card-level header row
         const duplicateSignals = mrGroupDuplicateSignals(group);
@@ -32174,6 +32339,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       // ── Per-group registration ─────────────────────────────────────
       for (const group of activeGroups) {
+        if (mrIsWmsGroup(group)) mrWmsApplySetAggregates(group.rows || []);
         const activeRows = group.rows.filter(r => r.status === 'preview' || r.status === 'failed');
         if (activeRows.length === 0) continue;
         const groupLifecycle = mrGroupLifecycle(group);

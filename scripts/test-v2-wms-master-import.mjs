@@ -135,8 +135,13 @@ assert(
 assert(
   html.includes('mrWmsSetAggregateForRow')
     && html.includes('mrWmsApplySetAggregates')
-    && html.includes('mrWmsBundleComponentQuantity'),
+    && html.includes('mrWmsBundleComponentQuantity')
+    && html.includes('_weightTouched'),
   'WMS SET preview must include explicit bundle aggregate helpers',
+);
+assert(
+  !html.includes('disabled: isWmsSetRow'),
+  'WMS SET purchase/settlement/weight inputs must stay editable after aggregate defaults are applied',
 );
 
 {
@@ -181,6 +186,19 @@ assert(
   assertModule.equal(rows[0]._sourcing_price, 4000, 'SET purchase price must be written back to preview row');
   assertModule.equal(rows[0]._cost_krw, 4900, 'SET settlement price must be written back to preview row');
   assertModule.equal(rows[0]._weight_g, 340, 'SET weight must be written back to preview row');
+  rows[0]._sourcingTouched = true;
+  rows[0].sourcing_price = 4100;
+  rows[0]._sourcing_price = 4100;
+  rows[0]._costTouched = true;
+  rows[0].cost_krw = 5200;
+  rows[0]._cost_krw = 5200;
+  rows[0]._weightTouched = true;
+  rows[0].weight_g = 365;
+  rows[0]._weight_g = 365;
+  helpers.mrWmsApplySetAggregates(rows);
+  assertModule.equal(rows[0]._sourcing_price, 4100, 'SET purchase price manual override must not be overwritten by aggregate refresh');
+  assertModule.equal(rows[0]._cost_krw, 5200, 'SET settlement price manual override must not be overwritten by aggregate refresh');
+  assertModule.equal(rows[0]._weight_g, 365, 'SET weight manual override must not be overwritten by aggregate refresh');
 }
 
 for (const token of [

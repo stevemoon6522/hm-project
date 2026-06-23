@@ -29417,13 +29417,21 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         row._wms_set_missing_components = aggregate?.missing_components || [];
         row._wms_set_component_count = aggregate?.component_count || 0;
         if (!aggregate || !aggregate.complete) return;
-        row.sourcing_price = aggregate.sourcing_price;
-        row._sourcing_price = aggregate.sourcing_price;
-        row.cost_krw = aggregate.cost_krw;
-        row._cost_krw = aggregate.cost_krw;
-        row.weight_g = aggregate.weight_g;
-        row._weight_g = aggregate.weight_g;
-        changed = true;
+        if (!row._sourcingTouched) {
+          row.sourcing_price = aggregate.sourcing_price;
+          row._sourcing_price = aggregate.sourcing_price;
+          changed = true;
+        }
+        if (!row._costTouched) {
+          row.cost_krw = aggregate.cost_krw;
+          row._cost_krw = aggregate.cost_krw;
+          changed = true;
+        }
+        if (!row._weightTouched) {
+          row.weight_g = aggregate.weight_g;
+          row._weight_g = aggregate.weight_g;
+          changed = true;
+        }
       });
       return changed;
     }
@@ -31259,6 +31267,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           const nextCost = rshSettlementFromSourcing(nextSourcing);
           const previousDefaultCost = Number(firstRow.cost_krw || firstRow._cost_krw || 0);
           group.rows.forEach(row => {
+            if (mrIsWmsGroup(group) && mrWmsIsBundleRow(row)) return;
             row._sourcingTouched = true;
             row.sourcing_price = nextSourcing;
             row._sourcing_price = nextSourcing;
@@ -31284,6 +31293,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           const previousDefault = Number(firstRow.cost_krw || firstRow._cost_krw || 0);
           const nextDefault = Number(e.target.value) || 0;
           group.rows.forEach(row => {
+            if (mrIsWmsGroup(group) && mrWmsIsBundleRow(row)) return;
             const wasTouched = !!row._costTouched;
             row.cost_krw = nextDefault;
             if (!wasTouched || !(Number(row._cost_krw) > 0) || Number(row._cost_krw) === previousDefault) {
@@ -31668,7 +31678,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           };
           const isWmsSetRow = mrIsWmsGroup(group) && mrWmsIsBundleRow(row);
           const setAutoTitle = isWmsSetRow
-            ? `Calculated from ${Number(row._wms_set_component_count || 0).toLocaleString()} WMS SET component(s).`
+            ? `Default is calculated from ${Number(row._wms_set_component_count || 0).toLocaleString()} WMS SET component(s); editable if you need an override.`
             : '';
 
           const axis0Name = group.tierNames[0] || '멤버';
@@ -31741,28 +31751,32 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             row.sourcing_price = v;
             if (!row._costTouched) {
               row._cost_krw = rshSettlementFromSourcing(v);
+              row.cost_krw = row._cost_krw;
+              if (isWmsSetRow) row._costTouched = true;
               const costInput = optRow.querySelector(`[data-cost-row-key="${rowKey}"]`);
               if (costInput) costInput.value = row._cost_krw ? String(row._cost_krw) : '';
             }
             mrSyncWmsSetAggregateInputs(card, group);
-          }, 90, { disabled: isWmsSetRow, title: setAutoTitle });
+          }, 90, { title: setAutoTitle });
           const sourcingInput = sourcingField.querySelector('input[type="number"]');
           if (sourcingInput) sourcingInput.dataset.sourcingRowKey = rowKey;
           optRow.appendChild(sourcingField);
 
           const costField = mkNumField('정산가(KRW)', row._cost_krw, (v) => {
             row._cost_krw = v;
+            row.cost_krw = v;
             row._costTouched = true;
             mrSyncWmsSetAggregateInputs(card, group);
-          }, 90, { disabled: isWmsSetRow, title: setAutoTitle });
+          }, 90, { title: setAutoTitle });
           const costInput = costField.querySelector('input[type="number"]');
           if (costInput) costInput.dataset.costRowKey = rowKey;
           optRow.appendChild(costField);
           const weightField = mkNumField('무게(g)', row._weight_g, (v) => {
             row._weight_g = v;
             row.weight_g = v;
+            row._weightTouched = true;
             mrSyncWmsSetAggregateInputs(card, group);
-          }, 70, { disabled: isWmsSetRow, title: setAutoTitle });
+          }, 70, { title: setAutoTitle });
           const weightInput = weightField.querySelector('input[type="number"]');
           if (weightInput) weightInput.dataset.weightRowKey = rowKey;
           optRow.appendChild(weightField);

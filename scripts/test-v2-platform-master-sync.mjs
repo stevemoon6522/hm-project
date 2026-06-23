@@ -23,7 +23,8 @@ assertIncludes(html, 'platformApplyMasterSync(platform, group)', 'preview execut
 assertIncludes(html, 'platformApplyShopeeMasterSync', 'Shopee executor');
 assertIncludes(html, 'platformApplyJoomMasterSync', 'Joom executor');
 assertIncludes(html, 'platformApplyQoo10MasterSync', 'Qoo10 executor');
-assertIncludes(html, 'update_shop_tier_variation', 'Shopee option image update');
+assertIncludes(html, 'rshBuildLayeredCoverDataUrl', 'Shopee layered representative image upload');
+assertIncludes(html, 'platformShopeeUploadProductImageRefs', 'Shopee product image ref uploader');
 assertIncludes(html, 'platformMasterSyncJoomVariantImages(group)', 'Joom variant image payload');
 assertIncludes(html, 'edit-image', 'Qoo10 representative image update');
 assertIncludes(html, 'edit-multi-image', 'Qoo10 detail image update');
@@ -37,6 +38,29 @@ if (globalItemIdStart < 0 || globalItemIdEnd <= globalItemIdStart) {
 const globalItemIdBlock = html.slice(globalItemIdStart, globalItemIdEnd);
 if (globalItemIdBlock.includes('row.shopee_item_id')) {
   throw new Error('Shopee master sync must not use shop item id as global_item_id fallback');
+}
+
+const shopeeApplyStart = html.indexOf('async function platformApplyShopeeMasterSync');
+const shopeeApplyEnd = html.indexOf('async function platformApplyJoomMasterSync', shopeeApplyStart);
+if (shopeeApplyStart < 0 || shopeeApplyEnd <= shopeeApplyStart) {
+  throw new Error('Shopee master sync executor block missing');
+}
+const shopeeApplyBlock = html.slice(shopeeApplyStart, shopeeApplyEnd);
+if (shopeeApplyBlock.includes('update_shop_item_description') || shopeeApplyBlock.includes('update_shop_tier_variation')) {
+  throw new Error('Shopee master sync must update Global Product only; shop-level repair belongs in a separate workflow');
+}
+if (!shopeeApplyBlock.includes("callBridgeMutation('update_global_item'")) {
+  throw new Error('Shopee master sync must call update_global_item');
+}
+
+const shopeeUploadStart = html.indexOf('async function platformShopeeUploadImageRef');
+const shopeeUploadEnd = html.indexOf('async function platformShopeeUploadProductImageRefs', shopeeUploadStart);
+if (shopeeUploadStart < 0 || shopeeUploadEnd <= shopeeUploadStart) {
+  throw new Error('Shopee master sync image ref uploader missing');
+}
+const shopeeUploadBlock = html.slice(shopeeUploadStart, shopeeUploadEnd);
+if (!shopeeUploadBlock.includes('rshBuildLayeredCoverDataUrl')) {
+  throw new Error('Shopee representative image upload must build the layered cover before upload_image');
 }
 
 assertIncludes(shopeeBridge, 'image_id_list required', 'Shopee image-only update guard');

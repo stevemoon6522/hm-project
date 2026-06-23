@@ -9133,6 +9133,16 @@ LEGACY END -->
     return [platformMasterSyncMainImage(rows), ...platformMasterSyncDetailImages(rows)].filter(Boolean).slice(0, REGISTER_MAX_IMAGE_IDS || 9);
   }
 
+  function platformMasterSyncShopeeImageRefs(rows) {
+    const mainImage = platformMasterSyncMainImage(rows);
+    const refs = [];
+    if (mainImage) refs.push({ imageUrl: mainImage, layered: true, kind: 'cover' });
+    platformMasterSyncDetailImages(rows).forEach((imageUrl) => {
+      refs.push({ imageUrl, layered: false, kind: 'detail' });
+    });
+    return refs.filter((ref) => ref.imageUrl).slice(0, REGISTER_MAX_IMAGE_IDS || 9);
+  }
+
   function platformMasterSyncOptionImageRows(group) {
     return rshSortedProducts(group?.rows || [])
       .map((row) => ({
@@ -9198,7 +9208,7 @@ LEGACY END -->
     if (platformMasterSyncPlainDescription(group)) labels.push('상품 설명');
     if (platformMasterSyncMainImage(rows)) labels.push('대표 이미지');
     if (platformMasterSyncDetailImages(rows).length) labels.push('상세 이미지');
-    if (platformMasterSyncOptionImageRows(group).length) labels.push('옵션 이미지');
+    if (platform === 'joom' && platformMasterSyncOptionImageRows(group).length) labels.push('옵션 이미지');
     if (platform === 'joom') labels.push('상품명');
     if (platform === 'ebay') labels.push('eBay 미구현');
     return Array.from(new Set(labels));
@@ -9217,7 +9227,7 @@ LEGACY END -->
 
     if (platform === 'shopee') {
       if (!platformMasterSyncShopeeGlobalItemId(group)) errors.push('Shopee global_item_id를 찾지 못했습니다.');
-      warnings.push('Shopee: 설명/대표/상세 이미지는 Global Product에 적용하고, 옵션 이미지는 등록된 Shop Item별로 보정합니다.');
+      warnings.push('Shopee: 설명/대표/상세 이미지는 Global Product만 수정합니다. 옵션 이미지는 공식 Global Product update API에 필드가 없어 이 버튼에서 직접 수정하지 않습니다.');
     } else if (platform === 'joom') {
       if (!platformGroupSku(group)) errors.push('Joom 업데이트에 사용할 SKU를 찾지 못했습니다.');
       warnings.push('Joom: 상품명/설명/대표 이미지/상세 이미지와 SKU가 매칭되는 옵션 이미지를 /products/update로 적용합니다.');
@@ -9237,13 +9247,16 @@ LEGACY END -->
     const mainImage = platformMasterSyncMainImage(rows);
     const detailCount = platformMasterSyncDetailImages(rows).length;
     const optionCount = platformMasterSyncOptionImageRows(group).length;
+    const optionText = platform === 'shopee'
+      ? (optionCount ? 'Global update API 없음' : '없음')
+      : `${optionCount}장`;
     const description = platform === 'shopee'
       ? platformMasterSyncShopeeDescription(group)
       : (platform === 'qoo10' ? platformMasterSyncQoo10Description(group) : platformMasterSyncPlainDescription(group));
     return `
       <div style="display:grid;gap:4px;margin-top:8px;font-size:12px;">
         <div>적용 대상 필드: ${text(fields.join(', ') || '-')}</div>
-        <div>대표 이미지: ${mainImage ? '1장' : '없음'} · 상세 이미지: ${text(detailCount)}장 · 옵션 이미지: ${text(optionCount)}장</div>
+        <div>대표 이미지: ${mainImage ? '1장' : '없음'} · 상세 이미지: ${text(detailCount)}장 · 옵션 이미지: ${text(optionText)}</div>
         <div>설명 길이: ${text(String(description || '').length)}자</div>
       </div>`;
   }
@@ -9563,8 +9576,14 @@ LEGACY END -->
     return shops;
   }
 
-  async function platformShopeeUploadImageUrl(region, imageUrl, runId, actor = 'v2-platform-master-sync') {
-    const dataUrl = await rshFetchImageDataUrl(imageUrl);
+  async function platformShopeeUploadImageRef(region, imageRef, runId, actor = 'v2-platform-master-sync') {
+    const ref = typeof imageRef === 'string' ? { imageUrl: imageRef } : (imageRef || {});
+    const imageUrl = String(ref.imageUrl || ref.url || '').trim();
+    if (!imageUrl) return '';
+    const layered = !!ref.layered;
+    const dataUrl = layered
+      ? await rshBuildLayeredCoverDataUrl(imageUrl, SHOPEE_DEFAULT_ACCOUNT_KEY)
+      : await rshFetchImageDataUrl(imageUrl);
     const body = {
       region,
       account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
@@ -9573,6 +9592,10 @@ LEGACY END -->
       actor,
       run_id: runId,
     };
+    if (layered) {
+      body.main_image_url = imageUrl;
+      body.layer_version = sdShopeeLayerVersion(SHOPEE_DEFAULT_ACCOUNT_KEY);
+    }
     const json = await callBridgeMutation('upload_image', body);
     if (!bridgeResultOk(json) || !json.image_id) {
       throw new Error(`${region} 이미지 업로드 실패: ${bridgeResultMessage(json)}`);
@@ -9580,10 +9603,14 @@ LEGACY END -->
     return String(json.image_id);
   }
 
-  async function platformShopeeUploadProductImageIds(imageUrls, runId) {
+  async function platformShopeeUploadImageUrl(region, imageUrl, runId, actor = 'v2-platform-master-sync') {
+    return platformShopeeUploadImageRef(region, { imageUrl, layered: false }, runId, actor);
+  }
+
+  async function platformShopeeUploadProductImageRefs(imageRefs, runId) {
     const ids = [];
-    for (const imageUrl of imageUrls || []) {
-      ids.push(await platformShopeeUploadImageUrl('SG', imageUrl, runId, 'v2-platform-master-product-image'));
+    for (const imageRef of imageRefs || []) {
+      ids.push(await platformShopeeUploadImageRef('SG', imageRef, runId, 'v2-platform-master-product-image'));
     }
     return ids.filter(Boolean).slice(0, REGISTER_MAX_IMAGE_IDS);
   }
@@ -9659,7 +9686,7 @@ LEGACY END -->
     add({ action: 'set_global_sync_fields', ok: bridgeResultOk(syncJson), message: bridgeResultMessage(syncJson) });
     if (!bridgeResultOk(syncJson)) throw new Error(bridgeResultMessage(syncJson));
 
-    const productImageIds = await platformShopeeUploadProductImageIds(platformMasterSyncProductImages(rows), runId);
+    const productImageIds = await platformShopeeUploadProductImageRefs(platformMasterSyncShopeeImageRefs(rows), runId);
     const description = platformMasterSyncShopeeDescription(group);
     if (description || productImageIds.length) {
       const globalJson = await callBridgeMutation('update_global_item', {
@@ -9672,50 +9699,6 @@ LEGACY END -->
       });
       add({ action: 'update_global_item', ok: bridgeResultOk(globalJson), message: bridgeResultMessage(globalJson) });
       if (!bridgeResultOk(globalJson)) throw new Error(bridgeResultMessage(globalJson));
-    }
-
-    const published = readyPublishedItemsFromResponse(await shopeeEnglishRestoreFetch('published_list', {
-      region: 'SG',
-      global_item_id: String(globalItemId),
-    }));
-    const shopRegionById = new Map(syncShops.map((shop) => [String(shop.shop_id), shop.shop_region]));
-    const optionRows = platformMasterSyncOptionImageRows(group);
-    for (const publishedItem of published) {
-      const shopId = Number(publishedItem.shop_id || publishedItem.shopId || 0);
-      const region = String(publishedItem.shop_region || publishedItem.region || shopRegionById.get(String(shopId)) || '').toUpperCase();
-      if (!regions.includes(region)) continue;
-      const itemId = Number(publishedItem.item_id || publishedItem.itemId || 0);
-      if (!Number.isFinite(itemId) || itemId <= 0) {
-        add({ action: 'resolve_shop_item', ok: false, message: `${region}: item_id missing` });
-        continue;
-      }
-      if (description) {
-        const descJson = await callBridgeMutation('update_shop_item_description', {
-          region,
-          actor: 'v2-platform-master-sync',
-          run_id: runId,
-          item_id: itemId,
-          description,
-        });
-        add({ action: `update_shop_description:${region}`, ok: bridgeResultOk(descJson), message: bridgeResultMessage(descJson) });
-      }
-      if (optionRows.length && rows.length > 1) {
-        const optionImageIds = await platformShopeeUploadOptionImageIds(region, group, runId);
-        const shopModelJson = await shopeeEnglishRestoreFetch('shop_model_list', { region, item_id: String(itemId) });
-        const payloadResult = platformShopeeBuildTierImageUpdatePayload(shopeeEnglishRestorePayload(shopModelJson), optionImageIds);
-        if (!payloadResult.ok) {
-          add({ action: `build_option_image_payload:${region}`, ok: false, message: payloadResult.error || 'payload build failed' });
-        } else if (!payloadResult.skipped) {
-          const optionJson = await callBridgeMutation('update_shop_tier_variation', {
-            region,
-            actor: 'v2-platform-master-sync',
-            run_id: runId,
-            item_id: itemId,
-            ...payloadResult.payload,
-          });
-          add({ action: `update_shop_option_images:${region}`, ok: bridgeResultOk(optionJson), message: bridgeResultMessage(optionJson) });
-        }
-      }
     }
 
     await platformTouchMasterSyncCheckpoint('shopee', group, regions);

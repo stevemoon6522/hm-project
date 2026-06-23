@@ -171,6 +171,21 @@ assert.match(
   'group payload must encode observed Shopee region model price ratio limits',
 );
 assert.match(
+  html,
+  /function rshBuildModelPriceRatioExclusionPlan[\s\S]*maxAllowedPrice[\s\S]*excluded[\s\S]*function rshBuildVariantPriceRatioExclusionPlan/,
+  'V2 Shopee registration must build a region-aware option exclusion plan before API calls',
+);
+assert.match(
+  html,
+  /function rshConfirmModelPriceRatioExclusions[\s\S]*window\.confirm[\s\S]*Continue registration without these options/,
+  'V2 Shopee registration must warn operators before excluding price-ratio options',
+);
+assert.match(
+  buildGroupPayload,
+  /allowedSkus[\s\S]*allVariantInputs\.filter[\s\S]*price_ratio_excluded_options/,
+  'group payload must exclude price-ratio violating option SKUs and keep the evidence in payload',
+);
+assert.match(
   normalizeRegionalGlobalModelPrices,
   /rshStrictestModelPriceRatioLimit\(activeRegions\)[\s\S]*global_original_price:\s*safeMinimum/,
   'group payload must normalize Global Product model prices using the strictest targeted region price ratio',
@@ -204,6 +219,11 @@ assert.match(
   masterPromoteRegisterBlock,
   /shopeeRegisterCbscWithRegionBatches/,
   'master promote registration must use the same timeout-safe Shopee batch helper',
+);
+assert.match(
+  html,
+  /rshBuildModelPriceRatioExclusionPlan[\s\S]*rshConfirmModelPriceRatioExclusions[\s\S]*shopeeVariationOptions[\s\S]*const skusInGroup\s*=\s*shopeeVariationOptions\.map/,
+  'master promote registration must exclude price-ratio violating options before Shopee publish and DB state updates',
 );
 
 assert.match(

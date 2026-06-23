@@ -19803,6 +19803,102 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return limit;
   }
 
+  function rshBuildModelPriceRatioExclusionPlan(entries, activeRegions) {
+    const regions = Array.from(new Set((activeRegions || []).map((region) => String(region || '').toUpperCase()).filter(Boolean)));
+    const rows = (entries || []).map((entry, index) => {
+      const sku = String(entry?.sku || entry?.model_sku || entry?.global_model_sku || '').trim();
+      return {
+        sku,
+        label: String(entry?.label || entry?.option || sku || `Option ${index + 1}`).trim(),
+        regionPrices: entry?.regionPrices || {},
+        source: entry?.source || null,
+        reasons: [],
+      };
+    }).filter((row) => row.sku);
+    const excludedBySku = new Map();
+
+    regions.forEach((region) => {
+      const limit = rshModelPriceRatioLimitForRegion(region);
+      const priced = rows
+        .map((row) => ({ row, price: Number(row.regionPrices?.[region] || 0) }))
+        .filter((entry) => Number.isFinite(entry.price) && entry.price > 0);
+      if (priced.length < 2) return;
+      const minPrice = Math.min(...priced.map((entry) => entry.price));
+      const maxPrice = Math.max(...priced.map((entry) => entry.price));
+      if (!(minPrice > 0) || !(maxPrice > 0) || maxPrice / minPrice <= limit) return;
+      const maxAllowedPrice = Number((minPrice * limit).toFixed((region === 'TW' || region === 'TH' || region === 'PH') ? 0 : 2));
+      priced
+        .filter((entry) => entry.price > maxAllowedPrice + 0.000001)
+        .forEach((entry) => {
+          const existing = excludedBySku.get(entry.row.sku) || {
+            sku: entry.row.sku,
+            label: entry.row.label,
+            source: entry.row.source,
+            reasons: [],
+          };
+          existing.reasons.push({
+            region,
+            limit,
+            minPrice,
+            maxAllowedPrice,
+            price: entry.price,
+            ratio: Number((entry.price / minPrice).toFixed(4)),
+          });
+          excludedBySku.set(entry.row.sku, existing);
+        });
+    });
+
+    const excluded = Array.from(excludedBySku.values());
+    const excludedSkus = new Set(excluded.map((row) => row.sku));
+    const allowed = rows.filter((row) => !excludedSkus.has(row.sku));
+    return {
+      activeRegions: regions,
+      allowedSkus: allowed.map((row) => row.sku),
+      excluded,
+      hasExclusions: excluded.length > 0,
+    };
+  }
+
+  function rshBuildVariantPriceRatioExclusionPlan(variantInputs, activeRegions) {
+    const weights = (variantInputs || []).map((variant) => Number(variant.weight_g || 0)).filter((n) => Number.isFinite(n) && n > 0);
+    const fallbackWeight = weights.length ? Math.max(...weights) : 100;
+    const entries = (variantInputs || []).map((variant, index) => {
+      const regionPrices = {};
+      (activeRegions || []).forEach((region) => {
+        const code = String(region || '').toUpperCase();
+        const calc = rshComputeRegionPrice(Number(variant.price || 0), Number(variant.weight_g || fallbackWeight), code);
+        if (calc) regionPrices[code] = calc.originalPrice;
+      });
+      return {
+        sku: variant.sku,
+        label: variant.option || variant.sku || `Option ${index + 1}`,
+        regionPrices,
+        source: variant,
+      };
+    });
+    return rshBuildModelPriceRatioExclusionPlan(entries, activeRegions);
+  }
+
+  function rshConfirmModelPriceRatioExclusions(plan) {
+    if (!plan?.hasExclusions) return true;
+    const detailLines = plan.excluded.slice(0, 8).map((entry) => {
+      const reasonText = entry.reasons.slice(0, 3).map((reason) => {
+        const currency = CAT_CURRENCY?.[reason.region] || reason.region;
+        return `${reason.region} ${formatPriceForRegion(reason.region, reason.price)} ${currency} > ${formatPriceForRegion(reason.region, reason.maxAllowedPrice)} ${currency} (limit ${reason.limit})`;
+      }).join('; ');
+      return `- ${entry.label || entry.sku} (${entry.sku}): ${reasonText}`;
+    }).join('\n');
+    const more = plan.excluded.length > 8 ? `\n- +${plan.excluded.length - 8} more option(s)` : '';
+    return window.confirm([
+      'Shopee option price ratio limit exceeded.',
+      'The options below will be excluded from Shopee registration so the product can be published safely.',
+      '',
+      detailLines + more,
+      '',
+      'Continue registration without these options?',
+    ].join('\n'));
+  }
+
   function rshNormalizeRegionalGlobalModelPrices(models, activeRegions) {
     if (!Array.isArray(models) || models.length < 2) return models;
     const safeRatioLimit = rshStrictestModelPriceRatioLimit(activeRegions);
@@ -19853,14 +19949,24 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     });
   }
 
-  function rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKeyOverride) {
+  function rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKeyOverride, options = {}) {
     const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
-    const products = rshSortedProducts(_rsh.products || []);
-    const master = _rsh.master || products[0] || {};
+    const allProducts = rshSortedProducts(_rsh.products || []);
+    const allVariantInputs = Array.isArray(options.variantInputs) ? options.variantInputs : rshReadVariantInputs(allProducts);
+    const allowedSkuSet = Array.isArray(options.allowedSkus) && options.allowedSkus.length
+      ? new Set(options.allowedSkus.map((sku) => String(sku || '').trim()).filter(Boolean))
+      : null;
+    const variantInputs = allowedSkuSet
+      ? allVariantInputs.filter((variant) => allowedSkuSet.has(String(variant.sku || '').trim()))
+      : allVariantInputs;
+    const products = variantInputs.map((variant) => variant.product).filter(Boolean);
+    if (allProducts.length > 1 && products.length < 1) {
+      throw new Error('Shopee price ratio filtering excluded every option. Adjust option prices before registration.');
+    }
+    const master = _rsh.master || products[0] || allProducts[0] || {};
     const categoryId = Number(document.getElementById('rsh-category')?.value) || Number(master.shopee_category_id) || 100740;
     const productCosts = products.map((p) => Number(p.cost_krw || 0)).filter((n) => Number.isFinite(n) && n > 0);
     const productWeights = products.map((p) => Number(p.weight_g || 0)).filter((n) => Number.isFinite(n) && n > 0);
-    const variantInputs = rshReadVariantInputs(products);
     const basePrice = variantInputs.find((v) => Number(v.price || 0) > 0)?.price
       || productCosts[0]
       || Number(master.cost_krw || 0);
@@ -19957,6 +20063,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       lifecycle_state: lifecycle,
       is_pre_order: lifecycle === 'pre_order',
       registration_kind: 'option_group',
+      price_ratio_excluded_options: options.priceRatioExclusions || [],
       variation: {
         tier_variation: tierVariation,
         model,
@@ -19969,12 +20076,28 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   async function rshRegisterOptionGroupViaCbsc(session, activeRegions, dtsValues, lifecycle, errorEl, accountKeyOverride, options = {}) {
     const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     const products = rshSortedProducts(_rsh.products || []);
+    const variantInputs = rshReadVariantInputs(products);
+    const priceRatioPlan = rshBuildVariantPriceRatioExclusionPlan(variantInputs, activeRegions);
+    if (!rshConfirmModelPriceRatioExclusions(priceRatioPlan)) {
+      _rsh.publishInFlight = false;
+      rshShowStage2Buttons(true);
+      if (errorEl) { errorEl.textContent = 'Shopee registration cancelled before API call.'; errorEl.style.display = 'block'; }
+      return;
+    }
+    const allowedSkuSet = new Set((priceRatioPlan.allowedSkus || []).map((sku) => String(sku || '').trim()).filter(Boolean));
+    const publishProducts = priceRatioPlan.hasExclusions
+      ? products.filter((product) => allowedSkuSet.has(String(product.sku || '').trim()))
+      : products;
     if (products.length < 2) throw new Error('옵션 묶음 상품이 아닙니다.');
 
     let payload;
     let json;
     try {
-      payload = rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKey);
+      payload = rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKey, {
+        variantInputs,
+        allowedSkus: priceRatioPlan.allowedSkus,
+        priceRatioExclusions: priceRatioPlan.excluded,
+      });
       console.log('[rsh] group register_cbsc payload:', JSON.stringify(payload).slice(0, 2000));
       const { json: batchJson } = await shopeeRegisterCbscWithRegionBatches(payload, {
           Authorization: `Bearer ${session.access_token}`,
@@ -20025,7 +20148,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let mappingRows = [];
     try {
       mappingRows = await persistMappings(json, payload);
-      await rshApplyShopeePublishState(products.map((p) => p.id), json.global_item_id, mappingRows, activeRegions, accountKey);
+      await rshApplyShopeePublishState(publishProducts.map((p) => p.id), json.global_item_id, mappingRows, activeRegions, accountKey);
     } catch (persistErr) {
       console.warn('[rsh] group mapping persistence failed:', persistErr);
       if (errorEl) {
@@ -20309,7 +20432,21 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   async function rshRegisterGroupForAccount(session, accountKey, activeRegions, dtsValues, lifecycle, errorEl) {
     const products = rshSortedProducts(_rsh.products || []);
-    const payload = rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKey);
+    const variantInputs = rshReadVariantInputs(products);
+    const priceRatioPlan = rshBuildVariantPriceRatioExclusionPlan(variantInputs, activeRegions);
+    if (!rshConfirmModelPriceRatioExclusions(priceRatioPlan)) {
+      if (errorEl) { errorEl.textContent = 'Shopee registration cancelled before API call.'; errorEl.style.display = 'block'; }
+      return { anyFailed: true };
+    }
+    const allowedSkuSet = new Set((priceRatioPlan.allowedSkus || []).map((sku) => String(sku || '').trim()).filter(Boolean));
+    const publishProducts = priceRatioPlan.hasExclusions
+      ? products.filter((product) => allowedSkuSet.has(String(product.sku || '').trim()))
+      : products;
+    const payload = rshBuildGroupRegisterPayload(activeRegions, dtsValues, lifecycle, accountKey, {
+      variantInputs,
+      allowedSkus: priceRatioPlan.allowedSkus,
+      priceRatioExclusions: priceRatioPlan.excluded,
+    });
     payload.idempotency_token = rshAccountPublishRequestId(accountKey);
     const { json } = await shopeeRegisterCbscWithRegionBatches(payload, {
         Authorization: `Bearer ${session.access_token}`,
@@ -20337,7 +20474,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let mappingRows = [];
     try {
       mappingRows = await persistMappings(json, payload);
-      await rshApplyShopeePublishState(products.map((p) => p.id), json.global_item_id, mappingRows, activeRegions, accountKey);
+      await rshApplyShopeePublishState(publishProducts.map((p) => p.id), json.global_item_id, mappingRows, activeRegions, accountKey);
     } finally {
       state.currentProduct = previousCurrent;
     }
@@ -31507,9 +31644,44 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               if (!probeWeightOk) console.log('[mrPromoteAll] probe_per_model_weight_ok=false: stripping per-model weight from variation.model');
               if (!probeImageOk)  console.log('[mrPromoteAll] probe_per_option_image_ok=false: stripping option_list[].image from tier_variation');
 
+              const CBSC_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+              const priceRatioPlan = rshBuildModelPriceRatioExclusionPlan(variationOptions.map((vOpt, index) => ({
+                sku: vOpt.sku,
+                label: (vOpt.option_names || []).filter(Boolean).join(' / ') || vOpt.sku || `Option ${index + 1}`,
+                regionPrices: Object.fromEntries(CBSC_REGIONS.map((region) => [region, Number(vOpt.cost_krw || 0)])),
+                source: vOpt,
+              })), CBSC_REGIONS);
+              if (!rshConfirmModelPriceRatioExclusions(priceRatioPlan)) {
+                activeRows.forEach(r => { r.shopeePublishState = 'unpublished'; r.shopeePublishNote = 'Shopee registration cancelled before API call.'; });
+                mrRenderPreviewCards();
+                continue;
+              }
+              const allowedSkuSet = new Set((priceRatioPlan.allowedSkus || []).map((sku) => String(sku || '').trim()).filter(Boolean));
+              const shopeeRows = priceRatioPlan.hasExclusions
+                ? activeRows.filter((row) => allowedSkuSet.has(String(row._sku || '').trim()))
+                : activeRows;
+              const shopeeVariationOptions = priceRatioPlan.hasExclusions
+                ? variationOptions.filter((vOpt) => allowedSkuSet.has(String(vOpt.sku || '').trim()))
+                : variationOptions;
+              if (!shopeeRows.length || !shopeeVariationOptions.length) {
+                activeRows.forEach(r => { r.shopeePublishState = 'unpublished'; r.shopeePublishNote = 'Shopee price ratio filtering excluded every option.'; });
+                mrRenderPreviewCards();
+                continue;
+              }
+              if (priceRatioPlan.hasExclusions) {
+                const excludedSkuSet = new Set(priceRatioPlan.excluded.map((entry) => String(entry.sku || '').trim()));
+                activeRows.forEach((row) => {
+                  if (excludedSkuSet.has(String(row._sku || '').trim())) {
+                    row.shopeePublishState = 'unpublished';
+                    row.shopeePublishNote = 'Excluded by Shopee price ratio limit.';
+                  }
+                });
+                showToast(`Shopee price ratio limit: excluded ${priceRatioPlan.excluded.length} option(s).`, 'warn');
+              }
+
               // 3. Build model list
-              const firstRow = activeRows[0];
-              const cbscModels = variationOptions.map(vOpt => {
+              const firstRow = shopeeRows[0];
+              const cbscModels = shopeeVariationOptions.map(vOpt => {
                 const model = {
                   tier_index:       vOpt.tier_index,
                   global_model_sku: vOpt.sku,
@@ -31525,20 +31697,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               // BR requires 2 distinct image IDs (Shopee BR 2-image policy, root cause #4).
               // Per-option main images are uploaded for path A (tier_variation option_list[].image.image_id).
               // Product-level image_id_list = first option's composited main + valid extras.
-              const CBSC_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
 
               // 4a. Upload each option's main image (composited with shop-overlay-layer.png) per region
               const optionRegionMaps = []; // optionRegionMaps[i] = regionImageMap for activeRows[i]
               let skippedRegions = new Set();
 
               {
-                const totalUploadSteps = activeRows.length * 6; // 6 regions per option
+                const totalUploadSteps = shopeeRows.length * 6; // 6 regions per option
                 let uploadStep = 0;
                 activeRows.forEach(r => { r.shopeePublishNote = `이미지 업로드 중... 0/${totalUploadSteps}`; });
                 mrRenderPreviewCards();
 
                 let hardFail = false;
-                const uploadedOptionMaps = await mrMapWithConcurrency(activeRows, 2, async (row, oi) => {
+                const uploadedOptionMaps = await mrMapWithConcurrency(shopeeRows, 2, async (row, oi) => {
                   const optMainUrl = (row._main_image || '').trim();
                   if (!optMainUrl) {
                     throw new Error(`옵션 ${oi + 1} 메인 이미지가 없습니다.`);
@@ -31578,7 +31749,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               }
 
               // 4b. Upload extra images for first option (product-level image_id_list supplement)
-              const firstOptionExtras = (activeRows[0]._extra_images || []).filter(u => (u || '').trim());
+              const firstOptionExtras = (shopeeRows[0]._extra_images || []).filter(u => (u || '').trim());
               const extraRegionMaps = await mrMapWithConcurrency(firstOptionExtras, 2, async (extraUrl) => {
                 try {
                   return await mrUploadRegionImages(extraUrl, null, false);
@@ -31599,7 +31770,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
               const cbscTargets = publishRegions.map(rgn => ({
                 region:         rgn,
-                price:          firstRow._cost_krw || variationOptions[0].cost_krw || 0,
+                price:          firstRow._cost_krw || shopeeVariationOptions[0].cost_krw || 0,
                 days_to_ship:   firstRow._shopee_days_to_ship, // validated 1-150 int
                 image_id_list:  buildImageIdList(rgn).slice(0, REGISTER_MAX_IMAGE_IDS),
               }));
@@ -31614,14 +31785,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 return (group.tierNames.filter(Boolean)).map((name, axisIdx) => {
                   const seenKeys = new Set();
                   const optionList = [];
-                  for (const row of activeRows) {
+                  for (const row of shopeeRows) {
                     const raw = (axisIdx === 0 ? row._opt0 : row._opt1) || '';
                     const k = raw.trim().toLowerCase();
                     if (!k || seenKeys.has(k)) continue;
                     seenKeys.add(k);
                     const optEntry = { option: raw.trim() };
                     if (includeOptionImages && axisIdx === 0) {
-                      const rowIdx = activeRows.indexOf(row);
+                      const rowIdx = shopeeRows.indexOf(row);
                       const sgIds = (optionRegionMaps[rowIdx] || {})['SG'] || [];
                       if (sgIds.length > 0) optEntry.image = { image_id: sgIds[0] };
                     }
@@ -31639,7 +31810,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               // 5b. Auto-generate global_item_sku (parent SKU) from option SKUs' common prefix.
               //     e.g. ["PO-XSH-LOV-A", "PO-XSH-LOV-B"] → prefix "PO-XSH-LOV-"
               //     The parent SKU must differ from all option SKUs (global_model_sku).
-              const _optSkus = variationOptions.map(v => v.sku);
+              const _optSkus = shopeeVariationOptions.map(v => v.sku);
               function _commonPrefix(strs) {
                 if (!strs.length) return '';
                 let prefix = strs[0];
@@ -31710,7 +31881,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 sku:               cbscParentSku,
                 category_id:       firstRow._shopee_category_id || 100740,
                 description:       cbscDesc,
-                weight_g:          variationOptions[0].weight_g || firstRow._weight_g || 100,
+                weight_g:          shopeeVariationOptions[0].weight_g || firstRow._weight_g || 100,
                 is_pre_order:      groupLifecycle === 'pre_order',
                 lifecycle_state:   groupLifecycle,
                 attribute_list:    buildDefaultAttributeList(firstRow._shopee_category_id || 100740),
@@ -31724,7 +31895,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               console.log('[mrPromoteAll] register_cbsc payload:', JSON.stringify(cbscBody).slice(0, 2000));
 
               // Mark all rows as publishing
-              activeRows.forEach(r => { r.shopeePublishState = 'pending_publish'; });
+              shopeeRows.forEach(r => { r.shopeePublishState = 'pending_publish'; });
               mrRenderPreviewCards();
 
               // Path A: send with per-option image_id in tier_variation.
@@ -31777,7 +31948,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               const cbscGlobalId    = cbscJson.global_item_id || null;
               const cbscFailedM     = Array.isArray(cbscJson.failed_models)   ? cbscJson.failed_models   : [];
               const cbscSucceededM  = Array.isArray(cbscJson.succeeded_models) ? cbscJson.succeeded_models : [];
-              const skusInGroup     = variationOptions.map(v => v.sku);
+              const skusInGroup     = shopeeVariationOptions.map(v => v.sku);
 
               if (cbscJson.ok && cbscGlobalId) {
                 const globalItemId = cbscGlobalId;
@@ -31790,7 +31961,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 );
                 const listingUpserts = [];
                 const nowIso = new Date().toISOString();
-                for (const row of activeRows) {
+                for (const row of shopeeRows) {
                   for (const res of normalizedResults) {
                     const rgn = String(res.region || '').toUpperCase();
                     const mapped = !!(res.ok && res.item_id);
@@ -31828,7 +31999,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                   .update(productUpdate)
                   .in('sku', skusInGroup);
                 if (failedRegions.length > 0) {
-                  activeRows.forEach(r => {
+                  shopeeRows.forEach(r => {
                     r.shopeePublishState = publishState;
                     r.shopeePublishNote  = `실패 리전: ${failedRegions.join(', ')}`;
                   });
@@ -31839,7 +32010,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                     mappedRegions.length > 0 ? 'warn' : 'err'
                   );
                 } else {
-                  activeRows.forEach(r => { r.shopeePublishState = 'published'; });
+                  shopeeRows.forEach(r => { r.shopeePublishState = 'published'; });
                   showToast(`Shopee 발행 완료 (global_item_id: ${globalItemId}, ${resultsArr.length}개 리전)`, 'ok');
                 }
 
@@ -31851,7 +32022,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                     .in('sku', skusInGroup);
                   const failedSkus = cbscFailedM.map(m => m.global_model_sku).filter(Boolean).join(', ');
                   // Mark succeeded ✓ / failed ✗ per row
-                  activeRows.forEach(r => {
+                  shopeeRows.forEach(r => {
                     const sku = (r._sku || '').trim();
                     if (cbscFailedM.some(m => m.global_model_sku === sku)) {
                       r.shopeePublishState = 'partial_published';
@@ -31869,7 +32040,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 await db.from('products')
                   .update({ shopee_item_id: cbscGlobalId, shopee_publish_state: 'partial_published' })
                   .in('sku', skusInGroup);
-                activeRows.forEach(r => {
+                shopeeRows.forEach(r => {
                   const sku = (r._sku || '').trim();
                   if (cbscFailedM.some(m => m.global_model_sku === sku)) {
                     r.shopeePublishState = 'partial_published';
@@ -31889,7 +32060,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 await db.from('products')
                   .update({ shopee_publish_state: 'unpublished' })
                   .in('sku', skusInGroup);
-                activeRows.forEach(r => { r.shopeePublishState = 'unpublished'; });
+                shopeeRows.forEach(r => { r.shopeePublishState = 'unpublished'; });
                 showToast('Shopee 등록 롤백 완료 (cleanup_done). 다시 발행을 시도하세요.', 'warn');
 
               } else if (!cbscJson.ok && cbscStage === 'init_tier_variation' && cbscCleanup === 'cleanup_required') {
@@ -31900,7 +32071,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 await db.from('products')
                   .update({ shopee_publish_state: 'cleanup_required' })
                   .in('sku', skusInGroup);
-                activeRows.forEach(r => { r.shopeePublishState = 'cleanup_required'; });
+                shopeeRows.forEach(r => { r.shopeePublishState = 'cleanup_required'; });
                 showToast('Shopee 등록 중단 (cleanup_required): 셀러센터에서 직접 확인 후 재시도하세요.', 'err');
 
               } else if (!cbscJson.ok && cbscStage === 'add_global_model' && !cbscGlobalId) {
@@ -31909,7 +32080,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 await db.from('products')
                   .update({ shopee_publish_state: 'publish_failed' })
                   .in('sku', skusInGroup);
-                activeRows.forEach(r => { r.shopeePublishState = 'publish_failed'; r.shopeePublishNote = errMsg; });
+                shopeeRows.forEach(r => { r.shopeePublishState = 'publish_failed'; r.shopeePublishNote = errMsg; });
                 showToast(`Shopee 발행 실패 (add_global_model): ${errMsg}`, 'err');
 
               } else {
@@ -31918,7 +32089,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 await db.from('products')
                   .update({ shopee_publish_state: 'publish_failed' })
                   .in('sku', skusInGroup);
-                activeRows.forEach(r => { r.shopeePublishState = 'publish_failed'; r.shopeePublishNote = errMsg; });
+                shopeeRows.forEach(r => { r.shopeePublishState = 'publish_failed'; r.shopeePublishNote = errMsg; });
                 showToast(`Shopee 발행 실패: ${errMsg}`, 'err');
               }
 

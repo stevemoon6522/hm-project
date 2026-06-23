@@ -45,10 +45,24 @@ type ShopeeAdapterContext = AdapterContext & { userAuthToken?: string; account_k
 
 const DEFAULT_SHOPEE_ACCOUNT_KEY = 'starphotocard';
 const SHOPEE_LISTING_CONFLICT = 'product_id,account_key,region';
+const SHOPEE_DEFAULT_MODEL_PRICE_RATIO_LIMIT = 7;
+const SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS: Record<string, number> = Object.freeze({
+  SG: 5,
+  TW: 5,
+  TH: 5,
+  PH: 5,
+  BR: 4,
+});
 
 function normalizeShopeeAccountKey(value: unknown): string {
   const raw = String(value || DEFAULT_SHOPEE_ACCOUNT_KEY).trim().toLowerCase();
   return /^[a-z0-9][a-z0-9_-]{1,62}$/.test(raw) ? raw : DEFAULT_SHOPEE_ACCOUNT_KEY;
+}
+
+function shopeeModelPriceRatioLimitForRegion(region: unknown): number {
+  const code = String(region || '').trim().toUpperCase();
+  const limit = SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS[code];
+  return Number.isFinite(limit) && limit > 0 ? limit : SHOPEE_DEFAULT_MODEL_PRICE_RATIO_LIMIT;
 }
 
 function normalizeShopeeRegionPrice(region: unknown, rawPrice: unknown): number {
@@ -82,6 +96,53 @@ function pickRegionOptionPrice(regionOptionPrices: Record<string, any>, row: any
     if (Number.isFinite(value) && value > 0) return value;
   }
   return fallback;
+}
+
+function shopeeOptionPriceRatioExclusionPlan(
+  rows: any[],
+  regions: string[],
+  priceForRow: (row: any, region: string) => number,
+) {
+  const sourceRows = Array.isArray(rows) ? rows.filter(Boolean) : [];
+  const excludedBySku = new Map<string, any>();
+  for (const region of Array.from(new Set((regions || []).map((r) => String(r || '').toUpperCase()).filter(Boolean)))) {
+    const limit = shopeeModelPriceRatioLimitForRegion(region);
+    const priced = sourceRows
+      .map((row) => ({
+        row,
+        sku: String(row?.shopee_global_model_sku || row?.sku || row?.id || '').trim(),
+        price: Number(priceForRow(row, region)),
+      }))
+      .filter((entry) => entry.sku && Number.isFinite(entry.price) && entry.price > 0);
+    if (priced.length < 2) continue;
+    const minPrice = Math.min(...priced.map((entry) => entry.price));
+    const maxPrice = Math.max(...priced.map((entry) => entry.price));
+    if (!(minPrice > 0) || !(maxPrice > 0) || maxPrice / minPrice <= limit) continue;
+    const maxAllowedPrice = Number((minPrice * limit).toFixed((region === 'TW' || region === 'TH' || region === 'PH') ? 0 : 2));
+    for (const entry of priced.filter((row) => row.price > maxAllowedPrice + 0.000001)) {
+      const existing = excludedBySku.get(entry.sku) || {
+        sku: entry.sku,
+        option_name: entry.row?.option_name || entry.row?.product_name || entry.sku,
+        product_id: entry.row?.id || null,
+        reasons: [],
+      };
+      existing.reasons.push({
+        region,
+        limit,
+        price: entry.price,
+        min_price: minPrice,
+        max_allowed_price: maxAllowedPrice,
+        ratio: Number((entry.price / minPrice).toFixed(4)),
+      });
+      excludedBySku.set(entry.sku, existing);
+    }
+  }
+  const excluded = Array.from(excludedBySku.values());
+  const excludedSkus = new Set(excluded.map((entry) => entry.sku));
+  return {
+    excluded,
+    allowedRows: sourceRows.filter((row) => !excludedSkus.has(String(row?.shopee_global_model_sku || row?.sku || row?.id || '').trim())),
+  };
 }
 
 function shopeePlainText(value: unknown): string {
@@ -964,8 +1025,19 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     lifecycle_state,
     master.components_extracted_en,
   );
-  const variationRows = publishableGroupRows(master, (ctx as any).groupProducts || []);
-  const variationBundle = variationRows.length > 1 ? buildVariationItems(variationRows, 'Version') : null;
+  const rawVariationRows = publishableGroupRows(master, (ctx as any).groupProducts || []);
+  const priceRatioPlan = shopeeOptionPriceRatioExclusionPlan(rawVariationRows, regions, (row, region) => {
+    const explicitOptionPrices = regionOptionPrices[region] || {};
+    const target = targets.find((entry: any) => String(entry.region || '').toUpperCase() === region);
+    const targetBasePrice = Number(target?.price || 0);
+    const optionCostKrw = Number(row?.cost_krw || cost_krw);
+    const fallbackPrice = shopeeOptionRegionPrice(region, targetBasePrice, optionCostKrw, Number(cost_krw || 0));
+    return pickRegionOptionPrice(explicitOptionPrices, row, fallbackPrice);
+  });
+  const variationRows = priceRatioPlan.excluded.length ? priceRatioPlan.allowedRows : rawVariationRows;
+  const variationBundle = variationRows.length > 1 || priceRatioPlan.excluded.length
+    ? buildVariationItems(variationRows, 'Version')
+    : null;
   const stockOverride = Number((ctx as any).stock_override);
   const groupedInventory = variationRows.length > 1
     ? variationRows.reduce((sum: number, row: any) => sum + Math.max(0, Math.floor(Number(row.inventory || 0))), 0)
@@ -1090,6 +1162,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     registration_kind: (ctx as any).registration_kind || (variationBundle ? 'option_group' : 'single'),
     publish_request_id: ctx.publishRequestId,
     dry_run: ctx.dryRun ? true : undefined,
+    price_ratio_excluded_options: priceRatioPlan.excluded,
     variation: shopeeVariation || undefined,
   };
 
@@ -1101,6 +1174,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     regions,
     lifecycle_state,
     dry_run: ctx.dryRun,
+    price_ratio_excluded_options: priceRatioPlan.excluded.length,
     ts: new Date().toISOString(),
   }));
 
@@ -1111,7 +1185,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     return {
       ok: true,
       listingStatus: 'draft',
-      rawResponse: { dry_run: true, computed_payload: bridgeBody },
+      rawResponse: { dry_run: true, computed_payload: bridgeBody, excluded_options: priceRatioPlan.excluded },
     };
   }
 
@@ -1139,7 +1213,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
       listingStatus: 'error',
       errorCode: errCode,
       errorMsg: raw.message || raw.error || 'register_cbsc failed',
-      rawResponse: raw,
+      rawResponse: { ...raw, excluded_options: priceRatioPlan.excluded },
     };
   }
 
@@ -1185,7 +1259,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     }
 
     // Upsert product_shopee_listings (primary key: product_id + account_key + region).
-    const listingProducts = variationRows.length > 1 ? variationRows : [master];
+    const listingProducts = variationBundle ? variationRows : [master];
     for (const listingProduct of listingProducts) {
       const rowGlobalItemId = Object.prototype.hasOwnProperty.call(r || {}, 'global_item_id') ? r.global_item_id : global_item_id;
       const upsertPayload: Record<string, unknown> = {
@@ -1235,7 +1309,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   for (const reqRegion of regions) {
     const regionCode = reqRegion.toUpperCase();
     if (!regionSummary.find((s) => s.region === regionCode)) {
-      const listingProducts = variationRows.length > 1 ? variationRows : [master];
+      const listingProducts = variationBundle ? variationRows : [master];
       for (const listingProduct of listingProducts) {
         const upsertPayload: Record<string, unknown> = {
           product_id: listingProduct.id || master.id,
@@ -1280,7 +1354,14 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
       p_platform_item_id: summary.global_item_id ? String(summary.global_item_id) : null,
       p_listing_status: summary.status === 'mapped' ? 'listed' : 'error',
       p_last_publish_request_id: ctx.publishRequestId,
-      p_last_payload: { capability: 'create_listing_multi_region', account_key, regions, lifecycle_state, shopee_product_name: registerName },
+      p_last_payload: {
+        capability: 'create_listing_multi_region',
+        account_key,
+        regions,
+        lifecycle_state,
+        shopee_product_name: registerName,
+        price_ratio_excluded_options: priceRatioPlan.excluded,
+      },
       p_last_sync_at: new Date().toISOString(),
       p_error_msg: summary.error || null,
       p_error_code: summary.error ? 'PLATFORM_VALIDATION_ERROR' : null,
@@ -1324,6 +1405,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     global_item_id,
     regions_ok: successCount,
     regions_failed: failCount,
+    price_ratio_excluded_options: priceRatioPlan.excluded.length,
     ts: new Date().toISOString(),
   }));
 
@@ -1339,7 +1421,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     platformItemId: global_item_id ? String(global_item_id) : undefined,
     errorCode: overallOk ? undefined : 'PLATFORM_VALIDATION_ERROR',
     errorMsg: overallOk ? undefined : (failedSummary || 'Shopee multi-region publish failed'),
-    rawResponse: { account_key, global_item_id, results: regionSummary },
+    rawResponse: { account_key, global_item_id, results: regionSummary, excluded_options: priceRatioPlan.excluded },
   };
 }
 

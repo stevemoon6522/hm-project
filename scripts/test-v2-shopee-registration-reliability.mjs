@@ -247,6 +247,11 @@ assert.match(
 );
 assert.match(
   bridge,
+  /async function publishBrOptionMinimalFirst[\s\S]*br_option_minimal_first[\s\S]*retryMinimalPublish/,
+  'Shopee bridge must use a BR option minimal-first publish path before the slower full item publish',
+);
+assert.match(
+  bridge,
   /SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS[\s\S]*SG:\s*5[\s\S]*TW:\s*5[\s\S]*TH:\s*5[\s\S]*MY:\s*5[\s\S]*PH:\s*5[\s\S]*BR:\s*4[\s\S]*function normalizeRegionalGlobalModelPriceRatio/,
   'Shopee bridge must defensively normalize Global Product option price ratios with observed region limits',
 );
@@ -367,6 +372,11 @@ assert.match(
 );
 assert.match(
   publishToRegionBlock,
+  /publishBrOptionMinimalFirst[\s\S]*buildPublishItemPayload/,
+  'publish_to_region must try BR option minimal-first publish before building the full item payload',
+);
+assert.match(
+  publishToRegionBlock,
   /parsePublishOutcome[\s\S]*shouldRetryMinimalPublish[\s\S]*retryMinimalPublish[\s\S]*Fallback verification/,
   'publish_to_region must run minimal retry before slower fallback verification loops',
 );
@@ -439,6 +449,11 @@ assert.match(
   registerCbscBlock,
   /shouldRetryMinimalPublish[\s\S]*retryMinimalPublish/,
   'register_cbsc must retry variation-invalid and crossupload-permission failures with minimal publish',
+);
+assert.match(
+  registerCbscBlock,
+  /publishBrOptionMinimalFirst[\s\S]*buildPublishItemPayload/,
+  'register_cbsc must try BR option minimal-first publish before building the full item payload',
 );
 assert.match(
   `${publishToRegionBlock}\n${registerCbscBlock}`,

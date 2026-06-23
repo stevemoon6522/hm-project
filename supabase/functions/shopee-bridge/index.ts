@@ -2867,6 +2867,32 @@ async function retryMinimalPublish(globalItemId: number, shopId: number, target:
   return retryOutcome;
 }
 
+async function publishBrOptionMinimalFirst(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const region = String(target?.region || '').toUpperCase();
+  if (region !== 'BR' || !hasOptionVariationPayload(target, body)) return null;
+  const minimalOutcome = await retryMinimalPublish(globalItemId, shopId, target, body, logistics, accountKey, 'br_option_minimal_first');
+  if (minimalOutcome?.ok) {
+    const finalized = await finalizePublishOutcomeAfterSuccess(minimalOutcome, region, target, body, accountKey);
+    (finalized as any).br_option_minimal_first = true;
+    return finalized;
+  }
+  const failed = {
+    ...(minimalOutcome || {}),
+    ok: false,
+    region,
+    shop_id: shopId,
+    stage: minimalOutcome?.stage || 'br_option_minimal_first',
+    br_option_minimal_first: true,
+  };
+  if (isCrossuploadPermissionPublishFailure(minimalOutcome, minimalOutcome?.raw_retry_create, minimalOutcome?.raw_retry_task)) {
+    return markBrOptionCrossuploadBlocked(failed, minimalOutcome?.raw_retry_task || null, minimalOutcome?.raw_retry_create || null, {
+      global_item_id: globalItemId,
+      minimal_item_retry: minimalOutcome,
+    });
+  }
+  return failed;
+}
+
 function variationModelStock(model: any, fallback = 0): number {
   const stock = Number(model?.seller_stock?.[0]?.stock ?? model?.stock ?? model?.normal_stock ?? fallback ?? 0);
   return Number.isFinite(stock) ? Math.max(0, Math.floor(stock)) : 0;
@@ -4362,6 +4388,18 @@ Deno.serve(async (req) => {
             return;
           }
           const logistics = await getPublishLogistics(targetRegion, _isPreOrderRepublish, reqAccountKey);
+          const brMinimalFirst = await publishBrOptionMinimalFirst(global_item_id, shop_id, target, body, logistics, reqAccountKey).catch((e: any) => ({
+            ok: false,
+            region: targetRegion,
+            shop_id,
+            stage: 'br_option_minimal_first_exception',
+            error: String(e?.message || e),
+            br_option_minimal_first: true,
+          }));
+          if (brMinimalFirst) {
+            results.push(brMinimalFirst);
+            return;
+          }
           const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: reqAccountKey });
@@ -4877,6 +4915,18 @@ Deno.serve(async (req) => {
             return;
           }
           const logistics = await getPublishLogistics(targetRegion, _isPreOrderRegister, accountKey);
+          const brMinimalFirst = await publishBrOptionMinimalFirst(global_item_id, shop_id, target, body, logistics, accountKey).catch((e: any) => ({
+            ok: false,
+            region: targetRegion,
+            shop_id,
+            stage: 'br_option_minimal_first_exception',
+            error: String(e?.message || e),
+            br_option_minimal_first: true,
+          }));
+          if (brMinimalFirst) {
+            results.push(brMinimalFirst);
+            return;
+          }
           const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: accountKey });

@@ -41,7 +41,14 @@ const BANNED_SHOPEE_SHOP_IDS = new Set<string>(['1002269093']);
 // ---------------------------------------------------------------------------
 
 // The dispatcher injects userAuthToken and Shopee account routing on ctx.
-type ShopeeAdapterContext = AdapterContext & { userAuthToken?: string; account_key?: string; accountKey?: string };
+type ShopeeAdapterContext = AdapterContext & {
+  userAuthToken?: string;
+  account_key?: string;
+  accountKey?: string;
+  global_item_id?: number | string;
+  existing_global_item_id?: number | string;
+  publish_existing_global_only?: boolean;
+};
 
 const DEFAULT_SHOPEE_ACCOUNT_KEY = 'starphotocard';
 const SHOPEE_LISTING_CONFLICT = 'product_id,account_key,region';
@@ -285,6 +292,44 @@ function shopeeFailedResultsForBatch(targets: any[], reason: string, stage = 'pu
 
 async function registerCbscInRegionBatches(bridgeBody: Record<string, unknown>, userToken: string): Promise<any> {
   const targets = Array.isArray((bridgeBody as any).targets) ? (bridgeBody as any).targets : [];
+  const existingGlobalItemId = Number((bridgeBody as any).global_item_id || (bridgeBody as any).existing_global_item_id || 0);
+  const publishExistingOnly = (bridgeBody as any).publish_existing_global_only === true
+    && Number.isFinite(existingGlobalItemId)
+    && existingGlobalItemId > 0;
+  if (publishExistingOnly) {
+    const batches = shopeeTargetBatches(targets);
+    const results: any[] = [];
+    const publishBatches: any[] = [];
+    for (let i = 0; i < batches.length; i += 1) {
+      const batch = batches[i];
+      let raw: any;
+      try {
+        raw = await bridgePost('publish_to_region', { ...bridgeBody, global_item_id: existingGlobalItemId, targets: batch }, userToken) as any;
+      } catch (e) {
+        raw = { ok: false, error: e?.message || String(e) };
+      }
+      if (Array.isArray(raw?.results)) {
+        results.push(...raw.results);
+      } else {
+        results.push(...shopeeFailedResultsForBatch(batch, raw?.error || raw?.message || 'publish_to_region returned no results'));
+      }
+      publishBatches.push({
+        action: 'publish_to_region',
+        index: i,
+        regions: batch.map((target: any) => shopeeTargetRegion(target)),
+        ok: raw?.ok === true,
+        error: raw?.ok === true ? null : (raw?.error || raw?.message || 'publish_to_region failed'),
+      });
+    }
+    return {
+      ok: results.length > 0 && results.every((row: any) => row?.ok === true),
+      global_item_id: existingGlobalItemId,
+      results,
+      batched_publish: true,
+      publish_existing_global_only: true,
+      publish_batches: publishBatches,
+    };
+  }
   if (targets.length <= SHOPEE_REGISTER_REGION_BATCH_SIZE) {
     return await bridgePost('register_cbsc', bridgeBody, userToken) as any;
   }
@@ -822,6 +867,10 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   const account_key = normalizeShopeeAccountKey((ctx as any).account_key || (ctx as any).accountKey);
   const regions: string[] = Array.isArray((ctx as any).regions) ? (ctx as any).regions : [];
   const lifecycle_state: string = shopeeLifecycleOf(master, (ctx as any).lifecycle_state);
+  const existingGlobalItemId = Number((ctx as any).global_item_id || (ctx as any).existing_global_item_id || 0);
+  const publishExistingGlobalOnly = (ctx as any).publish_existing_global_only === true
+    && Number.isFinite(existingGlobalItemId)
+    && existingGlobalItemId > 0;
 
   // ------------------------------------------------------------------
   // STEP B: Validate required master-data fields (gate 7 pre-checks).
@@ -1163,6 +1212,9 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     registration_kind: (ctx as any).registration_kind || (variationBundle ? 'option_group' : 'single'),
     publish_request_id: ctx.publishRequestId,
     dry_run: ctx.dryRun ? true : undefined,
+    global_item_id: publishExistingGlobalOnly ? existingGlobalItemId : undefined,
+    existing_global_item_id: publishExistingGlobalOnly ? existingGlobalItemId : undefined,
+    publish_existing_global_only: publishExistingGlobalOnly || undefined,
     price_ratio_excluded_options: priceRatioPlan.excluded,
     variation: shopeeVariation || undefined,
   };
@@ -1196,7 +1248,8 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
   const raw = await registerCbscInRegionBatches(bridgeBody, ctx.userAuthToken || '') as any;
 
   // Bridge-level error (before any publish task).
-  if (!raw.ok || raw.error) {
+  const rawHasRegionResults = Array.isArray(raw?.results) && raw.results.length > 0;
+  if ((!raw.ok || raw.error) && !(publishExistingGlobalOnly && rawHasRegionResults)) {
     const shopeeErrCode = mapShopeeError(raw.error || '');
     const errCode = shopeeErrCode === 'PLATFORM_UNKNOWN' && raw.error && !String(raw.error).startsWith('error_')
       ? 'PLATFORM_VALIDATION_ERROR' as const

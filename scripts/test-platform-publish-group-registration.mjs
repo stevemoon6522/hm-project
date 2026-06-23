@@ -46,6 +46,22 @@ assert.match(shopee, /function normalizeShopeeAttributeList/, 'Shopee adapter mu
 assert.match(shopee, /else if \(originalValueName\) entry\.value_id = 0/, 'Shopee adapter must send custom attribute values as value_id=0 plus original_value_name');
 assert.match(shopee, /function registerCbscInRegionBatches[\s\S]*register_cbsc[\s\S]*publish_to_region[\s\S]*global_item_id/, 'Shopee adapter must split large multi-region publishes into timeout-safe bridge batches');
 assert.match(shopee, /const raw = await registerCbscInRegionBatches/, 'Shopee adapter multi-region create must use the batch helper');
+assert.match(dispatcher, /global_item_id:[\s\S]*existing_global_item_id:[\s\S]*publish_existing_global_only:/, 'platform-publish dispatcher must forward existing Global Product publish hints to the Shopee adapter');
+assert.match(
+  shopee,
+  /publishExistingOnly[\s\S]*bridgePost\('publish_to_region'[\s\S]*if \(targets\.length <= SHOPEE_REGISTER_REGION_BATCH_SIZE\)/,
+  'Shopee adapter existing Global Product publish must call publish_to_region before any register_cbsc branch',
+);
+assert.doesNotMatch(
+  shopee.slice(shopee.indexOf('if (publishExistingOnly) {'), shopee.indexOf('if (targets.length <= SHOPEE_REGISTER_REGION_BATCH_SIZE)')),
+  /register_cbsc/,
+  'Shopee adapter existing Global Product publish must not create a replacement Global Product',
+);
+assert.match(
+  shopee,
+  /rawHasRegionResults[\s\S]*publishExistingGlobalOnly && rawHasRegionResults/,
+  'Shopee adapter must persist per-region existing Global Product failures instead of treating them as fatal bridge errors',
+);
 assert.match(shopee, /BR:\s*0[\s\S]*SG:\s*1/, 'Shopee adapter batch ordering must prioritize BR');
 assert.match(shopee, /rowGlobalItemId[\s\S]*hasOwnProperty\.call\(r \|\| \{\}, 'global_item_id'\)[\s\S]*global_item_id:\s*rowGlobalItemId \? Number\(rowGlobalItemId\) : null/, 'Shopee adapter must preserve row-level null global_item_id for shop-level fallback listings');
 assert.match(shopee, /const failedSummary = regionSummary/, 'Shopee adapter must surface a top-level failure summary when every region fails');

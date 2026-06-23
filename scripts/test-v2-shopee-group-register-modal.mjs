@@ -22,6 +22,11 @@ const rshModal = sliceBetween(
   'PHASE B — NEW SHOPEE REGISTER MODAL',
   '// P2-1: Legacy modal URL flag',
 );
+const rshBatchHelper = sliceBetween(
+  html,
+  'async function shopeeRegisterCbscWithRegionBatches(payload, headers, options = {})',
+  'async function fetchShopModels(region, itemId, accountKeyOverride)',
+);
 
 assert(html.includes('id="rsh-variant-section"'), 'Shopee modal must show grouped option rows');
 assert(html.includes('id="rsh-variant-body"'), 'Shopee modal must have a variant tbody');
@@ -75,6 +80,27 @@ for (const token of [
 }
 
 assert(html.includes("'publish_to_region'") || html.includes('"publish_to_region"'), 'Shopee batch helper must call publish_to_region for follow-up region batches');
+assert(
+  html.includes('id="rsh-existing-region-section"')
+    && html.includes('id="rsh-publish-missing-btn"')
+    && rshModal.includes('rshRefreshExistingPublishPlans')
+    && rshModal.includes('rshPublishMissingRegionsOnly'),
+  'Shopee modal must expose a DB-backed missing-region-only publish action',
+);
+assert(
+  /publishExistingOnly[\s\S]*shopeeBridgePostJson\('publish_to_region'[\s\S]*if \(targets\.length <= SHOPEE_REGISTER_REGION_BATCH_SIZE\)/.test(rshBatchHelper),
+  'existing Global Product publish must route through publish_to_region before the normal register_cbsc branch',
+);
+assert(
+  !/register_cbsc/.test(sliceBetween(rshBatchHelper, 'if (publishExistingOnly) {', 'if (targets.length <= SHOPEE_REGISTER_REGION_BATCH_SIZE)')),
+  'existing Global Product missing-region publish must not call register_cbsc or create a new Global Product',
+);
+assert(
+  rshModal.includes('rshApplyShopeePublishStateFromListings')
+    && rshModal.includes('payload?.publish_existing_global_only === true')
+    && rshModal.includes('hasRenderedTargetRows'),
+  'missing-region-only publish must persist failed rows and compute product state from all listing mappings',
+);
 
 assert(
   rshModal.includes('product_group_id')

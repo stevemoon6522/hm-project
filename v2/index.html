@@ -4638,6 +4638,10 @@
         <!-- Loading / error banner -->
         <div id="rsh-loading" class="notice" style="display:none;">마스터 데이터 불러오는 중...</div>
         <div id="rsh-error" class="notice error" style="display:none;"></div>
+        <div id="rsh-existing-region-section" class="notice ok" style="display:none;margin-bottom:8px;">
+          <div id="rsh-existing-region-message" style="font-size:12px;"></div>
+          <button type="button" id="rsh-publish-missing-btn" class="primary" style="margin-top:8px;font-size:12px;padding:5px 10px;">미등록 지역만 등록</button>
+        </div>
         <!-- P1-3: Category 101390 is unsupported in Phase B -->
         <div id="rsh-cat-blocked" class="notice" style="display:none;">
           이 상품의 카테고리(101390 Idol Collectibles)는 Phase B에서 지원되지 않습니다.
@@ -13802,6 +13806,56 @@ LEGACY END -->
 
   async function shopeeRegisterCbscWithRegionBatches(payload, headers, options = {}) {
     const targets = Array.isArray(payload?.targets) ? payload.targets : [];
+    const existingGlobalItemId = Number(payload?.global_item_id || payload?.existing_global_item_id || 0);
+    const publishExistingOnly = (payload?.publish_existing_global_only === true || options.publishExistingGlobalOnly === true)
+      && Number.isFinite(existingGlobalItemId)
+      && existingGlobalItemId > 0;
+    if (publishExistingOnly) {
+      const batches = shopeeChunkTargets(targets);
+      const results = [];
+      const publishBatches = [];
+      let firstResp = null;
+      for (let i = 0; i < batches.length; i += 1) {
+        const batch = batches[i];
+        if (typeof options.onBatchStart === 'function') options.onBatchStart(i, batch, 'publish_to_region');
+        const publishPayload = { ...payload, global_item_id: existingGlobalItemId, targets: batch };
+        let batchJson;
+        let status = null;
+        try {
+          const batchResult = await shopeeBridgePostJson('publish_to_region', publishPayload, headers);
+          if (!firstResp) firstResp = batchResult.resp;
+          batchJson = batchResult.json || {};
+          status = batchResult.resp?.status || null;
+        } catch (e) {
+          batchJson = { ok: false, error: e?.message || String(e) };
+        }
+        if (Array.isArray(batchJson.results)) {
+          results.push(...batchJson.results);
+        } else {
+          results.push(...shopeeFailedResultsForTargets(batch, batchJson.error || batchJson.message || 'publish_to_region returned no results'));
+        }
+        publishBatches.push({
+          action: 'publish_to_region',
+          index: i,
+          regions: batch.map((target) => String(target.region || '').toUpperCase()),
+          ok: batchJson.ok === true,
+          status,
+          error: batchJson.ok === true ? null : (batchJson.error || batchJson.message || 'publish_to_region failed'),
+        });
+        if (typeof options.onBatchResult === 'function') options.onBatchResult(i, batch, batchJson);
+      }
+      return {
+        resp: firstResp,
+        json: {
+          ok: results.length > 0 && results.every((row) => row?.ok === true),
+          global_item_id: existingGlobalItemId,
+          results,
+          batched_publish: true,
+          publish_existing_global_only: true,
+          publish_batches: publishBatches,
+        },
+      };
+    }
     if (targets.length <= SHOPEE_REGISTER_REGION_BATCH_SIZE) {
       return shopeeBridgePostJson('register_cbsc', payload, headers);
     }
@@ -14052,6 +14106,33 @@ LEGACY END -->
     const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     if (accountKey !== SHOPEE_DEFAULT_ACCOUNT_KEY) return null;
     const publishState = rshPublishStateFromMappingRows(mappingRows, expectedRegions);
+    const update = { shopee_publish_state: publishState };
+    if (globalItemId && publishState !== 'publish_failed') update.shopee_item_id = globalItemId;
+    const { error } = await db.from('products').update(update).in('id', ids);
+    if (error) throw error;
+    return publishState;
+  }
+
+  async function rshApplyShopeePublishStateFromListings(productIds, globalItemId, accountKeyOverride) {
+    const ids = (productIds || []).filter(Boolean);
+    if (!ids.length) return null;
+    const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
+    if (accountKey !== SHOPEE_DEFAULT_ACCOUNT_KEY) return null;
+    const { data, error: fetchError } = await db
+      .from('product_shopee_listings')
+      .select('region,status,shop_item_id,global_item_id')
+      .in('product_id', ids)
+      .eq('account_key', accountKey)
+      .in('region', RSH_REGIONS);
+    if (fetchError) throw fetchError;
+    const rows = Array.isArray(data) ? data : [];
+    const mappedRegions = new Set(rows
+      .filter(rshListingHasPublishedShopItem)
+      .map((row) => String(row.region || '').toUpperCase())
+      .filter(Boolean));
+    const publishState = RSH_REGIONS.every((region) => mappedRegions.has(region))
+      ? 'published'
+      : (mappedRegions.size > 0 ? 'partial_published' : 'publish_failed');
     const update = { shopee_publish_state: publishState };
     if (globalItemId && publishState !== 'publish_failed') update.shopee_item_id = globalItemId;
     const { error } = await db.from('products').update(update).in('id', ids);
@@ -16216,6 +16297,8 @@ LEGACY END -->
     globalOptionImageIds: {},// option SKU -> SG image_id for Shopee variation option image
     accountGlobalOptionImageIds: {}, // account_key -> option SKU -> SG image_id
     optionImageUploadWarnings: [],
+    existingPublishPlans: {}, // account_key -> existing Global Product missing-region plan
+    publishExistingGlobalOnly: false,
     publishRequestId: null,  // UUID generated at Stage 2 start; fresh UUID on retry (P0-2)
     accountPublishRequestIds: {}, // account_key -> UUID
     dtsOverrides: {},        // { region: number } — user-edited DTS values
@@ -16271,6 +16354,9 @@ LEGACY END -->
     rshUpdateShopeeAccountLayerReadout();
     if (primaryChanged && _rsh.master) {
       await rshUseMasterImages(_rsh.master);
+    }
+    if (_rsh.master) {
+      await rshRefreshExistingPublishPlans(sdSelectedShopeeAccountKeys());
     }
     rshCheckSubmitEnabled();
   }
@@ -17390,6 +17476,128 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       .filter(Boolean)
       .map((p) => p.id)
       .filter(Boolean);
+  }
+
+  function rshListingHasPublishedShopItem(row) {
+    const status = String(row?.status || '').toLowerCase();
+    return ['mapped', 'listed'].includes(status) && !!row?.shop_item_id;
+  }
+
+  function rshExistingPublishPlanForAccount(accountKey) {
+    const key = sdNormalizeShopeeAccountKey(accountKey || sdSelectedShopeeAccountKey());
+    return _rsh.existingPublishPlans?.[key] || null;
+  }
+
+  function rshExistingGlobalPublishPayload(accountKey, activeRegions) {
+    if (!_rsh.publishExistingGlobalOnly) return {};
+    const plan = rshExistingPublishPlanForAccount(accountKey);
+    const globalItemId = Number(plan?.globalItemId || 0);
+    if (!globalItemId) return {};
+    const wanted = (activeRegions || []).map((region) => String(region || '').toUpperCase()).filter(Boolean);
+    if (wanted.length && plan?.regions?.length) {
+      const allowed = new Set(plan.regions);
+      if (!wanted.every((region) => allowed.has(region))) return {};
+    }
+    return {
+      global_item_id: globalItemId,
+      existing_global_item_id: globalItemId,
+      publish_existing_global_only: true,
+    };
+  }
+
+  function rshRenderExistingPublishPlans() {
+    const section = $rsh('existing-region-section');
+    const messageEl = $rsh('existing-region-message');
+    const button = $rsh('publish-missing-btn');
+    if (!section || !messageEl || !button) return;
+    const plans = Object.values(_rsh.existingPublishPlans || {})
+      .filter((plan) => Number(plan?.globalItemId || 0) > 0 && Array.isArray(plan?.regions) && plan.regions.length > 0);
+    if (!plans.length) {
+      section.style.display = 'none';
+      button.disabled = true;
+      return;
+    }
+    const summary = plans.map((plan) => {
+      const label = sdShopeeAccountDisplayName(plan.accountKey);
+      return `${label}: Global ${plan.globalItemId} → ${plan.regions.join(', ')}`;
+    }).join(' / ');
+    const mapped = Array.from(new Set(plans.flatMap((plan) => plan.mappedRegions || []))).sort();
+    messageEl.textContent = `기존 Global Product를 유지하고 미등록/실패 region만 publish 할 수 있습니다. ${summary}${mapped.length ? ` (이미 등록됨: ${mapped.join(', ')})` : ''}`;
+    button.disabled = false;
+    section.style.display = '';
+  }
+
+  async function rshRefreshExistingPublishPlans(accountKeys = sdSelectedShopeeAccountKeys()) {
+    const productIds = rshProductIds();
+    const accounts = sdUniqueShopeeAccountKeys(accountKeys);
+    const plans = {};
+    if (!productIds.length || !accounts.length) {
+      _rsh.existingPublishPlans = plans;
+      rshRenderExistingPublishPlans();
+      return plans;
+    }
+    try {
+      const { data, error } = await db
+        .from('product_shopee_listings')
+        .select('product_id,account_key,region,status,shop_id,shop_item_id,global_item_id,last_error,last_synced_at')
+        .in('product_id', productIds)
+        .in('account_key', accounts)
+        .in('region', RSH_REGIONS);
+      if (error) throw error;
+      const rows = Array.isArray(data) ? data : [];
+      accounts.forEach((accountKey) => {
+        const key = sdNormalizeShopeeAccountKey(accountKey);
+        const accountRows = rows.filter((row) => sdNormalizeShopeeAccountKey(row.account_key) === key);
+        const globalIds = Array.from(new Set(accountRows.map((row) => Number(row.global_item_id || 0)).filter((id) => Number.isFinite(id) && id > 0)));
+        if (!globalIds.length) return;
+        if (globalIds.length > 1) {
+          plans[key] = { accountKey: key, globalItemId: null, regions: [], mappedRegions: [], blockedReason: 'ambiguous_global_item_id_mapping' };
+          return;
+        }
+        const rowsByRegion = new Map();
+        accountRows.forEach((row) => {
+          const region = String(row.region || '').toUpperCase();
+          if (!region) return;
+          if (!rowsByRegion.has(region)) rowsByRegion.set(region, []);
+          rowsByRegion.get(region).push(row);
+        });
+        const mappedRegions = RSH_REGIONS.filter((region) => (rowsByRegion.get(region) || []).some(rshListingHasPublishedShopItem));
+        const missingRegions = RSH_REGIONS.filter((region) => !(rowsByRegion.get(region) || []).some(rshListingHasPublishedShopItem));
+        plans[key] = {
+          accountKey: key,
+          globalItemId: globalIds[0],
+          regions: missingRegions,
+          mappedRegions,
+          rowCount: accountRows.length,
+        };
+      });
+    } catch (e) {
+      console.warn('[rsh] existing Global Product publish plan load failed:', e);
+    }
+    _rsh.existingPublishPlans = plans;
+    rshRenderExistingPublishPlans();
+    return plans;
+  }
+
+  async function rshPublishMissingRegionsOnly() {
+    const plans = await rshRefreshExistingPublishPlans();
+    const targets = Object.values(plans).flatMap((plan) => {
+      const globalItemId = Number(plan?.globalItemId || 0);
+      if (!globalItemId || !Array.isArray(plan?.regions) || !plan.regions.length) return [];
+      return plan.regions.map((region) => ({
+        accountKey: plan.accountKey,
+        region,
+        global_item_id: globalItemId,
+        publish_existing_global_only: true,
+      }));
+    });
+    if (!targets.length) {
+      showToast('미등록/실패 region이 없거나 기존 global_item_id를 찾지 못했습니다.', 'err');
+      return;
+    }
+    _rsh.publishExistingGlobalOnly = true;
+    Array.from(new Set(targets.map((target) => target.accountKey))).forEach((accountKey) => rshAccountPublishRequestId(accountKey, true));
+    await rshProceedToStage2(targets);
   }
 
   function rshParentSku(rows) {
@@ -19221,6 +19429,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       accountRegionImageIds: {},
       globalOptionImageIds: {},
       accountGlobalOptionImageIds: {},
+      existingPublishPlans: {},
+      publishExistingGlobalOnly: false,
       publishRequestId: null,
       accountPublishRequestIds: {},
       dtsOverrides: {},
@@ -19283,6 +19493,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (!_rsh.products.length) _rsh.products = [master];
     _rsh.cachedImageId = master.shopee_image_id || null;
     _rsh.cachedExtraIds = master.shopee_extra_image_ids || [];
+    await rshRefreshExistingPublishPlans(sdSelectedShopeeAccountKeys());
 
     // Populate subtitle
     const subtitleEl = $rsh('subtitle');
@@ -20100,6 +20311,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         allowedSkus: priceRatioPlan.allowedSkus,
         priceRatioExclusions: priceRatioPlan.excluded,
       });
+      Object.assign(payload, rshExistingGlobalPublishPayload(accountKey, activeRegions));
       console.log('[rsh] group register_cbsc payload:', JSON.stringify(payload).slice(0, 2000));
       const { json: batchJson } = await shopeeRegisterCbscWithRegionBatches(payload, {
           Authorization: `Bearer ${session.access_token}`,
@@ -20129,7 +20341,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     _rsh.publishInFlight = false;
 
-    if (!json.ok) {
+    const hasPersistableExistingResults = payload?.publish_existing_global_only === true && Array.isArray(json.results) && json.results.length > 0;
+    if (!json.ok && !hasPersistableExistingResults) {
       const details = Array.isArray(json.missing_attributes)
         ? json.missing_attributes.map((a) => a.attribute_name || a.attribute_id).filter(Boolean).join(', ')
         : '';
@@ -20150,7 +20363,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let mappingRows = [];
     try {
       mappingRows = await persistMappings(json, payload);
-      await rshApplyShopeePublishState(publishProducts.map((p) => p.id), json.global_item_id, mappingRows, activeRegions, accountKey);
+      if (payload?.publish_existing_global_only === true) {
+        await rshApplyShopeePublishStateFromListings(publishProducts.map((p) => p.id), json.global_item_id, accountKey);
+      } else {
+        await rshApplyShopeePublishState(publishProducts.map((p) => p.id), json.global_item_id, mappingRows, activeRegions, accountKey);
+      }
     } catch (persistErr) {
       console.warn('[rsh] group mapping persistence failed:', persistErr);
       if (errorEl) {
@@ -20266,6 +20483,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return regionsOverride.map((target) => ({
         accountKey: sdNormalizeShopeeAccountKey(target.accountKey || target.account_key),
         region: String(target.region || '').toUpperCase(),
+        global_item_id: Number(target.global_item_id || target.globalItemId || 0) || null,
+        publish_existing_global_only: target.publish_existing_global_only === true,
       })).filter((target) => target.accountKey && target.region);
     }
     const regions = Array.isArray(regionsOverride) && regionsOverride.length > 0
@@ -20322,6 +20541,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return targets.filter((target) => {
       const el = rshTargetEl('status', target.region, target.accountKey);
       return el && /fail|failed|ㅽ뙣/.test(String(el.textContent || '').toLowerCase());
+    }).map((target) => {
+      if (!_rsh.publishExistingGlobalOnly) return target;
+      const plan = rshExistingPublishPlanForAccount(target.accountKey);
+      const globalItemId = Number(plan?.globalItemId || 0);
+      return globalItemId
+        ? { ...target, global_item_id: globalItemId, publish_existing_global_only: true }
+        : target;
     });
   }
 
@@ -20394,6 +20620,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       stock_override: stockOverride,
       region_image_ids: _rsh.regionImageIds || {},
       region_prices: rshBuildSingleRegionPrices(activeRegions, costOverride, singleWeightG),
+      ...rshExistingGlobalPublishPayload(accountKey, activeRegions),
     };
     const resp = await fetch(PLATFORM_PUBLISH_URL, {
       method: 'POST',
@@ -20402,7 +20629,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     });
     const dispatchResult = await resp.json();
     let regionResults = rshExtractRegionResults(dispatchResult);
-    if (dispatchResult.ok && !regionResults.length) {
+    if ((dispatchResult.ok || body.publish_existing_global_only === true) && !regionResults.length) {
       regionResults = await rshFetchShopeeListingResults(_rsh.productId, activeRegions, accountKey);
     }
     if (dispatchResult.ok && !regionResults.length) {
@@ -20449,6 +20676,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       allowedSkus: priceRatioPlan.allowedSkus,
       priceRatioExclusions: priceRatioPlan.excluded,
     });
+    Object.assign(payload, rshExistingGlobalPublishPayload(accountKey, activeRegions));
     payload.idempotency_token = rshAccountPublishRequestId(accountKey);
     const { json } = await shopeeRegisterCbscWithRegionBatches(payload, {
         Authorization: `Bearer ${session.access_token}`,
@@ -20461,7 +20689,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         },
       }
     );
-    if (!json.ok) {
+    const hasPersistableExistingResults = payload?.publish_existing_global_only === true && Array.isArray(json.results) && json.results.length > 0;
+    if (!json.ok && !hasPersistableExistingResults) {
       const details = Array.isArray(json.missing_attributes)
         ? json.missing_attributes.map((a) => a.attribute_name || a.attribute_id).filter(Boolean).join(', ')
         : '';
@@ -20476,7 +20705,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let mappingRows = [];
     try {
       mappingRows = await persistMappings(json, payload);
-      await rshApplyShopeePublishState(publishProducts.map((p) => p.id), json.global_item_id, mappingRows, activeRegions, accountKey);
+      if (payload?.publish_existing_global_only === true) {
+        await rshApplyShopeePublishStateFromListings(publishProducts.map((p) => p.id), json.global_item_id, accountKey);
+      } else {
+        await rshApplyShopeePublishState(publishProducts.map((p) => p.id), json.global_item_id, mappingRows, activeRegions, accountKey);
+      }
     } finally {
       state.currentProduct = previousCurrent;
     }
@@ -20506,7 +20739,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (subtitleEl2) subtitleEl2.textContent = [_rsh.master?.sku, cleanProductName(_rsh.master?.product_name, _rsh.master?.sku)].filter(Boolean).join(' / ');
     const errorEl = $rsh('stage2-error');
     if (errorEl) errorEl.style.display = 'none';
-    if (!isRetry) rshRenderMultiAccountResultRows(targets);
+    const hasRenderedTargetRows = targets.some((target) => !!rshTargetEl('status', target.region, target.accountKey));
+    if (!isRetry || !hasRenderedTargetRows) rshRenderMultiAccountResultRows(targets);
     _rsh.publishInFlight = true;
 
     const session = (await db.auth.getSession()).data.session;
@@ -20841,6 +21075,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         stock_override: stockOverride,
         region_image_ids: _rsh.regionImageIds || {},
         region_prices: rshBuildSingleRegionPrices(activeRegions, costOverride, singleWeightG),
+        ...rshExistingGlobalPublishPayload(sdSelectedShopeeAccountKey(), activeRegions),
       };
       const resp = await fetch(PLATFORM_PUBLISH_URL, {
         method: 'POST',
@@ -20864,7 +21099,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     _rsh.publishInFlight = false;
 
     let regionResults = rshExtractRegionResults(dispatchResult);
-    if (dispatchResult.ok && !regionResults.length) {
+    if ((dispatchResult.ok || body.publish_existing_global_only === true) && !regionResults.length) {
       regionResults = await rshFetchShopeeListingResults(_rsh.productId, activeRegions);
     }
     if (dispatchResult.ok && !regionResults.length) {
@@ -20985,6 +21220,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     const submitBtn1 = $rsh('submit1');
     if (submitBtn1) submitBtn1.addEventListener('click', () => rshProceedToStage2());
+    const publishMissingBtn = $rsh('publish-missing-btn');
+    if (publishMissingBtn) publishMissingBtn.addEventListener('click', () => {
+      rshPublishMissingRegionsOnly().catch((e) => {
+        console.warn('[rsh] missing-region publish failed:', e);
+        showToast(e?.message || String(e), 'err');
+      });
+    });
 
     const accountSelect = document.getElementById('rsh-account-key');
     if (accountSelect) accountSelect.addEventListener('change', () => {
@@ -21014,10 +21256,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (retryBtn) retryBtn.addEventListener('click', () => {
       // P0-2: Retry must use a fresh publish_request_id so the multi-region idempotency
       // cache doesn't replay the cached (failed) response. Also pass only failed regions.
-      if (sdSelectedShopeeAccountKeys().length > 1) {
+      if (_rsh.publishExistingGlobalOnly || sdSelectedShopeeAccountKeys().length > 1) {
         const failedTargets = rshCollectFailedTargets();
         if (!failedTargets.length) {
-          showToast('?ъ떆?꾪븷 ?ㅽ뙣 吏??씠 ?놁뒿?덈떎.', 'err');
+          showToast('재시도할 실패 지역이 없습니다.', 'err');
           return;
         }
         Array.from(new Set(failedTargets.map((target) => target.accountKey)))

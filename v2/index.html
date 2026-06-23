@@ -24040,6 +24040,37 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     all.indeterminate = checked > 0 && checked < visibleIds.length;
   }
 
+  function catParseInlinePositiveNumber(input) {
+    const raw = input && input.value != null ? String(input.value).trim() : '';
+    if (raw === '') return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 && value <= 999999999 ? value : NaN;
+  }
+
+  function catNumbersDiffer(a, b) {
+    const av = Number(a);
+    const bv = Number(b);
+    if (!Number.isFinite(av)) return false;
+    if (!Number.isFinite(bv)) return true;
+    return Math.abs(av - bv) > 0.0001;
+  }
+
+  function catCostOverridesSourcingDerivedCost(cost, sourcing) {
+    const costValue = Number(cost);
+    const sourcingValue = Number(sourcing);
+    if (!Number.isFinite(costValue) || costValue <= 0) return false;
+    if (!Number.isFinite(sourcingValue) || sourcingValue <= 0) return true;
+    return Math.round(costValue) !== Math.round(sourcingValue * RSH_SETTLEMENT_MULTIPLIER);
+  }
+
+  function catStageSourcingOnly(pid, sourcing) {
+    pendingSourcingEdits[pid] = sourcing;
+    if (_catCache) {
+      const product = _catCache.products.find(function(p) { return String(p.id) === String(pid); });
+      if (product) product.sourcing_price = sourcing;
+    }
+  }
+
   function catFlushSelectedInlineEdits(options) {
     const persistWeight = !!(options && options.persistWeight);
     const weightSaves = [];
@@ -24051,23 +24082,35 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const tr = cb.closest('tr');
       if (!tr) return;
 
+      const costInput = tr.querySelector('.cat-cost-input');
       const sourcingInput = tr.querySelector('.cat-sourcing-input');
-      if (sourcingInput && sourcingInput.value.trim() !== '') {
-        const sourcing = Number(sourcingInput.value.trim());
-        if (Number.isFinite(sourcing) && sourcing > 0 && sourcing <= 999999999) {
-          catApplySourcingToRow(pid, sourcing);
-        }
+      const product = _catCache && (_catCache.products || []).find(function(p) { return String(p.id) === pid; });
+      const cost = catParseInlinePositiveNumber(costInput);
+      const sourcing = catParseInlinePositiveNumber(sourcingInput);
+      const hasCost = Number.isFinite(cost);
+      const hasSourcing = Number.isFinite(sourcing);
+
+      if (costInput && Number.isNaN(cost)) costInput.classList.add('cost-warn');
+      else if (costInput && hasCost) costInput.classList.remove('cost-warn');
+      if (sourcingInput && Number.isNaN(sourcing)) sourcingInput.classList.add('cost-warn');
+      else if (sourcingInput && hasSourcing) sourcingInput.classList.remove('cost-warn');
+
+      const sourcingChanged = hasSourcing
+        && ((pid in pendingSourcingEdits) || catNumbersDiffer(sourcing, product && product.sourcing_price));
+      const costChanged = hasCost
+        && ((pid in pendingCostEdits) || catNumbersDiffer(cost, product && product.cost_krw));
+      const costOverridesSourcing = hasCost && costChanged
+        && catCostOverridesSourcingDerivedCost(cost, hasSourcing ? sourcing : null);
+
+      if (hasSourcing && sourcingChanged && !costOverridesSourcing) {
+        catApplySourcingToRow(pid, sourcing);
+      } else if (hasSourcing && sourcingChanged) {
+        catStageSourcingOnly(pid, sourcing);
       }
 
-      const costInput = tr.querySelector('.cat-cost-input');
-      if (costInput && costInput.value.trim() !== '') {
-        const cost = Number(costInput.value.trim());
-        if (Number.isFinite(cost) && cost > 0 && cost <= 999999999) {
-          pendingCostEdits[pid] = cost;
-          catUpdateRowPriceCells(pid, cost);
-        } else {
-          costInput.classList.add('cost-warn');
-        }
+      if (hasCost && (costChanged || costOverridesSourcing)) {
+        pendingCostEdits[pid] = cost;
+        catUpdateRowPriceCells(pid, cost);
       }
 
       const weightInput = tr.querySelector('.cat-weight-input');
@@ -24613,6 +24656,122 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
   }
 
+  function catShopeePriceErrorNeedsLogisticsRepair(errorMsg) {
+    const text = String(errorMsg || '').toLowerCase();
+    return /logistic|channel|locker|collection|pick[-\s]?up|price exceeds limit|prohibited for the channel/.test(text);
+  }
+
+  function catLogisticsRowId(row) {
+    return Number(row && (row.logistic_id || row.logistics_channel_id || row.channel_id || row.id));
+  }
+
+  function catLogisticsRowName(row) {
+    const id = catLogisticsRowId(row);
+    return String(row && (row.logistic_name || row.logistics_channel_name || row.name) || ('channel_' + id));
+  }
+
+  function catIsPickupOrLockerLogisticsName(name) {
+    return /(self\s*collection|self\s*collect|collection\s*points?|locker|pick[-\s]?up|xpress\s*collect)/i.test(String(name || ''));
+  }
+
+  function catBuildDeliveryOnlyLogisticPatch(logistics) {
+    const rows = (Array.isArray(logistics) ? logistics : [])
+      .map(function(row) {
+        const logisticId = catLogisticsRowId(row);
+        if (!Number.isFinite(logisticId) || logisticId <= 0) return null;
+        const wasEnabled = row && row.enabled !== false;
+        const isPickup = catIsPickupOrLockerLogisticsName(catLogisticsRowName(row));
+        const next = {
+          logistic_id: logisticId,
+          enabled: wasEnabled && !isPickup,
+          is_free: row && row.is_free === true,
+        };
+        if (row && row.shipping_fee !== undefined && row.shipping_fee !== null && row.shipping_fee !== '') {
+          const shippingFee = Number(row.shipping_fee);
+          if (Number.isFinite(shippingFee) && shippingFee >= 0) next.shipping_fee = shippingFee;
+        }
+        if (row && row.size_id !== undefined && row.size_id !== null && row.size_id !== '') {
+          const sizeId = Number(row.size_id);
+          if (Number.isFinite(sizeId) && sizeId >= 0) next.size_id = sizeId;
+        }
+        return { next: next, wasEnabled: wasEnabled, isPickup: isPickup };
+      })
+      .filter(Boolean);
+    const hasDeliveryEnabled = rows.some(function(row) { return row.next.enabled === true; });
+    const changed = hasDeliveryEnabled && rows.some(function(row) { return row.wasEnabled && row.isPickup; });
+    return {
+      changed: changed,
+      reason: hasDeliveryEnabled ? null : 'no_delivery_channel_left_enabled',
+      logistic_info: changed ? rows.map(function(row) { return row.next; }) : [],
+    };
+  }
+
+  async function catFetchShopeeItemInfo(region, itemId) {
+    const qs = new URLSearchParams({
+      region: String(region || '').toUpperCase(),
+      item_id: String(itemId),
+      account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
+    });
+    const response = await fetch(SHOPEE_BRIDGE + '/item_info?' + qs.toString(), { headers: AUTH_HEADERS });
+    const json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
+    if (!response.ok || !json.ok || json.result?.error) {
+      throw new Error(catBridgePriceMessage(json, 'item_info HTTP ' + response.status));
+    }
+    const items = json.result?.response?.item_list || json.response?.item_list || [];
+    return Array.isArray(items) ? items[0] || null : null;
+  }
+
+  async function catRetryShopeePriceAfterLogisticsRepair(payload, originalErrorMsg) {
+    if (!catShopeePriceErrorNeedsLogisticsRepair(originalErrorMsg)) {
+      return { attempted: false, ok: false, errorMsg: originalErrorMsg };
+    }
+    const item = await catFetchShopeeItemInfo(payload.region, payload.itemId);
+    const logistics = item?.logistic_info || item?.logistic || [];
+    const patch = catBuildDeliveryOnlyLogisticPatch(logistics);
+    if (!patch.changed) {
+      return {
+        attempted: false,
+        ok: false,
+        errorMsg: originalErrorMsg + ' (logistics repair skipped: ' + (patch.reason || 'already_delivery_only') + ')',
+      };
+    }
+
+    const repairBody = {
+      account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
+      region: payload.region,
+      item_id: payload.itemId,
+      logistic_info: patch.logistic_info,
+    };
+    const repairResp = await fetch(SHOPEE_BRIDGE + '/update_item_logistics', {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify(repairBody),
+    });
+    const repairJson = await repairResp.json().catch(function() { return { ok: false, error: 'HTTP ' + repairResp.status }; });
+    if (!repairResp.ok || !repairJson.ok || repairJson.result?.error) {
+      return {
+        attempted: true,
+        ok: false,
+        json: repairJson,
+        errorMsg: 'logistics repair failed: ' + catBridgePriceMessage(repairJson, 'HTTP ' + repairResp.status),
+      };
+    }
+
+    const retryResp = await fetch(payload.bridgeUrl, {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify(payload.payload),
+    });
+    const retryJson = await retryResp.json().catch(function() { return { ok: false, error: 'HTTP ' + retryResp.status }; });
+    const retryOk = retryResp.ok && catBridgePriceOk(retryJson);
+    return {
+      attempted: true,
+      ok: retryOk,
+      json: retryJson,
+      errorMsg: retryOk ? null : 'retry after logistics repair failed: ' + catBridgePriceMessage(retryJson, 'HTTP ' + retryResp.status),
+    };
+  }
+
   function catNormalizeSkuText(value) {
     return String(value || '').trim().toLowerCase();
   }
@@ -24939,6 +25098,22 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           if (!ok) errorMsg = catBridgePriceMessage(json, 'HTTP ' + response.status);
         } catch (e) {
           errorMsg = e.message || String(e);
+        }
+
+        if (!ok && catShopeePriceErrorNeedsLogisticsRepair(errorMsg)) {
+          await catInsertShopeePriceLog(p, 'error', json, errorMsg);
+          try {
+            const recovered = await catRetryShopeePriceAfterLogisticsRepair(p, errorMsg);
+            if (recovered.attempted) {
+              json = recovered.json || json;
+              ok = recovered.ok === true;
+              errorMsg = recovered.errorMsg || null;
+            } else {
+              errorMsg = recovered.errorMsg || errorMsg;
+            }
+          } catch (repairErr) {
+            errorMsg = 'logistics repair exception: ' + (repairErr.message || repairErr);
+          }
         }
 
         await catInsertShopeePriceLog(p, ok ? 'ok' : 'error', json, errorMsg);

@@ -184,7 +184,7 @@ assert(shopeeBridge.includes('"lookup-sku"'), 'Shopee bridge lookup-sku must be 
 assert(shopeeBridge.includes("if (action === 'lookup-sku' && req.method === 'GET')"), 'Shopee bridge must implement lookup-sku for price sync mapping recovery');
 assert(shopeeBridge.includes('region_hits') && shopeeBridge.includes('region_results'), 'Shopee lookup-sku must return frontend-compatible region hit shapes');
 assert(shopeeBridge.includes("source: 'product_shopee_listings'"), 'Shopee lookup-sku must use DB mappings before expensive remote scans');
-assert(shopeeBridge.includes("source: 'remote_list_items'"), 'Shopee lookup-sku must retain an explicit remote scan fallback');
+assert(shopeeBridge.includes("'remote_list_items'"), 'Shopee lookup-sku must retain an explicit remote scan fallback');
 assert(shopeeBridge.includes("if (action === 'update_item_logistics' && req.method === 'POST')"), 'Shopee bridge must expose explicit item logistics updates for price-limit recovery');
 assert(shopeeBridge.includes("shopApiCall(r, '/api/v2/product/update_item'"), 'Shopee item logistics recovery must use product.update_item per local API docs');
 assert(v2.includes("SHOPEE_BRIDGE + '/tokens?region=SG&account_key='"), 'Shopee published_list auto-resolution must map shop_id back to region using token shop ids');

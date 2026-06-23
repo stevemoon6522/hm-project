@@ -333,6 +333,7 @@ test('platform SKU sync includes Shopee lookup-sku and absorbs matched region id
   assert.match(coverageLookup, /coverageLookupShopeePublishedBySku/, 'Shopee lookup should use the shared platform lookup entrypoint');
   assert.match(coverageLookup, /coverageNormalizeShopeeSkuLookupHit/, 'Shopee lookup-sku response should be normalized before absorb');
   assert.match(coverageLookup, /SHOPEE_BRIDGE\}\/lookup-sku\?\$\{qs\.toString\(\)\}/, 'Shopee sync should call the bridge SKU lookup route');
+  assert.match(coverageLookup, /qs\.append\('item_name', productName\)/, 'Shopee sync should pass the selected master product name for remote item-name lookup');
   assert.match(coverageLookup, /regions: SHOPEE_PLATFORM_ACTIVE_REGIONS\.join\(','\)/, 'Shopee lookup should check every active marketplace region');
   assert.match(coverageLookup, /coverageAbsorbShopeePublishedHit/, 'Shopee hit should be absorbed into product_shopee_listings');
   assert.match(coverageLookup, /coverageClearShopeePublishedMappings/, 'Shopee not-found should mark product_shopee_listings as not_listed');

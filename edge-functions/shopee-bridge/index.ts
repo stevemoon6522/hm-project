@@ -74,7 +74,7 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 // v51: treat CBSC publish task "permission"/empty failed results as async-pending until published_list proves final state.
-const SOURCE_VERSION = 71;
+const SOURCE_VERSION = 76;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -2998,6 +2998,38 @@ function shopeeLookupError(stage: string, raw: any): string {
   return `${stage}: ${raw?.error || 'error'} ${raw?.message || ''}`.trim();
 }
 
+function shopeeSkuLookupNameTerms(values: unknown[]): string[] {
+  const out: string[] = [];
+  const normalize = (value: string) => value.replace(/\s+/g, ' ').trim();
+  const stripLifecycle = (value: string) => normalize(value.replace(/\b(PRE\s*[- ]?\s*ORDER|READY\s+STOCK)\b/ig, ' '));
+  const push = (value: unknown) => {
+    const raw = normalize(String(value ?? ''));
+    if (!raw || raw.length < 3) return;
+    const bracketContents = [...raw.matchAll(/\[([^\]]+)\]/g)]
+      .map((match) => normalize(match[1] || ''))
+      .filter((part) => part && !/^(PRE\s*[- ]?\s*ORDER|READY\s+STOCK)$/i.test(part));
+    const afterLastBracket = raw.includes(']') ? normalize(raw.slice(raw.lastIndexOf(']') + 1)) : '';
+    const bracketText = normalize(raw.replace(/[\[\]]/g, ' '));
+    const variants = [
+      raw,
+      stripLifecycle(raw.replace(/\[\s*(PRE\s*[- ]?\s*ORDER|READY\s+STOCK)\s*\]/ig, ' ')),
+      bracketText,
+      stripLifecycle(bracketText),
+      normalize(raw.replace(/\[[^\]]+\]/g, ' ')),
+      stripLifecycle(bracketText.replace(/&/g, ' ')),
+      stripLifecycle(bracketText.replace(/&\s*TEAM/ig, 'ANDTEAM').replace(/&/g, 'AND ')),
+      ...bracketContents.map((part) => normalize([part, afterLastBracket].filter(Boolean).join(' '))),
+    ];
+    for (const term of variants) {
+      if (term.length < 3) continue;
+      const key = term.toLowerCase();
+      if (!out.some((existing) => existing.toLowerCase() === key)) out.push(term);
+    }
+  };
+  for (const value of values) push(value);
+  return out.slice(0, 10);
+}
+
 function shopeeSearchItemIds(raw: any): number[] {
   const response = raw?.response || raw || {};
   const list =
@@ -3062,7 +3094,7 @@ async function shopeeSkuHitFromItemIds(region: string, sku: string, itemIds: num
   return { hit: null, errors };
 }
 
-async function lookupShopeeSkuInRegion(region: string, sku: string, maxScanItems = 5000, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+async function lookupShopeeSkuInRegion(region: string, sku: string, maxScanItems = 5000, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, options: { scanFallback?: boolean; itemNameTerms?: string[] } = {}) {
   const r = String(region || '').toUpperCase();
   const needle = shopeeSkuValue(sku);
   if (!r) return { region: r, found: false, not_found: false, error: 'region required' };
@@ -3086,7 +3118,23 @@ async function lookupShopeeSkuInRegion(region: string, sku: string, maxScanItems
     if (searched.hit) return { region: r, found: true, hit: searched.hit, search_item_ids: searchIds, errors };
   }
 
-  for (const status of SHOPEE_SKU_LOOKUP_STATUSES) {
+  const searchedNameTerms: string[] = [];
+  const searchedNameIds: number[] = [];
+  for (const term of options.itemNameTerms || []) {
+    searchedNameTerms.push(term);
+    const nameSearch = await shopApiCall(r, '/api/v2/product/search_item', { query: { item_name: term, offset: 0, page_size: 100 }, account_key: accountKey });
+    if (nameSearch.error) {
+      errors.push(shopeeLookupError('search_item_name', nameSearch));
+      continue;
+    }
+    const searchIds = shopeeSearchItemIds(nameSearch);
+    searchedNameIds.push(...searchIds);
+    const searched = await shopeeSkuHitFromItemIds(r, needle, searchIds, 'search_item_name', shopId, accountKey);
+    errors.push(...searched.errors);
+    if (searched.hit) return { region: r, found: true, hit: searched.hit, search_item_ids: searchIds, search_item_name: term, errors };
+  }
+
+  if (options.scanFallback !== false) for (const status of SHOPEE_SKU_LOOKUP_STATUSES) {
     const listed = await listItemsForRegion(r, status, maxScanItems, accountKey);
     if ((listed as any).error) {
       errors.push(shopeeLookupError(`list_items_${status}`, listed));
@@ -3107,12 +3155,12 @@ async function lookupShopeeSkuInRegion(region: string, sku: string, maxScanItems
     }
   }
 
-  return { region: r, found: false, not_found: true, errors };
+  return { region: r, found: false, not_found: true, errors, search_item_ids: [...new Set(searchedNameIds)], search_item_name: searchedNameTerms };
 }
 
-async function lookupShopeeSkuAcrossRegions(regions: string[], sku: string, maxScanItems = 5000, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+async function lookupShopeeSkuAcrossRegions(regions: string[], sku: string, maxScanItems = 5000, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, options: { scanFallback?: boolean; itemNameTerms?: string[] } = {}) {
   const uniqueRegions = [...new Set(regions.map((r) => String(r || '').trim().toUpperCase()).filter((r) => OPERATING_REGIONS.includes(r)))];
-  const regionResults = await Promise.all(uniqueRegions.map((r) => lookupShopeeSkuInRegion(r, sku, maxScanItems, accountKey)));
+  const regionResults = await Promise.all(uniqueRegions.map((r) => lookupShopeeSkuInRegion(r, sku, maxScanItems, accountKey, options)));
   const regionHits = regionResults
     .filter((result: any) => result?.found && result?.hit)
     .map((result: any) => result.hit);
@@ -4718,11 +4766,9 @@ Deno.serve(async (req) => {
       const sku = String(url.searchParams.get('sku') || '').trim();
       if (!sku) return jsonResp({ ok: false, error: 'sku required' }, 400);
       const requestedRegions = parseTargetRegions(url.searchParams.get('regions') || url.searchParams.get('region'));
-      const item_status = url.searchParams.get('item_status') || 'NORMAL';
       const rawMaxItems = parseInt(url.searchParams.get('max_items') || '5000');
       const max_items = Math.max(1, Math.min(5000, Number.isFinite(rawMaxItems) ? rawMaxItems : 5000));
       const allowRemoteScan = ['1', 'true', 'yes'].includes(String(url.searchParams.get('remote') || url.searchParams.get('scan') || '').toLowerCase());
-      const needle = sku.toUpperCase();
       const region_results: any[] = [];
       const region_hits: any[] = [];
 
@@ -4788,37 +4834,45 @@ Deno.serve(async (req) => {
           region_results.push({ region: r, ok: true, source: 'product_shopee_listings', hit, matches, count: matches.length });
         }
       }
+      const remoteSearchTerms = shopeeSkuLookupNameTerms([
+        ...url.searchParams.getAll('item_name'),
+        url.searchParams.get('product_name'),
+        url.searchParams.get('name'),
+        ...productRows.flatMap((row: any) => [
+        row?.product_name,
+        [row?.product_name, row?.option_name].filter(Boolean).join(' '),
+        ]),
+      ]);
 
-      if (allowRemoteScan && region_hits.length === 0) {
-        region_results.length = 0;
-        for (const r of requestedRegions) {
-          const result = await listItemsForRegion(r, item_status, max_items, accountKey);
-          if ((result as any).error) {
-            region_results.push({ region: r, ok: false, error: (result as any).error, result });
-            continue;
-          }
-          const matches = ((result as any).items || [])
-            .filter((row: any) => String(row.item_sku || row.base_sku || '').trim().toUpperCase() === needle)
-            .map((row: any) => ({
-              source: 'remote_list_items',
-              region: r,
-              shop_item_id: row.item_id,
-              item_id: row.item_id,
-              shop_model_id: row.model_id || null,
-              model_id: row.model_id || null,
-              item_sku: row.item_sku || '',
-              base_sku: row.base_sku || null,
-              item_name: row.item_name || '',
-              current_price: row.current_price ?? null,
-              original_price: row.original_price ?? null,
-              currency: row.currency || '',
-              status: row.status || '',
-              item_status: row.status || '',
-              has_model: !!row.has_model,
-            }));
-          const hit = matches[0] || null;
-          if (hit) region_hits.push(hit);
-          region_results.push({ region: r, ok: true, source: 'remote_list_items', hit, matches, count: matches.length });
+      const hitRegions = new Set(region_hits.map((hit: any) => String(hit?.region || '').toUpperCase()).filter(Boolean));
+      const remoteRegions = requestedRegions.filter((r) => !hitRegions.has(r));
+      if (remoteRegions.length) {
+        const lookup = await lookupShopeeSkuAcrossRegions(remoteRegions, sku, max_items, accountKey, { scanFallback: allowRemoteScan, itemNameTerms: remoteSearchTerms });
+        for (const hit of lookup.region_hits || []) region_hits.push(hit);
+        const remoteByRegion = new Map((lookup.region_results || []).map((row: any) => [String(row?.region || '').toUpperCase(), row]));
+        for (const r of remoteRegions) {
+          const result: any = remoteByRegion.get(r) || { region: r, found: false, not_found: true, errors: [] };
+          const hit = result?.hit || null;
+          const lookupSource = String(hit?.lookup_source || '');
+          const source = lookupSource.startsWith('scan_') ? 'remote_list_items' : (lookupSource || (allowRemoteScan ? 'remote_list_items' : 'remote_search_item'));
+          const matches = hit ? [hit] : [];
+          const existingIndex = region_results.findIndex((row: any) => String(row?.region || '').toUpperCase() === r);
+          const row = {
+            region: r,
+            ok: !result?.error,
+            source,
+            hit,
+            matches,
+            count: matches.length,
+            not_found: result?.not_found === true,
+            errors: result?.errors || [],
+            search_item_ids: result?.search_item_ids || [],
+            search_item_name: result?.search_item_name || null,
+            scanned_status: result?.scanned_status || null,
+            scanned_count: result?.scanned_count || null,
+          };
+          if (existingIndex >= 0) region_results[existingIndex] = row;
+          else region_results.push(row);
         }
       } else if (!region_results.length) {
         for (const r of requestedRegions) {
@@ -4831,8 +4885,15 @@ Deno.serve(async (req) => {
         account_key: accountKey,
         sku,
         regions: requestedRegions,
+        found: region_hits.length > 0,
+        not_found: region_hits.length === 0 && region_results.every((row: any) => row?.not_found === true || row?.count === 0),
         region_hits,
         region_results,
+        source_docs: [
+          'docs_ai/apis/product/v2.product.search_item.json:item_sku',
+          'docs_ai/apis/product/v2.product.search_item.json:item_name',
+          'docs_ai/apis/product/v2.product.get_model_list.json:model_sku',
+        ],
       });
     }
     if (action === 'update_price' && req.method === 'POST') {

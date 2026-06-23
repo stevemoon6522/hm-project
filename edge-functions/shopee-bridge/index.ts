@@ -1898,9 +1898,9 @@ function normalizeRegionalGlobalModelPriceRatio(body: any, targets: any[] = []) 
   if (rows.length < 2) return [];
   const maxPrice = Math.max(...rows.map((row: any) => row.price));
   const minPrice = Math.min(...rows.map((row: any) => row.price));
-  if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= safeRatioLimit) return [];
+  if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice < safeRatioLimit) return [];
 
-  const safeMinimum = Math.ceil(maxPrice / safeRatioLimit);
+  const safeMinimum = Math.floor(maxPrice / safeRatioLimit) + 1;
   const adjustments: any[] = [];
   for (const row of rows) {
     if (row.price >= safeMinimum) continue;
@@ -1946,7 +1946,7 @@ function normalizeRegionalTargetModelPriceRatio(targets: any[] = []) {
     if (rows.length < 2) continue;
     const maxPrice = Math.max(...rows.map((row: any) => row.price));
     const minPrice = Math.min(...rows.map((row: any) => row.price));
-    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= safeRatioLimit) continue;
+    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice < safeRatioLimit) continue;
 
     const safeMinimum = Number((Math.ceil(((maxPrice / safeRatioLimit) + 0.000001) * 100) / 100).toFixed(2));
     for (const row of rows) {
@@ -2780,6 +2780,23 @@ function isCrossuploadPermissionPublishFailure(...parts: any[]): boolean {
     || /partner does not have permission to operate shop/.test(text);
 }
 
+function isPriceRatioPublishFailure(...parts: any[]): boolean {
+  const text = publishFailureText(...parts);
+  return /most expensive sku.*cheapest sku.*limit/.test(text)
+    || /price.*cheapest.*sku.*limit/.test(text)
+    || /price[-_\s]?ratio/.test(text);
+}
+
+function isAmbiguousLocalPublishFailure(...parts: any[]): boolean {
+  if (isPriceRatioPublishFailure(...parts)) return false;
+  const text = publishFailureText(...parts);
+  return /channel.*not available/.test(text)
+    || /category.*invalid/.test(text)
+    || /类别无效/.test(text)
+    || /"failed_reason"\s*:\s*""/.test(text)
+    || /publish fail(?:ed)?(?:\s|["':,}\]])/.test(text);
+}
+
 function hasOptionVariationPayload(target: any, body: any): boolean {
   const variation = target?.variation || body?.variation;
   return Array.isArray(variation?.tier_variation)
@@ -2811,6 +2828,11 @@ function shouldRetryMinimalPublish(...parts: any[]): boolean {
     || isCrossuploadPermissionPublishFailure(...parts);
 }
 
+function shouldTryMinimalPublishFallback(...parts: any[]): boolean {
+  return shouldRetryMinimalPublish(...parts)
+    || isAmbiguousLocalPublishFailure(...parts);
+}
+
 async function mapWithConcurrency<T, R>(items: T[], limit: number, worker: (item: T, index: number) => Promise<R>): Promise<R[]> {
   const output: R[] = new Array(items.length);
   let nextIndex = 0;
@@ -2835,7 +2857,7 @@ async function retryMinimalPublish(globalItemId: number, shopId: number, target:
   const retryTaskId = Number(retryCreate.response.publish_task_id);
   let retryTask: any = null;
   let retryPollAttempts = 0;
-  const maxPoll = region === 'BR' ? 10 : 5;
+  const maxPoll = 15;
   for (let i = 0; i < maxPoll; i += 1) {
     await new Promise(s => setTimeout(s, 2000));
     const taskRes = await merchantApiCall(region, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id: retryTaskId }, account_key: accountKey });
@@ -2865,6 +2887,32 @@ async function retryMinimalPublish(globalItemId: number, shopId: number, target:
     }
   }
   return retryOutcome;
+}
+
+async function publishBrOptionMinimalFirst(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const region = String(target?.region || '').toUpperCase();
+  if (region !== 'BR' || !hasOptionVariationPayload(target, body)) return null;
+  const minimalOutcome = await retryMinimalPublish(globalItemId, shopId, target, body, logistics, accountKey, 'br_option_minimal_first');
+  if (minimalOutcome?.ok) {
+    const finalized = await finalizePublishOutcomeAfterSuccess(minimalOutcome, region, target, body, accountKey);
+    (finalized as any).br_option_minimal_first = true;
+    return finalized;
+  }
+  const failed = {
+    ...(minimalOutcome || {}),
+    ok: false,
+    region,
+    shop_id: shopId,
+    stage: minimalOutcome?.stage || 'br_option_minimal_first',
+    br_option_minimal_first: true,
+  };
+  if (isCrossuploadPermissionPublishFailure(minimalOutcome, minimalOutcome?.raw_retry_create, minimalOutcome?.raw_retry_task)) {
+    return markBrOptionCrossuploadBlocked(failed, minimalOutcome?.raw_retry_task || null, minimalOutcome?.raw_retry_create || null, {
+      global_item_id: globalItemId,
+      minimal_item_retry: minimalOutcome,
+    });
+  }
+  return failed;
 }
 
 function variationModelStock(model: any, fallback = 0): number {
@@ -4362,6 +4410,18 @@ Deno.serve(async (req) => {
             return;
           }
           const logistics = await getPublishLogistics(targetRegion, _isPreOrderRepublish, reqAccountKey);
+          const brMinimalFirst = await publishBrOptionMinimalFirst(global_item_id, shop_id, target, body, logistics, reqAccountKey).catch((e: any) => ({
+            ok: false,
+            region: targetRegion,
+            shop_id,
+            stage: 'br_option_minimal_first_exception',
+            error: String(e?.message || e),
+            br_option_minimal_first: true,
+          }));
+          if (brMinimalFirst) {
+            results.push(brMinimalFirst);
+            return;
+          }
           const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: reqAccountKey });
@@ -4373,8 +4433,12 @@ Deno.serve(async (req) => {
               else results.push(markBrOptionCrossuploadBlocked({ ...createFailure, minimal_item_retry: retryOutcome }, null, publishRes, { global_item_id, minimal_item_retry: retryOutcome }));
               return;
             }
-            if (shouldRetryMinimalPublish(createFailure, publishRes)) {
-              const retryReason = isCrossuploadPermissionPublishFailure(createFailure, publishRes) ? 'crossupload_permission_create_retry' : 'variation_invalid_create_retry';
+            if (shouldTryMinimalPublishFallback(createFailure, publishRes)) {
+              const retryReason = isCrossuploadPermissionPublishFailure(createFailure, publishRes)
+                ? 'crossupload_permission_create_retry'
+                : isAmbiguousLocalPublishFailure(createFailure, publishRes)
+                  ? 'ambiguous_local_publish_create_retry'
+                  : 'variation_invalid_create_retry';
               const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
               if (retryOutcome?.ok) results.push(await finalizePublishOutcomeAfterSuccess(retryOutcome, targetRegion, target, body, reqAccountKey));
               else results.push({ ...createFailure, minimal_item_retry: retryOutcome });
@@ -4412,8 +4476,12 @@ Deno.serve(async (req) => {
               ? retryOutcome
               : markBrOptionCrossuploadBlocked({ ...outcome, minimal_item_retry: retryOutcome }, task, publishRes, { global_item_id, minimal_item_retry: retryOutcome });
           }
-          if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldRetryMinimalPublish(outcome, task, publishRes)) {
-            const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
+          if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldTryMinimalPublishFallback(outcome, task, publishRes)) {
+            const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes)
+              ? 'crossupload_permission_task_retry'
+              : isAmbiguousLocalPublishFailure(outcome, task, publishRes)
+                ? 'ambiguous_local_publish_task_retry'
+                : 'variation_invalid_task_retry';
             const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
             if (retryOutcome?.ok) outcome = retryOutcome;
             else (outcome as any).minimal_item_retry = retryOutcome;
@@ -4877,6 +4945,18 @@ Deno.serve(async (req) => {
             return;
           }
           const logistics = await getPublishLogistics(targetRegion, _isPreOrderRegister, accountKey);
+          const brMinimalFirst = await publishBrOptionMinimalFirst(global_item_id, shop_id, target, body, logistics, accountKey).catch((e: any) => ({
+            ok: false,
+            region: targetRegion,
+            shop_id,
+            stage: 'br_option_minimal_first_exception',
+            error: String(e?.message || e),
+            br_option_minimal_first: true,
+          }));
+          if (brMinimalFirst) {
+            results.push(brMinimalFirst);
+            return;
+          }
           const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: accountKey });
@@ -4897,8 +4977,12 @@ Deno.serve(async (req) => {
               else results.push(markBrOptionCrossuploadBlocked({ ...createFailure, minimal_item_retry: retryOutcome }, null, publishRes, { global_item_id, minimal_item_retry: retryOutcome }));
               return;
             }
-            if (shouldRetryMinimalPublish(createFailure, publishRes)) {
-              const retryReason = isCrossuploadPermissionPublishFailure(createFailure, publishRes) ? 'crossupload_permission_create_retry' : 'variation_invalid_create_retry';
+            if (shouldTryMinimalPublishFallback(createFailure, publishRes)) {
+              const retryReason = isCrossuploadPermissionPublishFailure(createFailure, publishRes)
+                ? 'crossupload_permission_create_retry'
+                : isAmbiguousLocalPublishFailure(createFailure, publishRes)
+                  ? 'ambiguous_local_publish_create_retry'
+                  : 'variation_invalid_create_retry';
               const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
               if (retryOutcome?.ok) results.push(await finalizePublishOutcomeAfterSuccess(retryOutcome, targetRegion, target, body, accountKey));
               else results.push({ ...createFailure, minimal_item_retry: retryOutcome });
@@ -4938,8 +5022,12 @@ Deno.serve(async (req) => {
               ? retryOutcome
               : markBrOptionCrossuploadBlocked({ ...outcome, minimal_item_retry: retryOutcome }, task, publishRes, { global_item_id, minimal_item_retry: retryOutcome });
           }
-          if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldRetryMinimalPublish(outcome, task, publishRes)) {
-            const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
+          if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldTryMinimalPublishFallback(outcome, task, publishRes)) {
+            const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes)
+              ? 'crossupload_permission_task_retry'
+              : isAmbiguousLocalPublishFailure(outcome, task, publishRes)
+                ? 'ambiguous_local_publish_task_retry'
+                : 'variation_invalid_task_retry';
             const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
             if (retryOutcome?.ok) outcome = retryOutcome;
             else (outcome as any).minimal_item_retry = retryOutcome;

@@ -8105,6 +8105,7 @@ LEGACY END -->
     const status = String(detail?.status || detail?.listing_status || '').trim().toLowerCase();
     const hasItemId = !!(detail?.shop_item_id || detail?.platform_item_id || detail?.item_id || detail?.global_item_id);
     const lastError = String(detail?.last_error || detail?.error || '').trim();
+    if (!hasItemId && ['not_listed', 'missing', 'inactive'].includes(status)) return 'missing';
     if (lastError || ['error', 'failed', 'rejected'].includes(status)) return 'error';
     if (['pending', 'draft', 'processing', 'syncing'].includes(status)) return 'pending';
     if (hasItemId || ['mapped', 'listed', 'active'].includes(status)) return 'ok';

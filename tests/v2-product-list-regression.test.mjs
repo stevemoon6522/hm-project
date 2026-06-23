@@ -408,6 +408,23 @@ test('Shopee not-found SKU sync records checked regions instead of disappearing 
   assert.equal(upsert.rows[0].raw_payload.raw.region_results[0].search_item_name[0], 'WE ON FIRE SOLO VER');
 });
 
+test('Shopee not-listed SKU lookup rows render as missing instead of error', () => {
+  const stateFactory = new Function(
+    `${extractFunctionBlock(html, 'shopeePlatformDetailState')}; return shopeePlatformDetailState;`,
+  );
+  const detailState = stateFactory();
+  assert.equal(
+    detailState({ status: 'not_listed', last_error: 'shopee_sku_not_found', shop_item_id: null, global_item_id: null }),
+    'missing',
+    'not_listed rows persisted by SKU lookup should stay in the missing bucket even with debug last_error text',
+  );
+  assert.equal(
+    detailState({ status: 'error', last_error: 'publish failed' }),
+    'error',
+    'real error rows should still render as error',
+  );
+});
+
 test('platform SKU sync absorbs Joom/Qoo10/eBay lookup hits through platform-publish sync', () => {
   assert.match(platformSync, /else await coverageAbsorbLookupHit\(group\.id, hit\)/, 'non-Shopee lookup hits should all be absorbed, not only Qoo10');
   assert.match(coverageLookup, /fetch\(PLATFORM_PUBLISH/, 'frontend should route non-Shopee absorbs through platform-publish');

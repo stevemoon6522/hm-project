@@ -94,3 +94,27 @@ test('Shopee platform actions keep delete visible and secondary actions under mo
   assert.match(platformBinding, /data-platform-quick[\s\S]*platformOpenAction\(platform, btn\.dataset\.platformQuick \|\| 'register', \[btn\.dataset\.platformKey \|\| ''\]\)/, 'row action buttons must stay wired to the existing platform action handler');
   assert.match(platformBinding, /data-platform-master-delete[\s\S]*deleteOneMasterProduct\(btn\)/, 'platform-tab master delete buttons should use the master delete RPC flow');
 });
+
+test('non-Shopee platform tabs use platform-specific operational queue columns', () => {
+  assert.match(tableHead, />Product</, 'non-Shopee header should keep product context first');
+  assert.match(tableHead, />등록 상태</, 'non-Shopee header should show registration state');
+  assert.match(tableHead, />가격\/재고</, 'non-Shopee header should show price and stock together');
+  assert.match(tableHead, />문제</, 'non-Shopee header should show only actionable issues');
+  assert.match(tableHead, />Actions</, 'non-Shopee header should keep actions last');
+  assert.doesNotMatch(tableHead, />Lifecycle</, 'lifecycle should move into filters/product meta, not stay as a table column');
+  assert.doesNotMatch(tableHead, />옵션\/SKU</, 'option/SKU should move into product meta, not stay as a separate table column');
+  assert.match(platformRows, /platformQueueProductCell\(group, platform, expanded\)/, 'non-Shopee master rows should use the operational queue product cell');
+  assert.match(platformRows, /platformQueuePriceStockCell\(group\.rows \|\| \[\], platform\)/, 'non-Shopee master rows should render platform-specific price/stock');
+  assert.match(platformRows, /platformQueueIssueCell\(group, platform, status\)/, 'non-Shopee master rows should render compact issue summaries');
+  assert.match(platformRows, /platformQueueOptionRows\(group, platform, key\)/, 'expanded option products should render child rows in the same queue shape');
+});
+
+test('platform-specific copy removes unnecessary marketplace setup details from tab surface', () => {
+  assert.match(html, /const PLATFORM_QUEUE_COPY = Object\.freeze/, 'platform queue copy should be centralized');
+  assert.match(html, /Qoo10은 JPY 가격, 재고, 등록\/보정 상태만 표시합니다\./, 'Qoo10 tab should focus on registration and price management');
+  assert.match(html, /BrandNo, ShippingNo, header\/template 값은 등록\/보정 모달에서 확인합니다\./, 'Qoo10 setup ids should be modal-only guidance');
+  assert.match(html, /eBay는 검증 차단 사유, live offer 가격\/재고, 매핑, 종료 여부만 표시합니다\./, 'eBay tab should focus on live offer operations');
+  assert.doesNotMatch(html, /eBay는 초안/, 'eBay tab copy should not frame the workflow around drafts');
+  assert.match(html, /Alibaba는 일반 SKU 가격 동기화가 아니라 ICBU B2B 조건 준비 큐입니다\./, 'Alibaba tab should be modeled as B2B readiness');
+  assert.match(html, /if \(platform !== 'alibaba'\)[\s\S]*data-platform-sync/, 'Alibaba toolbar should omit SKU mapping actions');
+});

@@ -811,6 +811,43 @@
       color: #92400e;
       font-weight: 700;
     }
+    .platform-price-stock-cell,
+    .platform-issue-cell {
+      color: #334155;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .platform-price-main {
+      display: block;
+      color: #111827;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+    .platform-price-sub {
+      display: block;
+      color: #64748b;
+      margin-top: 3px;
+      white-space: nowrap;
+    }
+    .platform-issue-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #fffbeb;
+      color: #92400e;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.2;
+    }
+    .platform-issue-badge.error {
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+    .platform-option-indent {
+      padding-left: 34px;
+    }
     .platform-actions-cell {
       justify-content: flex-end;
     }
@@ -5498,6 +5535,44 @@ LEGACY END -->
     ebay: ['price', 'inventory', 'images'],
     alibaba: [],
   });
+  const PLATFORM_QUEUE_COPY = Object.freeze({
+    joom: Object.freeze({
+      description: 'Joom은 SKU lookup, 등록 가능성, 가격/재고, 실패 원인만 표시합니다. 카테고리/브랜드/물류 세부값은 등록 모달에서 확인합니다.',
+      primaryAction: '등록 검증',
+      registerLabel: '등록 검증',
+      editLabel: '가격/재고',
+      deleteLabel: '삭제',
+      syncLabel: 'SKU 매핑',
+      summaryLabel: '노출 항목',
+    }),
+    qoo10: Object.freeze({
+      description: 'Qoo10은 JPY 가격, 재고, 등록/보정 상태만 표시합니다. BrandNo, ShippingNo, header/template 값은 등록/보정 모달에서 확인합니다.',
+      primaryAction: '등록/보정',
+      registerLabel: '등록/보정',
+      editLabel: '가격/재고',
+      deleteLabel: '판매중지',
+      syncLabel: 'SKU 매핑',
+      summaryLabel: '노출 항목',
+    }),
+    ebay: Object.freeze({
+      description: 'eBay는 검증 차단 사유, live offer 가격/재고, 매핑, 종료 여부만 표시합니다.',
+      primaryAction: '등록 검증',
+      registerLabel: '등록 검증',
+      editLabel: '가격/재고',
+      deleteLabel: 'Withdraw',
+      syncLabel: 'SKU 매핑',
+      summaryLabel: '노출 항목',
+    }),
+    alibaba: Object.freeze({
+      description: 'Alibaba는 일반 SKU 가격 동기화가 아니라 ICBU B2B 조건 준비 큐입니다. FOB, MOQ, tier price, lead time을 운영 판단값으로 표시합니다.',
+      primaryAction: 'B2B 조건 편집',
+      registerLabel: '조건 편집',
+      editLabel: '이미지 점검',
+      deleteLabel: '',
+      syncLabel: '',
+      summaryLabel: 'B2B 기준',
+    }),
+  });
   const SHOPEE_PLATFORM_ACTIVE_REGIONS = Object.freeze(['SG', 'TW', 'TH', 'MY', 'PH', 'BR']);
   const SHOPEE_PLATFORM_EXCLUDED_REGIONS = Object.freeze([
     { region: 'VN', reason: 'out of scope' },
@@ -7787,6 +7862,214 @@ LEGACY END -->
       </div>`;
   }
 
+  function platformQueueCopy(platform) {
+    return PLATFORM_QUEUE_COPY[platform] || PLATFORM_QUEUE_COPY.joom;
+  }
+
+  function platformQueueOptionSummary(group) {
+    const rows = group?.rows || [];
+    if (group?.isGrouped) {
+      const options = platformUniqueValues(rows.map((row) => plOptionDisplay(row) || row.option_name || row.sku));
+      const optionText = options.length
+        ? `${options.slice(0, 3).join(', ')}${options.length > 3 ? ` +${options.length - 3}` : ''}`
+        : 'options';
+      return `옵션 ${rows.length}개 · ${optionText}`;
+    }
+    const first = rows[0] || {};
+    return plOptionDisplay(first) ? `옵션: ${plOptionDisplay(first)}` : '단품';
+  }
+
+  function platformFormatMoney(value, currency) {
+    const n = Number(value || 0);
+    if (!Number.isFinite(n) || n <= 0) return '';
+    if (currency === 'JPY') return `${Math.round(n).toLocaleString()} JPY`;
+    if (currency === 'USD') return `${n.toFixed(2)} USD`;
+    return n.toLocaleString();
+  }
+
+  function platformFirstNumber(row, fields) {
+    for (const field of fields || []) {
+      const n = Number(row?.[field] || 0);
+      if (Number.isFinite(n) && n > 0) return n;
+    }
+    return 0;
+  }
+
+  function platformNumberRange(rows, getter, formatter) {
+    const values = Array.from(new Set((rows || [])
+      .map((row) => Number(getter(row) || 0))
+      .filter((n) => Number.isFinite(n) && n > 0)
+      .map((n) => Number(n.toFixed(2)))))
+      .sort((a, b) => a - b);
+    if (!values.length) return '';
+    if (values.length === 1) return formatter(values[0]);
+    return `${formatter(values[0])}-${formatter(values[values.length - 1])}`;
+  }
+
+  function platformQueuePriceStockCell(rows, platform) {
+    const list = Array.isArray(rows) ? rows : [];
+    let main = '';
+    let sub = '';
+    if (platform === 'joom') {
+      main = platformNumberRange(list, (row) => platformFirstNumber(row, ['joom_last_synced_price', '_joomPrice', 'joom_price_usd']), (n) => `현재 ${platformFormatMoney(n, 'USD')}`);
+    } else if (platform === 'qoo10') {
+      main = platformNumberRange(list, (row) => platformFirstNumber(row, ['qoo10_last_synced_price', '_qoo10Price', 'qoo10_price_jpy']), (n) => `현재 ${platformFormatMoney(n, 'JPY')}`);
+    } else if (platform === 'ebay') {
+      main = platformNumberRange(list, (row) => platformFirstNumber(row, ['ebay_last_synced_price', '_ebayPriceUsd', 'ebay_price_usd']), (n) => `현재 ${platformFormatMoney(n, 'USD')}`);
+    } else if (platform === 'alibaba') {
+      main = platformNumberRange(list, (row) => platformFirstNumber(row, ['alibaba_price_usd', '_alibabaPriceUsd']), (n) => `FOB ${platformFormatMoney(n, 'USD')}`);
+      sub = platformNumberRange(list, (row) => platformFirstNumber(row, ['alibaba_moq', '_alibabaMoq']), (n) => `MOQ ${Math.round(n).toLocaleString()}`);
+    }
+    if (!main) {
+      const cost = platformNumberRange(list, (row) => Number(row?.cost_krw || row?._cost_krw || 0), (n) => `${Math.round(n).toLocaleString()} KRW`);
+      main = cost ? `원가 ${cost}` : (platform === 'alibaba' ? 'FOB 미입력' : '가격 확인');
+    }
+    if (!sub) {
+      const stockFields = platform === 'ebay'
+        ? ['_ebayQuantity', 'ebay_quantity', 'quantity', 'stock', 'seller_stock', 'stock_kr']
+        : ['stock', 'quantity', 'seller_stock', 'stock_kr', 'available_stock'];
+      const stock = platformNumberRange(list, (row) => platformFirstNumber(row, stockFields), (n) => Math.round(n).toLocaleString());
+      sub = stock ? `재고 ${stock}` : (platform === 'alibaba' ? 'MOQ/재고 확인' : '재고 확인');
+    }
+    return `<div class="platform-price-stock-cell"><span class="platform-price-main">${text(main)}</span><span class="platform-price-sub">${text(sub)}</span></div>`;
+  }
+
+  function platformGroupHasAnyImage(group) {
+    return (group?.rows || []).some((row) => !!plMainImage(row));
+  }
+
+  function platformQueueIssueLabels(group, platform, status) {
+    const rows = group?.rows || [];
+    const first = rows[0] || {};
+    const labels = [];
+    const sku = platformGroupSku(group) || first.sku || '';
+    if (status?.key === 'error') labels.push('등록 실패 확인');
+    if (status?.key === 'needs_update') labels.push('마스터 변경 반영');
+    if (!sku) labels.push('SKU 없음');
+    if (!platformGroupHasAnyImage(group)) labels.push('이미지 없음');
+    if (platform === 'joom') {
+      if (status?.key === 'missing') labels.push('SKU lookup 필요');
+      if (!Number(first.cost_krw || first._cost_krw || 0)) labels.push('원가 확인');
+    } else if (platform === 'qoo10') {
+      if (status?.key === 'missing') labels.push('등록 설정 확인');
+      if (status?.key === 'needs_update') labels.push('기존 상품 보정');
+    } else if (platform === 'ebay') {
+      if (String(sku).length > 50) labels.push('SKU 50자 초과');
+      if (!Number(first.weight_g || first._weight_g || 0)) labels.push('무게 확인');
+      if (status?.key === 'missing') labels.push('등록 검증 필요');
+      if (productKindOfRow(first) === PRODUCT_KIND_GOODS && !String(first.ebay_category_id || first._ebayCategory || '').trim()) labels.push('category/aspect 확인');
+    } else if (platform === 'alibaba') {
+      if (!Number(first.alibaba_price_usd || first._alibabaPriceUsd || 0)) labels.push('FOB 입력');
+      if (!Number(first.alibaba_moq || first._alibabaMoq || 0)) labels.push('MOQ 확인');
+      if (!String(first.alibaba_category_id || '').trim()) labels.push('카테고리 확인');
+    }
+    platformGroupChangeLabels(group, platform).forEach((label) => labels.push(label));
+    return platformUniqueValues(labels).slice(0, 3);
+  }
+
+  function platformQueueIssueCell(group, platform, status) {
+    const labels = platformQueueIssueLabels(group, platform, status);
+    if (!labels.length) return '<span class="muted">-</span>';
+    const className = status?.key === 'error' ? 'platform-issue-badge error' : 'platform-issue-badge';
+    const visible = labels.slice(0, 2).join(' / ');
+    const extra = labels.length > 2 ? ` +${labels.length - 2}` : '';
+    return `<span class="${className}">${text(visible + extra)}</span>`;
+  }
+
+  function platformQueueProductCell(group, platform, expanded) {
+    const first = group?.rows?.[0] || {};
+    const key = platformGroupKey(group);
+    const title = platformGroupTitle(group);
+    const sku = platformGroupSku(group) || first.sku || '(no sku)';
+    return `
+      <div class="platform-product-cell">
+        <button type="button" class="pl-group-toggle" data-platform-toggle="${text(key)}" title="${expanded ? 'Collapse options' : 'Expand options'}">${expanded ? '-' : '+'}</button>
+        ${plProductThumb(first, group?.rows || null)}
+        <div class="platform-product-copy">
+          <div class="platform-product-title">${text(title)} ${productLifecycleBadge(first)}</div>
+          <div class="platform-product-meta">${text(sku)} · ${text(platformQueueOptionSummary(group))}</div>
+        </div>
+      </div>`;
+  }
+
+  function platformQueueActionButtonsHtml(platform, key, group, disabled = '') {
+    const copy = platformQueueCopy(platform);
+    const editTarget = plMasterEditTargetKey(group?.rows?.[0] || {});
+    const editButton = platform === 'alibaba'
+      ? (editTarget ? `<button type="button" class="platform-row-button sync" data-edit-master="${text(editTarget)}"${disabled}>이미지</button>` : '')
+      : `<button type="button" class="platform-row-button sync" data-platform-quick="edit" data-platform-key="${text(key)}"${disabled}>${text(copy.editLabel)}</button>`;
+    const deleteButton = copy.deleteLabel
+      ? `<button type="button" class="platform-row-button danger" data-platform-quick="delete" data-platform-key="${text(key)}"${disabled}>${text(copy.deleteLabel)}</button>`
+      : '';
+    return `
+      <div class="pl-action-buttons platform-actions-cell">
+        <button type="button" class="platform-row-button" data-platform-quick="register" data-platform-key="${text(key)}"${disabled}>${text(copy.registerLabel)}</button>
+        ${editButton}
+        ${deleteButton}
+      </div>`;
+  }
+
+  function platformQueueOptionRows(group, platform, key) {
+    return (group?.rows || []).map((row) => {
+      const rowGroup = { rows: [row], key: row.id };
+      const rowKey = platformGroupKey(rowGroup);
+      const rowStatus = platformStatusForGroup(rowGroup, platform);
+      const optionName = plOptionDisplay(row) || row.option_name || 'Option';
+      return `
+        <tr class="platform-option-row">
+          <td></td>
+          <td>
+            <div class="platform-product-cell platform-option-indent">
+              <span class="pl-status-pill ${plVariantTypeLabel(row) === 'SET' ? 'info' : 'neutral'}">${text(plVariantTypeLabel(row))}</span>
+              <div class="platform-product-copy">
+                <div class="platform-product-title">${text(optionName)}</div>
+                <div class="platform-product-meta">${text(row.sku || '(no sku)')}</div>
+              </div>
+            </div>
+          </td>
+          <td>${platformStatusPill(rowStatus)}</td>
+          <td>${platformQueuePriceStockCell([row], platform)}</td>
+          <td class="platform-issue-cell">${platformQueueIssueCell(rowGroup, platform, rowStatus)}</td>
+          <td style="white-space:nowrap;text-align:right;">${platformQueueActionButtonsHtml(platform, rowKey, rowGroup)}</td>
+        </tr>`;
+    }).join('');
+  }
+
+  function platformQueueToolbarHtml(platform, filter, statusTabs, selectedCount, canRunSelectionAction) {
+    const copy = platformQueueCopy(platform);
+    const buttons = [
+      `<button type="button" data-platform-select-visible>표시 항목 선택</button>`,
+      `<button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>`,
+      `<button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.primaryAction)}</button>`,
+    ];
+    if (platform !== 'alibaba') {
+      buttons.push(`<button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.editLabel)}</button>`);
+      buttons.push(`<button type="button" class="platform-danger-action" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.deleteLabel)}</button>`);
+      buttons.push(`<button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.syncLabel)}</button>`);
+    }
+    return `<div class="platform-toolbar">
+      <div class="platform-filters">
+        <input type="search" data-platform-search value="${text(filter.search || '')}" placeholder="SKU / 상품명 / 옵션 검색">
+        <select data-platform-lifecycle>
+          <option value="all"${filter.lifecycle === 'all' ? ' selected' : ''}>전체 lifecycle</option>
+          <option value="pre_order"${filter.lifecycle === 'pre_order' ? ' selected' : ''}>PRE ORDER</option>
+          <option value="ready_stock"${filter.lifecycle === 'ready_stock' ? ' selected' : ''}>READY STOCK</option>
+        </select>
+        <div class="platform-status-tabs" role="group" aria-label="${text((PLATFORM_LABELS[platform] || platform) + ' 등록 상태 필터')}">${statusTabs}</div>
+      </div>
+      <div class="platform-actions">${buttons.join('')}</div>
+    </div>`;
+  }
+
+  function platformQueueSummaryHtml(platform, selectedCount) {
+    if (platform === 'shopee') return '';
+    const copy = platformQueueCopy(platform);
+    return `<div class="platform-summary">
+      <span class="pill">선택 ${text(selectedCount)}개</span>
+      <span class="pill">${text(copy.summaryLabel)}: Product / 등록 상태 / 가격·재고 / 문제 / Actions</span>
+    </div>`;
+  }
+
   function shopeePlatformRollupDetailEntries(row) {
     const rollup = rollupFor(row?.id, 'shopee');
     const detail = rollup?.per_shop_detail || {};
@@ -7948,7 +8231,7 @@ LEGACY END -->
     }).join('');
   }
 
-  function platformTableHeadHtml(platform) {
+  function platformTableHeadHtmlLegacy(platform) {
     if (platform === 'shopee') {
       return `
         <thead>
@@ -7977,7 +8260,7 @@ LEGACY END -->
       </thead>`;
   }
 
-  function platformTableRows(platform) {
+  function platformTableRowsLegacy(platform) {
     if (platform === 'shopee') return shopeePlatformTableRows();
     const groups = platformVisibleGroups(platform);
     const selected = platformSelection(platform);
@@ -8039,6 +8322,58 @@ LEGACY END -->
           </tr>`;
       }).join('');
       return master + children;
+    }).join('');
+  }
+
+  function platformTableHeadHtml(platform) {
+    if (platform === 'shopee') {
+      return `
+        <thead>
+          <tr>
+            <th style="width:34px;"></th>
+            <th style="width:470px;">Product</th>
+            <th style="width:150px;">Shopee Status</th>
+            <th style="width:220px;">Regions</th>
+            <th style="width:120px;">WMS</th>
+            <th style="width:170px;">Note</th>
+            <th style="width:300px;text-align:right;">Actions</th>
+          </tr>
+        </thead>`;
+    }
+    return `
+      <thead>
+        <tr>
+          <th style="width:34px;"></th>
+          <th style="width:410px;">Product</th>
+          <th style="width:140px;">등록 상태</th>
+          <th style="width:170px;">가격/재고</th>
+          <th style="width:190px;">문제</th>
+          <th style="width:250px;text-align:right;">Actions</th>
+        </tr>
+      </thead>`;
+  }
+
+  function platformTableRows(platform) {
+    if (platform === 'shopee') return shopeePlatformTableRows();
+    const groups = platformVisibleGroups(platform);
+    const selected = platformSelection(platform);
+    if (!groups.length) {
+      return '<tr><td colspan="6" class="empty">표시할 마스터 상품이 없습니다.</td></tr>';
+    }
+    return groups.map((group) => {
+      const key = platformGroupKey(group);
+      const expanded = state.platformExpandedGroups.has(`${platform}:${key}`);
+      const status = platformStatusForGroup(group, platform);
+      const master = `
+        <tr class="platform-master-row" data-platform-master-key="${text(key)}">
+          <td><input type="checkbox" class="platform-master-check" data-platform-key="${text(key)}" ${selected.has(key) ? 'checked' : ''}></td>
+          <td>${platformQueueProductCell(group, platform, expanded)}</td>
+          <td>${platformStatusPill(status)}<div class="muted" style="font-size:11px;margin-top:4px;">${text(status.detail || '')}</div>${platformGroupChangeBadgesHtml(group, platform)}</td>
+          <td>${platformQueuePriceStockCell(group.rows || [], platform)}</td>
+          <td class="platform-issue-cell">${platformQueueIssueCell(group, platform, status)}</td>
+          <td style="white-space:nowrap;text-align:right;">${platformQueueActionButtonsHtml(platform, key, group)}</td>
+        </tr>`;
+      return expanded ? master + platformQueueOptionRows(group, platform, key) : master;
     }).join('');
   }
 
@@ -8117,16 +8452,23 @@ LEGACY END -->
             <button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>${text(label)} SKU 매핑</button>
           </div>
         </div>`;
+    const effectiveSummaryHtml = platform === 'shopee' ? summaryHtml : platformQueueSummaryHtml(platform, selectedCount);
+    const effectiveToolbarHtml = platform === 'shopee'
+      ? toolbarHtml
+      : platformQueueToolbarHtml(platform, filter, statusTabs, selectedCount, canRunSelectionAction);
+    const effectiveDescription = platform === 'shopee'
+      ? '전체 마스터 상품을 기준으로 등록 상태를 좁히고, 선택 항목을 미리보기 후 실행합니다.'
+      : platformQueueCopy(platform).description;
     root.innerHTML = `
       <div class="platform-page-head">
         <div>
           <h2>${text(label)}</h2>
-          <p>${isAlibaba ? 'Alibaba(ICBU) B2B 등록 — FOB 단가(USD)/MOQ 기준. 등록 미리보기 → 실행 시 ICBU 등록 모달이 열립니다.' : '전체 마스터 상품을 기준으로 등록 상태를 좁히고, 선택 항목을 미리보기 후 실행합니다.'}</p>
+          <p>${text(effectiveDescription)}</p>
         </div>
-        ${summaryHtml}
+        ${effectiveSummaryHtml}
       </div>
       ${isAlibaba ? '<div class="notice" style="margin-bottom:10px;">Alibaba(ICBU) 등록은 운영자 설정이 끝나야 실제 동작합니다: alibaba-bridge 시크릿(App Key/Secret/access_token) + ALIBABA_BRIDGE_ENABLED=true + auth_verified 플립. (1차: create_listing + sync, 카테고리/속성/운임은 선택)</div>' : ''}
-      ${toolbarHtml}
+      ${effectiveToolbarHtml}
       ${previewHtml}
       ${shopeeNameSyncHtml}
       ${shopeeEnglishRestoreHtml}
@@ -19437,11 +19779,33 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return rshBuildVariationSpec(products).tierVariation;
   }
 
-  const RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT = 3.5;
+  const RSH_DEFAULT_MODEL_PRICE_RATIO_LIMIT = 7;
+  const RSH_REGION_MODEL_PRICE_RATIO_LIMITS = Object.freeze({
+    SG: 5,
+    TW: 5,
+    TH: 5,
+    PH: 5,
+    BR: 4,
+  });
 
-  function rshNormalizeBrGlobalModelPrices(models, activeRegions) {
-    const regions = new Set((activeRegions || []).map((region) => String(region || '').toUpperCase()));
-    if (!regions.has('BR') || !Array.isArray(models) || models.length < 2) return models;
+  function rshModelPriceRatioLimitForRegion(region) {
+    const key = String(region || '').toUpperCase();
+    const limit = RSH_REGION_MODEL_PRICE_RATIO_LIMITS[key];
+    return Number.isFinite(limit) && limit > 0 ? limit : RSH_DEFAULT_MODEL_PRICE_RATIO_LIMIT;
+  }
+
+  function rshStrictestModelPriceRatioLimit(activeRegions) {
+    const regions = new Set((activeRegions || []).map((region) => String(region || '').toUpperCase()).filter(Boolean));
+    let limit = RSH_DEFAULT_MODEL_PRICE_RATIO_LIMIT;
+    regions.forEach((region) => {
+      limit = Math.min(limit, rshModelPriceRatioLimitForRegion(region));
+    });
+    return limit;
+  }
+
+  function rshNormalizeRegionalGlobalModelPrices(models, activeRegions) {
+    if (!Array.isArray(models) || models.length < 2) return models;
+    const safeRatioLimit = rshStrictestModelPriceRatioLimit(activeRegions);
     const rows = models
       .map((model) => ({
         model,
@@ -19451,21 +19815,22 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (rows.length < 2) return models;
     const maxPrice = Math.max(...rows.map((row) => row.price));
     const minPrice = Math.min(...rows.map((row) => row.price));
-    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) return models;
-    const safeMinimum = Math.ceil(maxPrice / RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT);
+    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= safeRatioLimit) return models;
+    const safeMinimum = Math.ceil(maxPrice / safeRatioLimit);
     return models.map((model) => {
       const price = Number(model.global_original_price ?? model.original_price ?? 0);
       if (!Number.isFinite(price) || price <= 0 || price >= safeMinimum) return model;
       return {
         ...model,
         global_original_price: safeMinimum,
-        br_global_original_price_adjusted_from: price,
+        regional_global_original_price_adjusted_from: price,
       };
     });
   }
 
-  function rshNormalizeBrTargetModelPrices(models, region) {
-    if (String(region || '').toUpperCase() !== 'BR' || !Array.isArray(models) || models.length < 2) return models;
+  function rshNormalizeRegionalTargetModelPrices(models, region) {
+    if (!Array.isArray(models) || models.length < 2) return models;
+    const safeRatioLimit = rshModelPriceRatioLimitForRegion(region);
     const rows = models
       .map((model) => ({
         model,
@@ -19475,15 +19840,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (rows.length < 2) return models;
     const maxPrice = Math.max(...rows.map((row) => row.price));
     const minPrice = Math.min(...rows.map((row) => row.price));
-    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) return models;
-    const safeMinimum = Number((Math.ceil(((maxPrice / RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) + 0.000001) * 100) / 100).toFixed(2));
+    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= safeRatioLimit) return models;
+    const safeMinimum = Number((Math.ceil(((maxPrice / safeRatioLimit) + 0.000001) * 100) / 100).toFixed(2));
     return models.map((model) => {
       const price = Number(model.original_price ?? 0);
       if (!Number.isFinite(price) || price <= 0 || price >= safeMinimum) return model;
       return {
         ...model,
         original_price: safeMinimum,
-        br_original_price_adjusted_from: price,
+        regional_original_price_adjusted_from: price,
       };
     });
   }
@@ -19528,7 +19893,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         weight_g: Number(v.weight_g || 0),
       };
     });
-    const model = rshNormalizeBrGlobalModelPrices(modelRaw, activeRegions);
+    const model = rshNormalizeRegionalGlobalModelPrices(modelRaw, activeRegions);
     const totalStock = model.reduce((sum, m) => sum + (Number(m.stock) || 0), 0);
     const packageLength = hasOptionWeights ? 15 : Number(document.getElementById('rsh-package-length')?.value || 15);
     const packageWidth = hasOptionWeights ? 20 : Number(document.getElementById('rsh-package-width')?.value || 20);
@@ -19552,7 +19917,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           weight_g: Number(v.weight_g || 0),
         };
       });
-      return rshNormalizeBrTargetModelPrices(targetModels, region);
+      return rshNormalizeRegionalTargetModelPrices(targetModels, region);
     };
 
     const targets = activeRegions.map((region) => {

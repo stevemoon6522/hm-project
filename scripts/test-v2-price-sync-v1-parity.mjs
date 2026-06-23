@@ -194,7 +194,7 @@ assert(shopeeBridge.includes("shopApiCall(r, '/api/v2/product/update_item'"), 'S
 assert(v2.includes("SHOPEE_BRIDGE + '/tokens?region=SG&account_key='"), 'Shopee published_list auto-resolution must map shop_id back to region using token shop ids');
 assert(v2.includes('const matchesRegion = hitRegion ? hitRegion === wanted : (regionShopId && Number(shopId) === Number(regionShopId));'), 'Shopee published_list entries without region must match via shop_id');
 assert(v2.includes('function catProductNeedsShopeeModel'), 'Variant/global-model rows must require shop_model_id during auto-resolution');
-assert(v2.includes('variation_tier_index.map(function(v) { return Number(v); }).join'), 'Shopee shop model matching must fall back to tier_index when SKU/name differ');
+assert(v2.includes('function catShopeeTierIndexMatches') && v2.includes('variationTierIndex'), 'Shopee shop model matching must fall back to tier_index when SKU/name differ');
 assert(/await catEnsureSelectedShopeeListings\(\);[\s\S]*const \{ payloads \} = catBuildPriceSyncPayloads\(\)/.test(v2), 'Shopee live sync must hydrate shop listings before empty-target validation');
 assert(!/Shopee 가격을 실동기화합니다\.[\s\S]{0,200}confirm\(/.test(v2), 'V2 Shopee sync should match V1 one-click live update flow without an extra confirm blocker');
 

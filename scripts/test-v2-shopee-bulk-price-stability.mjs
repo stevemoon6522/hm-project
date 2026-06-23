@@ -64,8 +64,12 @@ const flushInlineHarnessSource = sliceBetween(
 );
 
 assert.match(payloadBuilder, /listing:\s*listing/, 'Shopee bulk price payloads must carry listing metadata for safe preflight trust decisions');
+assert.match(payloadBuilder, /optionName:\s*product\.option_name/, 'Shopee price payloads must carry option_name for model fallback matching');
+assert.match(payloadBuilder, /variationTierIndex:\s*Array\.isArray\(product\.variation_tier_index\)/, 'Shopee price payloads must carry variation_tier_index for model fallback matching');
 assert.match(payloadBuilder, /needsModel:\s*needsModel/, 'Shopee bulk price payloads must mark variant/global-model rows as requiring shop_model_id');
 assert.match(payloadBuilder, /catBuildShopeePriceEntry/, 'Shopee price payloads must split model and no-model price entry shapes explicitly');
+assert.match(priceSync, /function catShopeeTierIndexMatches\(/, 'Shopee model matching must support tier-index fallback when model_sku is absent');
+assert.match(priceSync, /function catShopeeRemoteListingMissingMessage\(/, 'Shopee preflight must detect stale remote item ids that are no longer published');
 assert.match(preflight, /PREFLIGHT_PARALLELISM\s*=\s*5/, 'Shopee bulk price preflight must limit parallel Shopee model lookups to 5');
 assert.match(preflight, /needsFetch\.slice\(i,\s*i \+ PREFLIGHT_PARALLELISM\)/, 'Shopee preflight must process model lookup chunks');
 assert.match(preflight, /Promise\.all\(chunk\.map\(async/, 'Shopee preflight must fetch model indexes concurrently within each chunk');
@@ -77,6 +81,7 @@ assert.match(preflight, /_trusted:\s*true/, 'Shopee preflight must mark syntheti
 assert.match(preflight, /else if \(!p\.needsModel\)/, 'Shopee preflight must not trust item-level updates for rows that require a model id');
 assert.match(preflight, /p\.needsModel && !p\.modelId/, 'Shopee preflight must block variant rows without shop_model_id before update_price');
 assert.match(preflight, /if \(!info\.hasModel\)[\s\S]*p\.needsModel = false[\s\S]*catBuildShopeePriceEntry/, 'Shopee preflight must downgrade false variant mappings when the remote item has no models');
+assert.match(preflight, /skipped\.push/, 'Shopee preflight must skip stale remote item ids without failing valid region price updates');
 assert.match(preflight, /!isTrustedListing\(p\.listing\) \|\| p\.needsModel/, 'Shopee preflight must re-check remote models for variant rows even when local mapping is fresh');
 assert.match(preflight, /catShopeeModelMatchesPayloadSku\(matchedModel, p\)/, 'Shopee preflight must verify model_id belongs to the selected SKU before update_price');
 assert.match(ensureListings, /const globalModelId = catProductGlobalModelId\(product, byRegion\)/, 'Shopee live sync must carry global_model_id into listing hydration');
@@ -84,8 +89,10 @@ assert.match(ensureListings, /account_key:\s*SHOPEE_DEFAULT_ACCOUNT_KEY,[\s\S]*g
 assert.match(ensureListings, /global_model_id:\s*globalModelId \|\|/, 'Shopee live sync must persist global_model_id while hydrating shop ids');
 assert.match(ensureListings, /existingModel && catShopeeModelMatchesProduct\(existingModel, product\)/, 'Shopee listing hydration must only skip existing shop_model_id when it matches the selected product');
 assert.match(ensureListings, /matchedModel = modelInfo\.models\.find\(function\(m\) \{ return catShopeeModelMatchesProduct\(m, product\); \}\)/, 'Shopee listing hydration must correct stale shop_model_id mappings by SKU');
+assert.match(ensureListings, /catMarkShopeeListingNotListed/, 'Shopee listing hydration must clear stale region mappings before payload build');
 assert.match(liveSync, /catBridgePriceOk\(json\)/, 'Shopee live bulk sync must treat bridge failure_list as an update failure');
 assert.match(liveSync, /catInsertShopeePriceLog\(p, ok \? 'ok' : 'error'/, 'Shopee live bulk sync must audit both successful and failed update_price calls');
+assert.match(liveSync, /preflight\.skipped/, 'Shopee live bulk sync must report skipped stale regions separately from errors');
 assert.match(priceSync, /function catCostOverridesSourcingDerivedCost\(/, 'Shopee inline flush must explicitly decide when direct Cost edits override stale sourcing input');
 assert.ok(
   flushInlineEdits.indexOf('const costInput = tr.querySelector') >= 0
@@ -373,6 +380,92 @@ async function runNoModelPreflightHarness() {
   return JSON.parse(JSON.stringify(context.result));
 }
 
+async function runMissingRegionPreflightHarness() {
+  const context = {
+    Date,
+    JSON,
+    Map,
+    Math,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+
+  const harness = `
+  ${extractFunction(v2, 'catBuildShopeePriceEntry')}
+  ${extractFunction(v2, 'catNormalizeSkuText')}
+  ${extractFunction(v2, 'catShopeeTierIndexValues')}
+  ${extractFunction(v2, 'catShopeeTierIndexMatches')}
+  ${extractFunction(v2, 'catShopeeRemoteListingMissingMessage')}
+  ${extractFunction(v2, 'catShopeeModelMatchesPayloadSku')}
+  async function catFetchShopeeModelIndex() {
+    return { ok: false, error: '.error_busi please input correct product id', hasModel: false, modelIds: new Set(), models: [] };
+  }
+  ${preflight}
+  (async function() {
+    const payloads = [{
+      productId: 'scene-1',
+      sku: 'V1-COR-COLOR-PHO-SCENE 1',
+      region: 'BR',
+      itemId: 43322467300,
+      modelId: null,
+      needsModel: true,
+      price: 94.18,
+      listing: { status: 'mapped', last_synced_at: '2026-06-23T17:12:56.878+00:00' },
+      payload: {
+        region: 'BR',
+        item_id: 43322467300,
+        price_list: [{ model_id: null, original_price: 94.18 }],
+      },
+    }];
+    globalThis.result = await catPreflightShopeePayloads(payloads);
+  })();
+  `;
+
+  await new vm.Script(harness, { filename: 'v2-shopee-missing-region-preflight-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify(context.result));
+}
+
+function runCortisModelMatchHarness() {
+  const context = {
+    Array,
+    Number,
+    String,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+
+  const harness = `
+  ${extractFunction(v2, 'catNormalizeSkuText')}
+  ${extractFunction(v2, 'catShopeeTierIndexValues')}
+  ${extractFunction(v2, 'catShopeeTierIndexMatches')}
+  ${extractFunction(v2, 'catShopeeModelMatchesPayloadSku')}
+  globalThis.result = {
+    sku: catShopeeModelMatchesPayloadSku(
+      { model_sku: 'V1-COR-COLOR-PHO-SCENE 1', model_name: 'SCENE 1', tier_index: [0] },
+      { sku: 'V1-COR-COLOR-PHO-SCENE 1', globalModelSku: null, optionName: null, variationTierIndex: [0, 0] }
+    ),
+    tierOnly: catShopeeModelMatchesPayloadSku(
+      { model_sku: '', model_name: '', tier_index: [1] },
+      { sku: 'LOCAL-SKU-WITHOUT-REMOTE-SKU', globalModelSku: null, optionName: null, variationTierIndex: [0, 1] }
+    ),
+    wrongTier: catShopeeModelMatchesPayloadSku(
+      { model_sku: '', model_name: '', tier_index: [2] },
+      { sku: 'LOCAL-SKU-WITHOUT-REMOTE-SKU', globalModelSku: null, optionName: null, variationTierIndex: [0, 1] }
+    ),
+  };
+  `;
+
+  new vm.Script(harness, { filename: 'v2-shopee-cortis-model-match-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify(context.result));
+}
+
 assert.deepEqual(
   await runFlushHarness({
     productSourcing: 10098,
@@ -549,6 +642,27 @@ assert.deepEqual(
     priceList: [{ model_id: 0, original_price: 67.92 }],
   }],
   'Remote no-model preflight must downgrade false variant mappings to item-level update_price payloads',
+);
+
+const missingRegionPreflight = await runMissingRegionPreflightHarness();
+assert.equal(missingRegionPreflight.valid.length, 0, 'Missing remote region should not become a valid update_price call');
+assert.equal(missingRegionPreflight.blocked.length, 0, 'Missing remote region should not block valid regions as an error');
+assert.deepEqual(
+  missingRegionPreflight.skipped.map(function(p) {
+    return { sku: p.sku, region: p.region, reason: p.reason };
+  }),
+  [{
+    sku: 'V1-COR-COLOR-PHO-SCENE 1',
+    region: 'BR',
+    reason: 'remote listing not found: .error_busi please input correct product id',
+  }],
+  'Stale BR mappings should be skipped with the exact remote item-not-found reason',
+);
+
+assert.deepEqual(
+  runCortisModelMatchHarness(),
+  { sku: true, tierOnly: true, wrongTier: false },
+  'CORTIS-style option rows must match by SKU first and by phantom-first-tier fallback when SKU is unavailable',
 );
 
 console.log('v2 Shopee bulk price stability checks passed');

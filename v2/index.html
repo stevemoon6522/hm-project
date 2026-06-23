@@ -10098,8 +10098,9 @@ LEGACY END -->
       const ids = Array.from(new Set((productIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
       if (ids.length) state.pendingPriceSyncSelectedIds = ids;
       try { _catActivePlatform = platform; } catch (_) {}
+      try { _catCache = null; } catch (_) {}
       showView('view-price-sync');
-      try { await renderCatalogView(false); } catch (_) {}
+      try { await renderCatalogView(true); } catch (_) {}
       showToast(`${PLATFORM_LABELS[platform]} 수정 화면을 열었습니다. 선택 상품만 체크되어 있습니다.`, 'ok');
       return;
     }
@@ -22906,6 +22907,73 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return Number(product.weight_g || 0);
   }
 
+  function catFirstPlatformListing(product, platform) {
+    const targetPlatform = String(platform || '').toLowerCase();
+    const rows = Array.isArray(product?._platformListings) ? product._platformListings : [];
+    return rows.find(function(row) {
+      return String(row?.platform || '').toLowerCase() === targetPlatform
+        && !row?.deleted_at
+        && String(row?.mapping_status || '').toLowerCase() !== 'unmatched';
+    }) || null;
+  }
+
+  function catAttachPlatformListingsToProducts(products, platformListings) {
+    const byProductId = new Map();
+    (platformListings || []).forEach(function(row) {
+      const pid = String(row?.master_product_id || '').trim();
+      if (!pid) return;
+      if (!byProductId.has(pid)) byProductId.set(pid, []);
+      byProductId.get(pid).push(row);
+    });
+    (products || []).forEach(function(product) {
+      const rows = byProductId.get(String(product.id || '')) || [];
+      product._platformListings = rows;
+      product._ebayPlatformListing = rows.find(function(row) {
+        return String(row?.platform || '').toLowerCase() === 'ebay';
+      }) || null;
+    });
+  }
+
+  function catEbayMapping(product) {
+    const listing = catFirstPlatformListing(product, 'ebay');
+    const productSku = String(product?.ebay_sku || '').trim();
+    const platformSku = String(listing?.external_sku || '').trim();
+    const sku = productSku || platformSku;
+    const itemId = String(product?.ebay_item_id || listing?.platform_item_id || '').trim();
+    const externalVariantId = String(listing?.external_variant_id || '').trim();
+    const variantLooksLikeSku = !!externalVariantId && (
+      externalVariantId === sku
+      || /[A-Za-z]/.test(externalVariantId)
+      || externalVariantId.indexOf(' ') >= 0
+    );
+    const offerId = String(product?.ebay_offer_id || (!variantLooksLikeSku ? externalVariantId : '') || '').trim();
+    const legacyVariantSku = variantLooksLikeSku ? externalVariantId : (platformSku || sku);
+    const productStatus = String(product?.ebay_status || '').toUpperCase();
+    const listingStatus = String(listing?.listing_status || '').toLowerCase();
+    const mappingStatus = String(listing?.mapping_status || '').toLowerCase();
+    const platformMapped = mappingStatus === 'mapped' && ['listed', 'published', 'active'].includes(listingStatus);
+    const productMapped = productStatus === 'PUBLISHED' || productStatus === 'MAPPED' || productStatus === 'LISTED';
+    const isMapped = !!(sku && (offerId || itemId) && (productMapped || platformMapped));
+    return {
+      listing,
+      sku,
+      offerId,
+      itemId,
+      legacyVariantSku,
+      isMapped,
+      marketplaceId: String(product?.ebay_marketplace_id || listing?.country || 'EBAY_US').trim() || 'EBAY_US',
+      statusLabel: isMapped ? 'mapped' : (productStatus || mappingStatus || '미매핑'),
+    };
+  }
+
+  function catEbayMappedSku(product) {
+    return catEbayMapping(product).sku;
+  }
+
+  function catEbayIsMapped(product) {
+    return catEbayMapping(product).isMapped;
+  }
+
   /** Relative date string: "3일 전", "오늘" */
   function catRelativeDate(iso) {
     if (!iso) return '—';
@@ -23008,6 +23076,27 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
     }
 
+    // Fetch generic marketplace mappings used by non-Shopee price tabs.
+    // eBay legacy Trading listings are absorbed into platform_listings even
+    // when products.ebay_offer_id is empty, so the price tab must read this.
+    let platformListings = [];
+    if (products.length > 0) {
+      const productIds = products.map(function(p) { return String(p.id || '').trim(); }).filter(Boolean);
+      for (let i = 0; i < productIds.length; i += 80) {
+        const chunk = productIds.slice(i, i + 80);
+        const plUrl = SUPABASE_URL + '/rest/v1/platform_listings'
+          + '?select=master_product_id,platform,shop_id,country,platform_item_id,external_sku,external_variant_id,listing_status,mapping_status,last_sync_at,error_msg,deleted_at'
+          + '&platform=eq.ebay'
+          + '&deleted_at=is.null'
+          + '&master_product_id=in.(' + chunk.map(encodeURIComponent).join(',') + ')';
+        const plRes = await fetch(plUrl, { headers: AUTH_HEADERS });
+        if (!plRes.ok) continue;
+        const plPage = await plRes.json();
+        if (Array.isArray(plPage)) platformListings = platformListings.concat(plPage);
+      }
+    }
+    catAttachPlatformListingsToProducts(products, platformListings);
+
     // Fetch country_settings once for the V1 pricing engine.
     let countrySettings = [];
     try {
@@ -23028,7 +23117,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (code) _catCountrySettingsByRegion.set(code, normalizeCountrySettings(cs, code));
     });
 
-    _catCache = { products: products, listings: listings, countrySettings: countrySettings, ts: now };
+    _catCache = { products: products, listings: listings, platformListings: platformListings, countrySettings: countrySettings, ts: now };
     return _catCache;
   }
 
@@ -23347,9 +23436,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         deltaLabel = '▼' + Math.abs(deltaPct).toFixed(1) + '%';
       }
     }
-    const ebayStatus = product && product.ebay_status
-      ? product.ebay_status
-      : (product && product.ebay_offer_id ? 'mapped' : '미매핑');
+    const ebayStatus = catEbayMapping(product).statusLabel;
     const html = '<td data-cat-ebay-current="1" style="font-size:12px;">'
       + (currentPrice != null ? catFormatEbayPrice(currentPrice) : '<span class="muted">—</span>') + '</td>'
       + '<td data-cat-ebay-new="1" class="cat-new-price ' + deltaClass + '">'
@@ -23764,7 +23851,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (values.length === 1 || values[0] === values[values.length - 1]) return catFormatEbayPrice(values[0]);
       return catFormatEbayPrice(values[0]) + '-' + catFormatEbayPrice(values[values.length - 1]);
     };
-    const mappedCount = rows.filter(function(p) { return p.ebay_offer_id || p.ebay_status === 'mapped'; }).length;
+    const mappedCount = rows.filter(catEbayIsMapped).length;
     const html = '<td data-cat-ebay-current="1" style="font-size:12px;">'
       + '<span class="muted">옵션 ' + currentPrices.length + '/' + rows.length + '</span><br>' + formatRange(currentPrices) + '</td>'
       + '<td data-cat-ebay-new="1" class="cat-new-price" style="font-size:12px;">'
@@ -25652,17 +25739,20 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     try {
       for (const product of products) {
-        // §RC5: use ebay_sku only — no fallback to product.sku
+        const ebayMapping = catEbayMapping(product);
         const productId = String(product.id);
-        const sku = product.ebay_sku;
+        const sku = catEbayMappedSku(product);
         if (!sku) {
-          errors.push((product.sku || product.product_name || String(product.id)) + ': eBay 미등록 (ebay_sku 없음)');
+          errors.push((product.sku || product.product_name || String(product.id)) + ': eBay 미매핑(SKU 없음)');
           continue;
         }
 
-        const ebayStatus = String(product.ebay_status || '').toUpperCase();
-        if (ebayStatus !== 'PUBLISHED' || !product.ebay_offer_id) {
-          errors.push(sku + ': eBay PUBLISHED offer mapping missing');
+        if (!ebayMapping.isMapped) {
+          errors.push(sku + ': eBay mapped listing missing');
+          continue;
+        }
+        if (!ebayMapping.offerId && !ebayMapping.itemId) {
+          errors.push(sku + ': eBay offer/item mapping missing');
           continue;
         }
 
@@ -25695,7 +25785,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               sku: sku,
               priceUsd: priceUsd,
               productId: product.id,
-              offerId: product.ebay_offer_id || undefined,
+              offerId: ebayMapping.offerId || undefined,
+              itemId: ebayMapping.itemId || undefined,
+              legacyVariantSku: ebayMapping.legacyVariantSku || undefined,
+              marketplaceId: ebayMapping.marketplaceId || undefined,
               confirmLargePriceDelta: confirmLargePriceDelta,
             }),
           });
@@ -25720,6 +25813,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }
 
         Object.assign(product, {
+          ebay_sku: product.ebay_sku || sku,
+          ebay_item_id: product.ebay_item_id || ebayMapping.itemId || null,
+          ebay_status: product.ebay_status || (ebayMapping.isMapped ? 'PUBLISHED' : null),
           ebay_last_synced_price: priceUsd,
           ebay_last_synced_at: now,
         });

@@ -17,6 +17,8 @@ function sliceBetween(source, start, end) {
 
 const v2 = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
 const qoo10Bridge = readFileSync(join(root, 'supabase', 'functions', 'qoo10-bridge', 'index.ts'), 'utf8');
+const ebayBridge = readFileSync(join(root, 'supabase', 'functions', 'ebay-bridge', 'index.ts'), 'utf8');
+const edgeEbayBridge = readFileSync(join(root, 'edge-functions', 'ebay-bridge', 'index.ts'), 'utf8');
 
 const ebaySync = sliceBetween(v2, 'async function catExecuteEbaySync()', '  // ── Platform + Shopee market controls');
 assert(
@@ -27,6 +29,19 @@ assert(
   !/fetch\(EBAY_BRIDGE \+ '\/update-price'[\s\S]*catPersistProductCost\(product\.id,\s*newCost,\s*now\)/.test(ebaySync),
   'eBay sync must not wait until after /update-price to persist cost_krw',
 );
+assert(v2.includes('platform_listings') && v2.includes('external_variant_id') && v2.includes('catAttachPlatformListingsToProducts'), 'price sync catalog must load platform_listings mappings, including variant identity');
+assert(v2.includes('function catEbayMapping(product)') && v2.includes('catEbayMappedSku(product)'), 'eBay price sync must resolve mapping through platform_listings, not only products.ebay_* columns');
+assert(ebaySync.includes('const ebayMapping = catEbayMapping(product);'), 'eBay price sync must use the unified mapping resolver');
+assert(ebaySync.includes('sku: sku,') && ebaySync.includes('itemId: ebayMapping.itemId || undefined') && ebaySync.includes('legacyVariantSku: ebayMapping.legacyVariantSku || undefined'), 'eBay price sync must send legacy item id and variation SKU to update-price');
+assert(!ebaySync.includes("product.ebay_sku;\n        if (!sku)"), 'eBay price sync must not require products.ebay_sku when platform_listings.external_sku is mapped');
+assert(!ebaySync.includes("ebayStatus !== 'PUBLISHED' || !product.ebay_offer_id"), 'eBay price sync must not reject mapped platform_listings rows for missing products.ebay_offer_id');
+const platformEditFlow = sliceBetween(v2, 'async function platformOpenEditFlow(platform, productIds = [])', '  async function platformSyncSelected(platform');
+assert(platformEditFlow.includes('_catCache = null') && platformEditFlow.includes('await renderCatalogView(true)'), 'platform price edit flow must bypass the price-sync cache so new eBay mappings show immediately');
+
+for (const [label, source] of [['Supabase', ebayBridge], ['edge mirror', edgeEbayBridge]]) {
+  assert(source.includes('ReviseInventoryStatus') && source.includes('legacy_trading_price_update'), `${label} eBay bridge must support Trading ReviseInventoryStatus for legacy mapped variation price updates`);
+  assert(source.includes('platform_listings') && source.includes('external_variant_id'), `${label} eBay price guard must accept platform_listings mapping identity`);
+}
 
 const joomSync = sliceBetween(v2, 'async function catExecuteJoomSync()', '  async function catExecuteEbaySync()');
 assert(

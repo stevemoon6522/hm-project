@@ -279,6 +279,37 @@ async function lookupTradingActiveListingBySku(sku: string): Promise<any | null>
   return null;
 }
 
+async function reviseTradingInventoryStatusPrice(
+  itemId: string,
+  sku: string,
+  priceUsd: number
+): Promise<{ ok: boolean; status: number; text: string; ack: string; message: string }> {
+  const safeItemId = String(itemId || "").trim();
+  const safeSku = normalizeEbaySku(sku);
+  if (!safeItemId || !safeSku) {
+    return { ok: false, status: 400, text: "", ack: "", message: "legacy item id and SKU are required" };
+  }
+  const body = `<?xml version="1.0" encoding="utf-8"?>
+<ReviseInventoryStatusRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>__EBAY_AUTH_TOKEN__</eBayAuthToken></RequesterCredentials>
+  <InventoryStatus>
+    <ItemID>${escapeEbayXml(safeItemId)}</ItemID>
+    <SKU>${escapeEbayXml(safeSku)}</SKU>
+    <StartPrice currencyID="USD">${priceUsd.toFixed(2)}</StartPrice>
+  </InventoryStatus>
+</ReviseInventoryStatusRequest>`;
+  const result = await ebayTradingXml("ReviseInventoryStatus", body);
+  const ack = firstEbayXml(result.text, "Ack").toUpperCase();
+  const message = firstEbayXml(result.text, "LongMessage") || firstEbayXml(result.text, "ShortMessage") || "";
+  return {
+    ok: result.status === 200 && (ack === "SUCCESS" || ack === "WARNING"),
+    status: result.status,
+    text: result.text,
+    ack,
+    message,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // merchantLocation idempotent setup
 // Citation: Codex BLOCKER §b — GET→create if missing
@@ -1386,6 +1417,8 @@ async function handleUpdatePrice(body: any): Promise<Response> {
   }
   resolvedMarketplaceId = priceGuard.marketplaceId || resolvedMarketplaceId;
   resolvedCallerOfferId = priceGuard.offerId || resolvedCallerOfferId;
+  const legacyItemId = s(body?.itemId || body?.item_id || priceGuard.legacyItemId).trim();
+  const legacyVariantSku = s(body?.legacyVariantSku || body?.legacy_variant_sku || priceGuard.legacyVariantSku || sku).trim();
 
   // Step 1: getOffers for this SKU on this marketplace
   // Citation: sell/inventory.yaml getOffers :3787
@@ -1406,6 +1439,29 @@ async function handleUpdatePrice(body: any): Promise<Response> {
 
   const allOffers: any[] = offersRes.status === 200 ? (offersRes.body?.offers || []) : [];
   if (!allOffers.length) {
+    if (legacyItemId && legacyVariantSku) {
+      const legacyUpdate = await reviseTradingInventoryStatusPrice(legacyItemId, legacyVariantSku, priceNum);
+      if (!legacyUpdate.ok) {
+        return jsonResp({
+          ok: false,
+          error: "legacy_trading_price_update_failed",
+          upstream_status: legacyUpdate.status,
+          upstream_ack: legacyUpdate.ack || null,
+          upstream: legacyUpdate.message || "Trading ReviseInventoryStatus failed",
+        }, legacyUpdate.status === 401 || legacyUpdate.status === 403 || legacyUpdate.status === 429 ? legacyUpdate.status : 502);
+      }
+      return jsonResp({
+        ok: true,
+        update_method: "legacy_trading_price_update",
+        ebay_item_id: legacyItemId,
+        legacy_variant_sku: legacyVariantSku,
+        sku,
+        marketplace_id: resolvedMarketplaceId,
+        priceUsd: Number(priceNum.toFixed(2)),
+        serverPriceUsd: priceGuard.serverPriceUsd,
+        trading_ack: legacyUpdate.ack,
+      });
+    }
     return jsonResp({ ok: false, error: "no_offer_for_sku" });
   }
 
@@ -1897,7 +1953,31 @@ async function loadEbayProductForPriceGuard(sku: string, productId: unknown) {
     return { ok: false, status: 409, error: "ambiguous_product_mapping" };
   }
 
-  return { ok: true, product: rows[0] };
+  const product = rows[0];
+  let platformListing: any | null = null;
+  try {
+    let listingQuery = supabase
+      .from("platform_listings")
+      .select("master_product_id,platform_item_id,external_sku,external_variant_id,listing_status,mapping_status,country,shop_id,deleted_at,last_sync_at")
+      .eq("platform", "ebay")
+      .is("deleted_at", null)
+      .limit(10);
+    if (product?.id) {
+      listingQuery = listingQuery.eq("master_product_id", String(product.id));
+    } else {
+      listingQuery = listingQuery.eq("external_sku", sku);
+    }
+    const { data: listingRows } = await listingQuery;
+    const rows = Array.isArray(listingRows) ? listingRows : [];
+    platformListing =
+      rows.find((row: any) => s(row?.external_sku).trim() === sku)
+      || rows.find((row: any) => s(row?.platform_item_id).trim())
+      || null;
+  } catch {
+    platformListing = null;
+  }
+
+  return { ok: true, product, platformListing };
 }
 
 async function guardEbayUpdatePrice(body: any, sku: string, priceNum: number, marketplaceId: string, callerOfferId: unknown) {
@@ -1910,25 +1990,32 @@ async function guardEbayUpdatePrice(body: any, sku: string, priceNum: number, ma
   if (!lookup.ok) return lookup;
 
   const product = lookup.product;
-  const productSku = s(product.ebay_sku).trim();
+  const platformListing = lookup.platformListing || null;
+  const platformSku = s(platformListing?.external_sku).trim();
+  const productSku = s(product.ebay_sku || platformSku).trim();
   if (productSku !== sku) {
     return { ok: false, status: 409, error: "sku_mapping_mismatch" };
   }
 
   const productStatus = s(product.ebay_status).toUpperCase();
-  if (productStatus !== "PUBLISHED") {
+  const platformListingStatus = s(platformListing?.listing_status).toUpperCase();
+  const platformMappingStatus = s(platformListing?.mapping_status).toUpperCase();
+  const platformPublished = platformMappingStatus === "MAPPED" && ["LISTED", "PUBLISHED", "ACTIVE"].includes(platformListingStatus);
+  if (productStatus !== "PUBLISHED" && !platformPublished) {
     return { ok: false, status: 409, error: "product_not_published", productStatus: productStatus || null };
   }
 
   const productOfferId = s(product.ebay_offer_id).trim();
-  if (!productOfferId) {
-    return { ok: false, status: 409, error: "product_offer_mapping_required" };
+  const legacyItemId = s(product.ebay_item_id || platformListing?.platform_item_id).trim();
+  const legacyVariantSku = platformSku || productSku;
+  if (!productOfferId && !legacyItemId) {
+    return { ok: false, status: 409, error: "product_offer_or_item_mapping_required" };
   }
-  if (callerOfferId && productOfferId !== String(callerOfferId)) {
+  if (callerOfferId && productOfferId && productOfferId !== String(callerOfferId)) {
     return { ok: false, status: 409, error: "offer_id_mismatch", productOfferId };
   }
 
-  const resolvedMarketplaceId = s(product.ebay_marketplace_id || marketplaceId || "EBAY_US", "EBAY_US").trim() || "EBAY_US";
+  const resolvedMarketplaceId = s(product.ebay_marketplace_id || platformListing?.country || marketplaceId || "EBAY_US", "EBAY_US").trim() || "EBAY_US";
   if (product.ebay_marketplace_id && marketplaceId && resolvedMarketplaceId !== marketplaceId) {
     return { ok: false, status: 409, error: "marketplace_mismatch", productMarketplaceId: resolvedMarketplaceId };
   }
@@ -1978,6 +2065,9 @@ async function guardEbayUpdatePrice(body: any, sku: string, priceNum: number, ma
     ok: true,
     product,
     offerId: productOfferId,
+    legacyItemId,
+    legacyVariantSku,
+    platformListing,
     marketplaceId: resolvedMarketplaceId,
     serverPriceUsd,
   };

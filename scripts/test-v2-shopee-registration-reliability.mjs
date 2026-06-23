@@ -27,8 +27,8 @@ const persistMappings = extractFunction(html, 'persistMappings');
 const applyPublishState = extractFunction(html, 'rshApplyShopeePublishState');
 const publishStateFromRows = extractFunction(html, 'rshPublishStateFromMappingRows');
 const buildGroupPayload = extractFunction(html, 'rshBuildGroupRegisterPayload');
-const normalizeBrGlobalModelPrices = extractFunction(html, 'rshNormalizeBrGlobalModelPrices');
-const normalizeBrTargetModelPrices = extractFunction(html, 'rshNormalizeBrTargetModelPrices');
+const normalizeRegionalGlobalModelPrices = extractFunction(html, 'rshNormalizeRegionalGlobalModelPrices');
+const normalizeRegionalTargetModelPrices = extractFunction(html, 'rshNormalizeRegionalTargetModelPrices');
 const brandForPublish = extractFunction(html, 'rshBrandForShopeePublish');
 const mrUploadRegionImages = extractFunction(html, 'mrUploadRegionImages');
 const regionBatchOrder = extractFunction(html, 'shopeeRegionBatchOrder');
@@ -166,24 +166,29 @@ assert.match(
   'group payload must apply BR-safe brand normalization',
 );
 assert.match(
-  normalizeBrGlobalModelPrices,
-  /RSH_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT[\s\S]*global_original_price:\s*safeMinimum/,
-  'group payload must normalize Global Product model prices when BR would reject the option price ratio',
+  html,
+  /RSH_REGION_MODEL_PRICE_RATIO_LIMITS[\s\S]*SG:\s*5[\s\S]*TW:\s*5[\s\S]*TH:\s*5[\s\S]*PH:\s*5[\s\S]*BR:\s*4/,
+  'group payload must encode observed Shopee region model price ratio limits',
+);
+assert.match(
+  normalizeRegionalGlobalModelPrices,
+  /rshStrictestModelPriceRatioLimit\(activeRegions\)[\s\S]*global_original_price:\s*safeMinimum/,
+  'group payload must normalize Global Product model prices using the strictest targeted region price ratio',
 );
 assert.match(
   buildGroupPayload,
-  /const model = rshNormalizeBrGlobalModelPrices\(modelRaw,\s*activeRegions\)/,
-  'group payload must apply BR-safe global model price normalization before register_cbsc',
+  /const model = rshNormalizeRegionalGlobalModelPrices\(modelRaw,\s*activeRegions\)/,
+  'group payload must apply region-aware global model price normalization before register_cbsc',
 );
 assert.match(
-  normalizeBrTargetModelPrices,
-  /original_price:\s*safeMinimum[\s\S]*br_original_price_adjusted_from/,
-  'group payload must normalize BR target-region option prices when the local price ratio would be rejected',
+  normalizeRegionalTargetModelPrices,
+  /rshModelPriceRatioLimitForRegion\(region\)[\s\S]*original_price:\s*safeMinimum[\s\S]*regional_original_price_adjusted_from/,
+  'group payload must normalize each target-region option price when the local price ratio would be rejected',
 );
 assert.match(
   buildGroupPayload,
-  /return rshNormalizeBrTargetModelPrices\(targetModels,\s*region\)/,
-  'group payload must apply BR-safe target model price normalization for each region variation',
+  /return rshNormalizeRegionalTargetModelPrices\(targetModels,\s*region\)/,
+  'group payload must apply region-aware target model price normalization for each region variation',
 );
 assert.match(
   batchRegister,
@@ -219,28 +224,28 @@ assert.match(
 );
 assert.match(
   bridge,
-  /SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT = 3\.5[\s\S]*function normalizeBrGlobalModelPriceRatio/,
-  'Shopee bridge must defensively normalize BR Global Product option price ratios',
+  /SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS[\s\S]*SG:\s*5[\s\S]*TW:\s*5[\s\S]*TH:\s*5[\s\S]*PH:\s*5[\s\S]*BR:\s*4[\s\S]*function normalizeRegionalGlobalModelPriceRatio/,
+  'Shopee bridge must defensively normalize Global Product option price ratios with observed region limits',
 );
 assert.match(
   bridge,
-  /function normalizeBrTargetModelPriceRatio[\s\S]*row\.model\.original_price = safeMinimum/,
-  'Shopee bridge must defensively normalize BR target-region option price ratios',
+  /function normalizeRegionalTargetModelPriceRatio[\s\S]*row\.model\.original_price = safeMinimum/,
+  'Shopee bridge must defensively normalize target-region option price ratios',
 );
 assert.match(
   registerCbscBlock,
-  /normalizeBrGlobalModelPriceRatio\(body,\s*targetInputs\)[\s\S]*br_global_model_price_ratio_normalized/,
-  'register_cbsc must apply and log BR global model price ratio normalization',
+  /normalizeRegionalGlobalModelPriceRatio\(body,\s*targetInputs\)[\s\S]*regional_global_model_price_ratio_normalized/,
+  'register_cbsc must apply and log regional global model price ratio normalization',
 );
 assert.match(
   registerCbscBlock,
-  /normalizeBrTargetModelPriceRatio\(targetInputs\)[\s\S]*br_target_model_price_ratio_normalized/,
-  'register_cbsc must apply and log BR target model price ratio normalization',
+  /normalizeRegionalTargetModelPriceRatio\(targetInputs\)[\s\S]*regional_target_model_price_ratio_normalized/,
+  'register_cbsc must apply and log regional target model price ratio normalization',
 );
 assert.match(
   publishToRegionBlock,
-  /normalizeBrTargetModelPriceRatio\(targetInputs\)[\s\S]*br_target_price_adjustments/,
-  'publish_to_region must also normalize BR target-region option prices for missing-region retries',
+  /normalizeRegionalTargetModelPriceRatio\(targetInputs\)[\s\S]*regional_target_price_adjustments/,
+  'publish_to_region must also normalize target-region option prices for missing-region retries',
 );
 assert.match(
   bridge,
@@ -264,13 +269,13 @@ assert.match(
 );
 assert.match(
   registerCbscBlock,
-  /br_global_price_adjustments: brGlobalPriceAdjustments/,
-  'register_cbsc must return BR Global Product price-ratio adjustments for diagnosis',
+  /regional_global_price_adjustments: regionalGlobalPriceAdjustments[\s\S]*br_global_price_adjustments: brGlobalPriceAdjustments/,
+  'register_cbsc must return regional and BR Global Product price-ratio adjustments for diagnosis',
 );
 assert.match(
   registerCbscBlock,
-  /br_target_price_adjustments: brTargetPriceAdjustments/,
-  'register_cbsc must return BR target-region price-ratio adjustments for diagnosis',
+  /regional_target_price_adjustments: regionalTargetPriceAdjustments[\s\S]*br_target_price_adjustments: brTargetPriceAdjustments/,
+  'register_cbsc must return regional and BR target-region price-ratio adjustments for diagnosis',
 );
 assert.match(
   reconcilePublishedList,

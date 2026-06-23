@@ -85,7 +85,14 @@ const DEFAULT_REFRESH_THRESHOLD_SEC = 7200;
 const DEFAULT_REFRESH_ATTEMPTS = 3;
 const DEFAULT_RETRY_BASE_MS = 1000;
 const SHOPEE_HEADLESS_DELETE_CONFIRM_PHRASE = 'DELETE_SHOPEE_GLOBAL_ITEM';
-const SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT = 3.5;
+const SHOPEE_DEFAULT_MODEL_PRICE_RATIO_LIMIT = 7;
+const SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS: Record<string, number> = Object.freeze({
+  SG: 5,
+  TW: 5,
+  TH: 5,
+  PH: 5,
+  BR: 4,
+});
 const SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS = 3;
 const SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_EVERY_POLLS = 3;
 const SHOPEE_BR_MAX_PUBLISH_POLLS = 36;
@@ -1758,21 +1765,29 @@ function registerModelPrice(model: any, fallbackPrice: number) {
   return Number(model?.global_original_price ?? model?.original_price ?? fallbackPrice ?? 0);
 }
 
-function hasBrPublishTarget(targets: any[] = []) {
-  return targets.some((target: any) => String(target?.region || '').toUpperCase() === 'BR');
+function shopeeModelPriceRatioLimitForRegion(region: any) {
+  const key = String(region || '').toUpperCase();
+  const limit = SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS[key];
+  return Number.isFinite(limit) && limit > 0 ? limit : SHOPEE_DEFAULT_MODEL_PRICE_RATIO_LIMIT;
 }
 
-function normalizeBrGlobalModelPriceRatio(body: any, targets: any[] = []) {
-  if (!hasBrPublishTarget(targets)) return [];
-  const brTargetsHaveRegionVariation = targets
-    .filter((target: any) => String(target?.region || '').toUpperCase() === 'BR')
-    .some((target: any) => {
-      try {
-        return !!normalizeVariation(target?.variation);
-      } catch (_) {
-        return false;
-      }
-    });
+function shopeeStrictestModelPriceRatioLimit(targets: any[] = []) {
+  const regions = new Set(targets.map((target: any) => String(target?.region || '').toUpperCase()).filter(Boolean));
+  let limit = SHOPEE_DEFAULT_MODEL_PRICE_RATIO_LIMIT;
+  for (const region of regions) limit = Math.min(limit, shopeeModelPriceRatioLimitForRegion(region));
+  return limit;
+}
+
+function normalizeRegionalGlobalModelPriceRatio(body: any, targets: any[] = []) {
+  const safeRatioLimit = shopeeStrictestModelPriceRatioLimit(targets);
+  const targetRegions = Array.from(new Set(targets.map((target: any) => String(target?.region || '').toUpperCase()).filter(Boolean)));
+  const targetsHaveRegionVariation = targets.some((target: any) => {
+    try {
+      return !!normalizeVariation(target?.variation);
+    } catch (_) {
+      return false;
+    }
+  });
   const models = Array.isArray(body?.variation?.model) ? body.variation.model : [];
   if (models.length < 2) return [];
   const rows = models
@@ -1786,31 +1801,34 @@ function normalizeBrGlobalModelPriceRatio(body: any, targets: any[] = []) {
   if (rows.length < 2) return [];
   const maxPrice = Math.max(...rows.map((row: any) => row.price));
   const minPrice = Math.min(...rows.map((row: any) => row.price));
-  if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) return [];
+  if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= safeRatioLimit) return [];
 
-  const safeMinimum = Math.ceil(maxPrice / SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT);
+  const safeMinimum = Math.ceil(maxPrice / safeRatioLimit);
   const adjustments: any[] = [];
   for (const row of rows) {
     if (row.price >= safeMinimum) continue;
     row.model.global_original_price = safeMinimum;
-    if (!brTargetsHaveRegionVariation) row.model.original_price = safeMinimum;
+    if (!targetsHaveRegionVariation) row.model.original_price = safeMinimum;
     adjustments.push({
+      regions: targetRegions,
       sku: row.sku,
       from: row.price,
       to: safeMinimum,
       min_price: minPrice,
       max_price: maxPrice,
       ratio: Number((maxPrice / minPrice).toFixed(4)),
-      safe_ratio: SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT,
+      safe_ratio: safeRatioLimit,
     });
   }
   return adjustments;
 }
 
-function normalizeBrTargetModelPriceRatio(targets: any[] = []) {
+function normalizeRegionalTargetModelPriceRatio(targets: any[] = []) {
   const adjustments: any[] = [];
   for (const target of targets) {
-    if (String(target?.region || '').toUpperCase() !== 'BR') continue;
+    const targetRegion = String(target?.region || '').toUpperCase();
+    if (!targetRegion) continue;
+    const safeRatioLimit = shopeeModelPriceRatioLimitForRegion(targetRegion);
     let normalized: any = null;
     try {
       normalized = normalizeVariation(target?.variation);
@@ -1831,21 +1849,21 @@ function normalizeBrTargetModelPriceRatio(targets: any[] = []) {
     if (rows.length < 2) continue;
     const maxPrice = Math.max(...rows.map((row: any) => row.price));
     const minPrice = Math.min(...rows.map((row: any) => row.price));
-    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) continue;
+    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= safeRatioLimit) continue;
 
-    const safeMinimum = Number((Math.ceil(((maxPrice / SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT) + 0.000001) * 100) / 100).toFixed(2));
+    const safeMinimum = Number((Math.ceil(((maxPrice / safeRatioLimit) + 0.000001) * 100) / 100).toFixed(2));
     for (const row of rows) {
       if (row.price >= safeMinimum) continue;
       row.model.original_price = safeMinimum;
       adjustments.push({
-        region: 'BR',
+        region: targetRegion,
         sku: row.sku,
         from: row.price,
         to: safeMinimum,
         min_price: minPrice,
         max_price: maxPrice,
         ratio: Number((maxPrice / minPrice).toFixed(4)),
-        safe_ratio: SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT,
+        safe_ratio: safeRatioLimit,
       });
     }
   }
@@ -3851,7 +3869,8 @@ Deno.serve(async (req) => {
         .map((t: any) => ({ ...t, region: String(t.region || '').toUpperCase() }))
         .filter((t: any) => t.region);
       if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
-      const brTargetPriceAdjustments = normalizeBrTargetModelPriceRatio(targetInputs);
+      const regionalTargetPriceAdjustments = normalizeRegionalTargetModelPriceRatio(targetInputs);
+      const brTargetPriceAdjustments = regionalTargetPriceAdjustments.filter((adjustment: any) => String(adjustment?.region || '').toUpperCase() === 'BR');
       if (!body.name) return jsonResp({ ok: false, error: 'name required (publish item payload)' }, 400);
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       const _isPreOrderRepublish = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
@@ -3988,7 +4007,7 @@ Deno.serve(async (req) => {
       });
       const reconciledResults = await reconcilePublishResultsWithPublishedList(global_item_id, targetInputs, results, reqAccountKey, region);
       const responseResults = reconciledResults.map((row) => ({ account_key: reqAccountKey, ...row }));
-      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: reqAccountKey, global_item_id, logistics_repairs: publishLogisticsRepair, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults });
+      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: reqAccountKey, global_item_id, logistics_repairs: publishLogisticsRepair, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults });
     }
     if (action === 'oauth_exchange') {
       const code = url.searchParams.get('code') || '';
@@ -4209,8 +4228,10 @@ Deno.serve(async (req) => {
       if (!body.name) return jsonResp({ ok: false, error: 'name required' }, 400);
       if (!body.category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
       if (!targetInputs.length) return jsonResp({ ok: false, error: 'targets required' }, 400);
-      const brGlobalPriceAdjustments = normalizeBrGlobalModelPriceRatio(body, targetInputs);
-      const brTargetPriceAdjustments = normalizeBrTargetModelPriceRatio(targetInputs);
+      const regionalGlobalPriceAdjustments = normalizeRegionalGlobalModelPriceRatio(body, targetInputs);
+      const regionalTargetPriceAdjustments = normalizeRegionalTargetModelPriceRatio(targetInputs);
+      const brGlobalPriceAdjustments = regionalGlobalPriceAdjustments.filter((adjustment: any) => (adjustment?.regions || []).includes('BR'));
+      const brTargetPriceAdjustments = regionalTargetPriceAdjustments.filter((adjustment: any) => String(adjustment?.region || '').toUpperCase() === 'BR');
 
       let preflightVariation: any = null;
       try {
@@ -4262,13 +4283,14 @@ Deno.serve(async (req) => {
 
       return withPublishRequestId(action, `${accountKey}:${r}`, _cbscIdempotencyToken, body, async () => {
       const stage_logs: string[] = [];
-      if (brGlobalPriceAdjustments.length) {
-        const firstAdjustment = brGlobalPriceAdjustments[0] || {};
-        stage_logs.push(`br_global_model_price_ratio_normalized: ${brGlobalPriceAdjustments.length} model(s), ratio=${firstAdjustment.ratio || 'unknown'}, min=${firstAdjustment.min_price || 'unknown'}->${firstAdjustment.to || 'unknown'}, max=${firstAdjustment.max_price || 'unknown'}, safe_ratio=${SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT}`);
+      if (regionalGlobalPriceAdjustments.length) {
+        const firstAdjustment = regionalGlobalPriceAdjustments[0] || {};
+        const regions = (firstAdjustment.regions || []).join(',') || 'unknown';
+        stage_logs.push(`regional_global_model_price_ratio_normalized: ${regionalGlobalPriceAdjustments.length} model(s), regions=${regions}, ratio=${firstAdjustment.ratio || 'unknown'}, min=${firstAdjustment.min_price || 'unknown'}->${firstAdjustment.to || 'unknown'}, max=${firstAdjustment.max_price || 'unknown'}, safe_ratio=${firstAdjustment.safe_ratio || 'unknown'}`);
       }
-      if (brTargetPriceAdjustments.length) {
-        const firstAdjustment = brTargetPriceAdjustments[0] || {};
-        stage_logs.push(`br_target_model_price_ratio_normalized: ${brTargetPriceAdjustments.length} model(s), ratio=${firstAdjustment.ratio || 'unknown'}, min=${firstAdjustment.min_price || 'unknown'}->${firstAdjustment.to || 'unknown'}, max=${firstAdjustment.max_price || 'unknown'}, safe_ratio=${SHOPEE_BR_GLOBAL_MODEL_PRICE_RATIO_LIMIT}`);
+      if (regionalTargetPriceAdjustments.length) {
+        const firstAdjustment = regionalTargetPriceAdjustments[0] || {};
+        stage_logs.push(`regional_target_model_price_ratio_normalized: ${regionalTargetPriceAdjustments.length} model(s), region=${firstAdjustment.region || 'unknown'}, ratio=${firstAdjustment.ratio || 'unknown'}, min=${firstAdjustment.min_price || 'unknown'}->${firstAdjustment.to || 'unknown'}, max=${firstAdjustment.max_price || 'unknown'}, safe_ratio=${firstAdjustment.safe_ratio || 'unknown'}`);
       }
       const catAttrs = await buildCategoryAttributeListForRegions(r, targetInputs.map((target: any) => target.region), Number(body.category_id), Array.isArray(body.attribute_list) ? body.attribute_list : [], accountKey);
       if (catAttrs.missing.length > 0) {
@@ -4604,7 +4626,7 @@ Deno.serve(async (req) => {
       });
       const reconciledResults = await reconcilePublishResultsWithPublishedList(global_item_id, targetInputs, results, accountKey, r, stage_logs);
       const responseResults = reconciledResults.map((row) => ({ account_key: accountKey, ...row }));
-      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id, stage_logs, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, publishable_shops, publishable_status });
+      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id, stage_logs, regional_global_price_adjustments: regionalGlobalPriceAdjustments, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, publishable_shops, publishable_status });
       }); // end withPublishRequestId for register_cbsc
     }
     if (action === 'item_info') {

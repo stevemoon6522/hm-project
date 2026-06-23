@@ -339,6 +339,7 @@ test('platform SKU sync includes Shopee lookup-sku and absorbs matched region id
   assert.match(coverageLookup, /coverageClearShopeePublishedMappings/, 'Shopee not-found should mark product_shopee_listings as not_listed');
   assert.match(coverageLookup, /raw: lookupRaw/, 'Shopee not-found should preserve the bridge debug payload instead of reducing it to a generic skip');
   assert.match(coverageLookup, /upsert\(rows, \{ onConflict: SHOPEE_LISTING_CONFLICT \}\)/, 'Shopee not-found should persist checked regions so the next sync cannot silently skip the same SKU');
+  assert.match(coverageLookup, /platform === 'shopee' \|\| platform === 'joom' \? 'health' : 'healthz'/, 'Shopee SKU sync must call shopee-bridge /health, not /healthz, so selected rows are not skipped as unavailable');
   assert.match(coverageLookup, /coverageShopeePublishedItemsFromRaw/, 'Shopee sync should normalize bridge and cached published list shapes');
   assert.match(coverageLookup, /result\?\.response\?\.published_item/, 'Shopee bridge published_list shape should be accepted');
   assert.match(coverageLookup, /SHOPEE_BRIDGE\}\/published_list\?\$\{qs\.toString\(\)\}/, 'Shopee sync should keep published_list as a global-item fallback');

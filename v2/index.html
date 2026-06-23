@@ -27340,7 +27340,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   async function coverageCheckPlatformHealth(platform) {
     try {
-      const action = platform === 'joom' ? 'health' : 'healthz';
+      const action = platform === 'shopee' || platform === 'joom' ? 'health' : 'healthz';
       const resp = await fetch(coverageBridgeUrl(platform) + '/' + action, { headers: AUTH_HEADERS });
       const json = await resp.json().catch(function() { return { ok: false, error: 'HTTP ' + resp.status }; });
       return { platform, ok: resp.ok && json.ok !== false, status: resp.status, error: json.error || json.message || null };

@@ -22407,7 +22407,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       let lOffset = 0;
       while (true) {
         const lUrl = SUPABASE_URL + '/rest/v1/product_shopee_listings'
-          + '?select=product_id,account_key,region,shop_id,shop_item_id,shop_model_id,status,published_at,last_synced_price,last_synced_at'
+          + '?select=product_id,account_key,region,shop_id,shop_item_id,shop_model_id,global_item_id,global_model_id,status,published_at,last_synced_price,last_synced_at'
           + '&account_key=eq.' + encodeURIComponent(SHOPEE_DEFAULT_ACCOUNT_KEY)
           + '&product_id=in.(' + ids + ')';
         const lRes = await fetch(lUrl, {
@@ -23898,6 +23898,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       const newWeightG = catEffectiveWeight(product);
       if (!newWeightG || newWeightG <= 0) return;
+      const globalItemId = catProductGlobalItemId(product, byRegion);
+      const globalModelId = catProductGlobalModelId(product, byRegion);
+      const needsModel = catProductNeedsShopeeModel(product) || (Number.isFinite(globalModelId) && globalModelId > 0);
 
       // Build one shop-level update_price envelope per mapped, currently enabled region.
       const targetRegions = CAT_REGIONS.filter(function(r) { return _catRegionVisible.has(r); });
@@ -23935,6 +23938,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           itemId: itemId,
           modelId: modelId,
           listing: listing,
+          globalItemId: globalItemId || null,
+          globalModelId: globalModelId || null,
+          needsModel: needsModel,
           newCost: newCost,
           newWeightG: newWeightG,
           price: priceInfo.value,
@@ -24255,7 +24261,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (modelId) {
         if (!trustedModelIds.has(key)) trustedModelIds.set(key, new Set());
         trustedModelIds.get(key).add(modelId);
-      } else {
+      } else if (!p.needsModel) {
         trustedItemNoModel.add(key);
       }
     }
@@ -24292,6 +24298,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         blocked.push(Object.assign({}, p, { reason: 'preflight failed: ' + ((info && info.error) || 'unknown') }));
         continue;
       }
+      if (p.needsModel && !p.modelId) {
+        blocked.push(Object.assign({}, p, { reason: 'variant mapping requires shop_model_id' }));
+        continue;
+      }
       if (info.hasModel && !p.modelId) {
         blocked.push(Object.assign({}, p, { reason: 'item has models but shop_model_id mapping is missing' }));
         continue;
@@ -24322,6 +24332,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     Object.assign(row, {
       shop_item_id: payload.itemId,
       shop_model_id: payload.modelId || null,
+      global_item_id: payload.globalItemId || payload.listing?.global_item_id || row.global_item_id || null,
+      global_model_id: payload.globalModelId || payload.listing?.global_model_id || row.global_model_id || null,
       last_synced_price: payload.price,
       last_synced_at: nowIso,
       status: row.status || 'mapped',
@@ -24379,6 +24391,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (byRegion && typeof byRegion.values === 'function') {
       for (const listing of byRegion.values()) {
         const v = Number(listing && listing.global_item_id);
+        if (Number.isFinite(v) && v > 0) return v;
+      }
+    }
+    return null;
+  }
+
+  function catProductGlobalModelId(product, byRegion) {
+    const direct = Number(product && (product.global_model_id || product.shopee_global_model_id || 0));
+    if (Number.isFinite(direct) && direct > 0) return direct;
+    if (byRegion && typeof byRegion.values === 'function') {
+      for (const listing of byRegion.values()) {
+        const v = Number(listing && listing.global_model_id);
         if (Number.isFinite(v) && v > 0) return v;
       }
     }
@@ -24498,10 +24522,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const pid = String(product.id);
       const byRegion = listingIdx.get(pid) || new Map();
       const globalItemId = catProductGlobalItemId(product, byRegion);
+      const globalModelId = catProductGlobalModelId(product, byRegion);
       const hasGlobalItemId = Number.isFinite(globalItemId) && globalItemId > 0;
       const sku = String(product.sku || product.shopee_global_model_sku || '').trim();
       if (!hasGlobalItemId && !sku) continue;
-      const needsModel = catProductNeedsShopeeModel(product);
+      const needsModel = catProductNeedsShopeeModel(product) || (Number.isFinite(globalModelId) && globalModelId > 0);
       const needsRegion = targetRegions.some(function(r) {
         const l = byRegion.get(r);
         return !(l && l.shop_item_id && (!needsModel || l.shop_model_id));
@@ -24509,7 +24534,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!needsRegion) continue;
 
       if (hasGlobalItemId && !publishedCache.has(globalItemId)) {
-        const qs = new URLSearchParams({ region: 'SG', global_item_id: String(globalItemId) });
+        const qs = new URLSearchParams({
+          region: 'SG',
+          account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
+          global_item_id: String(globalItemId),
+        });
         const response = await fetch(SHOPEE_BRIDGE + '/published_list?' + qs.toString(), { headers: AUTH_HEADERS });
         const json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
         if (!response.ok || !json.ok || json.result?.error) {
@@ -24554,12 +24583,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
           region: r,
           global_item_id: hasGlobalItemId ? globalItemId : (published.global_item_id || null),
+          global_model_id: globalModelId || published.global_model_id || published.globalModelId || null,
           shop_id: published.shop_id || published.shopId || null,
           shop_item_id: itemId,
           shop_model_id: modelId,
           status: 'mapped',
           published_at: new Date().toISOString(),
-          raw_payload: { source: hasGlobalItemId ? 'price_sync_auto_published_list' : 'price_sync_sku_lookup', published: published },
+          raw_payload: {
+            source: hasGlobalItemId ? 'price_sync_auto_published_list' : 'price_sync_sku_lookup',
+            global_model_id: globalModelId || null,
+            published: published,
+          },
         };
         const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: SHOPEE_LISTING_CONFLICT });
         if (error) throw error;
@@ -24578,7 +24612,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     await catEnsureSelectedShopeeListings();
     const { payloads } = catBuildPriceSyncPayloads();
     if (!payloads.length) {
-      showToast('Shopee 실호출 대상이 없습니다. 매핑된 행을 선택하고 cost를 확인하세요.', 'err');
+      showToast('Shopee 가격 동기화 대상이 없습니다. 선택 상품의 region shop item/model 매핑을 확인하세요.', 'err');
       return;
     }
     // V1 parity: the Shopee sync button is an explicit operator action.
@@ -24627,6 +24661,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           product_id: p.productId,
           account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
           region: p.region,
+          global_item_id: p.globalItemId || p.listing?.global_item_id || null,
+          global_model_id: p.globalModelId || p.listing?.global_model_id || null,
           shop_item_id: p.itemId,
           shop_model_id: p.modelId || null,
           last_synced_price: p.price,

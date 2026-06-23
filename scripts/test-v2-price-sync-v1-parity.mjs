@@ -135,7 +135,7 @@ const shopeeBridge = readFileSync(join(root, 'supabase', 'functions', 'shopee-br
 assert(v2.includes("from '/v2/price-engine.js'"), 'V2 must import the shared V1 parity price engine from the deployed /v2 path');
 assert(v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/update_price'"), 'V2 Shopee sync must use shop-level update_price');
 assert(!v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/update_global_price'"), 'V2 price sync must not build global update_price payloads');
-assert(v2.includes('shop_model_id,status,published_at,last_synced_price'), 'V2 listings fetch must include shop_model_id for variant price updates');
+assert(v2.includes('shop_item_id,shop_model_id,global_item_id,global_model_id,status,published_at,last_synced_price'), 'V2 listings fetch must carry Global Product ids so price sync can hydrate shop mappings');
 assert(v2.includes("countrySettings: catCountrySettings('JM')"), 'V2 Joom price preview must use JM country_settings fee row');
 assert(v2.includes("countrySettings: catCountrySettings('Q10')"), 'V2 Qoo10 price preview must use Q10 country_settings fee row');
 assert(v2.includes('weightG: Number(row.weight_g || 0)'), 'V2 Qoo10 modal prices must pass product weight into the Qoo10 shipping table');
@@ -180,6 +180,8 @@ assert(v2.includes('function catEnsureSelectedShopeeListings'), 'Shopee price sy
 assert(v2.includes("SHOPEE_BRIDGE + '/published_list?'"), 'Shopee price sync auto-resolution must use published_list from the global item id');
 assert(v2.includes("SHOPEE_BRIDGE + '/lookup-sku?'"), 'Shopee price sync auto-resolution must fall back to SKU lookup when global_item_id is absent');
 assert(v2.includes('price_sync_sku_lookup'), 'Shopee price sync SKU lookup fallback must mark listing rows with an audit source');
+assert(v2.includes('function catProductGlobalModelId'), 'Shopee price sync must recover global_model_id from product/listing rows');
+assert(v2.includes('global_model_id: globalModelId ||'), 'Shopee price sync hydrated mappings must preserve global_model_id for later exact model recovery');
 assert(shopeeBridge.includes('"lookup-sku"'), 'Shopee bridge lookup-sku must be a public read-only action for browser mapping recovery');
 assert(shopeeBridge.includes("if (action === 'lookup-sku' && req.method === 'GET')"), 'Shopee bridge must implement lookup-sku for price sync mapping recovery');
 assert(shopeeBridge.includes('region_hits') && shopeeBridge.includes('region_results'), 'Shopee lookup-sku must return frontend-compatible region hit shapes');

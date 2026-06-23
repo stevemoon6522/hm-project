@@ -346,9 +346,69 @@ test('platform SKU sync includes Shopee lookup-sku and absorbs matched region id
   assert.match(coverageLookup, /coverageLookupShopeeLocalRowsByItemInfo/, 'Shopee stale shop item rows should be verified by item_info when global_item_id is unavailable');
   assert.doesNotMatch(coverageLookup, /if \(localHit\) return coverageNormalizeShopeePublishedHit/, 'Shopee sync must not trust cached local rows before remote verification');
   assert.doesNotMatch(coverageLookup, /row\?\.shopee_item_id \|\| row\?\.platform_item_id/, 'products.shopee_item_id is a global id and must not be treated as shop_item_id');
+  assert.match(coverageLookup, /global_region_hits/, 'Shopee sync should consume Global Product SKU hits separately from shop listing hits');
+  assert.match(coverageLookup, /global_model_id: entry\.global_model_id \|\| entry\.model_id \|\| entry\.globalModelId \|\| null/, 'Shopee global lookup hits should preserve global_model_id');
+  assert.match(coverageLookup, /entry\.region && \(entry\.shop_item_id \|\| entry\.global_item_id\)/, 'Shopee global lookup hits without shop_item_id must not be filtered out');
   assert.match(coverageLookup, /global_item_id: row\.global_item_id \|\| null/, 'absorbed listing should preserve global_item_id for later price/sync operations');
+  assert.match(coverageLookup, /global_model_id: row\.global_model_id \|\| null/, 'absorbed listing should preserve global_model_id for later Global Product operations');
   assert.match(coverageSkuCheck, /const targetPlatforms = \['shopee', 'joom', 'qoo10', 'ebay'\]/, 'coverage SKU check should also include Shopee');
   assert.match(coverageSkuCheck, /if \(platform === 'shopee'\) await coverageAbsorbShopeePublishedHit/, 'coverage Shopee hits should be absorbed through product_shopee_listings');
+});
+
+test('Shopee Global Product SKU lookup hits map without shop listing ids', async () => {
+  const normalizeFactory = new Function(
+    `${extractFunctionBlock(html, 'coverageNormalizeShopeeSkuLookupHit')}; return coverageNormalizeShopeeSkuLookupHit;`,
+  );
+  const normalize = normalizeFactory();
+  const hit = normalize({
+    ok: true,
+    found: true,
+    not_found: false,
+    global_region_hits: [{
+      region: 'SG',
+      sku: 'T4-TEA-WEONF-SOL-EJ',
+      global_item_id: 57356515280,
+      global_model_id: 292422335253,
+      global_model_sku: 'T4-TEA-WEONF-SOL-EJ',
+      match_type: 'global_model_sku',
+      lookup_source: 'global_model_list',
+    }],
+  }, 'T4-TEA-WEONF-SOL-EJ');
+
+  assert.equal(hit.found, true, 'global-only lookup hit should count as found');
+  assert.equal(hit.notFound, false, 'global-only lookup hit must not be treated as not_found');
+  assert.equal(hit.platformItemId, 57356515280, 'global_item_id should be the fallback platform id for Shopee-tab mapping');
+  assert.equal(hit.regionHits[0].shop_item_id, null, 'Global Product SKU mapping must not invent shop_item_id values');
+  assert.equal(hit.regionHits[0].global_model_id, 292422335253, 'global_model_id should survive normalization');
+
+  const calls = [];
+  const db = {
+    from(table) {
+      return {
+        upsert(payload, options) {
+          calls.push({ table, payload, options });
+          return Promise.resolve({ error: null });
+        },
+      };
+    },
+  };
+  const absorbFactory = new Function(
+    'db',
+    'SHOPEE_DEFAULT_ACCOUNT_KEY',
+    'SHOPEE_LISTING_CONFLICT',
+    `${extractFunctionBlock(html, 'coverageAbsorbShopeePublishedHit')}; return coverageAbsorbShopeePublishedHit;`,
+  );
+  const absorb = absorbFactory(db, 'starphotocard', 'product_id,account_key,region');
+  const count = await absorb('product-1', hit);
+
+  assert.equal(count, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].table, 'product_shopee_listings');
+  assert.equal(calls[0].payload.region, 'SG');
+  assert.equal(calls[0].payload.global_item_id, 57356515280);
+  assert.equal(calls[0].payload.global_model_id, 292422335253);
+  assert.equal(calls[0].payload.shop_item_id, null);
+  assert.equal(calls[0].payload.status, 'mapped');
 });
 
 test('Shopee not-found SKU sync records checked regions instead of disappearing as a skip', async () => {

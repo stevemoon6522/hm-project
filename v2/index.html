@@ -27145,6 +27145,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           shop_id: entry.shop_id || entry.shopId || null,
           item_status: Number.isFinite(status) ? status : null,
           global_item_id: entry.global_item_id || globalItemId || null,
+          global_model_id: entry.global_model_id || entry.globalModelId || null,
         };
       })
       .filter((entry) => entry.region && entry.shop_item_id && (!entry.item_status || [1, 8].includes(entry.item_status)));
@@ -27157,6 +27158,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         shop_id: row?.shop_id || raw.shop_id || null,
         item_status: null,
         global_item_id: globalItemId,
+        global_model_id: row?.global_model_id || raw.global_model_id || null,
       });
     }
     return {
@@ -27171,7 +27173,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function coverageNormalizeShopeeSkuLookupHit(raw, sku) {
-    const rows = Array.isArray(raw?.region_hits) ? raw.region_hits : [];
+    const globalRows = Array.isArray(raw?.global_region_hits) ? raw.global_region_hits : [];
+    const shopRows = Array.isArray(raw?.region_hits) ? raw.region_hits : [];
+    const rows = globalRows.length ? globalRows : shopRows;
     const regionHits = rows
       .map((entry) => {
         const status = String(entry.item_status || entry.status || '').toUpperCase();
@@ -27182,17 +27186,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           shop_id: entry.shop_id || entry.shopId || null,
           item_status: status || null,
           global_item_id: entry.global_item_id || null,
+          global_model_id: entry.global_model_id || entry.model_id || entry.globalModelId || null,
           match_type: entry.match_type || null,
           lookup_source: entry.lookup_source || 'lookup-sku',
         };
       })
-      .filter((entry) => entry.region && entry.shop_item_id && (!entry.item_status || ['NORMAL', 'UNLIST'].includes(entry.item_status)));
+      .filter((entry) => entry.region && (entry.shop_item_id || entry.global_item_id) && (!entry.item_status || ['NORMAL', 'UNLIST'].includes(entry.item_status)));
     return {
       platform: 'shopee',
       sku,
       found: regionHits.length > 0,
-      notFound: raw?.not_found === true,
-      platformItemId: regionHits[0]?.shop_item_id || null,
+      notFound: raw?.not_found === true && regionHits.length === 0,
+      platformItemId: regionHits[0]?.shop_item_id || regionHits[0]?.global_item_id || null,
       regionHits,
       raw,
     };
@@ -27318,6 +27323,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
         region: row.region || 'GLOBAL',
         global_item_id: row.global_item_id || null,
+        global_model_id: row.global_model_id || null,
         shop_id: row.shop_id || null,
         shop_item_id: row.shop_item_id || null,
         shop_model_id: row.shop_model_id || null,

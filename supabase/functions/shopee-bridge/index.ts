@@ -73,8 +73,8 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 // CBSC main account ID ??Shopee CB Mall / KRSC group. Same across all 10 region shops in our setup.
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
-// v51: treat CBSC publish task "permission"/empty failed results as async-pending until published_list proves final state.
-const SOURCE_VERSION = 77;
+// v78: Shopee SKU lookup maps Global Product global_model_sku separately from shop listing price sync ids.
+const SOURCE_VERSION = 78;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -3168,6 +3168,199 @@ function shopeeSkuLookupHit(region: string, sku: string, item: any, model: any, 
   };
 }
 
+function shopeeGlobalItemList(raw: any): any[] {
+  const response = raw?.response || raw || {};
+  const list = response.global_item_list || response.item_list || raw?.global_item_list || [];
+  return Array.isArray(list) ? list : [];
+}
+
+function shopeeGlobalModelList(raw: any): any[] {
+  const response = raw?.response || raw || {};
+  const list = response.global_model || response.global_model_list || response.model || raw?.global_model || [];
+  return Array.isArray(list) ? list : [];
+}
+
+function shopeeGlobalItemIds(raw: any): number[] {
+  return [...new Set(shopeeGlobalItemList(raw)
+    .map((entry: any) => Number(entry?.global_item_id ?? entry?.item_id ?? entry))
+    .filter((id: number) => Number.isFinite(id) && id > 0))];
+}
+
+function shopeeNormalizeLookupText(value: unknown): string {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function shopeeGlobalItemMatchesTerms(item: any, terms: string[]): boolean {
+  if (!terms.length) return true;
+  const haystack = shopeeNormalizeLookupText([
+    item?.global_item_name,
+    item?.item_name,
+    item?.name,
+    item?.global_item_sku,
+    item?.item_sku,
+    item?.description,
+  ].filter(Boolean).join(' '));
+  if (!haystack) return false;
+  const hayWords = new Set(haystack.split(' ').filter(Boolean));
+  return terms.some((term) => {
+    const tokens = shopeeNormalizeLookupText(term)
+      .split(' ')
+      .filter((token) => token.length > 1 && !['the', 'and', 'ver', 'version', 'edition', 'album'].includes(token));
+    if (!tokens.length) return false;
+    const matched = tokens.filter((token) => hayWords.has(token) || haystack.includes(token)).length;
+    return matched >= Math.min(2, tokens.length);
+  });
+}
+
+function shopeeGlobalSkuLookupHit(sku: string, item: any, model: any, source: string) {
+  const globalItemId = Number(item?.global_item_id || item?.item_id || 0);
+  const globalModelId = Number(model?.global_model_id || model?.model_id || 0);
+  return {
+    region: 'GLOBAL',
+    sku,
+    shop_id: null,
+    shop_item_id: null,
+    shop_model_id: null,
+    global_item_id: globalItemId || null,
+    global_model_id: globalModelId || null,
+    item_status: String(item?.global_item_status || item?.item_status || '').toUpperCase() || null,
+    item_sku: shopeeSkuValue(item?.global_item_sku || item?.item_sku),
+    global_item_sku: shopeeSkuValue(item?.global_item_sku || item?.item_sku),
+    model_sku: model ? shopeeSkuValue(model?.global_model_sku || model?.model_sku) : null,
+    global_model_sku: model ? shopeeSkuValue(model?.global_model_sku || model?.model_sku) : null,
+    item_name: item?.global_item_name || item?.item_name || item?.name || '',
+    match_type: model ? 'global_model_sku' : 'global_item_sku',
+    lookup_source: source,
+  };
+}
+
+async function fetchShopeeGlobalItemInfo(region: string, globalItemIds: number[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const items: any[] = [];
+  const errors: string[] = [];
+  for (let i = 0; i < globalItemIds.length; i += 20) {
+    const chunk = globalItemIds.slice(i, i + 20);
+    const info = await merchantApiCall(region, '/api/v2/global_product/get_global_item_info', {
+      query: { global_item_id_list: chunk.join(',') },
+      account_key: accountKey,
+    });
+    if (info.error) {
+      errors.push(shopeeLookupError('get_global_item_info', info));
+      continue;
+    }
+    items.push(...shopeeGlobalItemList(info));
+  }
+  return { items, errors };
+}
+
+async function lookupShopeeGlobalSkuInItem(region: string, sku: string, item: any, source: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const globalItemId = Number(item?.global_item_id || item?.item_id || 0);
+  const errors: string[] = [];
+  if (!Number.isFinite(globalItemId) || globalItemId <= 0) return { hit: null, errors: ['global_item_id missing'] };
+  if (shopeeSkuEquals(item?.global_item_sku || item?.item_sku, sku)) {
+    return { hit: shopeeGlobalSkuLookupHit(sku, item, null, 'global_item_info'), errors };
+  }
+  const modelsResult = await merchantApiCall(region, '/api/v2/global_product/get_global_model_list', {
+    query: { global_item_id: globalItemId },
+    account_key: accountKey,
+  });
+  if (modelsResult.error) {
+    errors.push(shopeeLookupError('get_global_model_list', modelsResult));
+    return { hit: null, errors };
+  }
+  const models = shopeeGlobalModelList(modelsResult);
+  const modelHit = models.find((model: any) => shopeeSkuEquals(model?.global_model_sku, sku));
+  if (modelHit) return { hit: shopeeGlobalSkuLookupHit(sku, item, modelHit, source), errors };
+  return { hit: null, errors };
+}
+
+async function lookupShopeeGlobalSku(region: string, sku: string, maxGlobalItems = 300, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, options: { itemNameTerms?: string[]; globalItemIds?: number[] } = {}) {
+  const r = String(region || 'SG').toUpperCase() === 'GLOBAL' ? 'SG' : String(region || 'SG').toUpperCase();
+  const needle = shopeeSkuValue(sku);
+  const errors: string[] = [];
+  const scannedItemIds: number[] = [];
+  const checkedItemIds = new Set<number>();
+  const maxItems = Math.max(1, Math.min(Number.isFinite(maxGlobalItems) ? maxGlobalItems : 300, 1000));
+  const explicitIds = [...new Set((options.globalItemIds || []).map((id) => Number(id)).filter((id) => Number.isFinite(id) && id > 0))];
+
+  if (!needle) return { found: false, not_found: false, error: 'sku required', errors };
+
+  if (explicitIds.length) {
+    const info = await fetchShopeeGlobalItemInfo(r, explicitIds, accountKey);
+    errors.push(...info.errors);
+    for (const item of info.items) {
+      const id = Number(item?.global_item_id || item?.item_id || 0);
+      if (id) checkedItemIds.add(id);
+      const found = await lookupShopeeGlobalSkuInItem(r, needle, item, 'global_item_id', accountKey);
+      errors.push(...found.errors);
+      if (found.hit) return { found: true, not_found: false, hit: found.hit, source: 'global_item_id', errors, scanned_count: explicitIds.length, checked_count: checkedItemIds.size };
+    }
+  }
+
+  const itemTerms = shopeeSkuLookupNameTerms(options.itemNameTerms || []);
+  const itemInfoRows: any[] = [];
+  const seenOffsets = new Set<string>();
+  let offset = '';
+  let pages = 0;
+  while (scannedItemIds.length < maxItems) {
+    const query: Record<string, any> = { page_size: Math.min(50, maxItems - scannedItemIds.length) };
+    if (offset && offset !== '0') query.offset = offset;
+    const listResult = await merchantApiCall(r, '/api/v2/global_product/get_global_item_list', { query, account_key: accountKey });
+    if (listResult.error) {
+      errors.push(shopeeLookupError('get_global_item_list', listResult));
+      break;
+    }
+    pages += 1;
+    const pageIds = shopeeGlobalItemIds(listResult).filter((id) => !scannedItemIds.includes(id));
+    if (!pageIds.length) break;
+    scannedItemIds.push(...pageIds);
+    const info = await fetchShopeeGlobalItemInfo(r, pageIds, accountKey);
+    errors.push(...info.errors);
+    itemInfoRows.push(...info.items);
+    const candidateItems = info.items.filter((item) => shopeeGlobalItemMatchesTerms(item, itemTerms));
+    for (const item of candidateItems) {
+      const id = Number(item?.global_item_id || item?.item_id || 0);
+      if (checkedItemIds.has(id)) continue;
+      checkedItemIds.add(id);
+      const found = await lookupShopeeGlobalSkuInItem(r, needle, item, 'global_model_list', accountKey);
+      errors.push(...found.errors);
+      if (found.hit) return { found: true, not_found: false, hit: found.hit, source: 'global_model_list', errors, scanned_count: scannedItemIds.length, checked_count: checkedItemIds.size, pages };
+    }
+    const response = listResult?.response || {};
+    const nextOffset = String(response.offset || response.next_offset || '');
+    if (!response.has_next_page || !nextOffset || seenOffsets.has(nextOffset) || nextOffset === offset) break;
+    seenOffsets.add(nextOffset);
+    offset = nextOffset;
+  }
+
+  // If name filtering was too narrow, do one bounded exact-SKU pass over the
+  // item_info rows already fetched. This keeps Shopee-tab mapping correct
+  // without letting price-sync callers infer fake shop ids.
+  if (itemTerms.length) {
+    for (const item of itemInfoRows) {
+      const id = Number(item?.global_item_id || item?.item_id || 0);
+      if (checkedItemIds.has(id)) continue;
+      checkedItemIds.add(id);
+      const found = await lookupShopeeGlobalSkuInItem(r, needle, item, 'global_model_list_scan', accountKey);
+      errors.push(...found.errors);
+      if (found.hit) return { found: true, not_found: false, hit: found.hit, source: 'global_model_list_scan', errors, scanned_count: scannedItemIds.length, checked_count: checkedItemIds.size, pages };
+    }
+  }
+
+  return {
+    found: false,
+    not_found: true,
+    errors,
+    scanned_count: scannedItemIds.length,
+    checked_count: checkedItemIds.size,
+    pages,
+  };
+}
+
 async function shopeeSkuHitFromItemIds(region: string, sku: string, itemIds: number[], source: string, shopId: number | null, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   if (!itemIds.length) return { hit: null, errors: [] as string[] };
   const errors: string[] = [];
@@ -4921,19 +5114,23 @@ Deno.serve(async (req) => {
       const requestedRegions = parseTargetRegions(url.searchParams.get('regions') || url.searchParams.get('region'));
       const rawMaxItems = parseInt(url.searchParams.get('max_items') || '5000');
       const max_items = Math.max(1, Math.min(5000, Number.isFinite(rawMaxItems) ? rawMaxItems : 5000));
+      const rawMaxGlobalItems = parseInt(url.searchParams.get('max_global_items') || '300');
+      const max_global_items = Math.max(1, Math.min(1000, Number.isFinite(rawMaxGlobalItems) ? rawMaxGlobalItems : 300));
       const allowRemoteScan = ['1', 'true', 'yes'].includes(String(url.searchParams.get('remote') || url.searchParams.get('scan') || '').toLowerCase());
       const region_results: any[] = [];
       const region_hits: any[] = [];
+      const global_region_hits: any[] = [];
+      let global_lookup: any = null;
 
       const productRows: any[] = [];
       const primary = await supabase
         .from('products')
-        .select('id,sku,shopee_global_model_sku,product_name,option_name')
+        .select('id,sku,shopee_item_id,global_model_id,shopee_global_model_sku,product_name,option_name')
         .eq('sku', sku);
       if (!primary.error && Array.isArray(primary.data)) productRows.push(...primary.data);
       const modelSku = await supabase
         .from('products')
-        .select('id,sku,shopee_global_model_sku,product_name,option_name')
+        .select('id,sku,shopee_item_id,global_model_id,shopee_global_model_sku,product_name,option_name')
         .eq('shopee_global_model_sku', sku);
       if (!modelSku.error && Array.isArray(modelSku.data)) {
         for (const row of modelSku.data) {
@@ -4941,19 +5138,21 @@ Deno.serve(async (req) => {
         }
       }
 
+      let listingRows: any[] = [];
       if (productRows.length) {
         const productById = new Map(productRows.map((row: any) => [String(row.id), row]));
         const listingResult = await supabase
           .from('product_shopee_listings')
-          .select('product_id,account_key,region,shop_id,shop_item_id,shop_model_id,global_item_id,status,last_synced_price,last_synced_at')
+          .select('product_id,account_key,region,shop_id,shop_item_id,shop_model_id,global_item_id,global_model_id,status,last_synced_price,last_synced_at')
           .eq('account_key', accountKey)
           .in('product_id', productRows.map((row: any) => row.id))
           .in('region', requestedRegions);
         if (listingResult.error) {
           return jsonResp({ ok: false, account_key: accountKey, sku, error: listingResult.error.message || 'listing lookup failed' }, 500);
         }
+        listingRows = listingResult.data || [];
         const byRegion = new Map<string, any[]>();
-        for (const row of listingResult.data || []) {
+        for (const row of listingRows) {
           const r = String(row.region || '').toUpperCase();
           if (!r || !row.shop_item_id) continue;
           const product = productById.get(String(row.product_id)) || {};
@@ -4966,6 +5165,7 @@ Deno.serve(async (req) => {
             shop_model_id: row.shop_model_id || null,
             model_id: row.shop_model_id || null,
             global_item_id: row.global_item_id || null,
+            global_model_id: row.global_model_id || null,
             item_sku: product.sku || sku,
             base_sku: product.sku || null,
             item_name: [product.product_name, product.option_name].filter(Boolean).join(' - '),
@@ -4996,6 +5196,26 @@ Deno.serve(async (req) => {
         [row?.product_name, row?.option_name].filter(Boolean).join(' '),
         ]),
       ]);
+      const globalItemIds = [
+        ...url.searchParams.getAll('global_item_id').flatMap((value) => String(value || '').split(',')),
+        ...productRows.map((row: any) => row?.shopee_item_id),
+        ...listingRows.map((row: any) => row?.global_item_id),
+      ]
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      global_lookup = await lookupShopeeGlobalSku('SG', sku, max_global_items, accountKey, {
+        itemNameTerms: remoteSearchTerms,
+        globalItemIds,
+      });
+      if (global_lookup?.found && global_lookup.hit) {
+        for (const r of requestedRegions) {
+          global_region_hits.push({
+            ...global_lookup.hit,
+            source: global_lookup.hit.lookup_source || 'global_model_list',
+            region: r,
+          });
+        }
+      }
 
       const hitRegions = new Set(region_hits.map((hit: any) => String(hit?.region || '').toUpperCase()).filter(Boolean));
       const remoteRegions = requestedRegions.filter((r) => !hitRegions.has(r));
@@ -5038,14 +5258,19 @@ Deno.serve(async (req) => {
         account_key: accountKey,
         sku,
         regions: requestedRegions,
-        found: region_hits.length > 0,
-        not_found: region_hits.length === 0 && region_results.every((row: any) => row?.not_found === true || row?.count === 0),
+        found: region_hits.length > 0 || global_region_hits.length > 0,
+        not_found: region_hits.length === 0 && global_region_hits.length === 0 && region_results.every((row: any) => row?.not_found === true || row?.count === 0),
         region_hits,
+        global_region_hits,
+        global_lookup,
         region_results,
         source_docs: [
           'docs_ai/apis/product/v2.product.search_item.json:item_sku',
           'docs_ai/apis/product/v2.product.search_item.json:item_name',
           'docs_ai/apis/product/v2.product.get_model_list.json:model_sku',
+          'docs_ai/apis/global_product/v2.global_product.get_global_item_list.json:global_item_id',
+          'docs_ai/apis/global_product/v2.global_product.get_global_item_info.json:global_item_sku',
+          'docs_ai/apis/global_product/v2.global_product.get_global_model_list.json:global_model_sku',
         ],
       });
     }

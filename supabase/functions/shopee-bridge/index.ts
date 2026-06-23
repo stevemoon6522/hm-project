@@ -74,7 +74,7 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 // v51: treat CBSC publish task "permission"/empty failed results as async-pending until published_list proves final state.
-const SOURCE_VERSION = 76;
+const SOURCE_VERSION = 77;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -2697,7 +2697,7 @@ function markBrOptionCrossuploadBlocked(outcome: any, task: any, publishRes: any
     ...outcome,
     ok: false,
     error: 'BR_OPTION_CROSSUPLOAD_PERMISSION_BLOCKED',
-    message: 'Shopee BR currently rejects CBSC option Global Product crossupload for this account. No shop-level option fallback is allowed by Shopee (product.cnsc_shop_block).',
+    message: 'Shopee BR rejected direct CBSC option Global Product crossupload. Use the BR single-then-global-option fallback path.',
     br_option_crossupload_blocked: true,
     retry_suppressed: true,
     raw_task: task || outcome?.raw_task || null,
@@ -2767,93 +2767,199 @@ async function retryMinimalPublish(globalItemId: number, shopId: number, target:
   return retryOutcome;
 }
 
-async function createShopLevelFallbackItem(region: string, shopId: number, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, reason = 'global_publish_crossupload_fallback') {
-  const targetRegion = String(region || target?.region || '').toUpperCase();
-  const logistics = await getPublishLogistics(targetRegion, body.is_pre_order === true || body.lifecycle_state === 'pre_order', accountKey);
-  const price = Number(target?.price ?? body.price ?? body.global_price ?? 0);
-  const stock = Number(target?.stock ?? body.stock ?? 0);
-  const isPreOrder = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
-  const dts = isPreOrder ? clampPreOrderRegionDts(target?.days_to_ship ?? body.days_to_ship) : clampReadyStockDts(target?.days_to_ship ?? body.days_to_ship);
-  const sku = String(target?.sku || body.sku || '').trim();
-  if (!sku) return { ok: false, region: targetRegion, shop_id: shopId, stage: 'shop_level_fallback_preflight', error: 'sku required' };
-  const payload: any = {
-    item_name: body.name,
-    description: sanitizeShopeePlainTextDescription(target?.description ?? body.description) || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`,
-    item_sku: sku,
-    category_id: Number(body.category_id),
-    condition: body.condition || 'NEW',
-    weight: Number(target?.weight ?? body.weight ?? body.weight_kg ?? ((target?.weight_g ?? body.weight_g ?? 100) / 1000)) || 0.1,
-    dimension: {
-      package_length: Number(target?.package_length_cm ?? body.package_length_cm ?? body.package_length ?? 20) || 20,
-      package_width: Number(target?.package_width_cm ?? body.package_width_cm ?? body.package_width ?? 15) || 15,
-      package_height: Number(target?.package_height_cm ?? body.package_height_cm ?? body.package_height ?? 5) || 5,
-    },
-    image: imageBlockFrom({ ...body, image_id: target?.image_id || body.image_id, image_url: target?.image_url || body.image_url, image_id_list: target?.image_id_list || body.image_id_list, image_url_list: target?.image_url_list || body.image_url_list }),
-    original_price: price,
-    seller_stock: [{ stock }],
-    logistic_info: logistics,
-    item_status: body.shop_level_item_status || body.item_status || 'NORMAL',
-    days_to_ship: dts,
-    pre_order: { is_pre_order: isPreOrder, days_to_ship: dts },
-    brand: body.brand && body.brand.original_brand_name
-      ? { brand_id: Number(body.brand.brand_id || 0), original_brand_name: String(body.brand.original_brand_name) }
-      : { brand_id: 0, original_brand_name: 'No Brand' },
-    attribute_list: normalizeAttributeList(target?.attribute_list || body.attribute_list),
-  };
-  const normalizedVariation = normalizeVariation(target?.variation || body.variation);
-  const fallbackVariationPayload = normalizedVariation
-    ? {
-      standardise_tier_variation: buildStandardiseTierVariation(normalizedVariation.tier_variation),
-      model: normalizedVariation.model.map((model: any) => {
-        const entry: any = {
-          tier_index: Array.isArray(model?.tier_index) ? model.tier_index.map((x: any) => Number(x)) : [],
-          model_sku: String(model?.model_sku || model?.global_model_sku || '').trim(),
-          original_price: Number(model?.original_price ?? price),
-          seller_stock: [{ stock: Number(model?.seller_stock?.[0]?.stock ?? model?.stock ?? stock) }],
-        };
-        if (model?.weight_g != null && Number(model.weight_g) > 0) entry.weight = Number(model.weight_g) / 1000;
-        else if (model?.weight != null && Number(model.weight) > 0) entry.weight = Number(model.weight);
-        return entry;
-      }),
-    }
-    : null;
-  const result = await shopApiCall(targetRegion, '/api/v2/product/add_item', { method: 'POST', body: payload, account_key: accountKey });
-  const itemId = Number(result?.response?.item_id || 0) || null;
-  let initVariationResult: any = null;
-  let cleanupResult: any = null;
-  if (!result?.error && itemId && fallbackVariationPayload) {
-    initVariationResult = await shopApiCall(targetRegion, '/api/v2/product/init_tier_variation', {
+function variationModelStock(model: any, fallback = 0): number {
+  const stock = Number(model?.seller_stock?.[0]?.stock ?? model?.stock ?? model?.normal_stock ?? fallback ?? 0);
+  return Number.isFinite(stock) ? Math.max(0, Math.floor(stock)) : 0;
+}
+
+function variationModelGlobalPrice(model: any, fallback = 0): number {
+  const price = Number(model?.global_original_price ?? model?.global_price ?? model?.original_price ?? fallback ?? 0);
+  return Number.isFinite(price) && price > 0 ? price : Number(fallback || 0);
+}
+
+function variationModelTargetPrice(model: any, fallback = 0): number {
+  const price = Number(model?.original_price ?? model?.price ?? fallback ?? 0);
+  return Number.isFinite(price) && price > 0 ? price : Number(fallback || 0);
+}
+
+function brFallbackParentSku(target: any, body: any, variation: any): string {
+  const explicit = String(target?.sku || body?.sku || body?.global_item_sku || '').trim();
+  if (explicit) return explicit.slice(0, 100);
+  const firstSku = String(variation?.model?.[0]?.model_sku || variation?.model?.[0]?.global_model_sku || '').trim();
+  return (firstSku ? firstSku.replace(/[-_][^-_]+$/, '') : `BR-OPTION-${Date.now()}`).slice(0, 100);
+}
+
+async function cleanupGlobalItemBestEffort(region: string, globalItemId: number, accountKey: string) {
+  if (!globalItemId) return null;
+  try {
+    return await merchantApiCall(region, '/api/v2/global_product/delete_global_item', {
       method: 'POST',
-      body: { item_id: itemId, ...fallbackVariationPayload },
+      body: { global_item_id: globalItemId },
       account_key: accountKey,
     });
-    if (initVariationResult?.error) {
-      cleanupResult = await shopApiCall(targetRegion, '/api/v2/product/delete_item', {
-        method: 'POST',
-        body: { item_id: itemId },
-        account_key: accountKey,
-      }).catch((e: any) => ({ ok: false, error: String(e?.message || e) }));
+  } catch (e: any) {
+    return { error: 'cleanup_exception', message: String(e?.message || e) };
+  }
+}
+
+async function waitForShopModelsWithDetails(region: string, itemId: number, expectedCount: number, accountKey: string) {
+  let last: any = null;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    if (attempt > 0) await new Promise(s => setTimeout(s, 5000));
+    last = await shopApiCall(region, '/api/v2/product/get_model_list', { query: { item_id: itemId }, account_key: accountKey });
+    const models = Array.isArray(last?.response?.model) ? last.response.model : [];
+    const detailed = models.filter((model: any) => (
+      model?.model_id
+      && model?.model_sku
+      && Array.isArray(model?.tier_index)
+      && model.tier_index.length > 0
+      && Array.isArray(model?.price_info)
+      && model.price_info.length > 0
+    ));
+    if (models.length >= expectedCount && detailed.length >= expectedCount) {
+      return { ok: true, models, raw: last, attempts: attempt + 1 };
     }
   }
-  const fallbackOk = !result?.error && !!itemId && (!fallbackVariationPayload || !initVariationResult?.error);
   return {
-    ok: fallbackOk,
-    region: targetRegion,
-    shop_id: shopId,
-    item_id: itemId,
-    stage: fallbackVariationPayload ? 'shop_level_fallback_init_tier_variation' : 'shop_level_fallback_add_item',
-    shop_level_fallback: true,
-    global_item_id: null,
-    publish_status: fallbackOk ? 'shop_level_fallback' : null,
-    error: result?.error || initVariationResult?.error || (itemId ? null : 'item_id missing'),
-    message: result?.message || initVariationResult?.message || null,
-    fallback_reason: reason,
-    sent: payload,
-    sent_init_tier_variation: fallbackVariationPayload ? { item_id: itemId, ...fallbackVariationPayload } : null,
-    raw: result,
-    raw_init_tier_variation: initVariationResult,
-    cleanup_after_init_failure: cleanupResult,
+    ok: false,
+    error: 'shop_models_not_ready',
+    models: Array.isArray(last?.response?.model) ? last.response.model : [],
+    raw: last,
   };
+}
+
+async function publishBrOptionViaSingleThenGlobalModels(shopId: number, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, reason = 'br_direct_option_crossupload_failed') {
+  const region = String(target?.region || 'BR').toUpperCase();
+  const variation = normalizeVariation(target?.variation || body?.variation);
+  if (region !== 'BR' || !variation?.model?.length) {
+    return { ok: false, region, shop_id: shopId, stage: 'br_single_option_fallback_preflight', error: 'BR option variation required' };
+  }
+  const parentSku = brFallbackParentSku(target, body, variation);
+  const firstModel = variation.model[0];
+  const firstGlobalPrice = variationModelGlobalPrice(firstModel, Number(body.global_price ?? body.price ?? 0));
+  const firstTargetPrice = variationModelTargetPrice(firstModel, Number(target?.price ?? body.price ?? 0));
+  const totalStock = variation.model.reduce((sum: number, model: any) => sum + variationModelStock(model, body.stock), 0);
+  const fallbackBody = {
+    ...body,
+    sku: parentSku,
+    variation: undefined,
+    price: firstGlobalPrice,
+    global_price: firstGlobalPrice,
+    stock: totalStock || variationModelStock(firstModel, body.stock),
+    weight_g: Number(firstModel?.weight_g ?? body.weight_g ?? 100),
+    image_id: target?.image_id || body.image_id,
+    image_id_list: target?.image_id_list || body.image_id_list,
+    image_url: target?.image_url || body.image_url,
+    image_url_list: target?.image_url_list || body.image_url_list,
+  };
+  const addPayload = buildGlobalItemPayload(fallbackBody);
+  const addRes = await merchantApiCall(region, '/api/v2/global_product/add_global_item', { method: 'POST', body: addPayload, account_key: accountKey });
+  const fallbackGlobalItemId = Number(addRes?.response?.global_item_id || 0);
+  if (addRes.error || !fallbackGlobalItemId) {
+    return { ok: false, region, shop_id: shopId, stage: 'br_single_option_add_global_item', error: addRes.error || 'global_item_id missing', message: addRes.message, raw_add_global_item: addRes };
+  }
+
+  try {
+    const logistics = await getPublishLogistics(region, body.is_pre_order === true || body.lifecycle_state === 'pre_order', accountKey);
+    const singleTarget = {
+      ...target,
+      variation: undefined,
+      price: firstTargetPrice,
+      stock: totalStock || variationModelStock(firstModel, target.stock),
+    };
+    const item = buildPublishItemPayload(fallbackBody, singleTarget, logistics);
+    const publishBody = { global_item_id: fallbackGlobalItemId, shop_id: shopId, shop_region: region, item };
+    const publishRes = await merchantApiCall(region, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: accountKey });
+    if (publishRes.error || !publishRes.response?.publish_task_id) {
+      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
+      return { ok: false, region, shop_id: shopId, stage: 'br_single_option_publish_single', error: publishRes.error || 'publish_task_id missing', message: publishRes.message, raw_create: publishRes, cleanup };
+    }
+    const publishTaskId = Number(publishRes.response.publish_task_id);
+    let task: any = null;
+    let pollAttempts = 0;
+    for (let i = 0; i < 5; i += 1) {
+      await new Promise(s => setTimeout(s, 2000));
+      task = await merchantApiCall(region, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id: publishTaskId }, account_key: accountKey });
+      pollAttempts = i + 1;
+      if (isCrossuploadPermissionPublishFailure(task)) break;
+      if (!shouldContinuePublishPolling(task)) break;
+    }
+    let outcome = parsePublishOutcome(region, shopId, publishTaskId, task);
+    if (!outcome.ok) {
+      const verified = await verifyPublishedListOutcome(region, shopId, fallbackGlobalItemId, publishTaskId, task, accountKey).catch(() => null);
+      if (verified) outcome = verified;
+    }
+    if (!outcome.ok || !outcome.item_id) {
+      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
+      return { ...outcome, ok: false, stage: 'br_single_option_verify_single_publish', raw_create: publishRes, raw_task: task, cleanup };
+    }
+
+    const firstVariation = { tier_variation: variation.tier_variation, model: [firstModel] };
+    const firstGlobalModels = buildGlobalModels(firstVariation, firstGlobalPrice, variationModelStock(firstModel, body.stock));
+    const initRes = await merchantApiCall(region, '/api/v2/global_product/init_tier_variation', {
+      method: 'POST',
+      body: { global_item_id: fallbackGlobalItemId, tier_variation: variation.tier_variation, global_model: [firstGlobalModels[0]] },
+      account_key: accountKey,
+    });
+    if (initRes.error) {
+      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
+      return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_init_global_tier', error: initRes.error, message: initRes.message, raw_init_tier_variation: initRes, cleanup };
+    }
+
+    const remainingModels = variation.model.slice(1);
+    let addModelRes: any = null;
+    if (remainingModels.length) {
+      const addPayloadModels = buildAddGlobalModelPayload(
+        fallbackGlobalItemId,
+        buildGlobalModels({ tier_variation: variation.tier_variation, model: remainingModels }, firstGlobalPrice, 0),
+        fallbackBody,
+        target,
+      );
+      addModelRes = await merchantApiCall(region, '/api/v2/global_product/add_global_model', {
+        method: 'POST',
+        body: addPayloadModels,
+        account_key: accountKey,
+      });
+      if (addModelRes.error) {
+        const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
+        return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_add_global_model', error: addModelRes.error, message: addModelRes.message, raw_add_global_model: addModelRes, cleanup };
+      }
+    }
+
+    const modelsReady = await waitForShopModelsWithDetails(region, Number(outcome.item_id), variation.model.length, accountKey);
+    if (!modelsReady.ok) {
+      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
+      return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_wait_shop_models', error: modelsReady.error, raw_models: modelsReady.raw, cleanup };
+    }
+
+    const priceSync = await syncShopModelPricesAfterPublish(region, Number(outcome.item_id), { ...target, variation }, { ...body, variation }, accountKey);
+    if (priceSync?.ok === false) {
+      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
+      return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_price_sync', error: priceSync.error || 'price sync failed', price_sync: priceSync, cleanup };
+    }
+
+    return {
+      ...outcome,
+      ok: true,
+      region,
+      shop_id: shopId,
+      global_item_id: fallbackGlobalItemId,
+      item_id: Number(outcome.item_id),
+      publish_status: 'br_single_then_global_option_fallback',
+      br_single_then_global_option_fallback: true,
+      fallback_reason: reason,
+      raw_create: publishRes,
+      raw_task: task,
+      raw_init_tier_variation: initRes,
+      raw_add_global_model: addModelRes,
+      price_sync: priceSync,
+      poll_attempts: pollAttempts,
+      shop_model_count: modelsReady.models.length,
+    };
+  } catch (e: any) {
+    const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
+    return { ok: false, region, shop_id: shopId, global_item_id: fallbackGlobalItemId, stage: 'br_single_option_fallback_exception', error: String(e?.message || e), cleanup };
+  }
 }
 
 async function retryTwMinimalPublish(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
@@ -3237,6 +3343,34 @@ async function markShopeeGlobalItemDeleted(globalItemId: number, body: any, raw:
   return { ok: true, rows: data || [], raw };
 }
 
+async function resolveProductIdForMapping(row: any): Promise<string> {
+  const explicit = String(row?.product_id || row?.productId || row?.id || '').trim();
+  if (explicit) return explicit;
+  const candidates = [
+    row?.product_sku,
+    row?.sku,
+    row?.model_sku,
+    row?.shopee_global_model_sku,
+    row?.global_model_sku,
+    row?.item_sku,
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+  for (const sku of candidates) {
+    const bySku = await supabase
+      .from('products')
+      .select('id')
+      .eq('sku', sku)
+      .maybeSingle();
+    if (!bySku.error && bySku.data?.id) return String(bySku.data.id);
+    const byModelSku = await supabase
+      .from('products')
+      .select('id')
+      .eq('shopee_global_model_sku', sku)
+      .maybeSingle();
+    if (!byModelSku.error && byModelSku.data?.id) return String(byModelSku.data.id);
+  }
+  return '';
+}
+
 async function recordRegistrationMapping(req: Request): Promise<Response> {
   const denied = requireInternalBridge(req);
   if (denied) return denied;
@@ -3250,7 +3384,7 @@ async function recordRegistrationMapping(req: Request): Promise<Response> {
   const listingResults: any[] = [];
 
   for (const row of productUpdates) {
-    const productId = String(row?.product_id || row?.id || '').trim();
+    const productId = await resolveProductIdForMapping(row);
     if (!productId) {
       productResults.push({ ok: false, error: 'product_id required' });
       continue;
@@ -3271,10 +3405,12 @@ async function recordRegistrationMapping(req: Request): Promise<Response> {
   }
 
   if (listings.length) {
-    const payload = listings.map((row: any) => {
+    const payload: any[] = [];
+    for (const row of listings) {
+      const productId = await resolveProductIdForMapping(row);
       const status = String(row?.status || '').trim() || (row?.shop_item_id ? 'mapped' : 'failed');
-      return {
-        product_id: String(row?.product_id || '').trim(),
+      const next = {
+        product_id: productId,
         account_key: normalizeAccountKey(row?.account_key || accountKey),
         region: String(row?.region || '').trim().toUpperCase(),
         global_item_id: row?.global_item_id != null ? Number(row.global_item_id) : globalItemId,
@@ -3291,7 +3427,9 @@ async function recordRegistrationMapping(req: Request): Promise<Response> {
         raw_payload: row?.raw_payload || null,
         updated_at: now,
       };
-    }).filter((row: any) => row.product_id && row.region);
+      if (next.product_id && next.region) payload.push(next);
+      else listingResults.push({ ok: false, error: 'product_id required', sku: row?.sku || row?.model_sku || row?.shopee_global_model_sku || null, region: row?.region || null });
+    }
     if (payload.length) {
       const { data, error } = await supabase
         .from('product_shopee_listings')
@@ -3948,7 +4086,9 @@ Deno.serve(async (req) => {
           if (publishRes.error) {
             const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
             if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
-              results.push(markBrOptionCrossuploadBlocked(createFailure, null, publishRes));
+              const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, reqAccountKey, 'br_create_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
+              if (fallback?.ok) results.push(fallback);
+              else results.push({ ...markBrOptionCrossuploadBlocked(createFailure, null, publishRes), br_single_then_global_option_fallback: fallback });
               return;
             }
             if (shouldRetryMinimalPublish(createFailure, publishRes)) {
@@ -3985,7 +4125,10 @@ Deno.serve(async (req) => {
           }
           let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
           if (!outcome.ok && targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(outcome, task, publishRes)) {
-            outcome = markBrOptionCrossuploadBlocked(outcome, task, publishRes);
+            const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, reqAccountKey, 'br_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
+            outcome = fallback?.ok
+              ? fallback
+              : { ...markBrOptionCrossuploadBlocked(outcome, task, publishRes), br_single_then_global_option_fallback: fallback };
           }
           if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldRetryMinimalPublish(outcome, task, publishRes)) {
             const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
@@ -3994,11 +4137,6 @@ Deno.serve(async (req) => {
             else (outcome as any).minimal_item_retry = retryOutcome;
           }
           // Fallback verification: query published_list — BR gets 3 retries (5s apart), others get 1
-          if (!outcome.ok && targetRegion === 'BR' && !(outcome as any).br_option_crossupload_blocked && isCrossuploadPermissionPublishFailure(outcome, (outcome as any).minimal_item_retry, task, publishRes)) {
-            const fallback = await createShopLevelFallbackItem(targetRegion, shop_id, target, body, reqAccountKey, 'br_crossupload_permission_global_publish_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'shop_level_fallback_exception', error: String(e?.message || e), shop_level_fallback: true }));
-            if (fallback?.ok) outcome = { ...outcome, ...fallback, ok: true, error: null, message: null };
-            else (outcome as any).shop_level_fallback = fallback;
-          }
           if (!outcome.ok) {
             const fbRetries = (targetRegion === 'BR') ? 3 : 1;
             const fbSleep = (targetRegion === 'BR') ? 5000 : 0;
@@ -4552,7 +4690,16 @@ Deno.serve(async (req) => {
             }
             const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
             if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
-              results.push(markBrOptionCrossuploadBlocked(createFailure, null, publishRes));
+              const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, accountKey, 'br_create_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
+              if (fallback?.ok) {
+                if (targetInputs.length === 1 && Number(fallback.global_item_id) !== Number(global_item_id)) {
+                  fallback.original_global_item_id = global_item_id;
+                  fallback.original_global_item_cleanup = await cleanupGlobalItemBestEffort(r, global_item_id, accountKey);
+                }
+                results.push(fallback);
+              } else {
+                results.push({ ...markBrOptionCrossuploadBlocked(createFailure, null, publishRes), br_single_then_global_option_fallback: fallback });
+              }
               return;
             }
             if (shouldRetryMinimalPublish(createFailure, publishRes)) {
@@ -4591,18 +4738,22 @@ Deno.serve(async (req) => {
           console.log(`[register_cbsc] region=${targetRegion} publish_task_id=${publish_task_id} poll_attempts=${pollAttempts} final_task=${JSON.stringify(task).slice(0, 1200)}`);
           let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
           if (!outcome.ok && targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(outcome, task, publishRes)) {
-            outcome = markBrOptionCrossuploadBlocked(outcome, task, publishRes);
+            const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, accountKey, 'br_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
+            if (fallback?.ok) {
+              if (targetInputs.length === 1 && Number(fallback.global_item_id) !== Number(global_item_id)) {
+                fallback.original_global_item_id = global_item_id;
+                fallback.original_global_item_cleanup = await cleanupGlobalItemBestEffort(r, global_item_id, accountKey);
+              }
+              outcome = fallback;
+            } else {
+              outcome = { ...markBrOptionCrossuploadBlocked(outcome, task, publishRes), br_single_then_global_option_fallback: fallback };
+            }
           }
           if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldRetryMinimalPublish(outcome, task, publishRes)) {
             const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
             const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, retryReason).catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
             if (retryOutcome?.ok) outcome = retryOutcome;
             else (outcome as any).minimal_item_retry = retryOutcome;
-          }
-          if (!outcome.ok && targetRegion === 'BR' && !(outcome as any).br_option_crossupload_blocked && isCrossuploadPermissionPublishFailure(outcome, (outcome as any).minimal_item_retry, task, publishRes)) {
-            const fallback = await createShopLevelFallbackItem(targetRegion, shop_id, target, body, accountKey, 'br_crossupload_permission_global_publish_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'shop_level_fallback_exception', error: String(e?.message || e), shop_level_fallback: true }));
-            if (fallback?.ok) outcome = { ...outcome, ...fallback, ok: true, error: null, message: null };
-            else (outcome as any).shop_level_fallback = fallback;
           }
           outcome.raw_create = publishRes;
           outcome.raw_task = task;
@@ -4675,7 +4826,9 @@ Deno.serve(async (req) => {
       });
       const reconciledResults = await reconcilePublishResultsWithPublishedList(global_item_id, targetInputs, results, accountKey, r, stage_logs);
       const responseResults = reconciledResults.map((row) => ({ account_key: accountKey, ...row }));
-      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id, stage_logs, regional_global_price_adjustments: regionalGlobalPriceAdjustments, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, publishable_shops, publishable_status });
+      const fallbackGlobalItemId = responseResults.find((row: any) => row?.br_single_then_global_option_fallback && row?.global_item_id)?.global_item_id;
+      const responseGlobalItemId = fallbackGlobalItemId || global_item_id;
+      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id: responseGlobalItemId, original_global_item_id: fallbackGlobalItemId ? global_item_id : undefined, stage_logs, regional_global_price_adjustments: regionalGlobalPriceAdjustments, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, publishable_shops, publishable_status });
       }); // end withPublishRequestId for register_cbsc
     }
     if (action === 'item_info') {
@@ -5459,7 +5612,7 @@ Deno.serve(async (req) => {
     }
 
     // POST /add_item ??create a new Shopee product listing (shop-level, unlisted by default)
-    // Body: { region, name, description?, sku, price, stock, weight_g, category_id, image_url, condition? }
+    // Body: { region, name, description?, sku, price, stock, weight_g, category_id, image_id_list?, image_url, condition?, item_status? }
     // Returns: { ok, item_id }
     if (action === 'add_item' && req.method === 'POST') {
       const body = await req.json();
@@ -5467,7 +5620,8 @@ Deno.serve(async (req) => {
       const r = body.region || 'SG';
       const {
         name, sku, price, stock = 0, weight_g = 100,
-        category_id, image_url, image_id, condition = 'NEW', description, variation,
+        category_id, image_url, image_url_list, image_id, image_id_list, condition = 'NEW', description, variation,
+        item_status = 'UNLIST',
         days_to_ship = 2, brand,
         package_length_cm = 20, package_width_cm = 15, package_height_cm = 5,
         attribute_list = [], wholesale_list = [],
@@ -5476,6 +5630,10 @@ Deno.serve(async (req) => {
       if (!sku) return jsonResp({ ok: false, error: 'sku required' }, 400);
       if (!price) return jsonResp({ ok: false, error: 'price required' }, 400);
       if (!category_id) return jsonResp({ ok: false, error: 'category_id required' }, 400);
+      const normalizedItemStatus = String(item_status || 'UNLIST').toUpperCase();
+      if (!['UNLIST', 'NORMAL'].includes(normalizedItemStatus)) {
+        return jsonResp({ ok: false, error: 'item_status must be UNLIST or NORMAL' }, 400);
+      }
 
       // Fetch available logistics channels. Field per Shopee SDK is logistic_info[] with logistic_id+logistic_name+enabled+is_free.
       const logisticsResp = await shopApiCall(r, '/api/v2/logistics/get_channel_list', { account_key: reqAccountKey });
@@ -5501,7 +5659,11 @@ Deno.serve(async (req) => {
 
       // image: prefer image_id_list (Shopee's modern format); fallback to image_url_list.
       const imageBlock: any = {};
-      if (image_id) imageBlock.image_id_list = [String(image_id)];
+      const imageIds = stringArray(image_id_list);
+      const imageUrls = stringArray(image_url_list);
+      if (imageIds.length) imageBlock.image_id_list = imageIds;
+      else if (image_id) imageBlock.image_id_list = [String(image_id)];
+      else if (imageUrls.length) imageBlock.image_url_list = imageUrls;
       else if (image_url) imageBlock.image_url_list = [String(image_url)];
 
       const payload: any = {
@@ -5520,7 +5682,7 @@ Deno.serve(async (req) => {
         original_price: Number(price),
         seller_stock: [{ stock: stockNum }],   // top-level, NO location_id wrapper
         logistic_info: logistic_info.length > 0 ? logistic_info : [{ logistic_id: 80007, logistic_name: 'Default', enabled: true, is_free: false }],
-        item_status: 'UNLIST',
+        item_status: normalizedItemStatus,
         days_to_ship: dts,
         pre_order: { is_pre_order: false, days_to_ship: dts },
         brand: brand && brand.original_brand_name
@@ -5550,6 +5712,73 @@ Deno.serve(async (req) => {
       const result = await shopApiCall(r, '/api/v2/product/add_item', { method: 'POST', body: payload, account_key: reqAccountKey });
       if (result.error) return jsonResp({ ok: false, account_key: reqAccountKey, region: r, error: result.error, message: result.message, sent: payload, raw: result }, 502);
       return jsonResp({ ok: true, account_key: reqAccountKey, region: r, item_id: result.response?.item_id, sent: payload, raw: result });
+    }
+
+    // POST /unlist_item: publish/unpublish an existing shop-level item.
+    // Official local doc:
+    // C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\product\v2.product.unlist_item.json
+    if (action === 'unlist_item' && req.method === 'POST') {
+      const body = await req.json();
+      const reqAccountKey = normalizeAccountKey(body.account_key || body.accountKey || accountKey);
+      const r = String(body.region || region || 'SG').toUpperCase();
+      const sourceList = Array.isArray(body.item_list) && body.item_list.length
+        ? body.item_list
+        : [{ item_id: body.item_id, unlist: body.unlist }];
+      const item_list = sourceList
+        .map((row: any) => {
+          const unlist = row?.unlist;
+          return {
+            item_id: Number(row?.item_id),
+            unlist: unlist === true,
+            has_unlist: typeof unlist === 'boolean',
+          };
+        })
+        .filter((row: any) => Number.isFinite(row.item_id) && row.item_id > 0 && row.has_unlist)
+        .map(({ item_id, unlist }: any) => ({ item_id, unlist }));
+      if (!item_list.length) return jsonResp({ ok: false, error: 'item_list[] or item_id and boolean unlist required' }, 400);
+      const result = await shopApiCall(r, '/api/v2/product/unlist_item', {
+        method: 'POST',
+        body: { item_list },
+        account_key: reqAccountKey,
+      });
+      const failureList = Array.isArray(result?.response?.failure_list)
+        ? result.response.failure_list
+        : (Array.isArray(result?.response?.failed_list) ? result.response.failed_list : []);
+      return jsonResp({
+        ok: !result.error && failureList.length === 0,
+        account_key: reqAccountKey,
+        region: r,
+        sent_item_list: item_list,
+        failure_list: failureList,
+        result,
+      }, result.error ? 502 : 200);
+    }
+
+    // POST /delete_item: cleanup helper for shop-level registration rollback.
+    // Requires confirm_delete=true to avoid accidental destructive calls.
+    // Official local doc:
+    // C:\dev\api-refs\marketplaces\shopee\docs_ai\apis\product\v2.product.delete_item.json
+    if (action === 'delete_item' && req.method === 'POST') {
+      const body = await req.json();
+      const reqAccountKey = normalizeAccountKey(body.account_key || body.accountKey || accountKey);
+      const r = String(body.region || region || 'SG').toUpperCase();
+      const item_id = Number(body.item_id);
+      if (!item_id) return jsonResp({ ok: false, error: 'item_id required' }, 400);
+      if (body.confirm_delete !== true) {
+        return jsonResp({ ok: false, error: 'confirm_delete required' }, 400);
+      }
+      const result = await shopApiCall(r, '/api/v2/product/delete_item', {
+        method: 'POST',
+        body: { item_id },
+        account_key: reqAccountKey,
+      });
+      return jsonResp({
+        ok: !result.error,
+        account_key: reqAccountKey,
+        region: r,
+        item_id,
+        result,
+      }, result.error ? 502 : 200);
     }
 
     return jsonResp({ ok: false, error: `unknown: ${action}` }, 404);

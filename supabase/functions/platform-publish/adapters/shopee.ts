@@ -1146,7 +1146,7 @@ async function handleCreateListingMultiRegion(ctx: ShopeeAdapterContext): Promis
     account_key,
     region: baseRegion,
     name: registerName,
-    ...(variationBundle ? {} : { sku: bridgeParentSku }),
+    sku: bridgeParentSku,
     category_id: Number(master.shopee_category_id),
     brand: brand_obj,
     image_id: baseImageIds[0] || master.shopee_image_id || undefined,

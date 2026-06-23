@@ -5,6 +5,7 @@ import { join } from 'node:path';
 const root = process.cwd();
 const html = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
 const bridge = readFileSync(join(root, 'supabase', 'functions', 'shopee-bridge', 'index.ts'), 'utf8');
+const shopeeAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'shopee.ts'), 'utf8');
 
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -46,7 +47,10 @@ const getPublishLogistics = extractFunction(bridge, 'getPublishLogistics');
 const repairPublishedItemLogistics = extractFunction(bridge, 'repairPublishedItemLogisticsForGlobalItem');
 const buildPublishItemPayload = extractFunction(bridge, 'buildPublishItemPayload');
 const retryMinimalPublish = extractFunction(bridge, 'retryMinimalPublish');
-const shopLevelFallback = extractFunction(bridge, 'createShopLevelFallbackItem');
+const brSingleThenGlobalFallback = extractFunction(bridge, 'publishBrOptionViaSingleThenGlobalModels');
+const resolveProductIdForMapping = extractFunction(bridge, 'resolveProductIdForMapping');
+const recordRegistrationMapping = extractFunction(bridge, 'recordRegistrationMapping');
+const handleCreateListingMultiRegion = extractFunction(shopeeAdapter, 'handleCreateListingMultiRegion');
 const initShopTierVariationBlock = bridge.slice(
   bridge.indexOf("if (action === 'init_shop_tier_variation')"),
   bridge.indexOf("if (action === 'update_shop_tier_variation')"),
@@ -274,6 +278,21 @@ assert.match(
 );
 assert.match(
   bridge,
+  /action === 'add_item'[\s\S]*image_id_list[\s\S]*normalizedItemStatus[\s\S]*item_status: normalizedItemStatus/,
+  'shop-level add_item must accept image_id_list and caller-selected item_status for BR fallback publish flows',
+);
+assert.match(
+  bridge,
+  /action === 'unlist_item'[\s\S]*\/api\/v2\/product\/unlist_item[\s\S]*sent_item_list/,
+  'Shopee bridge must expose official unlist_item so shop-level fallback listings can be published after variation init',
+);
+assert.match(
+  bridge,
+  /action === 'delete_item'[\s\S]*confirm_delete[\s\S]*\/api\/v2\/product\/delete_item/,
+  'Shopee bridge must expose a confirm-gated delete_item cleanup path for failed shop-level fallback attempts',
+);
+assert.match(
+  bridge,
   /const SHOPEE_BR_MAX_PUBLISH_POLLS = 36[\s\S]*const maxPoll = \(targetRegion === 'BR'\) \? SHOPEE_BR_MAX_PUBLISH_POLLS : 30/,
   'BR publish polling must use a bounded constant instead of an unbounded or oversized inline window',
 );
@@ -358,39 +377,44 @@ assert.match(
   'Shopee bridge must treat duplicate variation option-name publish failures as minimal-retryable',
 );
 assert.match(
-  shopLevelFallback,
-  /product\/add_item[\s\S]*product\/init_tier_variation[\s\S]*product\/delete_item[\s\S]*shop_level_fallback[\s\S]*global_item_id:\s*null/,
-  'Shopee bridge must provide a BR shop-level fallback that creates option listings with init_tier_variation and cleans up failed local items',
-);
-assert.doesNotMatch(
-  shopLevelFallback,
-  /payload\.tier_variation|payload\.model\s*=/,
-  'Shopee bridge shop-level fallback must not send variation fields directly to product/add_item',
-);
-assert.match(
-  shopLevelFallback,
-  /standardise_tier_variation[\s\S]*model[\s\S]*weight[\s\S]*sent_init_tier_variation/,
-  'Shopee bridge shop-level fallback must preserve option model prices, stock, SKU, and per-model weight in init_tier_variation payload',
-);
-assert.match(
   initShopTierVariationBlock,
   /standardise_tier_variation[\s\S]*model_sku[\s\S]*weight[\s\S]*product\/init_tier_variation/,
   'Shopee bridge must expose a docs-backed shop init_tier_variation mutation for BR no-option publish then option-injection fallback',
 );
 assert.match(
   `${publishToRegionBlock}\n${registerCbscBlock}`,
-  /createShopLevelFallbackItem[\s\S]*br_crossupload_permission_global_publish_failed/,
-  'publish_to_region and register_cbsc must call shop-level fallback for BR crossupload permission failures',
+  /publishBrOptionViaSingleThenGlobalModels[\s\S]*br_create_publish_task_crossupload_failed[\s\S]*publishBrOptionViaSingleThenGlobalModels[\s\S]*br_publish_task_crossupload_failed/,
+  'publish_to_region and register_cbsc must use the proven BR single-then-global-option fallback for option crossupload failures',
 );
 assert.match(
   bridge,
-  /BR_OPTION_CROSSUPLOAD_PERMISSION_BLOCKED[\s\S]*product\.cnsc_shop_block/,
-  'Shopee bridge must surface the proven BR CBSC option crossupload permission blocker instead of reporting a generic publish failure',
+  /BR_OPTION_CROSSUPLOAD_PERMISSION_BLOCKED[\s\S]*direct CBSC option Global Product crossupload/,
+  'Shopee bridge must surface the BR direct option Global Product crossupload blocker instead of a generic publish failure',
+);
+assert.doesNotMatch(
+  `${publishToRegionBlock}\n${registerCbscBlock}`,
+  /createShopLevelFallbackItem|shop_level_fallback/,
+  'Shopee bridge must not revive the rejected shop-level fallback after BR option crossupload failures',
 );
 assert.match(
-  `${publishToRegionBlock}\n${registerCbscBlock}`,
-  /br_option_crossupload_blocked[\s\S]*createShopLevelFallbackItem/,
-  'Shopee bridge must suppress invalid shop-level fallback after BR option crossupload is classified as a permanent Shopee permission block',
+  brSingleThenGlobalFallback,
+  /add_global_item[\s\S]*create_publish_task[\s\S]*init_tier_variation[\s\S]*add_global_model[\s\S]*waitForShopModelsWithDetails[\s\S]*syncShopModelPricesAfterPublish/,
+  'BR fallback must publish a single Global Product first, then initialize global variation, add remaining global models, wait for shop model hydration, and sync model prices',
+);
+assert.match(
+  brSingleThenGlobalFallback,
+  /br_single_then_global_option_fallback:\s*true[\s\S]*shop_model_count/,
+  'BR fallback result must be clearly marked and include shop model evidence',
+);
+assert.match(
+  handleCreateListingMultiRegion,
+  /sku:\s*bridgeParentSku[\s\S]*variation:\s*shopeeVariation \|\| undefined/,
+  'platform-publish option group registration must send the parent SKU to the bridge so the BR fallback has a stable parent item_sku',
+);
+assert.match(
+  `${resolveProductIdForMapping}\n${recordRegistrationMapping}`,
+  /row\?\.sku[\s\S]*row\?\.model_sku[\s\S]*row\?\.shopee_global_model_sku[\s\S]*from\('products'\)[\s\S]*from\('product_shopee_listings'\)/,
+  'record_registration_mapping must resolve SKU-only BR fallback mapping rows before upserting product_shopee_listings',
 );
 assert.match(
   `${publishToRegionBlock}\n${registerCbscBlock}`,

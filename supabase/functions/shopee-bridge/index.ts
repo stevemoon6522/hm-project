@@ -53,6 +53,7 @@ const PUBLIC_ACTIONS: ReadonlySet<string> = new Set([
   "publishable_shop",
   "shop_publishable_status",
   "merchant_shops",
+  "oauth_callback",
 ]);
 
 const SANDBOX_HOST = 'openplatform.sandbox.test-stable.shopee.sg';
@@ -74,7 +75,7 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
 // v78: Shopee SKU lookup maps Global Product global_model_sku separately from shop listing price sync ids.
-const SOURCE_VERSION = 79;
+const SOURCE_VERSION = 80;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -3314,6 +3315,182 @@ async function requireBridgeTokenOrAuthenticatedUser(req: Request): Promise<Resp
   return authResult.response || null;
 }
 
+const SHOPEE_OAUTH_CALLBACK_TTL_SEC = 10 * 60;
+
+function shopeeOAuthCallbackParams(url: URL) {
+  return {
+    account_key: normalizeAccountKey(url.searchParams.get('account_key') || url.searchParams.get('accountKey')),
+    main_account_id: String(url.searchParams.get('main_account_id') || ''),
+    shop_id: String(url.searchParams.get('shop_id') || ''),
+    display_name: String(url.searchParams.get('display_name') || url.searchParams.get('displayName') || ''),
+    layer_asset_path: String(url.searchParams.get('layer_asset_path') || url.searchParams.get('layerAssetPath') || ''),
+    exp: String(url.searchParams.get('exp') || ''),
+    nonce: String(url.searchParams.get('nonce') || ''),
+  };
+}
+
+function shopeeOAuthCallbackBase(params: Record<string, string>) {
+  return [
+    ['account_key', params.account_key || DEFAULT_SHOPEE_ACCOUNT_KEY],
+    ['display_name', params.display_name || ''],
+    ['exp', params.exp || ''],
+    ['layer_asset_path', params.layer_asset_path || ''],
+    ['main_account_id', params.main_account_id || ''],
+    ['nonce', params.nonce || ''],
+    ['shop_id', params.shop_id || ''],
+  ].map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&');
+}
+
+async function signShopeeOAuthCallback(app: any, params: Record<string, string>) {
+  return await hmac(app.partner_key, shopeeOAuthCallbackBase(params));
+}
+
+async function buildShopeeOAuthCallbackRedirect(baseUrl: string, app: any, params: Record<string, string>) {
+  const exp = String(Math.floor(Date.now() / 1000) + SHOPEE_OAUTH_CALLBACK_TTL_SEC);
+  const nonce = crypto.randomUUID();
+  const signedParams = { ...params, exp, nonce };
+  const sig = await signShopeeOAuthCallback(app, signedParams);
+  const redirectUrl = new URL('/functions/v1/shopee-bridge/oauth_callback', baseUrl);
+  for (const [key, value] of Object.entries(signedParams)) {
+    if (value) redirectUrl.searchParams.set(key, String(value));
+  }
+  redirectUrl.searchParams.set('sig', sig);
+  return redirectUrl.toString();
+}
+
+async function verifyShopeeOAuthCallbackSignature(url: URL, app: any) {
+  const params = shopeeOAuthCallbackParams(url);
+  const sig = String(url.searchParams.get('sig') || '');
+  const exp = Number(params.exp || 0);
+  if (!sig) return { ok: false, error: 'oauth_callback_sig_required' };
+  if (!Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) {
+    return { ok: false, error: 'oauth_callback_expired' };
+  }
+  if (!params.main_account_id && !params.shop_id) {
+    return { ok: false, error: 'oauth_callback_principal_required' };
+  }
+  const expected = await signShopeeOAuthCallback(app, params);
+  return { ok: sig === expected, error: sig === expected ? null : 'oauth_callback_sig_invalid', params };
+}
+
+function sanitizedShopeeOAuthTokenResponse(raw: any) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const { access_token, refresh_token, ...safeRaw } = raw;
+  return {
+    ...safeRaw,
+    access_token_set: Boolean(access_token),
+    refresh_token_set: Boolean(refresh_token),
+  };
+}
+
+async function exchangeShopeeOAuthCode(url: URL, accountKey: string) {
+  const code = url.searchParams.get('code') || '';
+  const main_account_id = url.searchParams.get('main_account_id') || '';
+  const shop_id = url.searchParams.get('shop_id') || '';
+  const displayName = String(url.searchParams.get('display_name') || url.searchParams.get('displayName') || accountKey).trim() || accountKey;
+  const layerAssetPath = String(url.searchParams.get('layer_asset_path') || url.searchParams.get('layerAssetPath') || '').trim();
+  if (!code) return jsonResp({ ok: false, error: 'code required' }, 400);
+  if (!main_account_id && !shop_id) return jsonResp({ ok: false, error: 'main_account_id or shop_id required' }, 400);
+  const app = await getApp(accountKey);
+  const path = '/api/v2/auth/token/get';
+  const ts = Math.floor(Date.now() / 1000);
+  const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
+  const body: any = { code, partner_id: Number(app.partner_id) };
+  if (main_account_id) body.main_account_id = Number(main_account_id);
+  if (shop_id) body.shop_id = Number(shop_id);
+  const r = await fetch(`https://${host(app.is_sandbox)}${path}?partner_id=${app.partner_id}&timestamp=${ts}&sign=${sign}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json();
+  if (j.error || !j.access_token) {
+    return jsonResp({ ok: false, error: j.error || 'no_access_token', message: j.message || null, raw: sanitizedShopeeOAuthTokenResponse(j) }, 502);
+  }
+  // Persist merchant row (KRSC merchant token)
+  const now = Math.floor(Date.now() / 1000);
+  const expires_at = now + Number(j.expire_in || 14400);
+  const merchant_id_list: number[] = Array.isArray(j.merchant_id_list) ? j.merchant_id_list.map((x: any) => Number(x)) : [];
+  const merchant_id = merchant_id_list[0] || null;
+  const updates: any[] = [];
+  if (main_account_id || merchant_id || layerAssetPath) {
+    const profilePayload: Record<string, unknown> = {
+      account_key: accountKey,
+      display_name: displayName,
+      status: 'active',
+      updated_at: new Date().toISOString(),
+    };
+    if (main_account_id) profilePayload.main_account_id = Number(main_account_id);
+    if (merchant_id) profilePayload.merchant_id = merchant_id;
+    if (layerAssetPath) profilePayload.layer_asset_path = layerAssetPath;
+    const { error: profileErr } = await supabase
+      .from('shopee_account_profiles')
+      .upsert(profilePayload, { onConflict: 'account_key' });
+    updates.push({ kind: 'account_profile', account_key: accountKey, error: profileErr?.message || null });
+  }
+  if (main_account_id && merchant_id) {
+    const { error } = await supabase.from('shopee_tokens').upsert({
+      account_key: accountKey, region: '_MERCHANT', shop_id: Number(main_account_id), merchant_id, access_token: j.access_token, refresh_token: j.refresh_token, expires_at,
+    }, { onConflict: 'account_key,region' });
+    updates.push({ kind: 'merchant', account_key: accountKey, region: '_MERCHANT', shop_id: main_account_id, error: error?.message || null });
+  }
+  const shop_id_list: number[] = Array.isArray(j.shop_id_list) ? j.shop_id_list.map((x: any) => Number(x)) : [];
+  for (const sid of shop_id_list) {
+    if (!sid) continue;
+    try {
+      const probe = await probeShopToken(app, j.access_token, sid);
+      const shopRegion = String(probe.region || '').toUpperCase();
+      if (!probe.ok || !shopRegion) {
+        updates.push({ kind: 'shop', account_key: accountKey, shop_id: sid, ok: false, error: probe.error || 'shop_region_unresolved', message: probe.message || null });
+        continue;
+      }
+      const shopTs = Math.floor(Date.now() / 1000);
+      const shopSign = await hmac(app.partner_key, `${app.partner_id}${path}${shopTs}`);
+      const shopTokenResp = await fetch(`https://${host(app.is_sandbox)}${path}?partner_id=${app.partner_id}&timestamp=${shopTs}&sign=${shopSign}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: j.refresh_token, partner_id: Number(app.partner_id), shop_id: sid }),
+      });
+      const shopToken = await shopTokenResp.json();
+      if (shopToken.error || !shopToken.access_token || !shopToken.refresh_token) {
+        updates.push({ kind: 'shop', account_key: accountKey, region: shopRegion, shop_id: sid, ok: false, error: shopToken.error || 'missing_shop_token', message: shopToken.message || null });
+        continue;
+      }
+      const shopExpiresAt = Math.floor(Date.now() / 1000) + Number(shopToken.expire_in || 14400);
+      const expiresIso = new Date(shopExpiresAt * 1000).toISOString();
+      const shopPayload = {
+        account_key: accountKey,
+        shop_id: String(sid),
+        region: shopRegion,
+        shop_name: probe.shop_name || null,
+        access_token: shopToken.access_token,
+        refresh_token: shopToken.refresh_token,
+        expires_at: expiresIso,
+        status: 'active',
+        authorized_at: new Date().toISOString(),
+        merchant_id,
+      };
+      const { error: shopErr } = await supabase
+        .from('shopee_shops')
+        .upsert(shopPayload, { onConflict: 'shop_id' });
+      const { error: tokenErr } = await supabase.from('shopee_tokens').upsert({
+        account_key: accountKey,
+        region: shopRegion,
+        shop_id: sid,
+        merchant_id,
+        access_token: shopToken.access_token,
+        refresh_token: shopToken.refresh_token,
+        expires_at: shopExpiresAt,
+        is_sandbox: false,
+      }, { onConflict: 'account_key,region' });
+      updates.push({ kind: 'shop', account_key: accountKey, region: shopRegion, shop_id: sid, ok: !shopErr && !tokenErr, shop_error: shopErr?.message || null, token_error: tokenErr?.message || null });
+    } catch (e: any) {
+      updates.push({ kind: 'shop', account_key: accountKey, shop_id: sid, ok: false, error: String(e?.message || e) });
+    }
+  }
+  return jsonResp({ ok: true, account_key: accountKey, access_token_set: !!j.access_token, expires_at, merchant_id, merchant_id_list, shop_id_list, updates, raw: sanitizedShopeeOAuthTokenResponse(j) });
+}
+
 async function resolveHeadlessGlobalItemId(body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<{ ok: true; global_item_id: number; source: string; rows?: any[] } | { ok: false; status: number; error: string; rows?: any[] }> {
   const explicit = Number(body.global_item_id || body.globalItemId || 0);
   if (Number.isFinite(explicit) && explicit > 0) {
@@ -4214,109 +4391,18 @@ Deno.serve(async (req) => {
       return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: reqAccountKey, global_item_id, logistics_repairs: publishLogisticsRepair, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults });
     }
     if (action === 'oauth_exchange') {
-      const code = url.searchParams.get('code') || '';
-      const main_account_id = url.searchParams.get('main_account_id') || '';
-      const shop_id = url.searchParams.get('shop_id') || '';
-      const displayName = String(url.searchParams.get('display_name') || url.searchParams.get('displayName') || accountKey).trim() || accountKey;
-      const layerAssetPath = String(url.searchParams.get('layer_asset_path') || url.searchParams.get('layerAssetPath') || '').trim();
-      if (!code) return jsonResp({ ok: false, error: 'code required' }, 400);
-      if (!main_account_id && !shop_id) return jsonResp({ ok: false, error: 'main_account_id or shop_id required' }, 400);
       const app = await getApp(accountKey);
-      const path = '/api/v2/auth/token/get';
-      const ts = Math.floor(Date.now() / 1000);
-      const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
-      const body: any = { code, partner_id: Number(app.partner_id) };
-      if (main_account_id) body.main_account_id = Number(main_account_id);
-      if (shop_id) body.shop_id = Number(shop_id);
-      const r = await fetch(`https://${host(app.is_sandbox)}${path}?partner_id=${app.partner_id}&timestamp=${ts}&sign=${sign}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (j.error || !j.access_token) return jsonResp({ ok: false, error: j.error || 'no_access_token', message: j.message || null, raw: j }, 502);
-      // Persist merchant row (KRSC merchant token)
-      const now = Math.floor(Date.now() / 1000);
-      const expires_at = now + Number(j.expire_in || 14400);
-      const merchant_id_list: number[] = Array.isArray(j.merchant_id_list) ? j.merchant_id_list.map((x: any) => Number(x)) : [];
-      const merchant_id = merchant_id_list[0] || null;
-      const updates: any[] = [];
-      if (main_account_id || merchant_id || layerAssetPath) {
-        const profilePayload: Record<string, unknown> = {
-          account_key: accountKey,
-          display_name: displayName,
-          status: 'active',
-          updated_at: new Date().toISOString(),
-        };
-        if (main_account_id) profilePayload.main_account_id = Number(main_account_id);
-        if (merchant_id) profilePayload.merchant_id = merchant_id;
-        if (layerAssetPath) profilePayload.layer_asset_path = layerAssetPath;
-        const { error: profileErr } = await supabase
-          .from('shopee_account_profiles')
-          .upsert(profilePayload, { onConflict: 'account_key' });
-        updates.push({ kind: 'account_profile', account_key: accountKey, error: profileErr?.message || null });
+      const verified = await verifyShopeeOAuthCallbackSignature(url, app);
+      if (url.searchParams.get('sig') && !verified.ok) {
+        return jsonResp({ ok: false, error: verified.error }, 403);
       }
-      if (main_account_id && merchant_id) {
-        const { error } = await supabase.from('shopee_tokens').upsert({
-          account_key: accountKey, region: '_MERCHANT', shop_id: Number(main_account_id), merchant_id, access_token: j.access_token, refresh_token: j.refresh_token, expires_at,
-        }, { onConflict: 'account_key,region' });
-        updates.push({ kind: 'merchant', account_key: accountKey, region: '_MERCHANT', shop_id: main_account_id, error: error?.message || null });
-      }
-      const shop_id_list: number[] = Array.isArray(j.shop_id_list) ? j.shop_id_list.map((x: any) => Number(x)) : [];
-      for (const sid of shop_id_list) {
-        if (!sid) continue;
-        try {
-          const probe = await probeShopToken(app, j.access_token, sid);
-          const shopRegion = String(probe.region || '').toUpperCase();
-          if (!probe.ok || !shopRegion) {
-            updates.push({ kind: 'shop', account_key: accountKey, shop_id: sid, ok: false, error: probe.error || 'shop_region_unresolved', message: probe.message || null });
-            continue;
-          }
-          const shopTs = Math.floor(Date.now() / 1000);
-          const shopSign = await hmac(app.partner_key, `${app.partner_id}${path}${shopTs}`);
-          const shopTokenResp = await fetch(`https://${host(app.is_sandbox)}${path}?partner_id=${app.partner_id}&timestamp=${shopTs}&sign=${shopSign}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: j.refresh_token, partner_id: Number(app.partner_id), shop_id: sid }),
-          });
-          const shopToken = await shopTokenResp.json();
-          if (shopToken.error || !shopToken.access_token || !shopToken.refresh_token) {
-            updates.push({ kind: 'shop', account_key: accountKey, region: shopRegion, shop_id: sid, ok: false, error: shopToken.error || 'missing_shop_token', message: shopToken.message || null });
-            continue;
-          }
-          const shopExpiresAt = Math.floor(Date.now() / 1000) + Number(shopToken.expire_in || 14400);
-          const expiresIso = new Date(shopExpiresAt * 1000).toISOString();
-          const shopPayload = {
-            account_key: accountKey,
-            shop_id: String(sid),
-            region: shopRegion,
-            shop_name: probe.shop_name || null,
-            access_token: shopToken.access_token,
-            refresh_token: shopToken.refresh_token,
-            expires_at: expiresIso,
-            status: 'active',
-            authorized_at: new Date().toISOString(),
-            merchant_id,
-          };
-          const { error: shopErr } = await supabase
-            .from('shopee_shops')
-            .upsert(shopPayload, { onConflict: 'shop_id' });
-          const { error: tokenErr } = await supabase.from('shopee_tokens').upsert({
-            account_key: accountKey,
-            region: shopRegion,
-            shop_id: sid,
-            merchant_id,
-            access_token: shopToken.access_token,
-            refresh_token: shopToken.refresh_token,
-            expires_at: shopExpiresAt,
-            is_sandbox: false,
-          }, { onConflict: 'account_key,region' });
-          updates.push({ kind: 'shop', account_key: accountKey, region: shopRegion, shop_id: sid, ok: !shopErr && !tokenErr, shop_error: shopErr?.message || null, token_error: tokenErr?.message || null });
-        } catch (e: any) {
-          updates.push({ kind: 'shop', account_key: accountKey, shop_id: sid, ok: false, error: String(e?.message || e) });
-        }
-      }
-      return jsonResp({ ok: true, account_key: accountKey, access_token_set: !!j.access_token, expires_at, merchant_id, merchant_id_list, shop_id_list, updates, raw: j });
+      return await exchangeShopeeOAuthCode(url, accountKey);
+    }
+    if (action === 'oauth_callback') {
+      const app = await getApp(accountKey);
+      const verified = await verifyShopeeOAuthCallbackSignature(url, app);
+      if (!verified.ok) return jsonResp({ ok: false, error: verified.error }, 403);
+      return await exchangeShopeeOAuthCode(url, accountKey);
     }
     if (action === 'merchant_shops') {
       const r = url.searchParams.get('region') || 'SG';
@@ -4331,9 +4417,19 @@ Deno.serve(async (req) => {
       const ts = Math.floor(Date.now() / 1000);
       const base = `${app.partner_id}${path}${ts}`;
       const sign = await hmac(app.partner_key, base);
-      const redirect = url.searchParams.get('redirect') || 'https://shopee-dashboard-kohl.vercel.app/v2/';
+      const callbackMode = url.searchParams.get('callback') === '1';
+      const callbackBaseUrl = Deno.env.get('SUPABASE_URL') || 'https://mgqlwgnmwegzsjelbrih.supabase.co';
+      const redirect = callbackMode
+        ? await buildShopeeOAuthCallbackRedirect(callbackBaseUrl, app, {
+          account_key: accountKey,
+          main_account_id: String(url.searchParams.get('main_account_id') || await mainAccountIdForAccount(accountKey)),
+          shop_id: String(url.searchParams.get('shop_id') || ''),
+          display_name: String(url.searchParams.get('display_name') || url.searchParams.get('displayName') || accountKey),
+          layer_asset_path: String(url.searchParams.get('layer_asset_path') || url.searchParams.get('layerAssetPath') || ''),
+        })
+        : (url.searchParams.get('redirect') || 'https://shopee-dashboard-kohl.vercel.app/v2/');
       const oauthUrl = `https://${host(app.is_sandbox)}${path}?partner_id=${app.partner_id}&timestamp=${ts}&sign=${sign}&redirect=${encodeURIComponent(redirect)}`;
-      return jsonResp({ ok: true, account_key: accountKey, oauth_url: oauthUrl, partner_id: app.partner_id, timestamp: ts, path });
+      return jsonResp({ ok: true, account_key: accountKey, oauth_url: oauthUrl, partner_id: app.partner_id, timestamp: ts, path, redirect, callback_mode: callbackMode });
     }
     if (action === 'force_refresh_all') {
       const regions = (url.searchParams.get('regions') || 'SG,TW,TH,MY,PH,BR').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);

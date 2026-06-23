@@ -48,6 +48,10 @@ _Avoid_: global item name, master product name
 A shop-level setting that controls which Shopee Global Product fields are propagated to Shopee Shop Items, such as name and description, media, variation names, price, and days to ship.
 _Avoid_: item update, product data
 
+**Shopee Crossupload Permission Block**:
+A Shopee-side publication failure where `create_publish_task` or `get_publish_task_result` returns `partner does not have permission to operate shop`, sometimes through `crossupload.api`, after merchant/shop/publishable preflight checks pass. Treat it as an external Shopee account, app, or merchant permission binding issue, not as a payload validation error.
+_Avoid_: price ratio error, SET option error, token expired
+
 **Source Listing Snapshot**:
 A point-in-time capture of a remote marketplace listing before the operator accepts it as part of the master data. A Shopee listing imported from the shop catalog is a Source Listing Snapshot, not canonical truth by itself.
 _Avoid_: master data, source of truth

@@ -50,6 +50,7 @@ const SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS: Record<string, number> = Object.fr
   SG: 5,
   TW: 5,
   TH: 5,
+  MY: 5,
   PH: 5,
   BR: 4,
 });

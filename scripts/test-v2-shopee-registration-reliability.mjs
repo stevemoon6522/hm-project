@@ -167,7 +167,7 @@ assert.match(
 );
 assert.match(
   html,
-  /RSH_REGION_MODEL_PRICE_RATIO_LIMITS[\s\S]*SG:\s*5[\s\S]*TW:\s*5[\s\S]*TH:\s*5[\s\S]*PH:\s*5[\s\S]*BR:\s*4/,
+  /RSH_REGION_MODEL_PRICE_RATIO_LIMITS[\s\S]*SG:\s*5[\s\S]*TW:\s*5[\s\S]*TH:\s*5[\s\S]*MY:\s*5[\s\S]*PH:\s*5[\s\S]*BR:\s*4/,
   'group payload must encode observed Shopee region model price ratio limits',
 );
 assert.match(
@@ -244,7 +244,7 @@ assert.match(
 );
 assert.match(
   bridge,
-  /SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS[\s\S]*SG:\s*5[\s\S]*TW:\s*5[\s\S]*TH:\s*5[\s\S]*PH:\s*5[\s\S]*BR:\s*4[\s\S]*function normalizeRegionalGlobalModelPriceRatio/,
+  /SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS[\s\S]*SG:\s*5[\s\S]*TW:\s*5[\s\S]*TH:\s*5[\s\S]*MY:\s*5[\s\S]*PH:\s*5[\s\S]*BR:\s*4[\s\S]*function normalizeRegionalGlobalModelPriceRatio/,
   'Shopee bridge must defensively normalize Global Product option price ratios with observed region limits',
 );
 assert.match(

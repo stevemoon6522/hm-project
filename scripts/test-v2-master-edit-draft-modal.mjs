@@ -30,6 +30,11 @@ const editCode = sliceBetween(
   'function plMasterEditJsonText',
   'function beginEditCell(cell)',
 );
+const renderOptionsCode = sliceBetween(
+  editCode,
+  'function plMasterEditRenderOptions',
+  'function plMasterEditRowsFromModal',
+);
 const representativeSetter = sliceBetween(
   editCode,
   'function plMasterEditSetRepresentativeImage',
@@ -91,6 +96,8 @@ for (const token of [
   'variation_option_names',
   'rawOptionName',
   'Option name must be English',
+  'data-field="sourcing_price"',
+  'sourcing_price:',
   'data-field="shopee_option_image_url"',
   'shopee_option_image_url:',
   'main_image: representativeImageUrl || null',
@@ -172,6 +179,16 @@ assert(
 assert(
   editCode.includes('row?.shopee_option_image_url || row?.main_image || row?._main_image'),
   'master edit option image display must fall back to persisted main_image for older StarOneMall-created rows',
+);
+assert(
+  renderOptionsCode.includes('매입가') && renderOptionsCode.includes('정산가'),
+  'master edit option draft must expose both purchase and settlement prices',
+);
+assert(
+  renderOptionsCode.includes('type="hidden" value="${text(optionImageUrl)}"')
+    && !renderOptionsCode.includes('type="url" value="${text(optionImageUrl)}"')
+    && !renderOptionsCode.includes('data-clear-option-image'),
+  'master edit option images must use file upload only, without a visible URL input or remove button',
 );
 assert(
   editCode.includes('const hasDraftDetailImages = plMasterEditDetailImageUrls(rows).length > 0')

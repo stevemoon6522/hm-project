@@ -177,7 +177,7 @@ assert.match(
 );
 assert.match(
   html,
-  /function rshConfirmModelPriceRatioExclusions[\s\S]*window\.confirm[\s\S]*Continue registration without these options/,
+  /function rshConfirmModelPriceRatioExclusions[\s\S]*window\.confirm[\s\S]*이 옵션들을 제외하고 등록할까요/,
   'V2 Shopee registration must warn operators before excluding price-ratio options',
 );
 assert.match(

@@ -19890,12 +19890,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }).join('\n');
     const more = plan.excluded.length > 8 ? `\n- +${plan.excluded.length - 8} more option(s)` : '';
     return window.confirm([
-      'Shopee option price ratio limit exceeded.',
-      'The options below will be excluded from Shopee registration so the product can be published safely.',
+      'Shopee 옵션 가격비 제한을 초과했습니다.',
+      '상품 등록 성공을 위해 아래 옵션을 제외하고 Shopee 등록을 진행합니다.',
       '',
       detailLines + more,
       '',
-      'Continue registration without these options?',
+      '이 옵션들을 제외하고 등록할까요?',
     ].join('\n'));
   }
 
@@ -20081,7 +20081,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (!rshConfirmModelPriceRatioExclusions(priceRatioPlan)) {
       _rsh.publishInFlight = false;
       rshShowStage2Buttons(true);
-      if (errorEl) { errorEl.textContent = 'Shopee registration cancelled before API call.'; errorEl.style.display = 'block'; }
+      if (errorEl) { errorEl.textContent = 'Shopee 등록을 API 호출 전에 취소했습니다.'; errorEl.style.display = 'block'; }
       return;
     }
     const allowedSkuSet = new Set((priceRatioPlan.allowedSkus || []).map((sku) => String(sku || '').trim()).filter(Boolean));
@@ -20435,7 +20435,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const variantInputs = rshReadVariantInputs(products);
     const priceRatioPlan = rshBuildVariantPriceRatioExclusionPlan(variantInputs, activeRegions);
     if (!rshConfirmModelPriceRatioExclusions(priceRatioPlan)) {
-      if (errorEl) { errorEl.textContent = 'Shopee registration cancelled before API call.'; errorEl.style.display = 'block'; }
+      if (errorEl) { errorEl.textContent = 'Shopee 등록을 API 호출 전에 취소했습니다.'; errorEl.style.display = 'block'; }
       return { anyFailed: true };
     }
     const allowedSkuSet = new Set((priceRatioPlan.allowedSkus || []).map((sku) => String(sku || '').trim()).filter(Boolean));
@@ -31652,7 +31652,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 source: vOpt,
               })), CBSC_REGIONS);
               if (!rshConfirmModelPriceRatioExclusions(priceRatioPlan)) {
-                activeRows.forEach(r => { r.shopeePublishState = 'unpublished'; r.shopeePublishNote = 'Shopee registration cancelled before API call.'; });
+                activeRows.forEach(r => { r.shopeePublishState = 'unpublished'; r.shopeePublishNote = 'Shopee 등록을 API 호출 전에 취소했습니다.'; });
                 mrRenderPreviewCards();
                 continue;
               }
@@ -31664,7 +31664,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 ? variationOptions.filter((vOpt) => allowedSkuSet.has(String(vOpt.sku || '').trim()))
                 : variationOptions;
               if (!shopeeRows.length || !shopeeVariationOptions.length) {
-                activeRows.forEach(r => { r.shopeePublishState = 'unpublished'; r.shopeePublishNote = 'Shopee price ratio filtering excluded every option.'; });
+                activeRows.forEach(r => { r.shopeePublishState = 'unpublished'; r.shopeePublishNote = 'Shopee 가격비 필터링으로 모든 옵션이 제외되었습니다.'; });
                 mrRenderPreviewCards();
                 continue;
               }
@@ -31673,10 +31673,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 activeRows.forEach((row) => {
                   if (excludedSkuSet.has(String(row._sku || '').trim())) {
                     row.shopeePublishState = 'unpublished';
-                    row.shopeePublishNote = 'Excluded by Shopee price ratio limit.';
+                    row.shopeePublishNote = 'Shopee 가격비 제한으로 제외됨.';
                   }
                 });
-                showToast(`Shopee price ratio limit: excluded ${priceRatioPlan.excluded.length} option(s).`, 'warn');
+                showToast(`Shopee 가격비 제한: 옵션 ${priceRatioPlan.excluded.length}개 제외 후 등록합니다.`, 'warn');
               }
 
               // 3. Build model list

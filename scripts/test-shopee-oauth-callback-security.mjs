@@ -19,6 +19,12 @@ assert.match(
 
 assert.match(
   bridge,
+  /const SHOPEE_OAUTH_CALLBACK_TTL_SEC = 30 \* 60/,
+  'Shopee OAuth callback signature should stay valid long enough for slower seller approval',
+);
+
+assert.match(
+  bridge,
   /async function verifyShopeeOAuthCallbackSignature[\s\S]*oauth_callback_sig_required[\s\S]*oauth_callback_expired[\s\S]*oauth_callback_sig_invalid/,
   'OAuth callback must reject missing, expired, and invalid signatures',
 );

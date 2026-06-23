@@ -74,8 +74,8 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 // CBSC main account ID ??Shopee CB Mall / KRSC group. Same across all 10 region shops in our setup.
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
-// v82: Shopee OAuth callback uses the registered WMS-domain relay before signed dashboard token exchange.
-const SOURCE_VERSION = 82;
+// v83: Shopee OAuth signed callback TTL allows slower seller approval without expiring the relay target.
+const SOURCE_VERSION = 83;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -3315,7 +3315,7 @@ async function requireBridgeTokenOrAuthenticatedUser(req: Request): Promise<Resp
   return authResult.response || null;
 }
 
-const SHOPEE_OAUTH_CALLBACK_TTL_SEC = 10 * 60;
+const SHOPEE_OAUTH_CALLBACK_TTL_SEC = 30 * 60;
 
 function shopeeOAuthCallbackParams(url: URL) {
   return {

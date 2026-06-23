@@ -53,6 +53,7 @@ const PUBLIC_ACTIONS: ReadonlySet<string> = new Set([
   "publishable_shop",
   "shop_publishable_status",
   "merchant_shops",
+  "oauth_callback",
 ]);
 
 const SANDBOX_HOST = 'openplatform.sandbox.test-stable.shopee.sg';
@@ -73,8 +74,8 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 // CBSC main account ID ??Shopee CB Mall / KRSC group. Same across all 10 region shops in our setup.
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
-// v78: Shopee SKU lookup maps Global Product global_model_sku separately from shop listing price sync ids.
-const SOURCE_VERSION = 78;
+// v84: Shopee token/shop lookups support both account-aware and legacy schemas.
+const SOURCE_VERSION = 84;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -110,6 +111,7 @@ const PROXY_ALLOWED_HOSTS = new Set([
   'staronemall.com',
   'www.staronemall.com',
   'staronemall2.wisacdn.com',
+  'image.yes24.com',
   'cf.shopee.sg',
   'cf.shopee.tw',
   'cf.shopee.ph',
@@ -371,13 +373,107 @@ function fp(v: string | null | undefined): string {
   return Math.abs(h).toString(16).slice(0, 8);
 }
 
-async function getRegionShopRow(region: string, shopId: string | number, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const { data } = await supabase
+function isMissingAccountKeyColumn(error: any): boolean {
+  const text = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`;
+  return error?.code === '42703' && /account_key/i.test(text);
+}
+
+async function getShopeeTokenRow(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<any | null> {
+  const scoped = await supabase
+    .from('shopee_tokens')
+    .select('*')
+    .eq('account_key', accountKey)
+    .eq('region', region)
+    .maybeSingle();
+  if (!scoped.error) return scoped.data || null;
+  if (!isMissingAccountKeyColumn(scoped.error)) throw scoped.error;
+
+  const legacy = await supabase
+    .from('shopee_tokens')
+    .select('*')
+    .eq('region', region)
+    .maybeSingle();
+  if (legacy.error) throw legacy.error;
+  return legacy.data ? { account_key: accountKey, ...legacy.data } : null;
+}
+
+async function getShopeeTokenRows(accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, opts: { regions?: string[]; includeAccessToken?: boolean } = {}): Promise<any[]> {
+  const baseColumns = ['region', 'shop_id', 'merchant_id', 'expires_at', 'is_sandbox'];
+  if (opts.includeAccessToken) baseColumns.push('access_token');
+  const scopedColumns = ['account_key', ...baseColumns].join(', ');
+  const legacyColumns = baseColumns.join(', ');
+
+  let scopedQuery = supabase
+    .from('shopee_tokens')
+    .select(scopedColumns)
+    .eq('account_key', accountKey);
+  if (opts.regions?.length) scopedQuery = scopedQuery.in('region', opts.regions);
+  const scoped = await scopedQuery.order('region', { ascending: true });
+  if (!scoped.error) return scoped.data || [];
+  if (!isMissingAccountKeyColumn(scoped.error)) throw scoped.error;
+
+  let legacyQuery = supabase
+    .from('shopee_tokens')
+    .select(legacyColumns);
+  if (opts.regions?.length) legacyQuery = legacyQuery.in('region', opts.regions);
+  const legacy = await legacyQuery.order('region', { ascending: true });
+  if (legacy.error) throw legacy.error;
+  return (legacy.data || []).map((row: any) => ({ account_key: accountKey, ...row }));
+}
+
+async function updateShopeeTokenRow(region: string, values: Record<string, unknown>, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const scoped = await supabase
+    .from('shopee_tokens')
+    .update(values)
+    .eq('account_key', accountKey)
+    .eq('region', region);
+  if (!scoped.error) return;
+  if (!isMissingAccountKeyColumn(scoped.error)) throw scoped.error;
+
+  const legacy = await supabase
+    .from('shopee_tokens')
+    .update(values)
+    .eq('region', region);
+  if (legacy.error) throw legacy.error;
+}
+
+async function getShopeeShopRowByShopId(shopId: string | number, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<any | null> {
+  const scoped = await supabase
     .from('shopee_shops')
     .select('shop_id, region, merchant_id, status')
     .eq('account_key', accountKey)
     .eq('shop_id', String(shopId))
     .maybeSingle();
+  if (!scoped.error) return scoped.data || null;
+  if (!isMissingAccountKeyColumn(scoped.error)) throw scoped.error;
+
+  const legacy = await supabase
+    .from('shopee_shops')
+    .select('shop_id, region, merchant_id, status')
+    .eq('shop_id', String(shopId))
+    .maybeSingle();
+  if (legacy.error) throw legacy.error;
+  return legacy.data ? { account_key: accountKey, ...legacy.data } : null;
+}
+
+async function updateShopeeShopTokenByShopId(shopId: string | number, values: Record<string, unknown>, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const scoped = await supabase
+    .from('shopee_shops')
+    .update(values)
+    .eq('account_key', accountKey)
+    .eq('shop_id', String(shopId));
+  if (!scoped.error) return;
+  if (!isMissingAccountKeyColumn(scoped.error)) throw scoped.error;
+
+  const legacy = await supabase
+    .from('shopee_shops')
+    .update(values)
+    .eq('shop_id', String(shopId));
+  if (legacy.error) throw legacy.error;
+}
+
+async function getRegionShopRow(region: string, shopId: string | number, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const data = await getShopeeShopRowByShopId(shopId, accountKey);
   if (!data) throw new Error(`principal missing in shopee_shops for account=${accountKey}, region=${region}, shop_id=${shopId}`);
   if (String(data.region || '') !== String(region)) {
     throw new Error(`principal mismatch region/shop: token_region=${region} shops_region=${data.region} shop_id=${shopId}`);
@@ -425,18 +521,18 @@ async function persistShopToken(region: string, row: any, token: any, expiresAt:
     throw new Error(`principal mismatch merchant_id for region=${region}, shop_id=${row.shop_id}`);
   }
 
-  await supabase.from('shopee_tokens').update({
+  await updateShopeeTokenRow(region, {
     access_token: token.access_token,
     refresh_token: token.refresh_token,
     expires_at: expiresAt,
-  }).eq('account_key', accountKey).eq('region', region);
+  }, accountKey);
 
   if (row?.shop_id) {
-    await supabase.from('shopee_shops').update({
+    await updateShopeeShopTokenByShopId(row.shop_id, {
       access_token: token.access_token,
       refresh_token: token.refresh_token,
       expires_at: new Date(expiresAt * 1000).toISOString(),
-    }).eq('account_key', accountKey).eq('shop_id', String(row.shop_id));
+    }, accountKey);
   }
   audit('shop_token_persist_ok', {
     account_key: accountKey,
@@ -450,7 +546,7 @@ async function persistShopToken(region: string, row: any, token: any, expiresAt:
 }
 
 async function refreshMerchantToken(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
+  const data = await getShopeeTokenRow(region, accountKey);
   if (!data) throw new Error(`token no: ${region}`);
   if (!data.merchant_id) throw new Error(`merchant_id missing for region ${region}`);
   const app = await getApp(accountKey);
@@ -497,7 +593,7 @@ async function canCallShopInfo(app: any, accessToken: string, shopId: number | s
 }
 
 async function forceRefreshShopToken(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
+  const data = await getShopeeTokenRow(region, accountKey);
   if (!data) throw new Error(`token no: ${region}`);
   const app = await getApp(accountKey);
   const path = '/api/v2/auth/access_token/get';
@@ -539,7 +635,7 @@ async function forceRefreshShopToken(region: string, accountKey = DEFAULT_SHOPEE
 // CBSC merchant token: refresh with main_account_id (Shopee CB Mall convention).
 // Tries main_account_id first, then merchant_id as fallback.
 async function issueMerchantToken(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
+  const data = await getShopeeTokenRow(region, accountKey);
   if (!data) throw new Error(`token no: ${region}`);
   const app = await getApp(accountKey);
   const path = '/api/v2/auth/access_token/get';
@@ -570,7 +666,7 @@ async function issueMerchantToken(region: string, accountKey = DEFAULT_SHOPEE_AC
 }
 
 async function getValidToken(region: string, mode: 'shop' | 'merchant' = 'shop', accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
+  const data = await getShopeeTokenRow(region, accountKey);
   if (!data) throw new Error(`token no: ${region}`);
   const now = Math.floor(Date.now() / 1000);
   if (data.expires_at && now < data.expires_at - 60) return { access_token: data.access_token, shop_id: data.shop_id, merchant_id: data.merchant_id, expires_at: data.expires_at };
@@ -630,7 +726,7 @@ async function shopApiCall(region: string, path: string, opts: any = {}) {
 
 // Refresh the _MERCHANT row's access_token using merchant_id principal.
 async function refreshMerchantRowTokenStrict(accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<{ access_token: string; merchant_id: number; expires_at: number }> {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', '_MERCHANT').single();
+  const data = await getShopeeTokenRow('_MERCHANT', accountKey);
   if (!data || !data.refresh_token || !data.merchant_id) throw new Error('merchant row token missing');
   const app = await getApp(accountKey);
   const path = '/api/v2/auth/access_token/get';
@@ -648,11 +744,11 @@ async function refreshMerchantRowTokenStrict(accountKey = DEFAULT_SHOPEE_ACCOUNT
     throw new Error(`merchant row refresh: ${j.error || 'missing_access_token'} ${j.message || ''}`.trim());
   }
   const newExpiry = Math.floor(Date.now() / 1000) + (j.expire_in || 14400);
-  await supabase.from('shopee_tokens').update({
+  await updateShopeeTokenRow('_MERCHANT', {
     access_token: j.access_token,
     refresh_token: j.refresh_token || data.refresh_token,
     expires_at: newExpiry,
-  }).eq('account_key', accountKey).eq('region', '_MERCHANT');
+  }, accountKey);
   audit('merchant_row_refresh_ok', { account_key: accountKey, merchant_id: data.merchant_id, expire_in: j.expire_in });
   return { access_token: j.access_token, merchant_id: data.merchant_id, expires_at: newExpiry };
 }
@@ -668,7 +764,7 @@ async function refreshMerchantRowToken(accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY):
 
 // Get valid merchant token from _MERCHANT row, refreshing if needed.
 async function getValidMerchantToken(accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<{ access_token: string; merchant_id: number; expires_at?: number } | null> {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', '_MERCHANT').single();
+  const data = await getShopeeTokenRow('_MERCHANT', accountKey);
   if (!data || !data.access_token || !data.merchant_id) return null;
   const now = Math.floor(Date.now() / 1000);
   if (data.expires_at && now < data.expires_at - 60) {
@@ -2271,7 +2367,7 @@ async function buildCategoryAttributeListForRegions(baseRegion: string, regions:
 }
 
 async function getRegionShopId(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<number> {
-  const { data } = await supabase.from('shopee_tokens').select('shop_id').eq('account_key', accountKey).eq('region', region).single();
+  const data = await getShopeeTokenRow(region, accountKey);
   const shopId = Number(data?.shop_id);
   if (!shopId) throw new Error(`no shop_id for account=${accountKey}, region ${region}`);
   return shopId;
@@ -2692,14 +2788,18 @@ function hasOptionVariationPayload(target: any, body: any): boolean {
     && variation.model.length > 0;
 }
 
-function markBrOptionCrossuploadBlocked(outcome: any, task: any, publishRes: any) {
+function markBrOptionCrossuploadBlocked(outcome: any, task: any, publishRes: any, details: any = {}) {
   return {
     ...outcome,
     ok: false,
     error: 'BR_OPTION_CROSSUPLOAD_PERMISSION_BLOCKED',
-    message: 'Shopee BR rejected direct CBSC option Global Product crossupload. Use the BR single-then-global-option fallback path.',
+    message: 'Shopee BR rejected direct CBSC option Global Product crossupload. The bridge will only retry the requested existing global_item_id; creating a replacement Global Product is intentionally disabled.',
     br_option_crossupload_blocked: true,
-    retry_suppressed: true,
+    new_global_fallback_suppressed: true,
+    reuse_existing_global_item_only: true,
+    retry_suppressed: !details?.minimal_item_retry,
+    global_item_id: details?.global_item_id ?? outcome?.global_item_id ?? null,
+    minimal_item_retry: details?.minimal_item_retry ?? outcome?.minimal_item_retry ?? null,
     raw_task: task || outcome?.raw_task || null,
     raw_create: publishRes || outcome?.raw_create || null,
   };
@@ -2780,186 +2880,6 @@ function variationModelGlobalPrice(model: any, fallback = 0): number {
 function variationModelTargetPrice(model: any, fallback = 0): number {
   const price = Number(model?.original_price ?? model?.price ?? fallback ?? 0);
   return Number.isFinite(price) && price > 0 ? price : Number(fallback || 0);
-}
-
-function brFallbackParentSku(target: any, body: any, variation: any): string {
-  const explicit = String(target?.sku || body?.sku || body?.global_item_sku || '').trim();
-  if (explicit) return explicit.slice(0, 100);
-  const firstSku = String(variation?.model?.[0]?.model_sku || variation?.model?.[0]?.global_model_sku || '').trim();
-  return (firstSku ? firstSku.replace(/[-_][^-_]+$/, '') : `BR-OPTION-${Date.now()}`).slice(0, 100);
-}
-
-async function cleanupGlobalItemBestEffort(region: string, globalItemId: number, accountKey: string) {
-  if (!globalItemId) return null;
-  try {
-    return await merchantApiCall(region, '/api/v2/global_product/delete_global_item', {
-      method: 'POST',
-      body: { global_item_id: globalItemId },
-      account_key: accountKey,
-    });
-  } catch (e: any) {
-    return { error: 'cleanup_exception', message: String(e?.message || e) };
-  }
-}
-
-async function waitForShopModelsWithDetails(region: string, itemId: number, expectedCount: number, accountKey: string) {
-  let last: any = null;
-  for (let attempt = 0; attempt < 10; attempt += 1) {
-    if (attempt > 0) await new Promise(s => setTimeout(s, 5000));
-    last = await shopApiCall(region, '/api/v2/product/get_model_list', { query: { item_id: itemId }, account_key: accountKey });
-    const models = Array.isArray(last?.response?.model) ? last.response.model : [];
-    const detailed = models.filter((model: any) => (
-      model?.model_id
-      && model?.model_sku
-      && Array.isArray(model?.tier_index)
-      && model.tier_index.length > 0
-      && Array.isArray(model?.price_info)
-      && model.price_info.length > 0
-    ));
-    if (models.length >= expectedCount && detailed.length >= expectedCount) {
-      return { ok: true, models, raw: last, attempts: attempt + 1 };
-    }
-  }
-  return {
-    ok: false,
-    error: 'shop_models_not_ready',
-    models: Array.isArray(last?.response?.model) ? last.response.model : [],
-    raw: last,
-  };
-}
-
-async function publishBrOptionViaSingleThenGlobalModels(shopId: number, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, reason = 'br_direct_option_crossupload_failed') {
-  const region = String(target?.region || 'BR').toUpperCase();
-  const variation = normalizeVariation(target?.variation || body?.variation);
-  if (region !== 'BR' || !variation?.model?.length) {
-    return { ok: false, region, shop_id: shopId, stage: 'br_single_option_fallback_preflight', error: 'BR option variation required' };
-  }
-  const parentSku = brFallbackParentSku(target, body, variation);
-  const firstModel = variation.model[0];
-  const firstGlobalPrice = variationModelGlobalPrice(firstModel, Number(body.global_price ?? body.price ?? 0));
-  const firstTargetPrice = variationModelTargetPrice(firstModel, Number(target?.price ?? body.price ?? 0));
-  const totalStock = variation.model.reduce((sum: number, model: any) => sum + variationModelStock(model, body.stock), 0);
-  const fallbackBody = {
-    ...body,
-    sku: parentSku,
-    variation: undefined,
-    price: firstGlobalPrice,
-    global_price: firstGlobalPrice,
-    stock: totalStock || variationModelStock(firstModel, body.stock),
-    weight_g: Number(firstModel?.weight_g ?? body.weight_g ?? 100),
-    image_id: target?.image_id || body.image_id,
-    image_id_list: target?.image_id_list || body.image_id_list,
-    image_url: target?.image_url || body.image_url,
-    image_url_list: target?.image_url_list || body.image_url_list,
-  };
-  const addPayload = buildGlobalItemPayload(fallbackBody);
-  const addRes = await merchantApiCall(region, '/api/v2/global_product/add_global_item', { method: 'POST', body: addPayload, account_key: accountKey });
-  const fallbackGlobalItemId = Number(addRes?.response?.global_item_id || 0);
-  if (addRes.error || !fallbackGlobalItemId) {
-    return { ok: false, region, shop_id: shopId, stage: 'br_single_option_add_global_item', error: addRes.error || 'global_item_id missing', message: addRes.message, raw_add_global_item: addRes };
-  }
-
-  try {
-    const logistics = await getPublishLogistics(region, body.is_pre_order === true || body.lifecycle_state === 'pre_order', accountKey);
-    const singleTarget = {
-      ...target,
-      variation: undefined,
-      price: firstTargetPrice,
-      stock: totalStock || variationModelStock(firstModel, target.stock),
-    };
-    const item = buildPublishItemPayload(fallbackBody, singleTarget, logistics);
-    const publishBody = { global_item_id: fallbackGlobalItemId, shop_id: shopId, shop_region: region, item };
-    const publishRes = await merchantApiCall(region, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: accountKey });
-    if (publishRes.error || !publishRes.response?.publish_task_id) {
-      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-      return { ok: false, region, shop_id: shopId, stage: 'br_single_option_publish_single', error: publishRes.error || 'publish_task_id missing', message: publishRes.message, raw_create: publishRes, cleanup };
-    }
-    const publishTaskId = Number(publishRes.response.publish_task_id);
-    let task: any = null;
-    let pollAttempts = 0;
-    for (let i = 0; i < 5; i += 1) {
-      await new Promise(s => setTimeout(s, 2000));
-      task = await merchantApiCall(region, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id: publishTaskId }, account_key: accountKey });
-      pollAttempts = i + 1;
-      if (isCrossuploadPermissionPublishFailure(task)) break;
-      if (!shouldContinuePublishPolling(task)) break;
-    }
-    let outcome = parsePublishOutcome(region, shopId, publishTaskId, task);
-    if (!outcome.ok) {
-      const verified = await verifyPublishedListOutcome(region, shopId, fallbackGlobalItemId, publishTaskId, task, accountKey).catch(() => null);
-      if (verified) outcome = verified;
-    }
-    if (!outcome.ok || !outcome.item_id) {
-      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-      return { ...outcome, ok: false, stage: 'br_single_option_verify_single_publish', raw_create: publishRes, raw_task: task, cleanup };
-    }
-
-    const firstVariation = { tier_variation: variation.tier_variation, model: [firstModel] };
-    const firstGlobalModels = buildGlobalModels(firstVariation, firstGlobalPrice, variationModelStock(firstModel, body.stock));
-    const initRes = await merchantApiCall(region, '/api/v2/global_product/init_tier_variation', {
-      method: 'POST',
-      body: { global_item_id: fallbackGlobalItemId, tier_variation: variation.tier_variation, global_model: [firstGlobalModels[0]] },
-      account_key: accountKey,
-    });
-    if (initRes.error) {
-      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-      return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_init_global_tier', error: initRes.error, message: initRes.message, raw_init_tier_variation: initRes, cleanup };
-    }
-
-    const remainingModels = variation.model.slice(1);
-    let addModelRes: any = null;
-    if (remainingModels.length) {
-      const addPayloadModels = buildAddGlobalModelPayload(
-        fallbackGlobalItemId,
-        buildGlobalModels({ tier_variation: variation.tier_variation, model: remainingModels }, firstGlobalPrice, 0),
-        fallbackBody,
-        target,
-      );
-      addModelRes = await merchantApiCall(region, '/api/v2/global_product/add_global_model', {
-        method: 'POST',
-        body: addPayloadModels,
-        account_key: accountKey,
-      });
-      if (addModelRes.error) {
-        const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-        return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_add_global_model', error: addModelRes.error, message: addModelRes.message, raw_add_global_model: addModelRes, cleanup };
-      }
-    }
-
-    const modelsReady = await waitForShopModelsWithDetails(region, Number(outcome.item_id), variation.model.length, accountKey);
-    if (!modelsReady.ok) {
-      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-      return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_wait_shop_models', error: modelsReady.error, raw_models: modelsReady.raw, cleanup };
-    }
-
-    const priceSync = await syncShopModelPricesAfterPublish(region, Number(outcome.item_id), { ...target, variation }, { ...body, variation }, accountKey);
-    if (priceSync?.ok === false) {
-      const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-      return { ok: false, region, shop_id: shopId, item_id: outcome.item_id, stage: 'br_single_option_price_sync', error: priceSync.error || 'price sync failed', price_sync: priceSync, cleanup };
-    }
-
-    return {
-      ...outcome,
-      ok: true,
-      region,
-      shop_id: shopId,
-      global_item_id: fallbackGlobalItemId,
-      item_id: Number(outcome.item_id),
-      publish_status: 'br_single_then_global_option_fallback',
-      br_single_then_global_option_fallback: true,
-      fallback_reason: reason,
-      raw_create: publishRes,
-      raw_task: task,
-      raw_init_tier_variation: initRes,
-      raw_add_global_model: addModelRes,
-      price_sync: priceSync,
-      poll_attempts: pollAttempts,
-      shop_model_count: modelsReady.models.length,
-    };
-  } catch (e: any) {
-    const cleanup = await cleanupGlobalItemBestEffort(region, fallbackGlobalItemId, accountKey);
-    return { ok: false, region, shop_id: shopId, global_item_id: fallbackGlobalItemId, stage: 'br_single_option_fallback_exception', error: String(e?.message || e), cleanup };
-  }
 }
 
 async function retryTwMinimalPublish(globalItemId: number, shopId: number, target: any, body: any, logistics: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
@@ -3490,6 +3410,190 @@ async function requireBridgeTokenOrAuthenticatedUser(req: Request): Promise<Resp
   return authResult.response || null;
 }
 
+const SHOPEE_OAUTH_CALLBACK_TTL_SEC = 30 * 60;
+
+function shopeeOAuthCallbackParams(url: URL) {
+  return {
+    account_key: normalizeAccountKey(url.searchParams.get('account_key') || url.searchParams.get('accountKey')),
+    main_account_id: String(url.searchParams.get('main_account_id') || ''),
+    shop_id: String(url.searchParams.get('shop_id') || ''),
+    display_name: String(url.searchParams.get('display_name') || url.searchParams.get('displayName') || ''),
+    layer_asset_path: String(url.searchParams.get('layer_asset_path') || url.searchParams.get('layerAssetPath') || ''),
+    exp: String(url.searchParams.get('exp') || ''),
+    nonce: String(url.searchParams.get('nonce') || ''),
+  };
+}
+
+function shopeeOAuthCallbackBase(params: Record<string, string>) {
+  return [
+    ['account_key', params.account_key || DEFAULT_SHOPEE_ACCOUNT_KEY],
+    ['display_name', params.display_name || ''],
+    ['exp', params.exp || ''],
+    ['layer_asset_path', params.layer_asset_path || ''],
+    ['main_account_id', params.main_account_id || ''],
+    ['nonce', params.nonce || ''],
+    ['shop_id', params.shop_id || ''],
+  ].map(([k, v]) => `${k}=${encodeURIComponent(String(v))}`).join('&');
+}
+
+async function signShopeeOAuthCallback(app: any, params: Record<string, string>) {
+  return await hmac(app.partner_key, shopeeOAuthCallbackBase(params));
+}
+
+async function buildShopeeOAuthCallbackRedirect(baseUrl: string, app: any, params: Record<string, string>) {
+  const exp = String(Math.floor(Date.now() / 1000) + SHOPEE_OAUTH_CALLBACK_TTL_SEC);
+  const nonce = crypto.randomUUID();
+  const signedParams = { ...params, exp, nonce };
+  const sig = await signShopeeOAuthCallback(app, signedParams);
+  const redirectUrl = new URL('/functions/v1/shopee-bridge/oauth_callback', baseUrl);
+  for (const [key, value] of Object.entries(signedParams)) {
+    if (value) redirectUrl.searchParams.set(key, String(value));
+  }
+  redirectUrl.searchParams.set('sig', sig);
+  return redirectUrl.toString();
+}
+
+function buildShopeeOAuthRelayRedirect(targetUrl: string) {
+  const relayBase = Deno.env.get('SHOPEE_OAUTH_RELAY_URL')
+    || 'https://bpdafetvjyvvwbksvowu.supabase.co/functions/v1/shopee-oauth-relay';
+  const relayUrl = new URL(relayBase);
+  relayUrl.searchParams.set('target', targetUrl);
+  return relayUrl.toString();
+}
+
+async function verifyShopeeOAuthCallbackSignature(url: URL, app: any) {
+  const params = shopeeOAuthCallbackParams(url);
+  const sig = String(url.searchParams.get('sig') || '');
+  const exp = Number(params.exp || 0);
+  if (!sig) return { ok: false, error: 'oauth_callback_sig_required' };
+  if (!Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) {
+    return { ok: false, error: 'oauth_callback_expired' };
+  }
+  if (!params.main_account_id && !params.shop_id) {
+    return { ok: false, error: 'oauth_callback_principal_required' };
+  }
+  const expected = await signShopeeOAuthCallback(app, params);
+  return { ok: sig === expected, error: sig === expected ? null : 'oauth_callback_sig_invalid', params };
+}
+
+function sanitizedShopeeOAuthTokenResponse(raw: any) {
+  if (!raw || typeof raw !== 'object') return raw;
+  const { access_token, refresh_token, ...safeRaw } = raw;
+  return {
+    ...safeRaw,
+    access_token_set: Boolean(access_token),
+    refresh_token_set: Boolean(refresh_token),
+  };
+}
+
+async function exchangeShopeeOAuthCode(url: URL, accountKey: string) {
+  const code = url.searchParams.get('code') || '';
+  const main_account_id = url.searchParams.get('main_account_id') || '';
+  const shop_id = url.searchParams.get('shop_id') || '';
+  const displayName = String(url.searchParams.get('display_name') || url.searchParams.get('displayName') || accountKey).trim() || accountKey;
+  const layerAssetPath = String(url.searchParams.get('layer_asset_path') || url.searchParams.get('layerAssetPath') || '').trim();
+  if (!code) return jsonResp({ ok: false, error: 'code required' }, 400);
+  if (!main_account_id && !shop_id) return jsonResp({ ok: false, error: 'main_account_id or shop_id required' }, 400);
+  const app = await getApp(accountKey);
+  const path = '/api/v2/auth/token/get';
+  const ts = Math.floor(Date.now() / 1000);
+  const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
+  const body: any = { code, partner_id: Number(app.partner_id) };
+  if (main_account_id) body.main_account_id = Number(main_account_id);
+  if (shop_id) body.shop_id = Number(shop_id);
+  const r = await fetch(`https://${host(app.is_sandbox)}${path}?partner_id=${app.partner_id}&timestamp=${ts}&sign=${sign}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const j = await r.json();
+  if (j.error || !j.access_token) {
+    return jsonResp({ ok: false, error: j.error || 'no_access_token', message: j.message || null, raw: sanitizedShopeeOAuthTokenResponse(j) }, 502);
+  }
+  // Persist merchant row (KRSC merchant token)
+  const now = Math.floor(Date.now() / 1000);
+  const expires_at = now + Number(j.expire_in || 14400);
+  const merchant_id_list: number[] = Array.isArray(j.merchant_id_list) ? j.merchant_id_list.map((x: any) => Number(x)) : [];
+  const merchant_id = merchant_id_list[0] || null;
+  const updates: any[] = [];
+  if (main_account_id || merchant_id || layerAssetPath) {
+    const profilePayload: Record<string, unknown> = {
+      account_key: accountKey,
+      display_name: displayName,
+      status: 'active',
+      updated_at: new Date().toISOString(),
+    };
+    if (main_account_id) profilePayload.main_account_id = Number(main_account_id);
+    if (merchant_id) profilePayload.merchant_id = merchant_id;
+    if (layerAssetPath) profilePayload.layer_asset_path = layerAssetPath;
+    const { error: profileErr } = await supabase
+      .from('shopee_account_profiles')
+      .upsert(profilePayload, { onConflict: 'account_key' });
+    updates.push({ kind: 'account_profile', account_key: accountKey, error: profileErr?.message || null });
+  }
+  if (main_account_id && merchant_id) {
+    const { error } = await supabase.from('shopee_tokens').upsert({
+      account_key: accountKey, region: '_MERCHANT', shop_id: Number(main_account_id), merchant_id, access_token: j.access_token, refresh_token: j.refresh_token, expires_at,
+    }, { onConflict: 'account_key,region' });
+    updates.push({ kind: 'merchant', account_key: accountKey, region: '_MERCHANT', shop_id: main_account_id, error: error?.message || null });
+  }
+  const shop_id_list: number[] = Array.isArray(j.shop_id_list) ? j.shop_id_list.map((x: any) => Number(x)) : [];
+  for (const sid of shop_id_list) {
+    if (!sid) continue;
+    try {
+      const probe = await probeShopToken(app, j.access_token, sid);
+      const shopRegion = String(probe.region || '').toUpperCase();
+      if (!probe.ok || !shopRegion) {
+        updates.push({ kind: 'shop', account_key: accountKey, shop_id: sid, ok: false, error: probe.error || 'shop_region_unresolved', message: probe.message || null });
+        continue;
+      }
+      const shopTs = Math.floor(Date.now() / 1000);
+      const shopSign = await hmac(app.partner_key, `${app.partner_id}${path}${shopTs}`);
+      const shopTokenResp = await fetch(`https://${host(app.is_sandbox)}${path}?partner_id=${app.partner_id}&timestamp=${shopTs}&sign=${shopSign}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh_token: j.refresh_token, partner_id: Number(app.partner_id), shop_id: sid }),
+      });
+      const shopToken = await shopTokenResp.json();
+      if (shopToken.error || !shopToken.access_token || !shopToken.refresh_token) {
+        updates.push({ kind: 'shop', account_key: accountKey, region: shopRegion, shop_id: sid, ok: false, error: shopToken.error || 'missing_shop_token', message: shopToken.message || null });
+        continue;
+      }
+      const shopExpiresAt = Math.floor(Date.now() / 1000) + Number(shopToken.expire_in || 14400);
+      const expiresIso = new Date(shopExpiresAt * 1000).toISOString();
+      const shopPayload = {
+        account_key: accountKey,
+        shop_id: String(sid),
+        region: shopRegion,
+        shop_name: probe.shop_name || null,
+        access_token: shopToken.access_token,
+        refresh_token: shopToken.refresh_token,
+        expires_at: expiresIso,
+        status: 'active',
+        authorized_at: new Date().toISOString(),
+        merchant_id,
+      };
+      const { error: shopErr } = await supabase
+        .from('shopee_shops')
+        .upsert(shopPayload, { onConflict: 'shop_id' });
+      const { error: tokenErr } = await supabase.from('shopee_tokens').upsert({
+        account_key: accountKey,
+        region: shopRegion,
+        shop_id: sid,
+        merchant_id,
+        access_token: shopToken.access_token,
+        refresh_token: shopToken.refresh_token,
+        expires_at: shopExpiresAt,
+        is_sandbox: false,
+      }, { onConflict: 'account_key,region' });
+      updates.push({ kind: 'shop', account_key: accountKey, region: shopRegion, shop_id: sid, ok: !shopErr && !tokenErr, shop_error: shopErr?.message || null, token_error: tokenErr?.message || null });
+    } catch (e: any) {
+      updates.push({ kind: 'shop', account_key: accountKey, shop_id: sid, ok: false, error: String(e?.message || e) });
+    }
+  }
+  return jsonResp({ ok: true, account_key: accountKey, access_token_set: !!j.access_token, expires_at, merchant_id, merchant_id_list, shop_id_list, updates, raw: sanitizedShopeeOAuthTokenResponse(j) });
+}
+
 async function resolveHeadlessGlobalItemId(body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<{ ok: true; global_item_id: number; source: string; rows?: any[] } | { ok: false; status: number; error: string; rows?: any[] }> {
   const explicit = Number(body.global_item_id || body.globalItemId || 0);
   if (Number.isFinite(explicit) && explicit > 0) {
@@ -3757,7 +3861,7 @@ Deno.serve(async (req) => {
     }
     if (action === 'try_refresh_variants') {
       // Tries all known refresh parameter shapes for the current region to find the one that returns a valid token.
-      const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
+      const data = await getShopeeTokenRow(region, accountKey);
       if (!data) return jsonResp({ ok: false, error: `no tokens for region ${region}` }, 404);
       const app = await getApp(accountKey);
       const path = '/api/v2/auth/access_token/get';
@@ -3795,13 +3899,13 @@ Deno.serve(async (req) => {
       return jsonResp({ ok: true, account_key: accountKey, region, MAIN_ACCOUNT_ID: await mainAccountIdForAccount(accountKey), results });
     }
     if (action === 'tokens') {
-      const { data } = await supabase.from('shopee_tokens').select('account_key, region, shop_id, merchant_id, expires_at, is_sandbox').eq('account_key', accountKey);
+      const data = await getShopeeTokenRows(accountKey);
       const now = Math.floor(Date.now() / 1000);
       return jsonResp({ ok: true, account_key: accountKey, tokens: (data || []).map(r => ({ ...r, expires_in_sec: r.expires_at - now })) });
     }
     if (action === 'token_probe') {
       const app = await getApp(accountKey);
-      const { data } = await supabase.from('shopee_tokens').select('account_key, region, shop_id, merchant_id, expires_at, is_sandbox, access_token').eq('account_key', accountKey).eq('region', region).single();
+      const data = await getShopeeTokenRow(region, accountKey);
       if (!data) return jsonResp({ ok: false, region, error: 'token no' }, 404);
       const now = Math.floor(Date.now() / 1000);
       const probe = await probeShopToken(app, data.access_token, data.shop_id);
@@ -3824,12 +3928,7 @@ Deno.serve(async (req) => {
       const retryBaseMs = parsePositiveInt(url.searchParams.get('retry_base_ms'), DEFAULT_RETRY_BASE_MS, 100, 10000);
       const app = await getApp(accountKey);
       const now = Math.floor(Date.now() / 1000);
-      const { data } = await supabase
-        .from('shopee_tokens')
-        .select('account_key, region, shop_id, merchant_id, expires_at, is_sandbox, access_token')
-        .eq('account_key', accountKey)
-        .in('region', targetRegions)
-        .order('region', { ascending: true });
+      const data = await getShopeeTokenRows(accountKey, { regions: targetRegions, includeAccessToken: true });
       const byRegion = new Map((data || []).map((row: any) => [String(row.region), row]));
       const results: any[] = [];
       const counters = {
@@ -3883,12 +3982,7 @@ Deno.serve(async (req) => {
           next_refresh_due_in_sec: expiresIn - refreshThresholdSec,
         };
 
-        const { data: shopRow } = await supabase
-          .from('shopee_shops')
-          .select('shop_id, region, merchant_id, status')
-          .eq('account_key', accountKey)
-          .eq('shop_id', String(row.shop_id))
-          .maybeSingle();
+        const shopRow = await getShopeeShopRowByShopId(row.shop_id, accountKey);
         out.shop_status = shopRow?.status || null;
         if (!shopRow) {
           counters.principal_mismatch++;
@@ -3968,12 +4062,7 @@ Deno.serve(async (req) => {
       if (includeMerchant) {
         counters.total++;
         counters.merchant_total++;
-        const { data: merchantRow } = await supabase
-          .from('shopee_tokens')
-          .select('account_key, region, merchant_id, expires_at, is_sandbox, access_token')
-          .eq('account_key', accountKey)
-          .eq('region', '_MERCHANT')
-          .maybeSingle();
+        const merchantRow = await getShopeeTokenRow('_MERCHANT', accountKey);
         if (!merchantRow) {
           counters.missing_token++;
           counters.merchant_fail++;
@@ -4279,9 +4368,9 @@ Deno.serve(async (req) => {
           if (publishRes.error) {
             const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
             if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
-              const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, reqAccountKey, 'br_create_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
-              if (fallback?.ok) results.push(fallback);
-              else results.push({ ...markBrOptionCrossuploadBlocked(createFailure, null, publishRes), br_single_then_global_option_fallback: fallback });
+              const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, 'br_existing_global_crossupload_create_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+              if (retryOutcome?.ok) results.push(await finalizePublishOutcomeAfterSuccess(retryOutcome, targetRegion, target, body, reqAccountKey));
+              else results.push(markBrOptionCrossuploadBlocked({ ...createFailure, minimal_item_retry: retryOutcome }, null, publishRes, { global_item_id, minimal_item_retry: retryOutcome }));
               return;
             }
             if (shouldRetryMinimalPublish(createFailure, publishRes)) {
@@ -4318,10 +4407,10 @@ Deno.serve(async (req) => {
           }
           let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
           if (!outcome.ok && targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(outcome, task, publishRes)) {
-            const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, reqAccountKey, 'br_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
-            outcome = fallback?.ok
-              ? fallback
-              : { ...markBrOptionCrossuploadBlocked(outcome, task, publishRes), br_single_then_global_option_fallback: fallback };
+            const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, 'br_existing_global_crossupload_task_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+            outcome = retryOutcome?.ok
+              ? retryOutcome
+              : markBrOptionCrossuploadBlocked({ ...outcome, minimal_item_retry: retryOutcome }, task, publishRes, { global_item_id, minimal_item_retry: retryOutcome });
           }
           if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldRetryMinimalPublish(outcome, task, publishRes)) {
             const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
@@ -4359,7 +4448,7 @@ Deno.serve(async (req) => {
             if (retryOutcome?.ok) outcome = retryOutcome;
             else (outcome as any).tw_minimal_item_retry = retryOutcome;
           }
-          // BR-only: if still failing after fallback, re-issue create_publish_task once more
+          // BR-only: if still failing and no minimal retry ran, re-issue create_publish_task for the same global_item_id once more.
           if (!outcome.ok && targetRegion === 'BR' && !(outcome as any).minimal_item_retry) {
             try {
               const retryPublishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: reqAccountKey });
@@ -4390,109 +4479,18 @@ Deno.serve(async (req) => {
       return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: reqAccountKey, global_item_id, logistics_repairs: publishLogisticsRepair, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults });
     }
     if (action === 'oauth_exchange') {
-      const code = url.searchParams.get('code') || '';
-      const main_account_id = url.searchParams.get('main_account_id') || '';
-      const shop_id = url.searchParams.get('shop_id') || '';
-      const displayName = String(url.searchParams.get('display_name') || url.searchParams.get('displayName') || accountKey).trim() || accountKey;
-      const layerAssetPath = String(url.searchParams.get('layer_asset_path') || url.searchParams.get('layerAssetPath') || '').trim();
-      if (!code) return jsonResp({ ok: false, error: 'code required' }, 400);
-      if (!main_account_id && !shop_id) return jsonResp({ ok: false, error: 'main_account_id or shop_id required' }, 400);
       const app = await getApp(accountKey);
-      const path = '/api/v2/auth/token/get';
-      const ts = Math.floor(Date.now() / 1000);
-      const sign = await hmac(app.partner_key, `${app.partner_id}${path}${ts}`);
-      const body: any = { code, partner_id: Number(app.partner_id) };
-      if (main_account_id) body.main_account_id = Number(main_account_id);
-      if (shop_id) body.shop_id = Number(shop_id);
-      const r = await fetch(`https://${host(app.is_sandbox)}${path}?partner_id=${app.partner_id}&timestamp=${ts}&sign=${sign}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-      });
-      const j = await r.json();
-      if (j.error || !j.access_token) return jsonResp({ ok: false, error: j.error || 'no_access_token', message: j.message || null, raw: j }, 502);
-      // Persist merchant row (KRSC merchant token)
-      const now = Math.floor(Date.now() / 1000);
-      const expires_at = now + Number(j.expire_in || 14400);
-      const merchant_id_list: number[] = Array.isArray(j.merchant_id_list) ? j.merchant_id_list.map((x: any) => Number(x)) : [];
-      const merchant_id = merchant_id_list[0] || null;
-      const updates: any[] = [];
-      if (main_account_id || merchant_id || layerAssetPath) {
-        const profilePayload: Record<string, unknown> = {
-          account_key: accountKey,
-          display_name: displayName,
-          status: 'active',
-          updated_at: new Date().toISOString(),
-        };
-        if (main_account_id) profilePayload.main_account_id = Number(main_account_id);
-        if (merchant_id) profilePayload.merchant_id = merchant_id;
-        if (layerAssetPath) profilePayload.layer_asset_path = layerAssetPath;
-        const { error: profileErr } = await supabase
-          .from('shopee_account_profiles')
-          .upsert(profilePayload, { onConflict: 'account_key' });
-        updates.push({ kind: 'account_profile', account_key: accountKey, error: profileErr?.message || null });
+      const verified = await verifyShopeeOAuthCallbackSignature(url, app);
+      if (url.searchParams.get('sig') && !verified.ok) {
+        return jsonResp({ ok: false, error: verified.error }, 403);
       }
-      if (main_account_id && merchant_id) {
-        const { error } = await supabase.from('shopee_tokens').upsert({
-          account_key: accountKey, region: '_MERCHANT', shop_id: Number(main_account_id), merchant_id, access_token: j.access_token, refresh_token: j.refresh_token, expires_at,
-        }, { onConflict: 'account_key,region' });
-        updates.push({ kind: 'merchant', account_key: accountKey, region: '_MERCHANT', shop_id: main_account_id, error: error?.message || null });
-      }
-      const shop_id_list: number[] = Array.isArray(j.shop_id_list) ? j.shop_id_list.map((x: any) => Number(x)) : [];
-      for (const sid of shop_id_list) {
-        if (!sid) continue;
-        try {
-          const probe = await probeShopToken(app, j.access_token, sid);
-          const shopRegion = String(probe.region || '').toUpperCase();
-          if (!probe.ok || !shopRegion) {
-            updates.push({ kind: 'shop', account_key: accountKey, shop_id: sid, ok: false, error: probe.error || 'shop_region_unresolved', message: probe.message || null });
-            continue;
-          }
-          const shopTs = Math.floor(Date.now() / 1000);
-          const shopSign = await hmac(app.partner_key, `${app.partner_id}${path}${shopTs}`);
-          const shopTokenResp = await fetch(`https://${host(app.is_sandbox)}${path}?partner_id=${app.partner_id}&timestamp=${shopTs}&sign=${shopSign}`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refresh_token: j.refresh_token, partner_id: Number(app.partner_id), shop_id: sid }),
-          });
-          const shopToken = await shopTokenResp.json();
-          if (shopToken.error || !shopToken.access_token || !shopToken.refresh_token) {
-            updates.push({ kind: 'shop', account_key: accountKey, region: shopRegion, shop_id: sid, ok: false, error: shopToken.error || 'missing_shop_token', message: shopToken.message || null });
-            continue;
-          }
-          const shopExpiresAt = Math.floor(Date.now() / 1000) + Number(shopToken.expire_in || 14400);
-          const expiresIso = new Date(shopExpiresAt * 1000).toISOString();
-          const shopPayload = {
-            account_key: accountKey,
-            shop_id: String(sid),
-            region: shopRegion,
-            shop_name: probe.shop_name || null,
-            access_token: shopToken.access_token,
-            refresh_token: shopToken.refresh_token,
-            expires_at: expiresIso,
-            status: 'active',
-            authorized_at: new Date().toISOString(),
-            merchant_id,
-          };
-          const { error: shopErr } = await supabase
-            .from('shopee_shops')
-            .upsert(shopPayload, { onConflict: 'shop_id' });
-          const { error: tokenErr } = await supabase.from('shopee_tokens').upsert({
-            account_key: accountKey,
-            region: shopRegion,
-            shop_id: sid,
-            merchant_id,
-            access_token: shopToken.access_token,
-            refresh_token: shopToken.refresh_token,
-            expires_at: shopExpiresAt,
-            is_sandbox: false,
-          }, { onConflict: 'account_key,region' });
-          updates.push({ kind: 'shop', account_key: accountKey, region: shopRegion, shop_id: sid, ok: !shopErr && !tokenErr, shop_error: shopErr?.message || null, token_error: tokenErr?.message || null });
-        } catch (e: any) {
-          updates.push({ kind: 'shop', account_key: accountKey, shop_id: sid, ok: false, error: String(e?.message || e) });
-        }
-      }
-      return jsonResp({ ok: true, account_key: accountKey, access_token_set: !!j.access_token, expires_at, merchant_id, merchant_id_list, shop_id_list, updates, raw: j });
+      return await exchangeShopeeOAuthCode(url, accountKey);
+    }
+    if (action === 'oauth_callback') {
+      const app = await getApp(accountKey);
+      const verified = await verifyShopeeOAuthCallbackSignature(url, app);
+      if (!verified.ok) return jsonResp({ ok: false, error: verified.error }, 403);
+      return await exchangeShopeeOAuthCode(url, accountKey);
     }
     if (action === 'merchant_shops') {
       const r = url.searchParams.get('region') || 'SG';
@@ -4501,15 +4499,26 @@ Deno.serve(async (req) => {
     }
     if (action === 'oauth_url') {
       const app = await getApp(accountKey);
-      const path = url.searchParams.get('shop') === '1'
-        ? '/api/v2/shop/auth_partner'
-        : '/api/v2/merchant/auth_partner';
+      const path = '/api/v2/shop/auth_partner';
       const ts = Math.floor(Date.now() / 1000);
       const base = `${app.partner_id}${path}${ts}`;
       const sign = await hmac(app.partner_key, base);
-      const redirect = url.searchParams.get('redirect') || 'https://shopee-dashboard-kohl.vercel.app/v2/';
+      const callbackMode = url.searchParams.get('callback') === '1';
+      const callbackBaseUrl = Deno.env.get('SUPABASE_URL') || 'https://mgqlwgnmwegzsjelbrih.supabase.co';
+      const callbackRedirect = callbackMode
+        ? await buildShopeeOAuthCallbackRedirect(callbackBaseUrl, app, {
+          account_key: accountKey,
+          main_account_id: String(url.searchParams.get('main_account_id') || await mainAccountIdForAccount(accountKey)),
+          shop_id: String(url.searchParams.get('shop_id') || ''),
+          display_name: String(url.searchParams.get('display_name') || url.searchParams.get('displayName') || accountKey),
+          layer_asset_path: String(url.searchParams.get('layer_asset_path') || url.searchParams.get('layerAssetPath') || ''),
+        })
+        : '';
+      const redirect = callbackMode
+        ? buildShopeeOAuthRelayRedirect(callbackRedirect)
+        : (url.searchParams.get('redirect') || 'https://shopee-dashboard-kohl.vercel.app/v2/');
       const oauthUrl = `https://${host(app.is_sandbox)}${path}?partner_id=${app.partner_id}&timestamp=${ts}&sign=${sign}&redirect=${encodeURIComponent(redirect)}`;
-      return jsonResp({ ok: true, account_key: accountKey, oauth_url: oauthUrl, partner_id: app.partner_id, timestamp: ts, path });
+      return jsonResp({ ok: true, account_key: accountKey, oauth_url: oauthUrl, partner_id: app.partner_id, timestamp: ts, path, redirect, callback_redirect: callbackRedirect || null, callback_mode: callbackMode });
     }
     if (action === 'force_refresh_all') {
       const regions = (url.searchParams.get('regions') || 'SG,TW,TH,MY,PH,BR').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
@@ -4883,16 +4892,9 @@ Deno.serve(async (req) => {
             }
             const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
             if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
-              const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, accountKey, 'br_create_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
-              if (fallback?.ok) {
-                if (targetInputs.length === 1 && Number(fallback.global_item_id) !== Number(global_item_id)) {
-                  fallback.original_global_item_id = global_item_id;
-                  fallback.original_global_item_cleanup = await cleanupGlobalItemBestEffort(r, global_item_id, accountKey);
-                }
-                results.push(fallback);
-              } else {
-                results.push({ ...markBrOptionCrossuploadBlocked(createFailure, null, publishRes), br_single_then_global_option_fallback: fallback });
-              }
+              const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, 'br_existing_global_crossupload_create_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+              if (retryOutcome?.ok) results.push(await finalizePublishOutcomeAfterSuccess(retryOutcome, targetRegion, target, body, accountKey));
+              else results.push(markBrOptionCrossuploadBlocked({ ...createFailure, minimal_item_retry: retryOutcome }, null, publishRes, { global_item_id, minimal_item_retry: retryOutcome }));
               return;
             }
             if (shouldRetryMinimalPublish(createFailure, publishRes)) {
@@ -4931,16 +4933,10 @@ Deno.serve(async (req) => {
           console.log(`[register_cbsc] region=${targetRegion} publish_task_id=${publish_task_id} poll_attempts=${pollAttempts} final_task=${JSON.stringify(task).slice(0, 1200)}`);
           let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
           if (!outcome.ok && targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(outcome, task, publishRes)) {
-            const fallback = await publishBrOptionViaSingleThenGlobalModels(shop_id, target, body, accountKey, 'br_publish_task_crossupload_failed').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'br_single_option_fallback_exception', error: String(e?.message || e) }));
-            if (fallback?.ok) {
-              if (targetInputs.length === 1 && Number(fallback.global_item_id) !== Number(global_item_id)) {
-                fallback.original_global_item_id = global_item_id;
-                fallback.original_global_item_cleanup = await cleanupGlobalItemBestEffort(r, global_item_id, accountKey);
-              }
-              outcome = fallback;
-            } else {
-              outcome = { ...markBrOptionCrossuploadBlocked(outcome, task, publishRes), br_single_then_global_option_fallback: fallback };
-            }
+            const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, 'br_existing_global_crossupload_task_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
+            outcome = retryOutcome?.ok
+              ? retryOutcome
+              : markBrOptionCrossuploadBlocked({ ...outcome, minimal_item_retry: retryOutcome }, task, publishRes, { global_item_id, minimal_item_retry: retryOutcome });
           }
           if (!outcome.ok && !(outcome as any).br_option_crossupload_blocked && shouldRetryMinimalPublish(outcome, task, publishRes)) {
             const retryReason = isCrossuploadPermissionPublishFailure(outcome, task, publishRes) ? 'crossupload_permission_task_retry' : 'variation_invalid_task_retry';
@@ -4993,7 +4989,7 @@ Deno.serve(async (req) => {
             if (retryOutcome?.ok) outcome = retryOutcome;
             else (outcome as any).tw_minimal_item_retry = retryOutcome;
           }
-          // BR-only: if still failing after fallback retries, re-issue create_publish_task once more
+          // BR-only: if still failing and no minimal retry ran, re-issue create_publish_task for the same global_item_id once more.
           if (!outcome.ok && targetRegion === 'BR' && !(outcome as any).minimal_item_retry) {
             try {
               stage_logs.push('BR retry: re-creating publish_task');
@@ -5019,9 +5015,7 @@ Deno.serve(async (req) => {
       });
       const reconciledResults = await reconcilePublishResultsWithPublishedList(global_item_id, targetInputs, results, accountKey, r, stage_logs);
       const responseResults = reconciledResults.map((row) => ({ account_key: accountKey, ...row }));
-      const fallbackGlobalItemId = responseResults.find((row: any) => row?.br_single_then_global_option_fallback && row?.global_item_id)?.global_item_id;
-      const responseGlobalItemId = fallbackGlobalItemId || global_item_id;
-      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id: responseGlobalItemId, original_global_item_id: fallbackGlobalItemId ? global_item_id : undefined, stage_logs, regional_global_price_adjustments: regionalGlobalPriceAdjustments, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, publishable_shops, publishable_status });
+      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id, stage_logs, regional_global_price_adjustments: regionalGlobalPriceAdjustments, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, publishable_shops, publishable_status });
       }); // end withPublishRequestId for register_cbsc
     }
     if (action === 'item_info') {

@@ -74,8 +74,8 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 // CBSC main account ID ??Shopee CB Mall / KRSC group. Same across all 10 region shops in our setup.
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
-// v83: Shopee OAuth signed callback TTL allows slower seller approval without expiring the relay target.
-const SOURCE_VERSION = 83;
+// v84: Shopee token/shop lookups support both account-aware and legacy schemas.
+const SOURCE_VERSION = 84;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -111,6 +111,7 @@ const PROXY_ALLOWED_HOSTS = new Set([
   'staronemall.com',
   'www.staronemall.com',
   'staronemall2.wisacdn.com',
+  'image.yes24.com',
   'cf.shopee.sg',
   'cf.shopee.tw',
   'cf.shopee.ph',
@@ -372,13 +373,107 @@ function fp(v: string | null | undefined): string {
   return Math.abs(h).toString(16).slice(0, 8);
 }
 
-async function getRegionShopRow(region: string, shopId: string | number, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const { data } = await supabase
+function isMissingAccountKeyColumn(error: any): boolean {
+  const text = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`;
+  return error?.code === '42703' && /account_key/i.test(text);
+}
+
+async function getShopeeTokenRow(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<any | null> {
+  const scoped = await supabase
+    .from('shopee_tokens')
+    .select('*')
+    .eq('account_key', accountKey)
+    .eq('region', region)
+    .maybeSingle();
+  if (!scoped.error) return scoped.data || null;
+  if (!isMissingAccountKeyColumn(scoped.error)) throw scoped.error;
+
+  const legacy = await supabase
+    .from('shopee_tokens')
+    .select('*')
+    .eq('region', region)
+    .maybeSingle();
+  if (legacy.error) throw legacy.error;
+  return legacy.data ? { account_key: accountKey, ...legacy.data } : null;
+}
+
+async function getShopeeTokenRows(accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, opts: { regions?: string[]; includeAccessToken?: boolean } = {}): Promise<any[]> {
+  const baseColumns = ['region', 'shop_id', 'merchant_id', 'expires_at', 'is_sandbox'];
+  if (opts.includeAccessToken) baseColumns.push('access_token');
+  const scopedColumns = ['account_key', ...baseColumns].join(', ');
+  const legacyColumns = baseColumns.join(', ');
+
+  let scopedQuery = supabase
+    .from('shopee_tokens')
+    .select(scopedColumns)
+    .eq('account_key', accountKey);
+  if (opts.regions?.length) scopedQuery = scopedQuery.in('region', opts.regions);
+  const scoped = await scopedQuery.order('region', { ascending: true });
+  if (!scoped.error) return scoped.data || [];
+  if (!isMissingAccountKeyColumn(scoped.error)) throw scoped.error;
+
+  let legacyQuery = supabase
+    .from('shopee_tokens')
+    .select(legacyColumns);
+  if (opts.regions?.length) legacyQuery = legacyQuery.in('region', opts.regions);
+  const legacy = await legacyQuery.order('region', { ascending: true });
+  if (legacy.error) throw legacy.error;
+  return (legacy.data || []).map((row: any) => ({ account_key: accountKey, ...row }));
+}
+
+async function updateShopeeTokenRow(region: string, values: Record<string, unknown>, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const scoped = await supabase
+    .from('shopee_tokens')
+    .update(values)
+    .eq('account_key', accountKey)
+    .eq('region', region);
+  if (!scoped.error) return;
+  if (!isMissingAccountKeyColumn(scoped.error)) throw scoped.error;
+
+  const legacy = await supabase
+    .from('shopee_tokens')
+    .update(values)
+    .eq('region', region);
+  if (legacy.error) throw legacy.error;
+}
+
+async function getShopeeShopRowByShopId(shopId: string | number, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<any | null> {
+  const scoped = await supabase
     .from('shopee_shops')
     .select('shop_id, region, merchant_id, status')
     .eq('account_key', accountKey)
     .eq('shop_id', String(shopId))
     .maybeSingle();
+  if (!scoped.error) return scoped.data || null;
+  if (!isMissingAccountKeyColumn(scoped.error)) throw scoped.error;
+
+  const legacy = await supabase
+    .from('shopee_shops')
+    .select('shop_id, region, merchant_id, status')
+    .eq('shop_id', String(shopId))
+    .maybeSingle();
+  if (legacy.error) throw legacy.error;
+  return legacy.data ? { account_key: accountKey, ...legacy.data } : null;
+}
+
+async function updateShopeeShopTokenByShopId(shopId: string | number, values: Record<string, unknown>, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const scoped = await supabase
+    .from('shopee_shops')
+    .update(values)
+    .eq('account_key', accountKey)
+    .eq('shop_id', String(shopId));
+  if (!scoped.error) return;
+  if (!isMissingAccountKeyColumn(scoped.error)) throw scoped.error;
+
+  const legacy = await supabase
+    .from('shopee_shops')
+    .update(values)
+    .eq('shop_id', String(shopId));
+  if (legacy.error) throw legacy.error;
+}
+
+async function getRegionShopRow(region: string, shopId: string | number, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const data = await getShopeeShopRowByShopId(shopId, accountKey);
   if (!data) throw new Error(`principal missing in shopee_shops for account=${accountKey}, region=${region}, shop_id=${shopId}`);
   if (String(data.region || '') !== String(region)) {
     throw new Error(`principal mismatch region/shop: token_region=${region} shops_region=${data.region} shop_id=${shopId}`);
@@ -426,18 +521,18 @@ async function persistShopToken(region: string, row: any, token: any, expiresAt:
     throw new Error(`principal mismatch merchant_id for region=${region}, shop_id=${row.shop_id}`);
   }
 
-  await supabase.from('shopee_tokens').update({
+  await updateShopeeTokenRow(region, {
     access_token: token.access_token,
     refresh_token: token.refresh_token,
     expires_at: expiresAt,
-  }).eq('account_key', accountKey).eq('region', region);
+  }, accountKey);
 
   if (row?.shop_id) {
-    await supabase.from('shopee_shops').update({
+    await updateShopeeShopTokenByShopId(row.shop_id, {
       access_token: token.access_token,
       refresh_token: token.refresh_token,
       expires_at: new Date(expiresAt * 1000).toISOString(),
-    }).eq('account_key', accountKey).eq('shop_id', String(row.shop_id));
+    }, accountKey);
   }
   audit('shop_token_persist_ok', {
     account_key: accountKey,
@@ -451,7 +546,7 @@ async function persistShopToken(region: string, row: any, token: any, expiresAt:
 }
 
 async function refreshMerchantToken(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
+  const data = await getShopeeTokenRow(region, accountKey);
   if (!data) throw new Error(`token no: ${region}`);
   if (!data.merchant_id) throw new Error(`merchant_id missing for region ${region}`);
   const app = await getApp(accountKey);
@@ -498,7 +593,7 @@ async function canCallShopInfo(app: any, accessToken: string, shopId: number | s
 }
 
 async function forceRefreshShopToken(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
+  const data = await getShopeeTokenRow(region, accountKey);
   if (!data) throw new Error(`token no: ${region}`);
   const app = await getApp(accountKey);
   const path = '/api/v2/auth/access_token/get';
@@ -540,7 +635,7 @@ async function forceRefreshShopToken(region: string, accountKey = DEFAULT_SHOPEE
 // CBSC merchant token: refresh with main_account_id (Shopee CB Mall convention).
 // Tries main_account_id first, then merchant_id as fallback.
 async function issueMerchantToken(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
+  const data = await getShopeeTokenRow(region, accountKey);
   if (!data) throw new Error(`token no: ${region}`);
   const app = await getApp(accountKey);
   const path = '/api/v2/auth/access_token/get';
@@ -571,7 +666,7 @@ async function issueMerchantToken(region: string, accountKey = DEFAULT_SHOPEE_AC
 }
 
 async function getValidToken(region: string, mode: 'shop' | 'merchant' = 'shop', accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
+  const data = await getShopeeTokenRow(region, accountKey);
   if (!data) throw new Error(`token no: ${region}`);
   const now = Math.floor(Date.now() / 1000);
   if (data.expires_at && now < data.expires_at - 60) return { access_token: data.access_token, shop_id: data.shop_id, merchant_id: data.merchant_id, expires_at: data.expires_at };
@@ -631,7 +726,7 @@ async function shopApiCall(region: string, path: string, opts: any = {}) {
 
 // Refresh the _MERCHANT row's access_token using merchant_id principal.
 async function refreshMerchantRowTokenStrict(accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<{ access_token: string; merchant_id: number; expires_at: number }> {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', '_MERCHANT').single();
+  const data = await getShopeeTokenRow('_MERCHANT', accountKey);
   if (!data || !data.refresh_token || !data.merchant_id) throw new Error('merchant row token missing');
   const app = await getApp(accountKey);
   const path = '/api/v2/auth/access_token/get';
@@ -649,11 +744,11 @@ async function refreshMerchantRowTokenStrict(accountKey = DEFAULT_SHOPEE_ACCOUNT
     throw new Error(`merchant row refresh: ${j.error || 'missing_access_token'} ${j.message || ''}`.trim());
   }
   const newExpiry = Math.floor(Date.now() / 1000) + (j.expire_in || 14400);
-  await supabase.from('shopee_tokens').update({
+  await updateShopeeTokenRow('_MERCHANT', {
     access_token: j.access_token,
     refresh_token: j.refresh_token || data.refresh_token,
     expires_at: newExpiry,
-  }).eq('account_key', accountKey).eq('region', '_MERCHANT');
+  }, accountKey);
   audit('merchant_row_refresh_ok', { account_key: accountKey, merchant_id: data.merchant_id, expire_in: j.expire_in });
   return { access_token: j.access_token, merchant_id: data.merchant_id, expires_at: newExpiry };
 }
@@ -669,7 +764,7 @@ async function refreshMerchantRowToken(accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY):
 
 // Get valid merchant token from _MERCHANT row, refreshing if needed.
 async function getValidMerchantToken(accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<{ access_token: string; merchant_id: number; expires_at?: number } | null> {
-  const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', '_MERCHANT').single();
+  const data = await getShopeeTokenRow('_MERCHANT', accountKey);
   if (!data || !data.access_token || !data.merchant_id) return null;
   const now = Math.floor(Date.now() / 1000);
   if (data.expires_at && now < data.expires_at - 60) {
@@ -2272,7 +2367,7 @@ async function buildCategoryAttributeListForRegions(baseRegion: string, regions:
 }
 
 async function getRegionShopId(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<number> {
-  const { data } = await supabase.from('shopee_tokens').select('shop_id').eq('account_key', accountKey).eq('region', region).single();
+  const data = await getShopeeTokenRow(region, accountKey);
   const shopId = Number(data?.shop_id);
   if (!shopId) throw new Error(`no shop_id for account=${accountKey}, region ${region}`);
   return shopId;
@@ -3766,7 +3861,7 @@ Deno.serve(async (req) => {
     }
     if (action === 'try_refresh_variants') {
       // Tries all known refresh parameter shapes for the current region to find the one that returns a valid token.
-      const { data } = await supabase.from('shopee_tokens').select('*').eq('account_key', accountKey).eq('region', region).single();
+      const data = await getShopeeTokenRow(region, accountKey);
       if (!data) return jsonResp({ ok: false, error: `no tokens for region ${region}` }, 404);
       const app = await getApp(accountKey);
       const path = '/api/v2/auth/access_token/get';
@@ -3804,13 +3899,13 @@ Deno.serve(async (req) => {
       return jsonResp({ ok: true, account_key: accountKey, region, MAIN_ACCOUNT_ID: await mainAccountIdForAccount(accountKey), results });
     }
     if (action === 'tokens') {
-      const { data } = await supabase.from('shopee_tokens').select('account_key, region, shop_id, merchant_id, expires_at, is_sandbox').eq('account_key', accountKey);
+      const data = await getShopeeTokenRows(accountKey);
       const now = Math.floor(Date.now() / 1000);
       return jsonResp({ ok: true, account_key: accountKey, tokens: (data || []).map(r => ({ ...r, expires_in_sec: r.expires_at - now })) });
     }
     if (action === 'token_probe') {
       const app = await getApp(accountKey);
-      const { data } = await supabase.from('shopee_tokens').select('account_key, region, shop_id, merchant_id, expires_at, is_sandbox, access_token').eq('account_key', accountKey).eq('region', region).single();
+      const data = await getShopeeTokenRow(region, accountKey);
       if (!data) return jsonResp({ ok: false, region, error: 'token no' }, 404);
       const now = Math.floor(Date.now() / 1000);
       const probe = await probeShopToken(app, data.access_token, data.shop_id);
@@ -3833,12 +3928,7 @@ Deno.serve(async (req) => {
       const retryBaseMs = parsePositiveInt(url.searchParams.get('retry_base_ms'), DEFAULT_RETRY_BASE_MS, 100, 10000);
       const app = await getApp(accountKey);
       const now = Math.floor(Date.now() / 1000);
-      const { data } = await supabase
-        .from('shopee_tokens')
-        .select('account_key, region, shop_id, merchant_id, expires_at, is_sandbox, access_token')
-        .eq('account_key', accountKey)
-        .in('region', targetRegions)
-        .order('region', { ascending: true });
+      const data = await getShopeeTokenRows(accountKey, { regions: targetRegions, includeAccessToken: true });
       const byRegion = new Map((data || []).map((row: any) => [String(row.region), row]));
       const results: any[] = [];
       const counters = {
@@ -3892,12 +3982,7 @@ Deno.serve(async (req) => {
           next_refresh_due_in_sec: expiresIn - refreshThresholdSec,
         };
 
-        const { data: shopRow } = await supabase
-          .from('shopee_shops')
-          .select('shop_id, region, merchant_id, status')
-          .eq('account_key', accountKey)
-          .eq('shop_id', String(row.shop_id))
-          .maybeSingle();
+        const shopRow = await getShopeeShopRowByShopId(row.shop_id, accountKey);
         out.shop_status = shopRow?.status || null;
         if (!shopRow) {
           counters.principal_mismatch++;
@@ -3977,12 +4062,7 @@ Deno.serve(async (req) => {
       if (includeMerchant) {
         counters.total++;
         counters.merchant_total++;
-        const { data: merchantRow } = await supabase
-          .from('shopee_tokens')
-          .select('account_key, region, merchant_id, expires_at, is_sandbox, access_token')
-          .eq('account_key', accountKey)
-          .eq('region', '_MERCHANT')
-          .maybeSingle();
+        const merchantRow = await getShopeeTokenRow('_MERCHANT', accountKey);
         if (!merchantRow) {
           counters.missing_token++;
           counters.merchant_fail++;

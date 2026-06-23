@@ -41,10 +41,15 @@ assert(bridge.includes('getShopeeAccountProfile'), 'bridge can load Shopee accou
 assert(bridge.includes('getAccountCredential'), 'bridge can load account-specific Shopee app credentials');
 assert(bridge.includes('Shopee credential missing for account='), 'bridge does not silently reuse default credentials for non-default accounts');
 assert(bridge.includes("if (action === 'account_profile' && req.method === 'POST')"), 'bridge exposes gated account profile setup endpoint');
-assert(bridge.includes(".eq('account_key', accountKey).eq('region', region)"), 'bridge token reads are account-scoped');
+assert(
+  bridge.includes('async function getShopeeTokenRow') &&
+    bridge.includes(".eq('account_key', accountKey)") &&
+    bridge.includes('isMissingAccountKeyColumn'),
+  'bridge token reads are account-scoped with legacy schema fallback',
+);
 assert(bridge.includes('body.account_key = accountKey'), 'bridge normalizes request account_key');
 assert(bridge.includes("upsert(profilePayload, { onConflict: 'account_key' })"), 'bridge oauth_exchange upserts account profiles');
-assert(bridge.includes("upsert({\r\n            account_key: accountKey") || bridge.includes("upsert({\n            account_key: accountKey"), 'bridge OAuth token rows include account_key');
+assert(/from\('shopee_tokens'\)\.upsert\(\{[\s\S]*account_key:\s*accountKey[\s\S]*onConflict:\s*'account_key,region'/.test(bridge), 'bridge OAuth token rows include account_key');
 
 assert(adapter.includes("const SHOPEE_LISTING_CONFLICT = 'product_id,account_key,region'"), 'Shopee adapter uses account-aware listing conflict');
 assert(adapter.includes('account_key,'), 'Shopee adapter includes account_key in upsert payloads');

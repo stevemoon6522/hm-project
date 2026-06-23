@@ -684,7 +684,7 @@
       overflow-wrap: anywhere;
     }
     .platform-table-shopee {
-      min-width: 1100px;
+      min-width: 1180px;
     }
     .platform-table-shopee th,
     .platform-table-shopee td {
@@ -806,6 +806,10 @@
       color: #475569;
       font-size: 12px;
       line-height: 1.35;
+      max-width: 110px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .platform-note-issue {
       color: #92400e;
@@ -849,7 +853,14 @@
       padding-left: 34px;
     }
     .platform-actions-cell {
-      justify-content: flex-end;
+      justify-content: flex-start;
+    }
+    .platform-shopee-action-cell {
+      white-space: normal;
+      text-align: left;
+    }
+    .platform-shopee-action-cell .platform-actions-cell {
+      width: 100%;
     }
     .platform-row-button {
       border: 1px solid var(--border);
@@ -8400,7 +8411,7 @@ LEGACY END -->
           <td>${shopeePlatformRegionsCell(group)}</td>
           <td class="platform-wms-cell pl-wms-cell">${plWmsStatusCell(group.rows || [])}</td>
           <td class="platform-note-cell">${shopeePlatformNoteCell(group)}</td>
-          <td style="white-space:nowrap;text-align:right;">${shopeePlatformActionButtonsHtml(key, group, '')}</td>
+          <td class="platform-shopee-action-cell">${shopeePlatformActionButtonsHtml(key, group, '')}</td>
         </tr>`;
       return expanded ? master + shopeePlatformOptionRows(group, key) : master;
     }).join('');
@@ -8414,10 +8425,10 @@ LEGACY END -->
             <th style="width:34px;"></th>
             <th style="width:470px;">Product</th>
             <th style="width:150px;">Shopee Status</th>
-            <th style="width:220px;">Regions</th>
-            <th style="width:120px;">WMS</th>
-            <th style="width:170px;">Note</th>
-            <th style="width:300px;text-align:right;">Actions</th>
+            <th style="width:240px;">Regions</th>
+            <th style="width:130px;">WMS</th>
+            <th style="width:100px;">Note</th>
+            <th style="width:220px;text-align:left;">Actions</th>
           </tr>
         </thead>`;
     }
@@ -23939,7 +23950,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
    * Persist weight_g for a single product (PATCH), update in-memory cache,
    * and refresh region preview cells. Does NOT trigger any live marketplace sync.
    */
-  async function catPersistWeight(pid, weightG, input) {
+  async function catPersistWeight(pid, weightG, input, options) {
+    const silentSuccess = !!(options && options.silentSuccess);
     const statusOk = function() { if (input) input.classList.remove('cost-warn'); };
     try {
       const { error } = await db.from('products')
@@ -23967,6 +23979,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Re-render region preview using the new weight (cost unchanged).
     const product = _catCache && _catCache.products.find(function(p) { return String(p.id) === String(pid); });
     if (product) catUpdateRowPriceCells(pid, catEffectiveCost(product));
+    if (silentSuccess) return;
     showToast('무게 저장됨 (' + weightG.toLocaleString() + 'g)', 'ok');
   }
 
@@ -24615,11 +24628,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const weight = Number(weightInput.value.trim());
         if (Number.isFinite(weight) && weight > 0 && weight <= 999999999) {
           const roundedWeight = Math.round(weight);
-          pendingWeightEdits[pid] = roundedWeight;
+          const existingWeight = product ? Number(product.weight_g || 0) : NaN;
+          const weightChanged = (pid in pendingWeightEdits)
+            || !Number.isFinite(existingWeight)
+            || catNumbersDiffer(roundedWeight, existingWeight);
           weightInput.classList.remove('cost-warn');
-          const product = _catCache && (_catCache.products || []).find(function(p) { return String(p.id) === pid; });
-          catUpdateRowPriceCells(pid, catEffectiveCost(product || {}));
-          if (persistWeight) weightSaves.push(catPersistWeight(pid, roundedWeight, weightInput));
+          if (weightChanged) {
+            pendingWeightEdits[pid] = roundedWeight;
+            catUpdateRowPriceCells(pid, catEffectiveCost(product || {}));
+            if (persistWeight) weightSaves.push(catPersistWeight(pid, roundedWeight, weightInput, { silentSuccess: !!(options && options.silentWeightToast) }));
+          }
         } else {
           weightInput.classList.add('cost-warn');
         }
@@ -25089,6 +25107,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         blocked.push(Object.assign({}, p, { reason: 'preflight failed: ' + ((info && info.error) || 'unknown') }));
         continue;
       }
+      if (!info.hasModel) {
+        if (p.needsModel || p.modelId) {
+          p.needsModel = false;
+          p.modelId = null;
+          p.globalModelId = null;
+          p.payload.price_list = [catBuildShopeePriceEntry({
+            needsModel: false,
+            originalPrice: p.price,
+          })];
+        }
+        valid.push(p);
+        continue;
+      }
       if (p.needsModel && !p.modelId) {
         blocked.push(Object.assign({}, p, { reason: 'variant mapping requires shop_model_id' }));
         continue;
@@ -25102,10 +25133,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
       if (info.hasModel && !p.modelId) {
         blocked.push(Object.assign({}, p, { reason: 'item has models but shop_model_id mapping is missing' }));
-        continue;
-      }
-      if (!info.hasModel && p.modelId) {
-        blocked.push(Object.assign({}, p, { reason: 'item has no models but mapping has shop_model_id' }));
         continue;
       }
       if (p.modelId && !info.modelIds.has(Number(p.modelId))) {
@@ -25581,7 +25608,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function catExecuteShopeeLive() {
-    await catFlushSelectedInlineEdits({ persistWeight: true });
+    await catFlushSelectedInlineEdits({ persistWeight: true, silentWeightToast: true });
     await catEnsureSelectedShopeeListings();
     const { payloads } = catBuildPriceSyncPayloads();
     if (!payloads.length) {
@@ -25689,7 +25716,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function catExecuteJoomSync() {
-    await catFlushSelectedInlineEdits({ persistWeight: true });
+    await catFlushSelectedInlineEdits({ persistWeight: true, silentWeightToast: true });
     const products = catSelectedProducts();
     if (!products.length) {
       showToast('Joom 동기화 대상 행을 선택하세요.', 'err');
@@ -25819,7 +25846,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function catExecuteEbaySync() {
-    await catFlushSelectedInlineEdits({ persistWeight: true });
+    await catFlushSelectedInlineEdits({ persistWeight: true, silentWeightToast: true });
     const products = catSelectedProducts();
     if (!products.length) {
       showToast('eBay 동기화 대상 행을 선택하세요.', 'err');
@@ -25936,7 +25963,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // ── Platform + Shopee market controls ───────────────────────────
 
   async function catExecuteQoo10Sync() {
-    await catFlushSelectedInlineEdits({ persistWeight: true });
+    await catFlushSelectedInlineEdits({ persistWeight: true, silentWeightToast: true });
     const products = catSelectedProducts();
     if (!products.length) {
       showToast('Qoo10 동기화 대상을 선택하세요.', 'err');

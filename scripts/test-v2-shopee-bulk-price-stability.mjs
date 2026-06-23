@@ -76,6 +76,7 @@ assert.match(preflight, /mixedKeys/, 'Shopee preflight must fetch when any targe
 assert.match(preflight, /_trusted:\s*true/, 'Shopee preflight must mark synthetic cache entries for trusted mappings');
 assert.match(preflight, /else if \(!p\.needsModel\)/, 'Shopee preflight must not trust item-level updates for rows that require a model id');
 assert.match(preflight, /p\.needsModel && !p\.modelId/, 'Shopee preflight must block variant rows without shop_model_id before update_price');
+assert.match(preflight, /if \(!info\.hasModel\)[\s\S]*p\.needsModel = false[\s\S]*catBuildShopeePriceEntry/, 'Shopee preflight must downgrade false variant mappings when the remote item has no models');
 assert.match(preflight, /!isTrustedListing\(p\.listing\) \|\| p\.needsModel/, 'Shopee preflight must re-check remote models for variant rows even when local mapping is fresh');
 assert.match(preflight, /catShopeeModelMatchesPayloadSku\(matchedModel, p\)/, 'Shopee preflight must verify model_id belongs to the selected SKU before update_price');
 assert.match(ensureListings, /const globalModelId = catProductGlobalModelId\(product, byRegion\)/, 'Shopee live sync must carry global_model_id into listing hydration');
@@ -98,8 +99,10 @@ assert.match(priceSync, /function catRetryShopeePriceAfterLogisticsRepair\(/, 'S
 assert.match(liveSync, /catRetryShopeePriceAfterLogisticsRepair\(p,\s*errorMsg\)/, 'Shopee live sync must invoke logistics repair retry for channel/logistics price failures');
 assert.match(priceSync, /function catBuildShopeePriceEntry\(/, 'Shopee price sync must have an explicit no-model price entry builder');
 assert.match(priceSync, /model_id:\s*0,\s*original_price:\s*originalPrice/, 'Shopee no-model price updates must send model_id=0 per local API docs');
+assert.match(liveSync, /catFlushSelectedInlineEdits\(\{\s*persistWeight:\s*true,\s*silentWeightToast:\s*true\s*\}\)/, 'Shopee live sync must suppress weight-save success toasts');
+assert.match(flushInlineEdits, /weightChanged[\s\S]*catPersistWeight\(pid,\s*roundedWeight,\s*weightInput,\s*\{\s*silentSuccess:/, 'Shopee inline flush must persist weights only when changed and pass the silent toast flag');
 
-async function runFlushHarness({ productSourcing, productCost, sourcingInputValue, costInputValue }) {
+async function runFlushHarness({ productSourcing, productCost, sourcingInputValue, costInputValue, productWeight = 150, weightInputValue = 150, persistWeight = false, silentWeightToast = false }) {
   const context = {
     console,
     Math,
@@ -124,14 +127,15 @@ async function runFlushHarness({ productSourcing, productCost, sourcingInputValu
       id: 'pid',
       sourcing_price: ${JSON.stringify(productSourcing)},
       cost_krw: ${JSON.stringify(productCost)},
-      weight_g: 150
+      weight_g: ${JSON.stringify(productWeight)}
     };
     var _catCache = { products: [product], listings: [] };
     var lastRenderedCost = null;
     function classList() { return { add: function() {}, remove: function() {} }; }
     var costInput = { value: ${JSON.stringify(String(costInputValue))}, classList: classList() };
     var sourcingInput = { value: ${JSON.stringify(String(sourcingInputValue))}, classList: classList() };
-    var weightInput = { value: '150', classList: classList() };
+    var weightInput = { value: ${JSON.stringify(String(weightInputValue))}, classList: classList() };
+    var persistedWeightCalls = [];
     var row = {
       querySelector: function(selector) {
         if (selector === '.cat-cost-input') return costInput;
@@ -165,14 +169,17 @@ async function runFlushHarness({ productSourcing, productCost, sourcingInputValu
       const key = String(row.id);
       return key in pendingCostEdits ? pendingCostEdits[key] : Number(row.cost_krw || 0);
     }
-    async function catPersistWeight() {}
+    async function catPersistWeight(pid, weight, input, options) {
+      persistedWeightCalls.push({ pid, weight, silentSuccess: !!(options && options.silentSuccess) });
+    }
     ${flushInlineHarnessSource}
-    await catFlushSelectedInlineEdits({ persistWeight: false });
+    await catFlushSelectedInlineEdits({ persistWeight: ${JSON.stringify(persistWeight)}, silentWeightToast: ${JSON.stringify(silentWeightToast)} });
     globalThis.result = {
       cost: pendingCostEdits.pid,
       sourcing: pendingSourcingEdits.pid ?? null,
       costInputValue: costInput.value,
       rendered: lastRenderedCost,
+      persistedWeightCalls: persistedWeightCalls,
     };
   })();
   `;
@@ -268,7 +275,7 @@ function runStandalonePayloadHarness() {
   var _catRegionVisible = new Set(['SG', 'TW']);
   var SHOPEE_BRIDGE = 'https://bridge.example';
   var catSelectedIds = new Set(['single']);
-  var pendingCostEdits = { single: 38400 };
+  var pendingCostEdits = { single: 49920 };
   var pendingWeightEdits = {};
   var _catCache = {
     products: [
@@ -296,7 +303,7 @@ function runStandalonePayloadHarness() {
   function catUlid() { return 'RUN'; }
   function catEffectiveWeight(product) { return product.weight_g; }
   function catComputeNewPrice(cost, region) {
-    return region === 'SG' ? 59.03 : 1258;
+    return region === 'SG' ? 67.92 : 1524;
   }
   function normalizeShopeeOriginalPrice(region, price) {
     return { ok: Number.isFinite(Number(price)), value: Number(price) };
@@ -314,6 +321,53 @@ function runStandalonePayloadHarness() {
   return JSON.parse(JSON.stringify(context.result));
 }
 
+async function runNoModelPreflightHarness() {
+  const context = {
+    Date,
+    JSON,
+    Map,
+    Math,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+
+  const harness = `
+  ${extractFunction(v2, 'catBuildShopeePriceEntry')}
+  function catShopeeModelMatchesPayloadSku() { return false; }
+  async function catFetchShopeeModelIndex() {
+    return { ok: true, hasModel: false, modelIds: new Set(), models: [] };
+  }
+  ${preflight}
+  (async function() {
+    const payloads = [{
+      productId: 'single',
+      sku: 'ATEEZ-LIGHTSTICK-V3',
+      region: 'SG',
+      itemId: 49862317265,
+      modelId: null,
+      needsModel: true,
+      price: 67.92,
+      listing: { status: 'mapped', last_synced_at: '2026-06-23T16:42:00.39+00:00' },
+      payload: {
+        region: 'SG',
+        item_id: 49862317265,
+        price_list: [{ model_id: null, original_price: 67.92 }],
+      },
+    }];
+    globalThis.result = await catPreflightShopeePayloads(payloads);
+  })();
+  `;
+
+  await new vm.Script(harness, { filename: 'v2-shopee-no-model-preflight-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify(context.result));
+}
+
 assert.deepEqual(
   await runFlushHarness({
     productSourcing: 10098,
@@ -321,7 +375,7 @@ assert.deepEqual(
     sourcingInputValue: 10098,
     costInputValue: 12000,
   }),
-  { cost: 12000, sourcing: null, costInputValue: '12000', rendered: 12000 },
+  { cost: 12000, sourcing: null, costInputValue: '12000', rendered: 12000, persistedWeightCalls: [] },
   'Direct Cost=12000 must survive sync flush even when stale wholesale=10098 is still present',
 );
 assert.deepEqual(
@@ -331,7 +385,7 @@ assert.deepEqual(
     sourcingInputValue: 9000,
     costInputValue: 13127,
   }),
-  { cost: 11700, sourcing: 9000, costInputValue: '11700', rendered: 11700 },
+  { cost: 11700, sourcing: 9000, costInputValue: '11700', rendered: 11700, persistedWeightCalls: [] },
   'Wholesale edit without a manual Cost override must still derive Cost=wholesale*1.30',
 );
 assert.deepEqual(
@@ -341,8 +395,36 @@ assert.deepEqual(
     sourcingInputValue: 9000,
     costInputValue: 12000,
   }),
-  { cost: 12000, sourcing: 9000, costInputValue: '12000', rendered: 12000 },
+  { cost: 12000, sourcing: 9000, costInputValue: '12000', rendered: 12000, persistedWeightCalls: [] },
   'When both wholesale and Cost are edited, a manual Cost override must be the price-sync cost',
+);
+assert.deepEqual(
+  await runFlushHarness({
+    productSourcing: 38400,
+    productCost: 49920,
+    sourcingInputValue: 38400,
+    costInputValue: 49920,
+    productWeight: 1000,
+    weightInputValue: 1000,
+    persistWeight: true,
+    silentWeightToast: true,
+  }),
+  { sourcing: null, costInputValue: '49920', rendered: null, persistedWeightCalls: [] },
+  'Shopee sync flush must not persist unchanged weight or show a weight toast before price sync',
+);
+assert.deepEqual(
+  await runFlushHarness({
+    productSourcing: 38400,
+    productCost: 49920,
+    sourcingInputValue: 38400,
+    costInputValue: 49920,
+    productWeight: 900,
+    weightInputValue: 1000,
+    persistWeight: true,
+    silentWeightToast: true,
+  }),
+  { sourcing: null, costInputValue: '49920', rendered: 49920, persistedWeightCalls: [{ pid: 'pid', weight: 1000, silentSuccess: true }] },
+  'Shopee sync flush may persist a changed weight, but must suppress the weight success toast',
 );
 
 const optionPayloads = runPayloadHarness().payloads;
@@ -423,9 +505,9 @@ assert.deepEqual(
       modelId: null,
       needsModel: false,
       globalItemId: 48112303677,
-      newCost: 38400,
-      price: 59.03,
-      priceList: [{ model_id: 0, original_price: 59.03 }],
+      newCost: 49920,
+      price: 67.92,
+      priceList: [{ model_id: 0, original_price: 67.92 }],
     },
     {
       productId: 'single',
@@ -434,12 +516,34 @@ assert.deepEqual(
       modelId: null,
       needsModel: false,
       globalItemId: 48112303677,
-      newCost: 38400,
-      price: 1258,
-      priceList: [{ model_id: 0, original_price: 1258 }],
+      newCost: 49920,
+      price: 1524,
+      priceList: [{ model_id: 0, original_price: 1524 }],
     },
   ],
   'Standalone Shopee items with a display option_name must stay item-level and use model_id=0',
+);
+
+const noModelPreflight = await runNoModelPreflightHarness();
+assert.equal(noModelPreflight.blocked.length, 0, 'Remote no-model Shopee items must not be blocked as missing shop_model_id');
+assert.deepEqual(
+  noModelPreflight.valid.map(function(p) {
+    return {
+      sku: p.sku,
+      region: p.region,
+      needsModel: p.needsModel,
+      modelId: p.modelId,
+      priceList: p.payload.price_list,
+    };
+  }),
+  [{
+    sku: 'ATEEZ-LIGHTSTICK-V3',
+    region: 'SG',
+    needsModel: false,
+    modelId: null,
+    priceList: [{ model_id: 0, original_price: 67.92 }],
+  }],
+  'Remote no-model preflight must downgrade false variant mappings to item-level update_price payloads',
 );
 
 console.log('v2 Shopee bulk price stability checks passed');

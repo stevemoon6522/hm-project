@@ -173,7 +173,7 @@ assert(v2.includes('class="cat-sourcing-input"') && v2.includes('data-cat-sourci
 assert(v2.includes('class="cat-cost-input') && v2.includes('data-cat-cost-pid'), 'Shopee KRW Base cell must keep Cost editing wired');
 assert(v2.includes('class="cat-weight-input mono"') && v2.includes('data-cat-weight-pid'), 'Shopee KRW Base cell must keep weight editing wired');
 assert(v2.includes('function catFlushSelectedInlineEdits'), 'Shopee live sync must flush selected row cost/weight inputs before building payloads');
-assert(/await catFlushSelectedInlineEdits\(\{\s*persistWeight:\s*true\s*\}\);[\s\S]*const \{ payloads \} = catBuildPriceSyncPayloads\(\)/.test(v2), 'Shopee live sync must read pending inline edits before empty-target validation');
+assert(/await catFlushSelectedInlineEdits\(\{\s*persistWeight:\s*true,\s*silentWeightToast:\s*true\s*\}\);[\s\S]*const \{ payloads \} = catBuildPriceSyncPayloads\(\)/.test(v2), 'Shopee live sync must read pending inline edits before empty-target validation');
 assert(/const targetRegions = CAT_REGIONS\.filter\(function\(r\) \{ return _catRegionVisible\.has\(r\); \}\)/.test(v2), 'Shopee price payload builder must honor active region chips for region-scoped 10-20 row batches');
 assert(v2.includes('placeholder="아티스트 / SKU / 상품명 / 옵션 검색"'), 'Price sync search placeholder must make artist keyword search explicit');
 assert(v2.includes('id="login-github"'), 'V2 auth panel must expose GitHub OAuth login for Supabase GitHub accounts');

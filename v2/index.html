@@ -684,7 +684,7 @@
       overflow-wrap: anywhere;
     }
     .platform-table-shopee {
-      min-width: 1180px;
+      min-width: 1374px;
     }
     .platform-table-shopee th,
     .platform-table-shopee td {
@@ -747,6 +747,10 @@
     .platform-wms-cell {
       white-space: nowrap;
     }
+    .platform-wms-cell {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
     .platform-status-cell {
       white-space: nowrap;
     }
@@ -755,6 +759,13 @@
       align-items: center;
       gap: 5px;
       flex-wrap: nowrap;
+    }
+    .platform-table-shopee .platform-region-status-row {
+      flex-wrap: wrap;
+      row-gap: 4px;
+      max-width: 100%;
+      width: 100%;
+      min-width: 0;
     }
     .platform-region-status-chip {
       display: inline-flex;
@@ -806,7 +817,7 @@
       color: #475569;
       font-size: 12px;
       line-height: 1.35;
-      max-width: 110px;
+      max-width: 80px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -8425,9 +8436,9 @@ LEGACY END -->
             <th style="width:34px;"></th>
             <th style="width:470px;">Product</th>
             <th style="width:150px;">Shopee Status</th>
-            <th style="width:240px;">Regions</th>
-            <th style="width:130px;">WMS</th>
-            <th style="width:100px;">Note</th>
+            <th style="width:300px;">Regions</th>
+            <th style="width:120px;">WMS</th>
+            <th style="width:80px;">Note</th>
             <th style="width:220px;text-align:left;">Actions</th>
           </tr>
         </thead>`;
@@ -8519,10 +8530,10 @@ LEGACY END -->
             <th style="width:34px;"></th>
             <th style="width:470px;">Product</th>
             <th style="width:150px;">Shopee Status</th>
-            <th style="width:220px;">Regions</th>
+            <th style="width:300px;">Regions</th>
             <th style="width:120px;">WMS</th>
-            <th style="width:170px;">Note</th>
-            <th style="width:300px;text-align:right;">Actions</th>
+            <th style="width:80px;">Note</th>
+            <th style="width:220px;text-align:left;">Actions</th>
           </tr>
         </thead>`;
     }

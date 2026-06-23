@@ -64,6 +64,12 @@ test('Shopee platform tab uses the unified product-list table layout', () => {
   for (const removedHeading of ['Shopee IDs', 'KRW', 'Master']) {
     assert.doesNotMatch(tableHead, new RegExp(`>${removedHeading}<`), `Shopee header should not expose ${removedHeading}`);
   }
+  assert.match(html, /\.platform-table-shopee\s*\{\s*min-width:\s*1374px;/s, 'Shopee table should reserve enough width for region and WMS columns');
+  assert.match(html, /\.platform-table-shopee \.platform-region-status-row\s*\{[\s\S]*flex-wrap:\s*wrap;[\s\S]*width:\s*100%;/s, 'Shopee region chips should wrap inside the Regions column');
+  assert.match(html, /\.platform-note-cell\s*\{[\s\S]*max-width:\s*80px;[\s\S]*text-overflow:\s*ellipsis;/s, 'Shopee note cells should stay compact');
+  assert.match(tableHead, /<th style="width:300px;">Regions<\/th>/, 'Shopee Regions column should be wide enough for fixed region chips');
+  assert.match(tableHead, /<th style="width:80px;">Note<\/th>/, 'Shopee Note column should be compact');
+  assert.match(tableHead, /<th style="width:220px;text-align:left;">Actions<\/th>/, 'Shopee Actions column should align row actions from the left');
   assert.match(platformRows, /if \(platform === 'shopee'\) return shopeePlatformTableRows\(\);/, 'Shopee should route through the new row renderer');
   assert.match(platformRender, /const platformTableClass = platform === 'shopee' \? 'platform-table platform-table-shopee' : 'platform-table'/, 'Shopee should use the scoped table class');
   assert.match(platformRender, /platformTableHeadHtml\(platform\)/, 'platform renderer should use the shared header helper');
@@ -77,6 +83,7 @@ test('Shopee platform rows expose operational status and row actions', () => {
   assert.match(shopeeTableRows, /shopeePlatformNoteCell\(group\)/, 'Shopee rows should keep issue notes in the final column');
   assert.doesNotMatch(shopeeTableRows, /shopeePlatformIdsCell\(group\)/, 'Shopee rows should hide raw item/model/shop IDs from the main table');
   assert.match(shopeeTableRows, /shopeePlatformActionButtonsHtml\(key, group, ''\)/, 'Shopee rows should expose row-level action buttons');
+  assert.match(shopeeTableRows, /<td class="platform-shopee-action-cell">/, 'Shopee row actions should use the scoped left-aligned action cell');
   assert.match(shopeeRows, /platformMasterDeleteButtonHtml/, 'Shopee row actions should include the local master delete button');
 });
 

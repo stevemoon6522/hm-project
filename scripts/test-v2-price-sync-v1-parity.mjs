@@ -145,13 +145,15 @@ assert(v2.includes("JOOM_BRIDGE + '/lookup-sku?sku='"), 'V2 Joom sync must resol
 assert(v2.includes("JOOM_BRIDGE + '/update-price'"), 'V2 Joom sync must call update-price');
 assert(v2.includes("countrySettings: catCountrySettings('EX')"), 'V2 eBay price preview must use the EX country_settings fee row');
 assert(v2.includes("_v2EbayExCountryCache = normalizeCountrySettings(data, 'EX')"), 'V2 eBay publish must normalize the EX row through the shared price engine');
-assert(v2.includes("ebayStatus !== 'PUBLISHED' || !product.ebay_offer_id"), 'V2 eBay sync must require a published offer mapping before live update');
+assert(v2.includes('const ebayMapping = catEbayMapping(product);'), 'V2 eBay sync must resolve the current eBay mapping before live update');
+assert(v2.includes('if (!ebayMapping.isMapped)'), 'V2 eBay sync must require a mapped listing before live update');
+assert(v2.includes('if (!ebayMapping.offerId && !ebayMapping.itemId)'), 'V2 eBay sync must require an offer or item mapping before live update');
 assert(v2.includes('productId: product.id'), 'V2 eBay sync must send productId so the bridge can run server-side price guards');
 assert(v2.includes('function _v2LoadJoomCountry()'), 'V2 Joom publish must load the JM country_settings fee row');
 assert(v2.includes('const listing = _v2JoomCalcListing(costKrw, weightG, joomCountry);'), 'V2 Joom publish variants must use the JM fee formula');
 assert(v2.includes("'JM'") && v2.includes("Joom (Global)"), 'V2 fee settings must expose the Joom global fee row');
 assert(v2.includes("'Q10'") && v2.includes("Qoo10 JP"), 'V2 fee settings must expose the Qoo10 JP fee row');
-assert(v2.includes("chip.className = 'cat-market-chip active'"), 'Shopee markets must render as compact chips instead of loose checkboxes');
+assert(v2.includes("chip.className = 'cat-market-chip' + (isActive ? ' active' : '')"), 'Shopee markets must render as compact chips instead of loose checkboxes');
 assert(!v2.includes('id="cat-platform-tabs"'), 'Shopee price sync must not expose a generic Platform selector');
 assert(!v2.includes('class="cat-platform-row"'), 'Shopee price sync must remove the Platform selector row entirely');
 assert(v2.includes('main_image,shopee_option_image_url'), 'Shopee price sync product fetch must include saved Shopee/master image URLs');

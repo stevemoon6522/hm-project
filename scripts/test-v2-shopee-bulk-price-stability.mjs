@@ -12,6 +12,21 @@ function sliceBetween(source, start, end) {
   return source.slice(s, e);
 }
 
+function extractFunction(source, name) {
+  const start = source.indexOf(`function ${name}(`);
+  assert.ok(start >= 0, `missing function ${name}`);
+  const open = source.indexOf('{', start);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    else if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  assert.fail(`function ${name} must close`);
+}
+
 const priceSync = sliceBetween(
   v2,
   'renderCatalogView() — main entry point, called on tab click.',
@@ -50,6 +65,7 @@ const flushInlineHarnessSource = sliceBetween(
 
 assert.match(payloadBuilder, /listing:\s*listing/, 'Shopee bulk price payloads must carry listing metadata for safe preflight trust decisions');
 assert.match(payloadBuilder, /needsModel:\s*needsModel/, 'Shopee bulk price payloads must mark variant/global-model rows as requiring shop_model_id');
+assert.match(payloadBuilder, /catBuildShopeePriceEntry/, 'Shopee price payloads must split model and no-model price entry shapes explicitly');
 assert.match(preflight, /PREFLIGHT_PARALLELISM\s*=\s*5/, 'Shopee bulk price preflight must limit parallel Shopee model lookups to 5');
 assert.match(preflight, /needsFetch\.slice\(i,\s*i \+ PREFLIGHT_PARALLELISM\)/, 'Shopee preflight must process model lookup chunks');
 assert.match(preflight, /Promise\.all\(chunk\.map\(async/, 'Shopee preflight must fetch model indexes concurrently within each chunk');
@@ -80,6 +96,8 @@ assert.match(priceSync, /function catBuildDeliveryOnlyLogisticPatch\(/, 'Shopee 
 assert.match(priceSync, /self\\s\*collection[\s\S]*locker[\s\S]*pick\[-\\s\]\?up/, 'Shopee logistics repair must detect self-collection, locker, and pickup channels');
 assert.match(priceSync, /function catRetryShopeePriceAfterLogisticsRepair\(/, 'Shopee price sync must retry update_price after repairing prohibited logistics channels');
 assert.match(liveSync, /catRetryShopeePriceAfterLogisticsRepair\(p,\s*errorMsg\)/, 'Shopee live sync must invoke logistics repair retry for channel/logistics price failures');
+assert.match(priceSync, /function catBuildShopeePriceEntry\(/, 'Shopee price sync must have an explicit no-model price entry builder');
+assert.match(priceSync, /model_id:\s*0,\s*original_price:\s*originalPrice/, 'Shopee no-model price updates must send model_id=0 per local API docs');
 
 async function runFlushHarness({ productSourcing, productCost, sourcingInputValue, costInputValue }) {
   const context = {
@@ -220,11 +238,79 @@ function runPayloadHarness() {
     return { ok: Number.isFinite(Number(price)), value: Number(price) };
   }
   function simpleHash(input) { return 'h' + String(input).length; }
+  ${extractFunction(v2, 'catBuildShopeePriceEntry')}
   ${payloadBuilder}
   globalThis.result = catBuildPriceSyncPayloads();
   `;
 
   new vm.Script(harness, { filename: 'v2-shopee-option-payload-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify(context.result));
+}
+
+function runStandalonePayloadHarness() {
+  const context = {
+    Date: class {
+      static now() { return 1782223000000; }
+    },
+    JSON,
+    Map,
+    Math,
+    Number,
+    Set,
+    String,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+
+  const harness = `
+  var CAT_REGIONS = ['SG', 'TW'];
+  var _catRegionVisible = new Set(['SG', 'TW']);
+  var SHOPEE_BRIDGE = 'https://bridge.example';
+  var catSelectedIds = new Set(['single']);
+  var pendingCostEdits = { single: 38400 };
+  var pendingWeightEdits = {};
+  var _catCache = {
+    products: [
+      {
+        id: 'single',
+        sku: 'ATEEZ-LIGHTSTICK-V3',
+        product_name: '[READY STOCK] ATEEZ OFFICIAL LIGHT STICK VER 3',
+        option_name: 'LIGHTSTICK',
+        cost_krw: 51000,
+        weight_g: 1000,
+        shopee_item_id: 44562383405,
+        product_group_id: 'single',
+        variation_option_names: ['LIGHTSTICK'],
+        variation_tier_index: null
+      }
+    ],
+    listings: [
+      { product_id: 'single', region: 'SG', shop_item_id: 49862317265, shop_model_id: null, global_item_id: 48112303677, global_model_id: null, status: 'mapped' },
+      { product_id: 'single', region: 'TW', shop_item_id: 49862317259, shop_model_id: null, global_item_id: 48112303677, global_model_id: null, status: 'mapped' }
+    ]
+  };
+  var document = {
+    querySelector: function() { return { querySelector: function() { return { checked: true }; } }; }
+  };
+  function catUlid() { return 'RUN'; }
+  function catEffectiveWeight(product) { return product.weight_g; }
+  function catComputeNewPrice(cost, region) {
+    return region === 'SG' ? 59.03 : 1258;
+  }
+  function normalizeShopeeOriginalPrice(region, price) {
+    return { ok: Number.isFinite(Number(price)), value: Number(price) };
+  }
+  function simpleHash(input) { return 'h' + String(input).length; }
+  ${extractFunction(v2, 'catProductGlobalItemId')}
+  ${extractFunction(v2, 'catProductGlobalModelId')}
+  ${extractFunction(v2, 'catProductNeedsShopeeModel')}
+  ${extractFunction(v2, 'catBuildShopeePriceEntry')}
+  ${payloadBuilder}
+  globalThis.result = catBuildPriceSyncPayloads();
+  `;
+
+  new vm.Script(harness, { filename: 'v2-shopee-standalone-payload-harness.mjs' }).runInContext(context);
   return JSON.parse(JSON.stringify(context.result));
 }
 
@@ -312,6 +398,48 @@ assert.deepEqual(
     },
   ],
   'Multi-option Shopee price sync must use each option row Cost and model_id instead of the parent representative Cost',
+);
+
+const standalonePayloads = runStandalonePayloadHarness().payloads;
+assert.deepEqual(
+  standalonePayloads.map(function(p) {
+    return {
+      productId: p.productId,
+      sku: p.sku,
+      region: p.region,
+      modelId: p.modelId,
+      needsModel: p.needsModel,
+      globalItemId: p.globalItemId,
+      newCost: p.newCost,
+      price: p.price,
+      priceList: p.payload.price_list,
+    };
+  }),
+  [
+    {
+      productId: 'single',
+      sku: 'ATEEZ-LIGHTSTICK-V3',
+      region: 'SG',
+      modelId: null,
+      needsModel: false,
+      globalItemId: 48112303677,
+      newCost: 38400,
+      price: 59.03,
+      priceList: [{ model_id: 0, original_price: 59.03 }],
+    },
+    {
+      productId: 'single',
+      sku: 'ATEEZ-LIGHTSTICK-V3',
+      region: 'TW',
+      modelId: null,
+      needsModel: false,
+      globalItemId: 48112303677,
+      newCost: 38400,
+      price: 1258,
+      priceList: [{ model_id: 0, original_price: 1258 }],
+    },
+  ],
+  'Standalone Shopee items with a display option_name must stay item-level and use model_id=0',
 );
 
 console.log('v2 Shopee bulk price stability checks passed');

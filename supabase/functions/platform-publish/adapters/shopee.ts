@@ -125,9 +125,9 @@ function shopeeOptionPriceRatioExclusionPlan(
     if (priced.length < 2) continue;
     const minPrice = Math.min(...priced.map((entry) => entry.price));
     const maxPrice = Math.max(...priced.map((entry) => entry.price));
-    if (!(minPrice > 0) || !(maxPrice > 0) || maxPrice / minPrice <= limit) continue;
+    if (!(minPrice > 0) || !(maxPrice > 0) || maxPrice / minPrice < limit) continue;
     const maxAllowedPrice = Number((minPrice * limit).toFixed((region === 'TW' || region === 'TH' || region === 'PH') ? 0 : 2));
-    for (const entry of priced.filter((row) => row.price > maxAllowedPrice + 0.000001)) {
+    for (const entry of priced.filter((row) => row.price >= maxAllowedPrice - 0.000001)) {
       const existing = excludedBySku.get(entry.sku) || {
         sku: entry.sku,
         option_name: entry.row?.option_name || entry.row?.product_name || entry.sku,

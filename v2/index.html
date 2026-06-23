@@ -2031,6 +2031,36 @@
     .cat-base-row > span:first-child {
       white-space: nowrap;
     }
+    .cat-base-cell-inline {
+      grid-template-columns: minmax(148px, 1.05fr) minmax(140px, 1fr) minmax(118px, .85fr);
+      align-items: start;
+      column-gap: 12px;
+      row-gap: 4px;
+    }
+    .cat-base-cell-inline .cat-base-row {
+      grid-template-columns: 38px minmax(0, 1fr);
+      gap: 6px;
+      min-width: 0;
+    }
+    .cat-base-cell-inline .cat-base-row > span:first-child {
+      text-align: right;
+    }
+    .cat-base-cell-inline .cat-base-readonly,
+    .cat-base-cell-inline .cat-cost-input,
+    .cat-base-cell-inline .cat-sourcing-input,
+    .cat-base-cell-inline .cat-weight-input {
+      box-sizing: border-box;
+      height: 28px;
+      min-height: 28px;
+      padding: 3px 6px;
+      font-size: 11px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .cat-base-cell-inline .cat-base-hint {
+      display: none;
+    }
     .cat-base-readonly {
       display: flex;
       align-items: center;
@@ -2069,6 +2099,9 @@
       display: grid;
       grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 7px;
+    }
+    .cat-market-grid-single {
+      grid-template-columns: minmax(0, 1fr);
     }
     .cat-market-card {
       min-height: 52px;
@@ -14253,7 +14286,7 @@ LEGACY END -->
       resp: first.resp,
       json: {
         ...firstJson,
-        ok: true,
+        ok: results.length > 0 && results.every((row) => row?.ok === true),
         global_item_id: globalItemId,
         results,
         batched_publish: true,
@@ -20376,10 +20409,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (priced.length < 2) return;
       const minPrice = Math.min(...priced.map((entry) => entry.price));
       const maxPrice = Math.max(...priced.map((entry) => entry.price));
-      if (!(minPrice > 0) || !(maxPrice > 0) || maxPrice / minPrice <= limit) return;
+      if (!(minPrice > 0) || !(maxPrice > 0) || maxPrice / minPrice < limit) return;
       const maxAllowedPrice = Number((minPrice * limit).toFixed((region === 'TW' || region === 'TH' || region === 'PH') ? 0 : 2));
       priced
-        .filter((entry) => entry.price > maxAllowedPrice + 0.000001)
+        .filter((entry) => entry.price >= maxAllowedPrice - 0.000001)
         .forEach((entry) => {
           const existing = excludedBySku.get(entry.row.sku) || {
             sku: entry.row.sku,
@@ -20435,7 +20468,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const detailLines = plan.excluded.slice(0, 8).map((entry) => {
       const reasonText = entry.reasons.slice(0, 3).map((reason) => {
         const currency = CAT_CURRENCY?.[reason.region] || reason.region;
-        return `${reason.region} ${formatPriceForRegion(reason.region, reason.price)} ${currency} > ${formatPriceForRegion(reason.region, reason.maxAllowedPrice)} ${currency} (limit ${reason.limit})`;
+        return `${reason.region} ${formatPriceForRegion(reason.region, reason.price)} ${currency} >= ${formatPriceForRegion(reason.region, reason.maxAllowedPrice)} ${currency} (limit ${reason.limit})`;
       }).join('; ');
       return `- ${entry.label || entry.sku} (${entry.sku}): ${reasonText}`;
     }).join('\n');
@@ -20462,8 +20495,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (rows.length < 2) return models;
     const maxPrice = Math.max(...rows.map((row) => row.price));
     const minPrice = Math.min(...rows.map((row) => row.price));
-    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= safeRatioLimit) return models;
-    const safeMinimum = Math.ceil(maxPrice / safeRatioLimit);
+    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice < safeRatioLimit) return models;
+    const safeMinimum = Math.floor(maxPrice / safeRatioLimit) + 1;
     return models.map((model) => {
       const price = Number(model.global_original_price ?? model.original_price ?? 0);
       if (!Number.isFinite(price) || price <= 0 || price >= safeMinimum) return model;
@@ -20487,7 +20520,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (rows.length < 2) return models;
     const maxPrice = Math.max(...rows.map((row) => row.price));
     const minPrice = Math.min(...rows.map((row) => row.price));
-    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice <= safeRatioLimit) return models;
+    if (!(maxPrice > 0) || !(minPrice > 0) || maxPrice / minPrice < safeRatioLimit) return models;
     const safeMinimum = Number((Math.ceil(((maxPrice / safeRatioLimit) + 0.000001) * 100) / 100).toFixed(2));
     return models.map((model) => {
       const price = Number(model.original_price ?? 0);
@@ -23194,6 +23227,297 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return notes.join('<br>');
   }
 
+  function catPricePlatformMeta(platform) {
+    const key = String(platform || _catActivePlatform || 'shopee').toLowerCase();
+    const fallbackLabel = PLATFORM_LABELS[key] || key || 'Platform';
+    const map = {
+      shopee: {
+        label: 'Shopee',
+        filterLabel: 'Shopee markets',
+        chips: CAT_REGIONS.slice(),
+        summary: '선택 상품 기준 region 계산값 미리보기',
+        banner: 'V1 검증 가격식 기준: Shopee는 shop-level update_price 흐름으로 동기화합니다. 실호출 전 dry-run 확인 권장.',
+        priceHeading: 'Markets',
+        syncHeading: 'Sync Note',
+        baseWidth: 190,
+        priceWidth: 520,
+        syncWidth: 160,
+        cardLabel: 'Shopee',
+        dryRunDisabled: false,
+        dryRunTitle: '선택한 행의 Shopee update_price payload를 미리 확인',
+        syncTitle: '선택한 행의 Shopee 가격을 동기화',
+        syncNote: 'shop-level update_price',
+      },
+      joom: {
+        label: 'Joom',
+        filterLabel: 'Joom price',
+        chips: ['Global', 'USD'],
+        summary: 'Joom 단일 글로벌 USD 계산값 미리보기',
+        banner: 'Joom 가격식 기준: SKU lookup 후 update-price로 단일 글로벌 USD 가격을 동기화합니다.',
+        priceHeading: 'Joom Price',
+        syncHeading: 'Sync Note',
+        baseWidth: 460,
+        priceWidth: 270,
+        syncWidth: 180,
+        cardLabel: 'Joom Global',
+        dryRunDisabled: true,
+        dryRunTitle: 'Joom은 현재 화면 계산값과 동기화 확인창으로 실행 전 확인합니다.',
+        syncTitle: '선택한 행의 Joom 글로벌 가격을 동기화',
+        syncNote: 'lookup-sku + update-price',
+      },
+      qoo10: {
+        label: 'Qoo10',
+        filterLabel: 'Qoo10 price',
+        chips: ['JP', 'JPY'],
+        summary: 'Qoo10 JP 단일 JPY 계산값 미리보기',
+        banner: 'Qoo10 가격식 기준: SKU lookup 후 SetGoodsPriceQty로 JPY 가격만 동기화합니다.',
+        priceHeading: 'Qoo10 Price',
+        syncHeading: 'Sync Note',
+        baseWidth: 460,
+        priceWidth: 270,
+        syncWidth: 180,
+        cardLabel: 'Qoo10 JP',
+        dryRunDisabled: true,
+        dryRunTitle: 'Qoo10은 현재 화면 계산값과 동기화 확인창으로 실행 전 확인합니다.',
+        syncTitle: '선택한 행의 Qoo10 JP 가격을 동기화',
+        syncNote: 'lookup-sku + SetGoodsPriceQty',
+      },
+      ebay: {
+        label: 'eBay',
+        filterLabel: 'eBay price',
+        chips: ['US', 'USD'],
+        summary: 'eBay US 단일 USD 계산값 미리보기',
+        banner: 'eBay 가격식 기준: mapped offer/item을 확인한 뒤 USD 가격을 동기화합니다.',
+        priceHeading: 'eBay Price',
+        syncHeading: 'Sync Note',
+        baseWidth: 460,
+        priceWidth: 270,
+        syncWidth: 180,
+        cardLabel: 'eBay US',
+        dryRunDisabled: true,
+        dryRunTitle: 'eBay는 현재 화면 계산값과 동기화 확인창으로 실행 전 확인합니다.',
+        syncTitle: '선택한 행의 eBay US 가격을 동기화',
+        syncNote: 'mapped offer/item update-price',
+      },
+    };
+    return map[key] || {
+      label: fallbackLabel,
+      filterLabel: fallbackLabel + ' price',
+      chips: [fallbackLabel],
+      summary: fallbackLabel + ' 가격 계산값 미리보기',
+      banner: fallbackLabel + ' 가격 수정 화면입니다.',
+      priceHeading: fallbackLabel + ' Price',
+      syncHeading: 'Sync Note',
+      baseWidth: 460,
+      priceWidth: 270,
+      syncWidth: 180,
+      cardLabel: fallbackLabel,
+      dryRunDisabled: true,
+      dryRunTitle: fallbackLabel + ' dry-run은 아직 지원하지 않습니다.',
+      syncTitle: fallbackLabel + ' 가격을 동기화',
+      syncNote: 'platform price sync',
+    };
+  }
+
+  function catFormatPlatformPrice(platform, value, currency) {
+    if (platform === 'joom') return catFormatJoomPrice(value, currency || 'USD');
+    if (platform === 'ebay') return catFormatEbayPrice(value);
+    if (platform === 'qoo10') return catFormatQoo10Price(value);
+    return catFormatJoomPrice(value, currency || 'USD');
+  }
+
+  function catFormatPlatformPriceRange(platform, values, currency) {
+    const clean = (values || []).filter(function(value) {
+      return Number.isFinite(Number(value)) && Number(value) > 0;
+    }).map(Number).sort(function(a, b) { return a - b; });
+    if (!clean.length) return '—';
+    const first = clean[0];
+    const last = clean[clean.length - 1];
+    if (clean.length === 1 || first === last) return catFormatPlatformPrice(platform, first, currency);
+    return catFormatPlatformPrice(platform, first, currency) + '-' + catFormatPlatformPrice(platform, last, currency);
+  }
+
+  function catPriceDeltaInfo(currentPrice, newPrice) {
+    const current = Number(currentPrice);
+    const next = Number(newPrice);
+    if (!Number.isFinite(current) || current <= 0 || !Number.isFinite(next) || next <= 0) {
+      return { maxDeltaPct: 0, deltaClass: 'cat-price-same', deltaLabel: '' };
+    }
+    const deltaPct = (next - current) / current * 100;
+    if (deltaPct > 0.5) {
+      return { maxDeltaPct: Math.abs(deltaPct), deltaClass: 'cat-price-up', deltaLabel: '현재가 대비 +' + deltaPct.toFixed(1) + '%' };
+    }
+    if (deltaPct < -0.5) {
+      return { maxDeltaPct: Math.abs(deltaPct), deltaClass: 'cat-price-down', deltaLabel: '현재가 대비 -' + Math.abs(deltaPct).toFixed(1) + '%' };
+    }
+    return { maxDeltaPct: Math.abs(deltaPct), deltaClass: 'cat-price-same', deltaLabel: '' };
+  }
+
+  function catPlatformPriceSnapshot(product, platform, effectiveCost, weightG) {
+    const key = String(platform || '').toLowerCase();
+    const cost = Number(effectiveCost || 0);
+    const weight = Number(weightG || catEffectiveWeight(product) || 0);
+    if (key === 'joom') {
+      const currentPrice = product && product.joom_last_synced_price != null ? Number(product.joom_last_synced_price) : null;
+      const currency = (product && product.joom_currency) || 'USD';
+      const newPrice = catComputeJoomPrice(cost, weight);
+      const status = product && product.joom_mapping_status
+        ? product.joom_mapping_status
+        : (product && (product.joom_product_id || product.joom_variant_id) ? 'mapped' : '미매핑');
+      const mapped = !!(product && (product.joom_product_id || product.joom_variant_id || product.joom_mapping_status === 'mapped'));
+      return Object.assign({
+        currentPrice,
+        newPrice,
+        currency,
+        status,
+        mapped,
+        statusTitle: product && product.joom_mapping_error ? product.joom_mapping_error : '',
+      }, catPriceDeltaInfo(currentPrice, newPrice));
+    }
+    if (key === 'ebay') {
+      const currentPrice = product && product.ebay_last_synced_price != null ? Number(product.ebay_last_synced_price) : null;
+      const newPrice = catComputeEbayPrice(cost, weight);
+      const mapping = catEbayMapping(product);
+      return Object.assign({
+        currentPrice,
+        newPrice,
+        currency: 'USD',
+        status: mapping.statusLabel,
+        mapped: mapping.isMapped,
+        statusTitle: mapping.offerId ? 'offer_id ' + mapping.offerId : (mapping.itemId ? 'item_id ' + mapping.itemId : ''),
+      }, catPriceDeltaInfo(currentPrice, newPrice));
+    }
+    if (key === 'qoo10') {
+      const currentPrice = product && product.qoo10_last_synced_price != null ? Number(product.qoo10_last_synced_price) : null;
+      const newPrice = catComputeQoo10Price(cost, weight);
+      const status = product && product.qoo10_last_synced_at
+        ? 'synced'
+        : (product && product.qoo10_category_id ? 'lookup' : '미매핑');
+      return Object.assign({
+        currentPrice,
+        newPrice,
+        currency: 'JPY',
+        status,
+        mapped: status !== '미매핑',
+        statusTitle: '',
+      }, catPriceDeltaInfo(currentPrice, newPrice));
+    }
+    return {
+      currentPrice: null,
+      newPrice: null,
+      currency: '',
+      status: '미지원',
+      mapped: false,
+      statusTitle: '',
+      maxDeltaPct: 0,
+      deltaClass: 'cat-price-same',
+      deltaLabel: '',
+    };
+  }
+
+  function catPlatformMarketCardHtml(platform, mappedCount, totalCount, currentPrices, newPrices, currency, maxDeltaPct, deltaLabel, deltaClass) {
+    const meta = catPricePlatformMeta(platform);
+    const total = Math.max(Number(totalCount || 0), 1);
+    const mapped = Math.max(Number(mappedCount || 0), 0);
+    const stateClass = mapped <= 0 ? 'missing' : (mapped >= total ? 'ok' : 'partial');
+    const countLabel = mapped + '/' + total;
+    const currentText = catFormatPlatformPriceRange(platform, currentPrices, currency);
+    const newText = catFormatPlatformPriceRange(platform, newPrices, currency);
+    let priceHtml = '미매핑';
+    if (mapped > 0) {
+      priceHtml = currentText + '<span class="cat-market-arrow">→</span>' + newText;
+    } else if ((newPrices || []).length) {
+      priceHtml = '<span class="muted">미매핑</span><span class="cat-market-arrow">·</span>' + newText;
+    }
+    const resolvedDeltaLabel = deltaLabel || (maxDeltaPct > 0.5 ? '현재가 대비 +' + maxDeltaPct.toFixed(1) + '%' : '');
+    const resolvedDeltaClass = deltaClass || 'cat-price-up';
+    const deltaHtml = resolvedDeltaLabel
+      ? '<br><span class="cat-delta-label ' + esc(resolvedDeltaClass) + '" title="현재 등록/동기화 가격 대비 신규 계산가 증감률">' + esc(resolvedDeltaLabel) + '</span>'
+      : '';
+    return '<div class="cat-market-card ' + stateClass + '">'
+      + '<div class="cat-market-card-head"><span>' + esc(meta.cardLabel) + '</span><span>' + esc(countLabel) + '</span></div>'
+      + '<div class="cat-market-price">' + priceHtml + deltaHtml + '</div>'
+      + '</div>';
+  }
+
+  function catPlatformSyncNote(platform, mappedCount, totalCount, statuses, maxDeltaPct, deltaLabel, deltaClass) {
+    const meta = catPricePlatformMeta(platform);
+    const total = Math.max(Number(totalCount || 0), 1);
+    const mapped = Math.max(Number(mappedCount || 0), 0);
+    const notes = [];
+    if (mapped >= total) notes.push('<span class="platform-result-ok">mapped ' + mapped + '/' + total + '</span>');
+    else if (mapped > 0) notes.push('<strong>partial ' + mapped + '/' + total + '</strong>');
+    else notes.push('<strong>미매핑</strong>');
+    const uniqueStatuses = Array.from(new Set((statuses || []).filter(Boolean))).slice(0, 3);
+    if (uniqueStatuses.length) notes.push('상태: ' + uniqueStatuses.map(esc).join(', '));
+    const resolvedDeltaLabel = deltaLabel || (maxDeltaPct > 0.5 ? '현재가 대비 +' + maxDeltaPct.toFixed(1) + '%' : '');
+    const resolvedDeltaClass = deltaClass || 'cat-price-up';
+    if (resolvedDeltaLabel) notes.push('<span class="' + esc(resolvedDeltaClass) + '" title="현재 등록/동기화 가격 대비 신규 계산가 증감률">' + esc(resolvedDeltaLabel) + '</span>');
+    notes.push('<span class="muted">' + esc(meta.syncNote) + '</span>');
+    return notes.join('<br>');
+  }
+
+  function catPlatformMarketsForRows(rows, platform) {
+    const safeRows = rows || [];
+    const snapshots = safeRows.map(function(product) {
+      return catPlatformPriceSnapshot(product, platform, catEffectiveCost(product), catEffectiveWeight(product));
+    });
+    const currentPrices = [];
+    const newPrices = [];
+    const statuses = [];
+    let mappedCount = 0;
+    let maxDeltaPct = 0;
+    let deltaLabel = '';
+    let deltaClass = 'cat-price-up';
+    let currency = '';
+    snapshots.forEach(function(snapshot) {
+      if (snapshot.mapped) mappedCount += 1;
+      if (Number.isFinite(Number(snapshot.currentPrice)) && Number(snapshot.currentPrice) > 0) currentPrices.push(Number(snapshot.currentPrice));
+      if (Number.isFinite(Number(snapshot.newPrice)) && Number(snapshot.newPrice) > 0) newPrices.push(Number(snapshot.newPrice));
+      if (snapshot.status) statuses.push(snapshot.status);
+      if (!currency && snapshot.currency) currency = snapshot.currency;
+      if (snapshot.maxDeltaPct > maxDeltaPct) {
+        maxDeltaPct = snapshot.maxDeltaPct;
+        deltaLabel = snapshot.deltaLabel || '';
+        deltaClass = snapshot.deltaClass || 'cat-price-up';
+      }
+    });
+    const total = safeRows.length || 1;
+    const card = catPlatformMarketCardHtml(platform, mappedCount, total, currentPrices, newPrices, currency, maxDeltaPct, deltaLabel, deltaClass);
+    const noteHtml = catPlatformSyncNote(platform, mappedCount, total, statuses, maxDeltaPct, deltaLabel, deltaClass);
+    return {
+      html: '<td class="cat-markets-cell" data-cat-markets-cell="1"><div class="cat-market-grid cat-market-grid-single">' + card + '</div></td>'
+        + '<td class="cat-sync-note-cell" data-cat-sync-note="1">' + noteHtml + '</td>',
+      maxDeltaPct,
+      noteHtml,
+    };
+  }
+
+  function catPlatformMarketsForProduct(product, platform, effectiveCost, weightG) {
+    const snapshot = catPlatformPriceSnapshot(product, platform, effectiveCost, weightG);
+    const currentPrices = Number.isFinite(Number(snapshot.currentPrice)) && Number(snapshot.currentPrice) > 0 ? [Number(snapshot.currentPrice)] : [];
+    const newPrices = Number.isFinite(Number(snapshot.newPrice)) && Number(snapshot.newPrice) > 0 ? [Number(snapshot.newPrice)] : [];
+    const card = catPlatformMarketCardHtml(platform, snapshot.mapped ? 1 : 0, 1, currentPrices, newPrices, snapshot.currency, snapshot.maxDeltaPct, snapshot.deltaLabel, snapshot.deltaClass);
+    const statusTitle = snapshot.statusTitle ? ' title="' + esc(snapshot.statusTitle) + '"' : '';
+    const noteHtml = '<span' + statusTitle + '>' + catPlatformSyncNote(platform, snapshot.mapped ? 1 : 0, 1, [snapshot.status], snapshot.maxDeltaPct, snapshot.deltaLabel, snapshot.deltaClass) + '</span>';
+    return {
+      html: '<td class="cat-markets-cell" data-cat-markets-cell="1"><div class="cat-market-grid cat-market-grid-single">' + card + '</div></td>'
+        + '<td class="cat-sync-note-cell" data-cat-sync-note="1">' + noteHtml + '</td>',
+      maxDeltaPct: snapshot.maxDeltaPct,
+      noteHtml,
+    };
+  }
+
+  function catMarketCellsForRows(rows, listingIdx) {
+    if (_catActivePlatform === 'shopee') return catShopeeMarketsForRows(rows, listingIdx);
+    return catPlatformMarketsForRows(rows, _catActivePlatform);
+  }
+
+  function catMarketCellsForProduct(product, listingByRegion, effectiveCost, weightG) {
+    if (_catActivePlatform === 'shopee') return catShopeeMarketsForProduct(product, listingByRegion, effectiveCost, weightG);
+    return catPlatformMarketsForProduct(product, _catActivePlatform, effectiveCost, weightG);
+  }
+
   function catShopeeMarketsForRows(rows, listingIdx) {
     const safeRows = rows || [];
     let maxDeltaPct = 0;
@@ -23285,12 +23609,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + '</div></div>';
   }
 
-  function catBaseReadonlyCell(rows) {
-    return '<div class="cat-base-cell">'
+  function catUseInlineBaseCell() {
+    return _catActivePlatform !== 'shopee';
+  }
+
+  function catBaseReadonlyCell(rows, options) {
+    const inline = !!(options && options.inline);
+    return '<div class="cat-base-cell' + (inline ? ' cat-base-cell-inline' : '') + '">'
       + '<div class="cat-base-row"><span>도매가</span><span class="cat-base-readonly">' + esc(catNumberRange(rows, 'sourcing_price')) + '</span></div>'
       + '<div class="cat-base-row"><span>Cost</span><span class="cat-base-readonly">' + esc(catNumberRange(rows, 'cost_krw')) + '</span></div>'
       + '<div class="cat-base-row"><span>무게</span><span class="cat-base-readonly">' + esc(catNumberRange(rows.map(function(row) { return Object.assign({}, row, { weight_g: catEffectiveWeight(row) }); }), 'weight_g')) + 'g</span></div>'
-      + '<div class="cat-base-hint">옵션별 수정은 펼쳐서 입력</div>'
+      + (inline ? '' : '<div class="cat-base-hint">옵션별 수정은 펼쳐서 입력</div>')
       + '</div>';
   }
 
@@ -23335,10 +23664,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
    * Returns HTML string of <td> pairs (current + new).
    */
   function catBuildRegionCells(listingByRegion, effectiveCost, weightG, product) {
-    if (_catActivePlatform === 'joom') return catBuildJoomCells(product, effectiveCost, weightG);
-    if (_catActivePlatform === 'ebay') return catBuildEbayCells(product, effectiveCost, weightG);
-    if (_catActivePlatform === 'qoo10') return catBuildQoo10Cells(product, effectiveCost);
-    if (_catActivePlatform === 'shopee') return catShopeeMarketsForProduct(product, listingByRegion, effectiveCost, weightG);
+    if (['shopee', 'joom', 'ebay', 'qoo10'].includes(_catActivePlatform)) {
+      return catMarketCellsForProduct(product, listingByRegion, effectiveCost, weightG);
+    }
     let html = '';
     let maxDeltaPct = 0;
 
@@ -23484,6 +23812,26 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
    * Re-render ONLY the region price preview cells for a single row
    * when operator edits cost inline, without full table re-render.
    */
+  function catUpdateRowCostWarning(tr, product, newCost) {
+    if (!tr || !product) return;
+    const origCost = Number(product.cost_krw || 0);
+    const isLargeChange = origCost > 0 && Math.abs(Number(newCost || 0) - origCost) / origCost > 0.30;
+    tr.classList.toggle('cat-row-warn', isLargeChange);
+    const confirmEl = tr.querySelector('[data-cat-confirm]');
+    if (confirmEl) {
+      if (isLargeChange) {
+        if (!confirmEl.querySelector('.cat-confirm-cb')) {
+          confirmEl.innerHTML = '<input type="checkbox" class="cat-confirm-cb" title="매입가 30% 이상 변동 — 확인 체크 필요" oninput="event.stopPropagation();">'
+            + '<span style="font-size:10px;color:var(--yellow);">확인↑30%</span>';
+        }
+      } else {
+        confirmEl.innerHTML = '';
+      }
+    }
+    const costInput = tr.querySelector('.cat-cost-input');
+    if (costInput) costInput.classList.toggle('cost-warn', isLargeChange);
+  }
+
   function catUpdateRowPriceCells(productId, newCost) {
     const pid = String(productId);
     const tr = document.querySelector('[data-cat-pid="' + pid + '"]');
@@ -23499,67 +23847,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const product = _catCache.products.find(function(p) { return String(p.id) === pid; });
     const weightG = product ? catEffectiveWeight(product) : 0;
 
-    if (_catActivePlatform === 'joom' && product) {
-      const joomResult = catBuildJoomCells(product, newCost, weightG);
+    if (product && ['shopee', 'joom', 'ebay', 'qoo10'].includes(_catActivePlatform)) {
+      const marketResult = catMarketCellsForProduct(product, listingByRegion, newCost, weightG);
       const temp = document.createElement('tbody');
-      temp.innerHTML = '<tr>' + joomResult.html + '</tr>';
-      ['[data-cat-joom-current]', '[data-cat-joom-new]', '[data-cat-joom-status]'].forEach(function(sel) {
-        const oldCell = tr.querySelector(sel);
-        const newCell = temp.querySelector(sel);
-        if (oldCell && newCell) oldCell.replaceWith(newCell);
-      });
-      const tdDelta = tr.querySelector('[data-cat-delta]');
-      if (tdDelta) {
-        tdDelta.innerHTML = joomResult.maxDeltaPct > 0.5
-          ? '<span class="cat-price-up">' + joomResult.maxDeltaPct.toFixed(1) + '%</span>'
-          : '<span class="cat-price-same">—</span>';
-      }
-      return;
-    }
-
-    if (_catActivePlatform === 'ebay' && product) {
-      const ebayResult = catBuildEbayCells(product, newCost, weightG);
-      const temp = document.createElement('tbody');
-      temp.innerHTML = '<tr>' + ebayResult.html + '</tr>';
-      ['[data-cat-ebay-current]', '[data-cat-ebay-new]', '[data-cat-ebay-status]'].forEach(function(sel) {
-        const oldCell = tr.querySelector(sel);
-        const newCell = temp.querySelector(sel);
-        if (oldCell && newCell) oldCell.replaceWith(newCell);
-      });
-      const tdDelta = tr.querySelector('[data-cat-delta]');
-      if (tdDelta) {
-        tdDelta.innerHTML = ebayResult.maxDeltaPct > 0.5
-          ? '<span class="cat-price-up">' + ebayResult.maxDeltaPct.toFixed(1) + '%</span>'
-          : '<span class="cat-price-same">—</span>';
-      }
-      return;
-    }
-
-    if (_catActivePlatform === 'qoo10' && product) {
-      const qoo10Result = catBuildQoo10Cells(product, newCost);
-      const temp = document.createElement('tbody');
-      temp.innerHTML = '<tr>' + qoo10Result.html + '</tr>';
-      ['[data-cat-qoo10-current]', '[data-cat-qoo10-new]', '[data-cat-qoo10-status]'].forEach(function(sel) {
-        const oldCell = tr.querySelector(sel);
-        const newCell = temp.querySelector(sel);
-        if (oldCell && newCell) oldCell.replaceWith(newCell);
-      });
-      const tdDelta = tr.querySelector('[data-cat-delta]');
-      if (tdDelta) {
-        tdDelta.innerHTML = '<span class="cat-price-same">—</span>';
-      }
-      return;
-    }
-
-    if (_catActivePlatform === 'shopee' && product) {
-      const shopeeResult = catShopeeMarketsForProduct(product, listingByRegion, newCost, weightG);
-      const temp = document.createElement('tbody');
-      temp.innerHTML = '<tr>' + shopeeResult.html + '</tr>';
+      temp.innerHTML = '<tr>' + marketResult.html + '</tr>';
       ['[data-cat-markets-cell]', '[data-cat-sync-note]'].forEach(function(sel) {
         const oldCell = tr.querySelector(sel);
         const newCell = temp.querySelector(sel);
         if (oldCell && newCell) oldCell.replaceWith(newCell);
       });
+      catUpdateRowCostWarning(tr, product, newCost);
       return;
     }
 
@@ -23612,27 +23909,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         : '<span class="cat-price-same">—</span>';
     }
 
-    // Warn row if cost changed by > 30% vs original DB cost
-    if (product) {
-      const origCost = Number(product.cost_krw || 0);
-      const isLargeChange = origCost > 0 && Math.abs(newCost - origCost) / origCost > 0.30;
-      tr.classList.toggle('cat-row-warn', isLargeChange);
-      // Show confirm checkbox if large change
-      const confirmTd = tr.querySelector('[data-cat-confirm]');
-      if (confirmTd) {
-        if (isLargeChange) {
-          if (!confirmTd.querySelector('.cat-confirm-cb')) {
-            confirmTd.innerHTML = '<input type="checkbox" class="cat-confirm-cb" title="매입가 30% 이상 변동 — 확인 체크 필요" oninput="event.stopPropagation();">'
-              + '<span style="font-size:10px;color:var(--yellow);">확인↑30%</span>';
-          }
-        } else {
-          confirmTd.innerHTML = '';
-        }
-      }
-      // Update cost input style
-      const costInput = tr.querySelector('.cat-cost-input');
-      if (costInput) costInput.classList.toggle('cost-warn', isLargeChange);
-    }
+    catUpdateRowCostWarning(tr, product, newCost);
   }
 
   /**
@@ -23765,10 +24042,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function catRegionSummaryCells(rows, listingIdx) {
-    if (_catActivePlatform === 'joom') return catJoomSummaryCells(rows);
-    if (_catActivePlatform === 'ebay') return catEbaySummaryCells(rows);
-    if (_catActivePlatform === 'qoo10') return catQoo10SummaryCells(rows);
-    if (_catActivePlatform === 'shopee') return catShopeeMarketsForRows(rows, listingIdx);
+    if (['shopee', 'joom', 'ebay', 'qoo10'].includes(_catActivePlatform)) {
+      return catMarketCellsForRows(rows, listingIdx);
+    }
     let html = '';
     let maxDeltaPct = 0;
     CAT_REGIONS.forEach(function(r) {
@@ -23890,38 +24166,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function catRenderGroupRow(group, listingIdx) {
-    if (_catActivePlatform === 'shopee') return catRenderShopeeGroupRow(group, listingIdx);
-    const rows = group.rows;
-    const first = rows[0] || {};
-    const collapsed = !state.priceSyncExpandedGroups.has(group.key);
-    const productIds = rows.map(function(p) { return String(p.id || ''); }).filter(Boolean);
-    const optionSpec = plEffectiveVariationSpec(rows, 'Version');
-    const options = rows.map(function(row, idx) {
-      return plEffectiveOptionDisplay(row, optionSpec, idx, plOptionDisplay(row));
-    }).filter(Boolean);
-    const shownOptions = options.slice(0, 4).map(esc).join(', ');
-    const more = options.length > 4 ? ' 외 ' + (options.length - 4) + '개' : '';
-    const regionResult = catRegionSummaryCells(rows, listingIdx);
-    const maxDelta = regionResult.maxDeltaPct;
-    const staleCount = rows.filter(catIsStale).length;
-    const checked = productIds.length && productIds.every(function(id) { return catSelectedIds.has(id); });
-    const partial = !checked && productIds.some(function(id) { return catSelectedIds.has(id); });
-    return '<tr class="pl-group-row" data-cat-group-key="' + esc(group.key) + '">'
-      + '<td><input type="checkbox" class="cat-cb cat-group-cb" data-group-key="' + esc(group.key) + '" data-product-ids="' + esc(productIds.join(',')) + '" ' + (checked ? 'checked' : '') + (partial ? ' data-partial="1"' : '') + ' title="이 묶음 옵션 전체 선택"></td>'
-      + '<td><div class="pl-group-main">'
-      + '<button type="button" class="pl-group-toggle" data-cat-group-toggle="1" data-group-key="' + esc(group.key) + '" title="' + (collapsed ? '옵션 펼치기' : '옵션 접기') + '">' + (collapsed ? '▸' : '▾') + '</button>'
-      + '<div class="pl-product-copy"><div class="pl-master-title-row"><span class="pl-master-title">' + esc(plProductName(first)) + '</span></div>'
-      + '<div class="muted" style="font-size:11px;">' + esc(plParentSku(rows)) + ' · 옵션 묶음 ' + rows.length + '개' + (shownOptions ? ' · ' + shownOptions + esc(more) : '') + '</div></div>'
-      + '</div></td>'
-      + '<td>' + catLifecycleBadge(first.lifecycle_state) + '</td>'
-      + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows, 'sourcing_price') + '</td>'
-      + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows, 'cost_krw') + '</td>'
-      + '<td class="mono" style="font-size:12px;">' + catNumberRange(rows.map(function(row) { return Object.assign({}, row, { weight_g: catEffectiveWeight(row) }); }), 'weight_g') + '</td>'
-      + regionResult.html
-      + '<td data-cat-delta>' + (maxDelta > 0.5 ? '<span class="cat-price-up">' + maxDelta.toFixed(1) + '%</span>' : '<span class="cat-price-same">—</span>') + '</td>'
-      + '<td style="font-size:12px;color:var(--muted);">묶음</td>'
-      + '<td>' + (staleCount ? '<span class="cat-stale-badge">⚠ ' + staleCount + '/' + rows.length + '</span>' : '') + '</td>'
-      + '</tr>';
+    return catRenderShopeeGroupRow(group, listingIdx);
   }
 
   function catRenderShopeeGroupRow(group, listingIdx) {
@@ -23935,7 +24180,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }).filter(Boolean);
     const shownOptions = options.slice(0, 4).join(', ');
     const more = options.length > 4 ? ' 외 ' + (options.length - 4) + '개' : '';
-    const marketResult = catShopeeMarketsForRows(rows, listingIdx);
+    const marketResult = catMarketCellsForRows(rows, listingIdx);
     const checked = productIds.length && productIds.every(function(id) { return catSelectedIds.has(id); });
     const partial = !checked && productIds.some(function(id) { return catSelectedIds.has(id); });
     const toggleHtml = '<button type="button" class="pl-group-toggle" data-cat-group-toggle="1" data-group-key="' + esc(group.key) + '" title="' + (collapsed ? '옵션 펼치기' : '옵션 접기') + '">' + (collapsed ? '▸' : '▾') + '</button>';
@@ -23944,80 +24189,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + '<td><input type="checkbox" class="cat-cb cat-group-cb" data-group-key="' + esc(group.key) + '" data-product-ids="' + esc(productIds.join(',')) + '" ' + (checked ? 'checked' : '') + (partial ? ' data-partial="1"' : '') + ' title="이 묶음 옵션 전체 선택"></td>'
       + '<td>' + catProductCellHtml(first, { toggleHtml: toggleHtml, title: catProductTitle(first), meta: meta, thumbMode: 'representative' }) + '</td>'
       + '<td>' + catLifecycleBadge(first.lifecycle_state) + '</td>'
-      + '<td>' + catBaseReadonlyCell(rows) + '</td>'
+      + '<td>' + catBaseReadonlyCell(rows, { inline: catUseInlineBaseCell() }) + '</td>'
       + marketResult.html
       + '</tr>';
   }
 
   function catRenderProductRow(p, listingIdx, isGroupChild) {
-    if (_catActivePlatform === 'shopee') return catRenderShopeeProductRow(p, listingIdx, isGroupChild, arguments.length > 3 ? arguments[3] : null, arguments.length > 4 ? arguments[4] : 0);
-    const optionSpec = arguments.length > 3 ? arguments[3] : null;
-    const rowIndex = arguments.length > 4 ? arguments[4] : 0;
-    const pid = String(p.id);
-    const byRegion = listingIdx.get(pid) || new Map();
-    const effectiveCost = catEffectiveCost(p);
-    const origCost = Number(p.cost_krw || 0);
-    const isLargeChange = pid in pendingCostEdits && origCost > 0
-      && Math.abs(pendingCostEdits[pid] - origCost) / origCost > 0.30;
-    const effectiveWeight = catEffectiveWeight(p);
-    const regionResult = catBuildRegionCells(byRegion, effectiveCost, effectiveWeight, p);
-    const maxDelta = regionResult.maxDeltaPct;
-    const isStale = catIsStale(p);
-    const optionLabel = optionSpec
-      ? plEffectiveOptionDisplay(p, optionSpec, rowIndex, plOptionDisplay(p))
-      : plOptionDisplay(p);
-    const rowClass = (isGroupChild ? 'pl-option-row ' : 'pl-single-product-row ') + (isLargeChange ? 'cat-row-warn' : '');
-    const skuCell = '<td><div style="font-size:13px;font-weight:500;">' + esc(p.sku || '—') + '</div>'
-      + (isGroupChild ? '<div class="muted" style="font-size:11px;">' + esc(optionLabel || '옵션') + '</div>' : (p.option_name ? '<div class="muted" style="font-size:11px;">' + esc(p.option_name) + '</div>' : ''))
-      + '</td>';
-    const lcCell = '<td>' + catLifecycleBadge(p.lifecycle_state) + '</td>';
-    const hasStaronemall = !!(p.staronemall_url && String(p.staronemall_url).trim());
-    const sourcingVal = Number(p.sourcing_price || 0);
-    const sourcingCell = '<td>'
-      + '<input type="number" inputmode="decimal" class="cat-sourcing-input"'
-      + ' data-cat-sourcing-pid="' + esc(pid) + '"'
-      + ' value="' + (sourcingVal > 0 ? sourcingVal : '') + '"'
-      + ' min="0" max="999999999" step="1"'
-      + ' placeholder="도매가"'
-      + ' title="도매가(₩) — blur/Enter 시 × 1.30 정산가 자동 산출">'
-      + (hasStaronemall
-        ? '<button type="button" class="cat-staronemall-btn" data-cat-staronemall-pid="' + esc(pid) + '"'
-          + ' title="Staronemall 재크롤링 → 도매가/정산가 갱신" style="font-size:10px;margin-top:3px;padding:1px 6px;cursor:pointer;">↻ Staronemall</button>'
-          + '<div class="cat-staronemall-status" data-cat-staronemall-status="' + esc(pid) + '" style="font-size:10px;color:var(--muted);"></div>'
-        : '')
-      + '</td>';
-    const costVal = effectiveCost > 0 ? effectiveCost : (origCost || '');
-    const costWarn = isLargeChange ? ' cost-warn' : '';
-    const costCell = '<td>'
-      + '<input type="number" inputmode="decimal" class="cat-cost-input' + costWarn + '"'
-      + ' data-cat-cost-pid="' + esc(pid) + '"'
-      + ' value="' + Number(costVal || 0) + '"'
-      + ' min="1" max="999999999" step="1"'
-      + ' title="매입가(₩) — blur 또는 Enter로 region preview 갱신">'
-      + (isLargeChange
-        ? '<div data-cat-confirm style="font-size:10px;color:var(--yellow);">'
-          + '<input type="checkbox" class="cat-confirm-cb" title="매입가 30% 이상 변동 — 확인 체크 필요"> 확인↑30%</div>'
-        : '<div data-cat-confirm></div>')
-      + '</td>';
-    const wtCell = '<td>'
-      + '<input type="number" inputmode="decimal" class="cat-weight-input mono"'
-      + ' data-cat-weight-pid="' + esc(pid) + '"'
-      + ' value="' + (effectiveWeight > 0 ? Number(effectiveWeight) : '') + '"'
-      + ' min="1" max="999999999" step="1" style="width:64px;font-size:12px;"'
-      + ' title="무게(g) — blur/Enter 시 저장 + region preview 갱신 (실호출 아님)">'
-      + '</td>';
-    const deltaCell = '<td data-cat-delta>'
-      + (maxDelta > 0.5 ? '<span class="cat-price-up">' + maxDelta.toFixed(1) + '%</span>' : '<span class="cat-price-same">—</span>')
-      + '</td>';
-    const updatedAt = p.cost_updated_at || p.created_at || null;
-    const updatedCell = '<td style="font-size:12px;color:var(--muted);">' + catRelativeDate(updatedAt) + '</td>';
-    const staleCell = '<td>' + (isStale ? '<span class="cat-stale-badge">⚠ 14일+</span>' : '') + '</td>';
-    return '<tr class="' + rowClass + '" data-cat-pid="' + esc(pid) + '">'
-      + '<td><input type="checkbox" class="cat-cb cat-row-cb" data-cat-sel="' + esc(pid) + '" ' + (catSelectedIds.has(pid) ? 'checked' : '') + '></td>'
-      + skuCell + lcCell + sourcingCell + costCell + wtCell
-      + regionResult.html
-      + deltaCell + updatedCell + staleCell
-      + '</tr>';
+    return catRenderShopeeProductRow(p, listingIdx, isGroupChild, arguments.length > 3 ? arguments[3] : null, arguments.length > 4 ? arguments[4] : 0);
   }
 
   function catRenderShopeeProductRow(p, listingIdx, isGroupChild, optionSpec, rowIndex) {
@@ -24028,7 +24206,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const isLargeChange = pid in pendingCostEdits && origCost > 0
       && Math.abs(pendingCostEdits[pid] - origCost) / origCost > 0.30;
     const effectiveWeight = catEffectiveWeight(p);
-    const marketResult = catShopeeMarketsForProduct(p, byRegion, effectiveCost, effectiveWeight);
+    const marketResult = catMarketCellsForProduct(p, byRegion, effectiveCost, effectiveWeight);
     const optionLabel = optionSpec
       ? plEffectiveOptionDisplay(p, optionSpec, rowIndex, plOptionDisplay(p))
       : plOptionDisplay(p);
@@ -24039,7 +24217,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const toggleHtml = isGroupChild
       ? '<span style="width:24px;height:24px;display:inline-block;"></span>'
       : '';
-    const baseCell = '<div class="cat-base-cell">'
+    const inlineBase = catUseInlineBaseCell();
+    const baseCell = '<div class="cat-base-cell' + (inlineBase ? ' cat-base-cell-inline' : '') + '">'
       + '<div class="cat-base-row"><span>도매가</span><input type="number" inputmode="decimal" class="cat-sourcing-input" data-cat-sourcing-pid="' + esc(pid) + '" value="' + (sourcingVal > 0 ? sourcingVal : '') + '" min="0" max="999999999" step="1" placeholder="도매가" title="도매가(₩) — blur/Enter 시 × 1.30 정산가 자동 산출"></div>'
       + '<div class="cat-base-row"><span>Cost</span><input type="number" inputmode="decimal" class="cat-cost-input' + (isLargeChange ? ' cost-warn' : '') + '" data-cat-cost-pid="' + esc(pid) + '" value="' + Number(costVal || 0) + '" min="1" max="999999999" step="1" title="매입가(₩) — blur 또는 Enter로 market preview 갱신"></div>'
       + '<div class="cat-base-row"><span>무게</span><input type="number" inputmode="decimal" class="cat-weight-input mono" data-cat-weight-pid="' + esc(pid) + '" value="' + (effectiveWeight > 0 ? Number(effectiveWeight) : '') + '" min="1" max="999999999" step="1" title="무게(g) — blur/Enter 시 저장 + market preview 갱신"></div>'
@@ -24068,15 +24247,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
    * Fetches data (60s cache), applies filters, renders full table.
    */
   function catCurrentColCount() {
-    return _catActivePlatform === 'shopee'
-      ? 6
-      : 3 + CAT_REGIONS.length * 2 + 6;
+    return 6;
   }
 
   async function renderCatalogView(forceRefresh) {
     const errEl = document.getElementById('cat-error');
     const loadingEl = document.getElementById('cat-loading');
     const tbody = document.getElementById('cat-body');
+    catUpdatePlatformChrome();
     if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
     if (loadingEl) loadingEl.style.display = 'block';
     if (tbody) tbody.innerHTML = '<tr><td colspan="' + catCurrentColCount() + '" class="cat-empty">로딩 중…</td></tr>';
@@ -24122,125 +24300,20 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (!table) return;
     const thead = table.querySelector('thead tr');
     if (!thead) return;
-    const headMode = _catActivePlatform === 'shopee' ? 'shopee' : 'legacy';
+    const meta = catPricePlatformMeta(_catActivePlatform);
+    const headMode = String(_catActivePlatform || 'shopee') + '-market-card';
 
     if (thead.parentElement && thead.parentElement.dataset.catHeadMode !== headMode) {
-      if (headMode === 'shopee') {
-        thead.innerHTML = ''
-          + '<th style="width:28px;"><input type="checkbox" id="cat-select-all" class="cat-cb" title="전체 선택"></th>'
-          + '<th style="width:405px;">Product</th>'
-          + '<th style="width:90px;">Lifecycle</th>'
-          + '<th style="width:190px;">KRW Base</th>'
-          + '<th style="width:520px;">Markets</th>'
-          + '<th style="width:160px;">Sync Note</th>';
-      } else {
-        thead.innerHTML = ''
-          + '<th style="width:28px;"><input type="checkbox" id="cat-select-all" class="cat-cb" title="전체 선택"></th>'
-          + '<th style="min-width:180px;">SKU / 옵션</th>'
-          + '<th style="min-width:90px;">Lifecycle</th>'
-          + '<th style="min-width:100px;">도매가 (₩)</th>'
-          + '<th style="min-width:110px;">Cost (₩)</th>'
-          + '<th style="min-width:70px;">무게(g)</th>'
-          + '<th style="min-width:80px;">Δ 최대</th>'
-          + '<th style="min-width:100px;">cost 갱신</th>'
-          + '<th style="min-width:60px;">배지</th>';
-      }
+      thead.innerHTML = ''
+        + '<th style="width:28px;"><input type="checkbox" id="cat-select-all" class="cat-cb" title="전체 선택"></th>'
+        + '<th style="width:405px;">Product</th>'
+        + '<th style="width:90px;">Lifecycle</th>'
+        + '<th style="width:' + Number(meta.baseWidth || 190) + 'px;">KRW Base</th>'
+        + '<th style="width:' + Number(meta.priceWidth || 520) + 'px;">' + esc(meta.priceHeading) + '</th>'
+        + '<th style="width:' + Number(meta.syncWidth || 160) + 'px;">' + esc(meta.syncHeading) + '</th>';
       thead.parentElement.dataset.catHeadMode = headMode;
       catBindSelectAll();
     }
-
-    // Remove existing dynamic price headers (all platform columns)
-    thead.querySelectorAll('[data-cat-region],[data-cat-region-new],[data-cat-joom-current],[data-cat-joom-new],[data-cat-joom-status],[data-cat-ebay-current],[data-cat-ebay-new],[data-cat-ebay-status],[data-cat-qoo10-current],[data-cat-qoo10-new],[data-cat-qoo10-status]').forEach(function(th) { th.remove(); });
-    if (_catActivePlatform === 'shopee') return;
-
-    // Find anchor: the 무게(g) column, insert region columns after it
-    const ths = Array.from(thead.querySelectorAll('th'));
-    const weightTh = ths[5]; // 0=cb, 1=sku, 2=lifecycle, 3=sourcing(도매가), 4=cost, 5=weight
-    if (!weightTh) return;
-
-    const frag = document.createDocumentFragment();
-    if (_catActivePlatform === 'joom') {
-      const thCurr = document.createElement('th');
-      thCurr.dataset.catJoomCurrent = '1';
-      thCurr.style.cssText = 'min-width:125px;';
-      thCurr.textContent = 'Joom 현재가';
-      frag.appendChild(thCurr);
-
-      const thNew = document.createElement('th');
-      thNew.dataset.catJoomNew = '1';
-      thNew.style.cssText = 'min-width:125px;';
-      thNew.textContent = 'Joom 신규가';
-      frag.appendChild(thNew);
-
-      const thStatus = document.createElement('th');
-      thStatus.dataset.catJoomStatus = '1';
-      thStatus.style.cssText = 'min-width:135px;';
-      thStatus.textContent = 'Joom 매핑';
-      frag.appendChild(thStatus);
-      weightTh.after(frag);
-      return;
-    }
-
-    if (_catActivePlatform === 'ebay') {
-      const thCurr = document.createElement('th');
-      thCurr.dataset.catEbayCurrent = '1';
-      thCurr.style.cssText = 'min-width:125px;';
-      thCurr.textContent = 'eBay 현재가 (USD)';
-      frag.appendChild(thCurr);
-
-      const thNew = document.createElement('th');
-      thNew.dataset.catEbayNew = '1';
-      thNew.style.cssText = 'min-width:125px;';
-      thNew.textContent = 'eBay 신규가 (USD)';
-      frag.appendChild(thNew);
-
-      const thStatus = document.createElement('th');
-      thStatus.dataset.catEbayStatus = '1';
-      thStatus.style.cssText = 'min-width:135px;';
-      thStatus.textContent = 'eBay 매핑';
-      frag.appendChild(thStatus);
-      weightTh.after(frag);
-      return;
-    }
-
-    if (_catActivePlatform === 'qoo10') {
-      const thCurr = document.createElement('th');
-      thCurr.dataset.catQoo10Current = '1';
-      thCurr.style.cssText = 'min-width:125px;';
-      thCurr.textContent = 'Qoo10 현재가 (JPY)';
-      frag.appendChild(thCurr);
-
-      const thNew = document.createElement('th');
-      thNew.dataset.catQoo10New = '1';
-      thNew.style.cssText = 'min-width:125px;';
-      thNew.textContent = 'Qoo10 신규가 (JPY)';
-      frag.appendChild(thNew);
-
-      const thStatus = document.createElement('th');
-      thStatus.dataset.catQoo10Status = '1';
-      thStatus.style.cssText = 'min-width:135px;';
-      thStatus.textContent = 'Qoo10 매핑';
-      frag.appendChild(thStatus);
-      weightTh.after(frag);
-      return;
-    }
-
-    CAT_REGIONS.forEach(function(r) {
-      const dimStyle = _catRegionVisible.has(r) ? '' : 'opacity:0.35;';
-
-      const thCurr = document.createElement('th');
-      thCurr.dataset.catRegion = r;
-      thCurr.style.cssText = 'min-width:105px;' + dimStyle;
-      thCurr.textContent = r + ' 현재가';
-      frag.appendChild(thCurr);
-
-      const thNew = document.createElement('th');
-      thNew.dataset.catRegionNew = r;
-      thNew.style.cssText = 'min-width:105px;' + dimStyle;
-      thNew.textContent = r + ' 신규가';
-      frag.appendChild(thNew);
-    });
-    weightTh.after(frag);
   }
 
   /** Apply current search + lifecycle filter, sort, and render tbody. */
@@ -24622,10 +24695,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const priceInfo = normalizeShopeeOriginalPrice(r, newPrice);
         if (!priceInfo.ok) return;
 
-        const modelId = listing.shop_model_id ? Number(listing.shop_model_id) : null;
-        const priceEntry = modelId
-          ? { model_id: modelId, original_price: priceInfo.value }
-          : { original_price: priceInfo.value };
+        const rawModelId = listing.shop_model_id ? Number(listing.shop_model_id) : null;
+        const modelId = needsModel && rawModelId ? rawModelId : null;
+        const priceEntry = catBuildShopeePriceEntry({
+          needsModel: needsModel,
+          modelId: modelId,
+          originalPrice: priceInfo.value,
+        });
         const payload = {
           region: r,
           item_id: itemId,
@@ -24671,6 +24747,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // ── Dry-run modal ───────────────────────────────────────────────
 
   function catShowDryRunModal() {
+    if (_catActivePlatform !== 'shopee') {
+      const meta = catPricePlatformMeta(_catActivePlatform);
+      showToast(meta.label + '은 현재 화면 계산값과 동기화 확인창으로 실행 전 확인합니다.', '');
+      return;
+    }
     catFlushSelectedInlineEdits({ persistWeight: false });
     const { runId, payloads } = catBuildDryRunPayloads();
 
@@ -25226,14 +25307,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function catProductGlobalItemId(product, byRegion) {
-    const direct = Number(product && (product.shopee_item_id || product.global_item_id || product.shopee_global_item_id || 0));
-    if (Number.isFinite(direct) && direct > 0) return direct;
     if (byRegion && typeof byRegion.values === 'function') {
+      const listingIds = [];
       for (const listing of byRegion.values()) {
         const v = Number(listing && listing.global_item_id);
-        if (Number.isFinite(v) && v > 0) return v;
+        if (Number.isFinite(v) && v > 0 && !listingIds.includes(v)) listingIds.push(v);
       }
+      if (listingIds.length === 1) return listingIds[0];
+      if (listingIds.length > 1) return listingIds[0];
     }
+    const direct = Number(product && (product.shopee_item_id || product.global_item_id || product.shopee_global_item_id || 0));
+    if (Number.isFinite(direct) && direct > 0) return direct;
     return null;
   }
 
@@ -25251,12 +25335,27 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   function catProductNeedsShopeeModel(product) {
     if (!product) return false;
+    const kind = String(product.product_kind || '').toLowerCase();
+    if (kind === 'option' || kind === 'variant') return true;
     if (Number(product.global_model_id) > 0) return true;
     if (String(product.shopee_global_model_sku || '').trim()) return true;
+    if (Array.isArray(product.variation_tier_index) && product.variation_tier_index.length) return true;
+    const groupId = String(product.product_group_id || '').trim();
+    const productId = String(product.id || '').trim();
+    const belongsToOptionGroup = !!(groupId && productId && groupId !== productId);
+    if (!belongsToOptionGroup) return false;
     if (String(product.option_name || '').trim()) return true;
     if (Array.isArray(product.variation_option_names) && product.variation_option_names.length) return true;
-    if (Array.isArray(product.variation_tier_index) && product.variation_tier_index.length) return true;
     return false;
+  }
+
+  function catBuildShopeePriceEntry(options) {
+    const originalPrice = Number(options && options.originalPrice);
+    if (options && options.needsModel) {
+      return { model_id: Number(options.modelId), original_price: originalPrice };
+    }
+    // Shopee v2.product.update_price documents model_id=0 for no-model items.
+    return { model_id: 0, original_price: originalPrice };
   }
 
   async function catFetchShopeeShopRegionIndex() {
@@ -25995,6 +26094,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           tab.setAttribute('aria-selected', active ? 'true' : 'false');
         });
         _catActivePlatform = platform;
+        catUpdatePlatformChrome();
         catSyncRegionHeaders();
         applyAndRenderCatalog();
         if (platform === 'joom') {
@@ -26010,17 +26110,47 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     });
   }
 
-  function initCatRegionFilters() {
+  function catUpdatePlatformChrome() {
+    const meta = catPricePlatformMeta(_catActivePlatform);
+    const banner = document.getElementById('cat-api-banner');
+    if (banner) banner.textContent = meta.banner;
+
+    const dryRunBtn = document.getElementById('cat-dry-run-btn');
+    if (dryRunBtn) {
+      dryRunBtn.disabled = !!meta.dryRunDisabled;
+      dryRunBtn.title = meta.dryRunTitle;
+      dryRunBtn.textContent = _catActivePlatform === 'shopee' ? 'Dry-run' : 'Dry-run 없음';
+    }
+
+    const syncBtn = document.getElementById('cat-sync-btn');
+    if (syncBtn) {
+      syncBtn.title = meta.syncTitle;
+      syncBtn.textContent = _catActivePlatform === 'shopee' ? '동기화' : meta.label + ' 동기화';
+    }
+
+    const summaryText = document.querySelector('.cat-price-summary span');
+    if (summaryText) summaryText.textContent = meta.summary;
+
     const container = document.getElementById('cat-region-filters');
     if (!container) return;
+    container.setAttribute('aria-label', meta.filterLabel);
+    if (_catActivePlatform !== 'shopee') {
+      container.innerHTML = '<span class="cat-market-title">' + esc(meta.filterLabel) + '</span>'
+        + meta.chips.map(function(chip) {
+          return '<span class="cat-market-chip active" aria-disabled="true">' + esc(chip) + '</span>';
+        }).join('');
+      return;
+    }
+
     container.innerHTML = '<span class="cat-market-title">Shopee markets</span>';
     CAT_REGIONS.forEach(function(r) {
       const chip = document.createElement('button');
       chip.type = 'button';
-      chip.className = 'cat-market-chip active';
+      const isActive = _catRegionVisible.has(r);
+      chip.className = 'cat-market-chip' + (isActive ? ' active' : '');
       chip.dataset.catMarket = r;
       chip.textContent = r;
-      chip.setAttribute('aria-pressed', 'true');
+      chip.setAttribute('aria-pressed', isActive ? 'true' : 'false');
       chip.addEventListener('click', function() {
         const nextActive = !chip.classList.contains('active');
         chip.classList.toggle('active', nextActive);
@@ -26033,6 +26163,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       });
       container.appendChild(chip);
     });
+  }
+
+  function initCatRegionFilters() {
+    catUpdatePlatformChrome();
   }
 
   // ── Wire listeners ──────────────────────────────────────────────
@@ -32473,7 +32607,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         return [
           { attribute_id: 100037, attribute_value_list: [{ value_id: 48, original_value_name: 'Korea' }] },
           { attribute_id: 100693, attribute_value_list: [{ value_id: 3574, original_value_name: 'Music & Concerts' }] },
-          { attribute_id: 101044, attribute_value_list: [{ value_id: 11441, original_value_name: 'No' }] },
         ];
       }
       if (cat === 101390) {
@@ -32627,6 +32760,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           sourcing_price: Number(r._sourcing_price || r.sourcing_price || 0),
           cost_krw:       r._cost_krw || 0,
           weight_g:       r._weight_g || 0,
+          inventory:      r._inventory || r.inventory || 0,
           main_image:     r._main_image || '',
           extra_images:   r._extra_images || [],
           option_names:   r._singleProductMode ? [] : (group.twoAxis ? [r._opt0 || '', r._opt1 || ''] : [r._opt0 || '']),
@@ -32755,10 +32889,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
               if (!probeImageOk)  console.log('[mrPromoteAll] probe_per_option_image_ok=false: stripping option_list[].image from tier_variation');
 
               const CBSC_REGIONS = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR'];
+              const optionPriceRatioWeights = variationOptions
+                .map((vOpt) => Number(vOpt.weight_g || 0))
+                .filter((n) => Number.isFinite(n) && n > 0);
+              const fallbackPriceRatioWeight = optionPriceRatioWeights.length ? Math.max(...optionPriceRatioWeights) : 100;
               const priceRatioPlan = rshBuildModelPriceRatioExclusionPlan(variationOptions.map((vOpt, index) => ({
                 sku: vOpt.sku,
                 label: (vOpt.option_names || []).filter(Boolean).join(' / ') || vOpt.sku || `Option ${index + 1}`,
-                regionPrices: Object.fromEntries(CBSC_REGIONS.map((region) => [region, Number(vOpt.cost_krw || 0)])),
+                regionPrices: Object.fromEntries(CBSC_REGIONS.map((region) => {
+                  const calc = rshComputeRegionPrice(Number(vOpt.cost_krw || 0), Number(vOpt.weight_g || fallbackPriceRatioWeight), region);
+                  return [region, calc ? calc.originalPrice : Number(vOpt.cost_krw || 0)];
+                })),
                 source: vOpt,
               })), CBSC_REGIONS);
               if (!rshConfirmModelPriceRatioExclusions(priceRatioPlan)) {
@@ -32796,7 +32937,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                   tier_index:       vOpt.tier_index,
                   global_model_sku: vOpt.sku,
                   original_price:   vOpt.cost_krw,
-                  seller_stock:     [{ stock: 0 }],
+                  seller_stock:     [{ stock: Math.floor(Number(vOpt.inventory || 0)) }],
                 };
                 if (probeWeightOk) model.weight_g = vOpt.weight_g;
                 return model;
@@ -32878,12 +33019,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 return ids;
               };
 
-              const cbscTargets = publishRegions.map(rgn => ({
-                region:         rgn,
-                price:          firstRow._cost_krw || shopeeVariationOptions[0].cost_krw || 0,
-                days_to_ship:   firstRow._shopee_days_to_ship, // validated 1-150 int
-                image_id_list:  buildImageIdList(rgn).slice(0, REGISTER_MAX_IMAGE_IDS),
-              }));
               const globalImageRegion = publishRegions.includes('SG') ? 'SG' : publishRegions[0];
               const globalImageIdList = buildImageIdList(globalImageRegion).slice(0, REGISTER_MAX_IMAGE_IDS);
 
@@ -32912,6 +33047,30 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 });
               };
               const tierVariation = buildTierVariation(pathAEnabled);
+              const buildTargetVariationModels = (rgn) => {
+                return shopeeVariationOptions.map((vOpt) => {
+                  const calc = rshComputeRegionPrice(Number(vOpt.cost_krw || 0), Number(vOpt.weight_g || fallbackPriceRatioWeight), rgn);
+                  if (!calc) throw new Error(`${rgn} ${vOpt.sku || ''} Shopee price calculation failed`);
+                  return {
+                    tier_index:       vOpt.tier_index,
+                    model_sku:        vOpt.sku,
+                    global_model_sku: vOpt.sku,
+                    original_price:   calc.originalPrice,
+                    seller_stock:     [{ stock: Math.floor(Number(vOpt.inventory || 0)) }],
+                    weight_g:         vOpt.weight_g,
+                  };
+                });
+              };
+              const cbscTargets = publishRegions.map((rgn) => {
+                const targetModels = buildTargetVariationModels(rgn);
+                return {
+                  region:         rgn,
+                  price:          targetModels[0]?.original_price || firstRow._cost_krw || shopeeVariationOptions[0].cost_krw || 0,
+                  days_to_ship:   firstRow._shopee_days_to_ship, // validated 1-150 int
+                  image_id_list:  buildImageIdList(rgn).slice(0, REGISTER_MAX_IMAGE_IDS),
+                  variation:      { tier_variation: tierVariation, model: targetModels },
+                };
+              });
 
               // 5. Title / description from observed
               const cbscTitle = mrMasterProductName(firstRow) || firstRow.artist || 'UNKNOWN';

@@ -35,6 +35,7 @@ const mrUploadRegionImages = extractFunction(html, 'mrUploadRegionImages');
 const regionBatchOrder = extractFunction(html, 'shopeeRegionBatchOrder');
 const batchRegister = extractFunction(html, 'shopeeRegisterCbscWithRegionBatches');
 const updateDifferentWeightShipping = extractFunction(html, 'rshUpdateDifferentWeightShipping');
+const buildDefaultAttributeList = extractFunction(html, 'buildDefaultAttributeList');
 const renderModal = html.slice(html.indexOf('<section class="rsh-seller-section grid" id="rsh-info-section"'), html.indexOf('<!-- Description -->'));
 const variantSection = html.slice(html.indexOf('<!-- Sales Information -->'), html.indexOf('<!-- Shipping + region pre-order/DTS -->'));
 const shippingSection = html.slice(html.indexOf('<!-- Shipping + region pre-order/DTS -->'), html.indexOf('<!-- Others -->'));
@@ -180,6 +181,11 @@ assert.match(
 );
 assert.match(
   html,
+  /maxPrice \/ minPrice < limit[\s\S]*entry\.price >= maxAllowedPrice - 0\.000001/,
+  'V2 price-ratio preflight must treat the Shopee limit as an exclusive ceiling, so exact 4x BR options are excluded',
+);
+assert.match(
+  html,
   /function rshConfirmModelPriceRatioExclusions[\s\S]*window\.confirm[\s\S]*이 옵션들을 제외하고 등록할까요/,
   'V2 Shopee registration must warn operators before excluding price-ratio options',
 );
@@ -190,8 +196,8 @@ assert.match(
 );
 assert.match(
   normalizeRegionalGlobalModelPrices,
-  /rshStrictestModelPriceRatioLimit\(activeRegions\)[\s\S]*global_original_price:\s*safeMinimum/,
-  'group payload must normalize Global Product model prices using the strictest targeted region price ratio',
+  /rshStrictestModelPriceRatioLimit\(activeRegions\)[\s\S]*maxPrice \/ minPrice < safeRatioLimit[\s\S]*global_original_price:\s*safeMinimum/,
+  'group payload must normalize Global Product model prices using the strictest targeted region price ratio as an exclusive ceiling',
 );
 assert.match(
   buildGroupPayload,
@@ -214,6 +220,11 @@ assert.match(
   'V2 group registration must split large region publishes into register_cbsc + publish_to_region batches',
 );
 assert.match(
+  batchRegister,
+  /ok:\s*results\.length > 0 && results\.every\(\(row\) => row\?\.ok === true\)/,
+  'V2 batch registration must fail the overall response when any follow-up region publish fails',
+);
+assert.match(
   regionBatchOrder,
   /BR:\s*0[\s\S]*SG:\s*1/,
   'V2 batch ordering must prioritize BR so its longer polling window overlaps other regions',
@@ -227,6 +238,21 @@ assert.match(
   html,
   /rshBuildModelPriceRatioExclusionPlan[\s\S]*rshConfirmModelPriceRatioExclusions[\s\S]*shopeeVariationOptions[\s\S]*const skusInGroup\s*=\s*shopeeVariationOptions\.map/,
   'master promote registration must exclude price-ratio violating options before Shopee publish and DB state updates',
+);
+assert.match(
+  html,
+  /priceRatioPlan[\s\S]*rshComputeRegionPrice\(Number\(vOpt\.cost_krw[\s\S]*fallbackPriceRatioWeight[\s\S]*calc \? calc\.originalPrice : Number\(vOpt\.cost_krw/,
+  'master promote registration must evaluate price-ratio exclusions using computed region-local option prices, not raw KRW costs',
+);
+assert.match(
+  html,
+  /const buildTargetVariationModels[\s\S]*rshComputeRegionPrice\(Number\(vOpt\.cost_krw[\s\S]*original_price:\s*calc\.originalPrice[\s\S]*variation:\s*\{ tier_variation: tierVariation, model: targetModels \}/,
+  'master promote registration must send region-local target variation prices for every Shopee publish target',
+);
+assert.doesNotMatch(
+  buildDefaultAttributeList,
+  /101044/,
+  'master promote registration must not include Adult products by default because MY rejects it for category 100740',
 );
 
 assert.match(
@@ -252,8 +278,8 @@ assert.match(
 );
 assert.match(
   bridge,
-  /SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS[\s\S]*SG:\s*5[\s\S]*TW:\s*5[\s\S]*TH:\s*5[\s\S]*MY:\s*5[\s\S]*PH:\s*5[\s\S]*BR:\s*4[\s\S]*function normalizeRegionalGlobalModelPriceRatio/,
-  'Shopee bridge must defensively normalize Global Product option price ratios with observed region limits',
+  /SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS[\s\S]*SG:\s*5[\s\S]*TW:\s*5[\s\S]*TH:\s*5[\s\S]*MY:\s*5[\s\S]*PH:\s*5[\s\S]*BR:\s*4[\s\S]*function normalizeRegionalGlobalModelPriceRatio[\s\S]*maxPrice \/ minPrice < safeRatioLimit/,
+  'Shopee bridge must defensively normalize Global Product option price ratios with observed region limits as exclusive ceilings',
 );
 assert.match(
   bridge,
@@ -367,8 +393,8 @@ assert.match(
 );
 assert.match(
   publishToRegionBlock,
-  /shouldRetryMinimalPublish[\s\S]*retryMinimalPublish/,
-  'publish_to_region must retry variation-invalid and crossupload-permission failures with minimal publish',
+  /shouldTryMinimalPublishFallback[\s\S]*retryMinimalPublish/,
+  'publish_to_region must retry retryable and ambiguous local publish failures with minimal publish',
 );
 assert.match(
   publishToRegionBlock,
@@ -377,8 +403,13 @@ assert.match(
 );
 assert.match(
   publishToRegionBlock,
-  /parsePublishOutcome[\s\S]*shouldRetryMinimalPublish[\s\S]*retryMinimalPublish[\s\S]*Fallback verification/,
+  /parsePublishOutcome[\s\S]*shouldTryMinimalPublishFallback[\s\S]*retryMinimalPublish[\s\S]*Fallback verification/,
   'publish_to_region must run minimal retry before slower fallback verification loops',
+);
+assert.match(
+  bridge,
+  /function isPriceRatioPublishFailure[\s\S]*function isAmbiguousLocalPublishFailure[\s\S]*isPriceRatioPublishFailure[\s\S]*function shouldTryMinimalPublishFallback/,
+  'Shopee bridge must not use minimal publish fallback for price-ratio failures, while allowing ambiguous local publish failures',
 );
 assert.match(
   bridge,
@@ -437,7 +468,7 @@ assert.match(
 );
 assert.match(
   registerCbscBlock,
-  /parsePublishOutcome[\s\S]*shouldRetryMinimalPublish[\s\S]*retryMinimalPublish[\s\S]*BR gets 3 retries/,
+  /parsePublishOutcome[\s\S]*shouldTryMinimalPublishFallback[\s\S]*retryMinimalPublish[\s\S]*BR gets 3 retries/,
   'register_cbsc must run minimal retry before slower fallback verification loops',
 );
 assert.match(
@@ -447,8 +478,8 @@ assert.match(
 );
 assert.match(
   registerCbscBlock,
-  /shouldRetryMinimalPublish[\s\S]*retryMinimalPublish/,
-  'register_cbsc must retry variation-invalid and crossupload-permission failures with minimal publish',
+  /shouldTryMinimalPublishFallback[\s\S]*retryMinimalPublish/,
+  'register_cbsc must retry retryable and ambiguous local publish failures with minimal publish',
 );
 assert.match(
   registerCbscBlock,

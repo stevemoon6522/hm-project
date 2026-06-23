@@ -5364,9 +5364,56 @@ Deno.serve(async (req) => {
       const price_list = body.price_list || [];
       if (!item_id) return jsonResp({ ok: false, error: 'item_id required' }, 400);
       if (!Array.isArray(price_list) || !price_list.length) return jsonResp({ ok: false, error: 'price_list required' }, 400);
+      const requestPayload = { account_key: reqAccountKey, item_id, price_list };
+      const payloadHash = await sha256Hex({ action, account_key: reqAccountKey, region: r, request_payload: requestPayload });
+      const previous = await findOkMutation(payloadHash);
+      if (previous) {
+        audit('shop_update_price_idempotent_skip', { account_key: reqAccountKey, region: r, item_id, payload_hash: payloadHash, previous_log_id: previous.id });
+        return jsonResp({
+          ok: true,
+          skipped: true,
+          previous_log_id: previous.id,
+          account_key: reqAccountKey,
+          region: r,
+          item_id,
+          sent_price_list: price_list,
+          failure_list: [],
+          payload_hash: payloadHash,
+          rollback_policy: V2_ROLLBACK_POLICY,
+        });
+      }
+      const started = Date.now();
       const result = await shopApiCall(r, '/api/v2/product/update_price', { method: 'POST', body: { item_id, price_list }, account_key: reqAccountKey });
+      const durationMs = Date.now() - started;
       const failureList = Array.isArray(result?.response?.failure_list) ? result.response.failure_list : [];
-      return jsonResp({ ok: !result.error && failureList.length === 0, account_key: reqAccountKey, region: r, item_id, sent_price_list: price_list, failure_list: failureList, result });
+      const ok = !result.error && failureList.length === 0;
+      const errorMsg = result?.error
+        ? `${result.error || ''} ${result.message || ''}`.trim()
+        : (failureList.length ? 'update_price failure_list: ' + JSON.stringify(failureList).slice(0, 500) : null);
+      const log = await insertMutationLog({
+        action: 'update_price',
+        region: r,
+        payloadHash,
+        requestPayload,
+        status: ok ? 'ok' : 'error',
+        response: result,
+        errorMsg,
+        requestId: result?.request_id || null,
+        durationMs,
+        body: { ...body, account_key: reqAccountKey },
+      });
+      return jsonResp({
+        ok,
+        account_key: reqAccountKey,
+        region: r,
+        item_id,
+        sent_price_list: price_list,
+        failure_list: failureList,
+        result,
+        payload_hash: payloadHash,
+        log_id: log.id || null,
+        rollback_policy: V2_ROLLBACK_POLICY,
+      });
     }
     if (action === 'update_item_logistics' && req.method === 'POST') {
       const body = await req.json();

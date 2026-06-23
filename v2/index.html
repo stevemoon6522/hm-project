@@ -25177,6 +25177,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function catInsertShopeePriceLog(payload, status, responseJson, errorMsg) {
+    if (responseJson && (responseJson.log_id || responseJson.previous_log_id)) return;
     try {
       const liveHash = 'live:' + String(payload.payloadHash || '').replace(/^dry:/, '');
       const { error } = await db.from('shopee_mutation_log').insert({

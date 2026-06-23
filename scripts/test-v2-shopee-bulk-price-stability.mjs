@@ -101,6 +101,11 @@ assert.match(priceSync, /function catBuildShopeePriceEntry\(/, 'Shopee price syn
 assert.match(priceSync, /model_id:\s*0,\s*original_price:\s*originalPrice/, 'Shopee no-model price updates must send model_id=0 per local API docs');
 assert.match(liveSync, /catFlushSelectedInlineEdits\(\{\s*persistWeight:\s*true,\s*silentWeightToast:\s*true\s*\}\)/, 'Shopee live sync must suppress weight-save success toasts');
 assert.match(flushInlineEdits, /weightChanged[\s\S]*catPersistWeight\(pid,\s*roundedWeight,\s*weightInput,\s*\{\s*silentSuccess:/, 'Shopee inline flush must persist weights only when changed and pass the silent toast flag');
+assert.match(priceSync, /responseJson && \(responseJson\.log_id \|\| responseJson\.previous_log_id\)/, 'Shopee live sync must not double-write mutation logs after Edge logging succeeds');
+
+const bridgeSource = fs.readFileSync(new URL('../supabase/functions/shopee-bridge/index.ts', import.meta.url), 'utf8');
+assert.match(bridgeSource, /if \(action === 'update_price' && req\.method === 'POST'\)[\s\S]*insertMutationLog\({[\s\S]*action: 'update_price'/, 'Shopee update_price bridge route must log via service-role Edge function');
+assert.match(bridgeSource, /shop_update_price_idempotent_skip/, 'Shopee update_price bridge route must idempotently skip already-logged ok payloads');
 
 async function runFlushHarness({ productSourcing, productCost, sourcingInputValue, costInputValue, productWeight = 150, weightInputValue = 150, persistWeight = false, silentWeightToast = false }) {
   const context = {

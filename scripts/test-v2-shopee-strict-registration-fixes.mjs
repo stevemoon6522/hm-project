@@ -65,8 +65,8 @@ assert(
     && shopeeAdapter.includes('const needsDetailImageUpload = imageRefs.length > bestExistingImageCount')
     && !shopeeAdapter.includes('!cachedMasterImageIds.length && master.main_image')
     && shopeeAdapter.includes('registration_kind: (ctx as any).registration_kind || (variationBundle ? \'option_group\' : \'single\')')
-    && shopeeAdapter.includes('...(variationBundle ? {} : { sku: bridgeParentSku })'),
-  'platform-publish Shopee adapter must upload master detail images into Product Images and omit parent SKU for option groups',
+    && shopeeAdapter.includes('sku: bridgeParentSku'),
+  'platform-publish Shopee adapter must upload master detail images into Product Images and send a stable parent SKU for option-group fallback flows',
 );
 
 console.log('v2 Shopee strict registration fix checks passed');

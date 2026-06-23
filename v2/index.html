@@ -27203,6 +27203,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const globalItemId = product?.shopee_item_id || product?.global_item_id || product?.shopee_global_item_id || localRows.find((row) => row.global_item_id)?.global_item_id || '';
     let lookupError = null;
     let lookupNotFound = false;
+    let lookupRaw = null;
     try {
       const qs = new URLSearchParams({
         account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
@@ -27215,6 +27216,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (productName && optionName) qs.append('item_name', productName + ' ' + optionName);
       const resp = await fetch(`${SHOPEE_BRIDGE}/lookup-sku?${qs.toString()}`, { headers: AUTH_HEADERS });
       const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+      lookupRaw = json;
       if (resp.ok && json.ok !== false) {
         const bridgeHit = coverageNormalizeShopeeSkuLookupHit(json, sku);
         if (bridgeHit.found) return bridgeHit;
@@ -27247,9 +27249,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const itemInfoHit = await coverageLookupShopeeLocalRowsByItemInfo(localRows, sku);
     if (itemInfoHit) return itemInfoHit;
     if (lookupError && !lookupNotFound) {
-      return { platform: 'shopee', sku, found: false, notFound: false, error: lookupError, raw: { source: 'lookup-sku' } };
+      return { platform: 'shopee', sku, found: false, notFound: false, error: lookupError, raw: lookupRaw || { source: 'lookup-sku' } };
     }
-    return { platform: 'shopee', sku, found: false, notFound: true, error: 'shopee_sku_not_found', raw: { source: 'lookup-sku' } };
+    return { platform: 'shopee', sku, found: false, notFound: true, error: 'shopee_sku_not_found', raw: lookupRaw || { source: 'lookup-sku', not_found: true } };
   }
 
   function coverageShopeeItemInfoRows(raw) {
@@ -27367,28 +27369,57 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return json.platform_listing_id || json.platform_item_id || hit.platformItemId || null;
   }
 
+  function coverageShopeeLookupRegions(hit) {
+    const regions = [];
+    const push = (value) => {
+      const region = String(value || '').trim().toUpperCase();
+      if (region && SHOPEE_PLATFORM_ACTIVE_REGIONS.includes(region) && !regions.includes(region)) regions.push(region);
+    };
+    const raw = hit?.raw || {};
+    if (Array.isArray(raw?.region_results)) raw.region_results.forEach((row) => push(row?.region));
+    if (Array.isArray(raw?.regions)) raw.regions.forEach(push);
+    if (Array.isArray(hit?.regionHits)) hit.regionHits.forEach((row) => push(row?.region));
+    if (!regions.length) SHOPEE_PLATFORM_ACTIVE_REGIONS.forEach(push);
+    return regions;
+  }
+
   async function coverageClearShopeePublishedMappings(productId, hit) {
-    const payload = {
+    const checkedAt = new Date().toISOString();
+    const rawRegionResults = Array.isArray(hit?.raw?.region_results) ? hit.raw.region_results : [];
+    const basePayload = {
       status: 'not_listed',
+      global_item_id: null,
+      global_model_id: null,
+      shop_id: null,
       shop_item_id: null,
       shop_model_id: null,
       last_error: hit?.error || 'Remote Shopee listing not found during SKU sync',
-      last_synced_at: new Date().toISOString(),
-      raw_payload: {
-        source: 'sku_lookup_sync',
-        not_found: true,
-        checked_at: new Date().toISOString(),
-        raw: hit?.raw || null,
-      },
+      last_synced_at: checkedAt,
     };
+    const rows = coverageShopeeLookupRegions(hit).map((region) => {
+      const regionResult = rawRegionResults.find((row) => String(row?.region || '').toUpperCase() === region) || null;
+      return {
+        product_id: productId,
+        account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
+        region,
+        ...basePayload,
+        raw_payload: {
+          source: 'sku_lookup_sync',
+          not_found: true,
+          checked_at: checkedAt,
+          region,
+          region_result: regionResult,
+          raw: hit?.raw || null,
+        },
+      };
+    });
+    if (!rows.length) return 0;
     const { data, error } = await db
       .from('product_shopee_listings')
-      .update(payload)
-      .eq('product_id', productId)
-      .eq('account_key', SHOPEE_DEFAULT_ACCOUNT_KEY)
+      .upsert(rows, { onConflict: SHOPEE_LISTING_CONFLICT })
       .select('product_id,account_key,region');
     if (error) throw error;
-    return Array.isArray(data) ? data.length : 0;
+    return Array.isArray(data) ? data.length : rows.length;
   }
 
   async function coverageClearPlatformMapping(productId, platform, hit) {

@@ -337,6 +337,8 @@ test('platform SKU sync includes Shopee lookup-sku and absorbs matched region id
   assert.match(coverageLookup, /regions: SHOPEE_PLATFORM_ACTIVE_REGIONS\.join\(','\)/, 'Shopee lookup should check every active marketplace region');
   assert.match(coverageLookup, /coverageAbsorbShopeePublishedHit/, 'Shopee hit should be absorbed into product_shopee_listings');
   assert.match(coverageLookup, /coverageClearShopeePublishedMappings/, 'Shopee not-found should mark product_shopee_listings as not_listed');
+  assert.match(coverageLookup, /raw: lookupRaw/, 'Shopee not-found should preserve the bridge debug payload instead of reducing it to a generic skip');
+  assert.match(coverageLookup, /upsert\(rows, \{ onConflict: SHOPEE_LISTING_CONFLICT \}\)/, 'Shopee not-found should persist checked regions so the next sync cannot silently skip the same SKU');
   assert.match(coverageLookup, /coverageShopeePublishedItemsFromRaw/, 'Shopee sync should normalize bridge and cached published list shapes');
   assert.match(coverageLookup, /result\?\.response\?\.published_item/, 'Shopee bridge published_list shape should be accepted');
   assert.match(coverageLookup, /SHOPEE_BRIDGE\}\/published_list\?\$\{qs\.toString\(\)\}/, 'Shopee sync should keep published_list as a global-item fallback');
@@ -346,6 +348,63 @@ test('platform SKU sync includes Shopee lookup-sku and absorbs matched region id
   assert.match(coverageLookup, /global_item_id: row\.global_item_id \|\| null/, 'absorbed listing should preserve global_item_id for later price/sync operations');
   assert.match(coverageSkuCheck, /const targetPlatforms = \['shopee', 'joom', 'qoo10', 'ebay'\]/, 'coverage SKU check should also include Shopee');
   assert.match(coverageSkuCheck, /if \(platform === 'shopee'\) await coverageAbsorbShopeePublishedHit/, 'coverage Shopee hits should be absorbed through product_shopee_listings');
+});
+
+test('Shopee not-found SKU sync records checked regions instead of disappearing as a skip', async () => {
+  const clearFactory = new Function(
+    'db',
+    'SHOPEE_DEFAULT_ACCOUNT_KEY',
+    'SHOPEE_LISTING_CONFLICT',
+    'SHOPEE_PLATFORM_ACTIVE_REGIONS',
+    `${html.includes('function coverageShopeeLookupRegions(') ? extractFunctionBlock(html, 'coverageShopeeLookupRegions') : ''}
+     ${extractFunctionBlock(html, 'coverageClearShopeePublishedMappings')};
+     return coverageClearShopeePublishedMappings;`,
+  );
+  const calls = [];
+  const chain = {
+    eq() { return chain; },
+    select() { return Promise.resolve({ data: [], error: null }); },
+  };
+  const db = {
+    from(table) {
+      return {
+        update(payload) {
+          calls.push({ type: 'update', table, payload });
+          return chain;
+        },
+        upsert(rows, options) {
+          calls.push({ type: 'upsert', table, rows, options });
+          return {
+            select() {
+              return Promise.resolve({
+                data: rows.map((row) => ({ product_id: row.product_id, account_key: row.account_key, region: row.region })),
+                error: null,
+              });
+            },
+          };
+        },
+      };
+    },
+  };
+  const clear = clearFactory(db, 'starphotocard', 'product_id,account_key,region', Object.freeze(['SG', 'TW', 'TH', 'MY', 'PH', 'BR']));
+  const count = await clear('product-1', {
+    error: 'shopee_sku_not_found',
+    raw: {
+      source: 'lookup-sku',
+      regions: ['SG', 'TW'],
+      region_results: [
+        { region: 'SG', not_found: true, search_item_name: ['WE ON FIRE SOLO VER'] },
+        { region: 'TW', not_found: true, search_item_name: ['WE ON FIRE SOLO VER'] },
+      ],
+    },
+  });
+  const upsert = calls.find((call) => call.type === 'upsert');
+  assert.ok(upsert, 'not-found lookup should upsert explicit not_listed rows for checked Shopee regions');
+  assert.equal(count, 2, 'clear should report the number of checked regions persisted');
+  assert.deepEqual(upsert.rows.map((row) => row.region), ['SG', 'TW']);
+  assert.equal(upsert.options.onConflict, 'product_id,account_key,region');
+  assert.ok(upsert.rows.every((row) => row.status === 'not_listed' && row.shop_item_id === null && row.shop_model_id === null));
+  assert.equal(upsert.rows[0].raw_payload.raw.region_results[0].search_item_name[0], 'WE ON FIRE SOLO VER');
 });
 
 test('platform SKU sync absorbs Joom/Qoo10/eBay lookup hits through platform-publish sync', () => {

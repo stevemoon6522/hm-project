@@ -182,7 +182,15 @@ for (const [label, source] of [['Supabase', ebayBridge], ['edge mirror', edgeEba
 assert(ebayAdapter.includes('x-platform-bridge-token') && ebayAdapter.includes('PLATFORM_BRIDGE_INTERNAL_TOKEN'), 'eBay adapter must forward the internal bridge token when routed through platform-publish');
 assert(ebayAdapter.includes('lookupMiss') && ebayAdapter.includes('PLATFORM_NOT_FOUND'), 'eBay adapter must classify ordinary lookup misses as PLATFORM_NOT_FOUND');
 assert(ebayAdapter.includes("title.slice(0, 50)"), 'eBay adapter aspect values must be clamped to bridge validation limits');
+assert(ebayAdapter.includes('row?.legacyVariantId || row?.sku'), 'eBay sync must accept legacy Trading variation SKU identity from ebay-bridge');
 assert(ebayBridge.includes('upstream_inventory_lookup_failed') && ebayBridge.includes('upstream_offer_lookup_failed'), 'eBay bridge lookup must distinguish upstream failures from true SKU misses');
+assert(platformPublish.includes('offer?.legacyVariantId ?? offer?.sku'), 'platform-publish must preserve eBay legacy variation SKU as platform_listings.external_variant_id');
+for (const [label, source] of [['Supabase', ebayBridge], ['edge mirror', edgeEbayBridge]]) {
+  assert(source.includes('lookupTradingActiveListingBySku') && source.includes('GetMyeBaySelling'), `${label} eBay bridge must fall back to Trading ActiveList for legacy listings absent from Sell Inventory`);
+  assert(source.includes('parseTradingActiveSkuHit') && source.includes('legacyVariantId'), `${label} eBay bridge must expose matched legacy variation SKU identity`);
+  assert(source.includes('lookup_source: "trading_active_list"'), `${label} eBay bridge must mark Trading fallback lookup results`);
+  assert(/if \(!skuRecordFound\)[\s\S]{0,900}lookupTradingActiveListingBySku\(sku\)/.test(source), `${label} eBay bridge must only use Trading fallback after REST inventory/offer miss`);
+}
 assert(joomAdapter.includes('x-platform-bridge-token') && joomAdapter.includes('PLATFORM_BRIDGE_INTERNAL_TOKEN'), 'Joom adapter must forward the internal bridge token');
 for (const [label, source] of [['edge mirror', edgeJoomBridge], ['Supabase', supabaseJoomBridge]]) {
   assert(source.includes('function requireInternalBridge') && source.includes('internal_bridge_required'), `${label} Joom bridge should retain internal bridge guard helper for server-routed calls`);

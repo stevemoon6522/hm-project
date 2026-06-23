@@ -162,6 +162,123 @@ function formatEbayErrorBody(body: any): string {
   try { return JSON.stringify(body); } catch { return String(body); }
 }
 
+function escapeEbayXml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function decodeEbayXml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&gt;/g, ">")
+    .replace(/&lt;/g, "<")
+    .replace(/&amp;/g, "&");
+}
+
+function firstEbayXml(block: string, tag: string): string {
+  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "i");
+  const match = String(block || "").match(re);
+  return match ? decodeEbayXml(match[1]).trim() : "";
+}
+
+function ebayXmlBlocks(block: string, tag: string): string[] {
+  const re = new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "gi");
+  return [...String(block || "").matchAll(re)].map((m) => m[1]);
+}
+
+async function ebayTradingXml(callName: string, bodyXml: string): Promise<{ status: number; text: string }> {
+  const token = await getValidAccessToken();
+  const response = await fetch("https://api.ebay.com/ws/api.dll", {
+    method: "POST",
+    headers: {
+      "X-EBAY-API-CALL-NAME": callName,
+      "X-EBAY-API-SITEID": "0",
+      "X-EBAY-API-COMPATIBILITY-LEVEL": "1271",
+      "Content-Type": "text/xml",
+    },
+    body: bodyXml.replace("__EBAY_AUTH_TOKEN__", escapeEbayXml(token)),
+  });
+  return { status: response.status, text: await response.text() };
+}
+
+function normalizeEbaySku(value: unknown): string {
+  return String(value ?? "").trim();
+}
+
+function parseTradingActiveSkuHit(xml: string, requestedSku: string): any | null {
+  const target = normalizeEbaySku(requestedSku);
+  if (!target) return null;
+  for (const itemBlock of ebayXmlBlocks(xml, "Item")) {
+    const itemId = firstEbayXml(itemBlock, "ItemID");
+    const title = firstEbayXml(itemBlock, "Title");
+    const listingStatus = firstEbayXml(itemBlock, "ListingStatus") || "Active";
+    const variationBlocks = ebayXmlBlocks(itemBlock, "Variation");
+    const variationMatches = variationBlocks
+      .map((variationBlock) => {
+        const sku = normalizeEbaySku(firstEbayXml(variationBlock, "SKU"));
+        if (sku !== target) return null;
+        return {
+          sku,
+          quantity: firstEbayXml(variationBlock, "Quantity") || null,
+          variationSpecifics: ebayXmlBlocks(variationBlock, "NameValueList").map((specificBlock) => ({
+            name: firstEbayXml(specificBlock, "Name"),
+            value: firstEbayXml(specificBlock, "Value"),
+          })).filter((row) => row.name || row.value),
+        };
+      })
+      .filter(Boolean);
+    const itemOnlyBlock = itemBlock.split(/<Variations(?:\s[^>]*)?>/i)[0] || itemBlock;
+    const itemSku = normalizeEbaySku(firstEbayXml(itemOnlyBlock, "SKU"));
+    if (itemSku !== target && !variationMatches.length) continue;
+    return {
+      itemId,
+      title,
+      listingStatus,
+      itemSku: itemSku || null,
+      matchedSku: target,
+      variation: variationMatches[0] || null,
+    };
+  }
+  return null;
+}
+
+async function lookupTradingActiveListingBySku(sku: string): Promise<any | null> {
+  const target = normalizeEbaySku(sku);
+  if (!target) return null;
+  // Local REST docs exclude legacy Trading XML. Official Trading docs confirm
+  // GetMyeBaySelling returns active item and variation SKU fields for seller
+  // reconciliation, which is required for legacy multi-variation listings.
+  for (let page = 1; page <= 5; page += 1) {
+    const body = `<?xml version="1.0" encoding="utf-8"?>
+<GetMyeBaySellingRequest xmlns="urn:ebay:apis:eBLBaseComponents">
+  <RequesterCredentials><eBayAuthToken>__EBAY_AUTH_TOKEN__</eBayAuthToken></RequesterCredentials>
+  <ActiveList>
+    <Include>true</Include>
+    <Pagination><EntriesPerPage>200</EntriesPerPage><PageNumber>${page}</PageNumber></Pagination>
+  </ActiveList>
+  <DetailLevel>ReturnAll</DetailLevel>
+</GetMyeBaySellingRequest>`;
+    const result = await ebayTradingXml("GetMyeBaySelling", body);
+    if (result.status !== 200) {
+      throw new Error(`Trading GetMyeBaySelling failed HTTP ${result.status}`);
+    }
+    const ack = firstEbayXml(result.text, "Ack").toUpperCase();
+    if (ack !== "SUCCESS" && ack !== "WARNING") {
+      throw new Error(firstEbayXml(result.text, "LongMessage") || "Trading GetMyeBaySelling failed");
+    }
+    const hit = parseTradingActiveSkuHit(result.text, target);
+    if (hit?.itemId) return hit;
+    const items = ebayXmlBlocks(result.text, "Item");
+    if (!items.length || items.length < 200) break;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // merchantLocation idempotent setup
 // Citation: Codex BLOCKER §b — GET→create if missing
@@ -1618,6 +1735,52 @@ async function handleLookupItem(sku: string, marketplaceId: string): Promise<Res
   // ListingDetails L9665-L9669.
   const publishedVerificationPassed = !!publishedOffer && !!listingId;
   const skuRecordFound = itemOk || offers.length > 0;
+
+  if (!skuRecordFound) {
+    let legacyHit: any | null = null;
+    try {
+      legacyHit = await lookupTradingActiveListingBySku(sku);
+    } catch (e) {
+      return jsonResp({
+        ok: false,
+        error: "legacy_trading_lookup_failed",
+        upstream_status: "trading",
+        detail: e instanceof Error ? e.message : String(e),
+      }, 502);
+    }
+    if (legacyHit?.itemId) {
+      const legacySku = legacyHit.variation?.sku || legacyHit.matchedSku || sku;
+      const legacyListingStatus = legacyHit.listingStatus || "Active";
+      return jsonResp({
+        ok: true,
+        verification: {
+          inventory_item_found: false,
+          offer_count: 1,
+          sku_record_found: true,
+          published_offer_found: true,
+          published_verification_passed: true,
+          listing_id: legacyHit.itemId,
+          listing_status: legacyListingStatus,
+          lookup_source: "trading_active_list",
+        },
+        inventory_item: null,
+        offers: [{
+          offerId: null,
+          legacyVariantId: legacySku,
+          status: "PUBLISHED",
+          sku: legacySku,
+          marketplaceId,
+          price: null,
+          listingId: legacyHit.itemId,
+          listingStatus: legacyListingStatus,
+          title: legacyHit.title || null,
+          variationSpecifics: legacyHit.variation?.variationSpecifics || [],
+        }],
+        legacy_item: legacyHit,
+        lookup_source: "trading_active_list",
+      });
+    }
+  }
 
   return jsonResp({
     ok: skuRecordFound,

@@ -840,13 +840,15 @@ Deno.serve(async (req: Request): Promise<Response> => {
     };
     if (shouldAbsorbLookup) {
       rpcName = 'absorb_platform_sku_lookup';
-      const offer = Array.isArray(raw.offers) ? raw.offers.find((row: any) => row?.listingId || row?.offerId) : null;
+      const offer = Array.isArray(raw.offers)
+        ? raw.offers.find((row: any) => row?.listingId || row?.offerId || row?.legacyVariantId || row?.sku)
+        : null;
       rpcArgs = {
         p_master_product_id: master_product_id,
         p_platform: platform,
         p_external_sku: product.sku,
         p_platform_item_id: adapterResult.platformItemId ?? raw.joom_product_id ?? raw.platform_item_id ?? raw.verification?.listing_id ?? null,
-        p_external_variant_id: raw.joom_variant_id ?? raw.variant_id ?? offer?.offerId ?? null,
+        p_external_variant_id: raw.joom_variant_id ?? raw.variant_id ?? offer?.offerId ?? offer?.legacyVariantId ?? offer?.sku ?? null,
         p_country: country ?? null,
         p_shop_id: shop_id ?? null,
         p_listing_status: adapterResult.listingStatus,

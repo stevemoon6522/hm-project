@@ -443,7 +443,9 @@ async function syncListing(ctx: BridgeContext): Promise<AdapterResult> {
   const { status, raw } = await bridgeGet('lookup-item', { sku, marketplace_id: marketplaceId }, userToken);
   if (status >= 200 && status < 300 && raw?.ok) {
     const verification = raw.verification || {};
-    const offer = Array.isArray(raw.offers) ? raw.offers.find((row: any) => row?.listingId || row?.offerId) : null;
+    const offer = Array.isArray(raw.offers)
+      ? raw.offers.find((row: any) => row?.listingId || row?.offerId || row?.legacyVariantId || row?.sku)
+      : null;
     const platformItemId = verification.listing_id || offer?.listingId || offer?.offerId || (verification.inventory_item_found ? sku : '');
     return { ok: true, platformItemId: s(platformItemId), listingStatus: mapLookupStatus(raw), rawResponse: raw };
   }

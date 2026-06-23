@@ -162,6 +162,72 @@ async function runFlushHarness({ productSourcing, productCost, sourcingInputValu
   return JSON.parse(JSON.stringify(context.result));
 }
 
+function runPayloadHarness() {
+  const context = {
+    Date: class {
+      static now() { return 1782223000000; }
+    },
+    JSON,
+    Map,
+    Math,
+    Number,
+    Set,
+    String,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+
+  const harness = `
+  var CAT_REGIONS = ['SG', 'TW'];
+  var _catRegionVisible = new Set(['SG', 'TW']);
+  var SHOPEE_BRIDGE = 'https://bridge.example';
+  var catSelectedIds = new Set(['option-ej', 'option-fuma']);
+  var pendingCostEdits = { 'option-ej': 12000, 'option-fuma': 8000 };
+  var pendingWeightEdits = {};
+  var _catCache = {
+    products: [
+      { id: 'parent', sku: 'T4-TEA-WEONF-SOL-', product_kind: 'parent', cost_krw: 99999, weight_g: 150 },
+      { id: 'option-ej', sku: 'T4-TEA-WEONF-SOL-EJ', product_kind: 'option', cost_krw: 13000, weight_g: 100, global_model_id: 101, shopee_global_model_sku: 'T4-TEA-WEONF-SOL-EJ' },
+      { id: 'option-fuma', sku: 'T4-TEA-WEONF-SOL-FUMA', product_kind: 'option', cost_krw: 7000, weight_g: 100, global_model_id: 102, shopee_global_model_sku: 'T4-TEA-WEONF-SOL-FUMA' }
+    ],
+    listings: [
+      { product_id: 'option-ej', region: 'SG', shop_item_id: 431, shop_model_id: 9001, global_item_id: 57356515280, global_model_id: 101, status: 'mapped' },
+      { product_id: 'option-ej', region: 'TW', shop_item_id: 511, shop_model_id: 9002, global_item_id: 57356515280, global_model_id: 101, status: 'mapped' },
+      { product_id: 'option-fuma', region: 'SG', shop_item_id: 431, shop_model_id: 9011, global_item_id: 57356515280, global_model_id: 102, status: 'mapped' },
+      { product_id: 'option-fuma', region: 'TW', shop_item_id: 511, shop_model_id: 9012, global_item_id: 57356515280, global_model_id: 102, status: 'mapped' }
+    ]
+  };
+  var document = {
+    querySelector: function() { return { querySelector: function() { return { checked: true }; } }; }
+  };
+  function catUlid() { return 'RUN'; }
+  function catEffectiveWeight(product) { return product.weight_g; }
+  function catProductGlobalItemId(product, byRegion) {
+    const first = Array.from(byRegion.values())[0];
+    return first && Number(first.global_item_id);
+  }
+  function catProductGlobalModelId(product, byRegion) {
+    return Number(product.global_model_id || 0);
+  }
+  function catProductNeedsShopeeModel(product) {
+    return product.product_kind === 'option';
+  }
+  function catComputeNewPrice(cost, region) {
+    return region === 'SG' ? Number(cost) / 1000 : Number(cost) / 100;
+  }
+  function normalizeShopeeOriginalPrice(region, price) {
+    return { ok: Number.isFinite(Number(price)), value: Number(price) };
+  }
+  function simpleHash(input) { return 'h' + String(input).length; }
+  ${payloadBuilder}
+  globalThis.result = catBuildPriceSyncPayloads();
+  `;
+
+  new vm.Script(harness, { filename: 'v2-shopee-option-payload-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify(context.result));
+}
+
 assert.deepEqual(
   await runFlushHarness({
     productSourcing: 10098,
@@ -191,6 +257,61 @@ assert.deepEqual(
   }),
   { cost: 12000, sourcing: 9000, costInputValue: '12000', rendered: 12000 },
   'When both wholesale and Cost are edited, a manual Cost override must be the price-sync cost',
+);
+
+const optionPayloads = runPayloadHarness().payloads;
+assert.equal(optionPayloads.length, 4, 'Multi-option Shopee price sync must build one payload per selected option row and region');
+assert.deepEqual(
+  optionPayloads.map(function(p) {
+    return {
+      productId: p.productId,
+      sku: p.sku,
+      region: p.region,
+      modelId: p.modelId,
+      newCost: p.newCost,
+      price: p.price,
+      priceList: p.payload.price_list,
+    };
+  }),
+  [
+    {
+      productId: 'option-ej',
+      sku: 'T4-TEA-WEONF-SOL-EJ',
+      region: 'SG',
+      modelId: 9001,
+      newCost: 12000,
+      price: 12,
+      priceList: [{ model_id: 9001, original_price: 12 }],
+    },
+    {
+      productId: 'option-ej',
+      sku: 'T4-TEA-WEONF-SOL-EJ',
+      region: 'TW',
+      modelId: 9002,
+      newCost: 12000,
+      price: 120,
+      priceList: [{ model_id: 9002, original_price: 120 }],
+    },
+    {
+      productId: 'option-fuma',
+      sku: 'T4-TEA-WEONF-SOL-FUMA',
+      region: 'SG',
+      modelId: 9011,
+      newCost: 8000,
+      price: 8,
+      priceList: [{ model_id: 9011, original_price: 8 }],
+    },
+    {
+      productId: 'option-fuma',
+      sku: 'T4-TEA-WEONF-SOL-FUMA',
+      region: 'TW',
+      modelId: 9012,
+      newCost: 8000,
+      price: 80,
+      priceList: [{ model_id: 9012, original_price: 80 }],
+    },
+  ],
+  'Multi-option Shopee price sync must use each option row Cost and model_id instead of the parent representative Cost',
 );
 
 console.log('v2 Shopee bulk price stability checks passed');

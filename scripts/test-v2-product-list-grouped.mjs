@@ -15,8 +15,29 @@ function sliceBetween(source, start, end) {
   return source.slice(s, e);
 }
 
+function extractFunction(source, name) {
+  const marker = `function ${name}`;
+  const start = source.indexOf(marker);
+  assert(start >= 0, `missing function: ${name}`);
+  const open = source.indexOf('{', start);
+  assert(open > start, `missing function body: ${name}`);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === '{') depth += 1;
+    if (ch === '}') depth -= 1;
+    if (depth === 0) return source.slice(start, i + 1);
+  }
+  throw new Error(`unterminated function: ${name}`);
+}
+
 const html = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
 
+const loadData = sliceBetween(
+  html,
+  'async function loadData() {',
+  'if (productsRes.error',
+);
 const productView = sliceBetween(
   html,
   '<div id="view-products" class="view active">',
@@ -48,8 +69,29 @@ assert(html.includes('productListSelectedIds: new Set()'), 'product list selecte
 assert(html.includes('wmsInventoryBySku: new Map()'), 'product list must keep WMS inventory matches outside the DOM');
 assert(html.includes('function plLoadWmsInventoryForProducts(products)'), 'product list must load WMS inventory matches by SKU');
 
+const createdAtOrderIndex = loadData.indexOf(".order('created_at', { ascending: false })");
+const groupOrderIndex = loadData.indexOf(".order('product_group_id'");
+const tierOrderIndex = loadData.indexOf(".order('variation_tier_index'");
+assert(createdAtOrderIndex >= 0, 'product loading must request newest products first');
+assert(
+  groupOrderIndex < 0 || createdAtOrderIndex < groupOrderIndex,
+  'created_at DESC must be the primary product loading order before group_id',
+);
+assert(
+  tierOrderIndex < 0 || createdAtOrderIndex < tierOrderIndex,
+  'created_at DESC must be the primary product loading order before variation tier',
+);
+assert(
+  html.includes('state.products = plSortProductsNewestFirst(productsRes.data || [])'),
+  'loaded products must be locally normalized to newest-first even if the API order changes',
+);
+
 for (const token of [
   'function plBuildProductGroups(rows)',
+  'function plProductCreatedTime(product)',
+  'function plGroupCreatedTime(group)',
+  'function plCompareProductGroupsNewestFirst(a, b)',
+  'function plSortProductGroupsNewestFirst(groups)',
   'function renderProductGroup(group)',
   'function renderProductOptionRow(p, groupKey, isGroupChild)',
   'function plParentSku(rows)',
@@ -75,6 +117,11 @@ for (const token of [
 assert(
   productList.includes('group.isGrouped ? renderProductGroup(group) : renderProductOptionRow'),
   'renderProducts must route grouped variants through the master group renderer',
+);
+assert(
+  productList.includes('return plSortProductGroupsNewestFirst(groups)')
+    && !productList.includes('return groups.sort((a, b) => a.firstIndex - b.firstIndex)'),
+  'master groups must sort by newest registration time, not by first visible source index',
 );
 assert(
   productList.includes('const shopeeImageId = String(product?.shopee_image_id || \'\').trim()')
@@ -168,6 +215,38 @@ assert(
   bulkDeleteUi.includes("document.querySelectorAll('.pl-group-check')")
     && bulkDeleteUi.includes('groupCb.indeterminate'),
   'bulk delete UI must keep group checkboxes in sync with child options',
+);
+
+const groupSortSource = [
+  extractFunction(html, 'plProductCreatedTime'),
+  extractFunction(html, 'plGroupCreatedTime'),
+  extractFunction(html, 'plCompareProductGroupsNewestFirst'),
+  extractFunction(html, 'plSortProductGroupsNewestFirst'),
+].join('\n');
+const { plSortProductGroupsNewestFirst } = Function(`${groupSortSource}; return { plSortProductGroupsNewestFirst };`)();
+const sortedGroups = plSortProductGroupsNewestFirst([
+  {
+    key: 'edited-old',
+    firstIndex: 0,
+    rows: [{ id: 'old', created_at: '2025-01-01T00:00:00Z', updated_at: '2026-12-31T00:00:00Z' }],
+  },
+  {
+    key: 'new-group',
+    firstIndex: 1,
+    rows: [
+      { id: 'new-a', created_at: '2026-06-01T00:00:00Z' },
+      { id: 'new-b', created_at: '2026-06-02T00:00:00Z' },
+    ],
+  },
+  {
+    key: 'mid-single',
+    firstIndex: 2,
+    rows: [{ id: 'mid', created_at: '2026-03-01T00:00:00Z' }],
+  },
+]);
+assert(
+  sortedGroups.map((group) => group.key).join(',') === 'new-group,mid-single,edited-old',
+  'group sorting must place newest registered products first and ignore later edit timestamps',
 );
 
 console.log('v2 grouped product list checks passed');

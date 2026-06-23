@@ -6788,9 +6788,9 @@ LEGACY END -->
     let [productsRes, listingsRes, rollupsRes] = await Promise.all([
       db.from('products')
         .select('id, sku, product_kind, product_name, option_name, description, cost_krw, weight_g, inventory, staronemall_url, shopee_item_id, lifecycle_state, weight_measured_at, position, created_at, updated_at, main_image, extra_images, shopee_option_image_url, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, components_extracted_en, components_extracted_at, components_approved, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_description, shopee_days_to_ship, joom_category_id, qoo10_category_id, ebay_category_id')
+        .order('created_at', { ascending: false })
         .order('product_group_id', { ascending: true, nullsFirst: false })
-        .order('variation_tier_index', { ascending: true, nullsFirst: false })
-        .order('created_at', { ascending: false }),
+        .order('variation_tier_index', { ascending: true, nullsFirst: false }),
       db.from('product_shopee_listings').select('*').eq('account_key', SHOPEE_DEFAULT_ACCOUNT_KEY),
       db.from('platform_listing_rollups').select('master_product_id, platform, listed_count, pending_count, error_count, total_count, per_shop_detail'),
     ]);
@@ -6803,7 +6803,7 @@ LEGACY END -->
     }
     if (productsRes.error) throw productsRes.error;
     if (listingsRes.error) throw listingsRes.error;
-    state.products = productsRes.data || [];
+    state.products = plSortProductsNewestFirst(productsRes.data || []);
     state.listings = listingsRes.data || [];
     try {
       await plLoadWmsInventoryForProducts(state.products);
@@ -7309,6 +7309,35 @@ LEGACY END -->
     return Array.from(ids);
   }
 
+  function plProductCreatedTime(product) {
+    const ms = product?.created_at ? new Date(product.created_at).getTime() : 0;
+    return Number.isFinite(ms) ? ms : 0;
+  }
+
+  function plSortProductsNewestFirst(products) {
+    return (products || []).slice().sort((a, b) => {
+      const createdDiff = plProductCreatedTime(b) - plProductCreatedTime(a);
+      if (createdDiff !== 0) return createdDiff;
+      return String(b?.id || '').localeCompare(String(a?.id || ''));
+    });
+  }
+
+  function plGroupCreatedTime(group) {
+    return Math.max(0, ...(group?.rows || []).map(plProductCreatedTime));
+  }
+
+  function plCompareProductGroupsNewestFirst(a, b) {
+    const createdDiff = plGroupCreatedTime(b) - plGroupCreatedTime(a);
+    if (createdDiff !== 0) return createdDiff;
+    const indexDiff = Number(a?.firstIndex ?? Number.MAX_SAFE_INTEGER) - Number(b?.firstIndex ?? Number.MAX_SAFE_INTEGER);
+    if (indexDiff !== 0) return indexDiff;
+    return String(a?.key || '').localeCompare(String(b?.key || ''));
+  }
+
+  function plSortProductGroupsNewestFirst(groups) {
+    return (groups || []).slice().sort(plCompareProductGroupsNewestFirst);
+  }
+
   function plTierSortKey(product) {
     const idx = Array.isArray(product?.variation_tier_index) ? product.variation_tier_index : [];
     const tier = idx.map((n) => String(Number(n) || 0).padStart(4, '0')).join('.');
@@ -7334,7 +7363,7 @@ LEGACY END -->
     groups.forEach((group) => {
       if (group.isGrouped) group.rows.sort((a, b) => plTierSortKey(a).localeCompare(plTierSortKey(b)));
     });
-    return groups.sort((a, b) => a.firstIndex - b.firstIndex);
+    return plSortProductGroupsNewestFirst(groups);
   }
 
   function plParentSku(rows) {

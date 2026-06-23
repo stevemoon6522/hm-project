@@ -30967,52 +30967,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return firstRow._source_kind === 'wms_inventory' || firstRow.observed?.source === 'wms_inventory';
     }
 
-    function mrWmsPreflight(group) {
-      const rows = (group?.rows || []).filter(r => r.status === 'preview' || r.status === 'failed');
-      const firstRow = group?.rows?.[0] || {};
-      const lifecycle = mrGroupLifecycle(group);
-      const blockers = [];
-      const notes = [];
-      const any = (predicate) => rows.some(predicate);
-      if (!rows.length) blockers.push('No active option rows.');
-      if (any(row => !String(row._sku || '').trim())) blockers.push('SKU missing.');
-      if (any(row => mrHasNonAscii(row._sku || ''))) blockers.push('SKU has non-ASCII text.');
-      if (any(row => !(Number(row._weight_g || row.weight_g || 0) > 0))) blockers.push('Weight is missing or zero.');
-      if (any(row => !(Number(row._cost_krw || row.cost_krw || 0) > 0))) blockers.push('Cost is missing or zero.');
-      if (any(row => !String(row._main_image || '').trim())) blockers.push('Main image is missing.');
-      const incompleteSet = rows.find(row => mrWmsIsBundleRow(row) && Array.isArray(row._wms_set_missing_components) && row._wms_set_missing_components.length > 0);
-      if (incompleteSet) blockers.push(`SET components missing in WMS preview: ${incompleteSet._wms_set_missing_components.join(', ')}`);
-      if (lifecycle === 'pre_order' && !/^\d{4}-\d{2}-\d{2}$/.test(firstRow._qoo10_release_date || '')) {
-        blockers.push('PRE ORDER requires Qoo10 release date.');
-      }
-      if (lifecycle === 'ready_stock') {
-        notes.push('Shopee DTS: TW=1, BR=3, SG/MY/TH/PH=2.');
-        notes.push('Qoo10: normal shipping. eBay fulfillment policy: 233825118025.');
-      } else {
-        notes.push('Shopee DTS: 60 for all active regions.');
-        notes.push('Qoo10: reserved shipping by release date. eBay fulfillment policy: 253030471025.');
-      }
-      notes.push('Joom: no shipping rule override needed.');
-      return { blockers, notes };
-    }
-
-    function mrRenderWmsPreflight(group) {
-      if (!mrIsWmsGroup(group)) return null;
-      const result = mrWmsPreflight(group);
-      const hasBlockers = result.blockers.length > 0;
-      const wrap = el('div', {
-        style: `display:flex;flex-direction:column;gap:5px;margin-top:6px;padding:8px;border:1px solid ${hasBlockers ? '#dc2626' : '#16a34a'};background:${hasBlockers ? '#fef2f2' : '#f0fdf4'};border-radius:8px;font-size:11px;`,
-      });
-      wrap.appendChild(el('strong', { style: `color:${hasBlockers ? '#991b1b' : '#166534'};` }, hasBlockers ? 'Platform preflight blockers' : 'Platform preflight passed'));
-      (hasBlockers ? result.blockers : result.notes).slice(0, 5).forEach((message) => {
-        wrap.appendChild(el('div', { style: `color:${hasBlockers ? '#991b1b' : '#166534'};` }, message));
-      });
-      if (hasBlockers && result.notes.length) {
-        wrap.appendChild(el('div', { style: 'color:#64748b;' }, result.notes.join(' ')));
-      }
-      return wrap;
-    }
-
     function mrRenderWmsStaronemallEnrichment(group) {
       if (!mrIsWmsGroup(group)) return null;
       const firstRow = group?.rows?.[0] || {};
@@ -31218,8 +31172,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (wmsEnrichment) infoCol.appendChild(wmsEnrichment);
         const duplicateWarning = mrRenderDuplicateSignals(group);
         if (duplicateWarning) infoCol.appendChild(duplicateWarning);
-        const wmsPreflight = mrRenderWmsPreflight(group);
-        if (wmsPreflight) infoCol.appendChild(wmsPreflight);
 
         // Artist/Album/Version fields (card-level, shared across options)
         if (firstRow.cost_krw == null) {

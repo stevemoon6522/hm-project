@@ -65,7 +65,6 @@ for (const token of [
   'mrRenderWmsStaronemallEnrichment',
   'mrWmsMergeObservedIntoGroup',
   'mrWmsDuplicateSignals',
-  'mrRenderWmsPreflight',
   "db.rpc('stage_wms_inventory_payload'",
   'p_observed: null',
   '_skuLocked',
@@ -75,7 +74,6 @@ for (const token of [
   'qoo10_release_date',
   '_staronemall_url',
   'Duplicate warning must be confirmed before registration.',
-  'Platform preflight blockers',
   'Staronemall URL is already used by master SKU',
   "group_mode: groupMode",
   "addRowToGroup(row, key, matchedGroup?.group_mode || 'barcode'",
@@ -131,6 +129,12 @@ assert(
   html.includes('const bundleRows = await mrWmsFetchBundleRowsForBarcodeGroup(group, rows);')
     && html.includes('mrWmsMergeUniqueRows(rows.concat(bundleRows))'),
   'WMS preview loading must re-fetch SET rows linked to a barcode component group',
+);
+assert(
+  !html.includes('Platform preflight blockers')
+    && !html.includes('mrRenderWmsPreflight')
+    && !html.includes('Joom: no shipping rule override needed.'),
+  'WMS master preview should not show platform preflight notes as product data',
 );
 assert(
   html.includes('mrWmsSetAggregateForRow')

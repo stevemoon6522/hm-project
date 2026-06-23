@@ -74,8 +74,8 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 // CBSC main account ID ??Shopee CB Mall / KRSC group. Same across all 10 region shops in our setup.
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
-// v78: Shopee SKU lookup maps Global Product global_model_sku separately from shop listing price sync ids.
-const SOURCE_VERSION = 80;
+// v82: Shopee OAuth callback uses the registered WMS-domain relay before signed dashboard token exchange.
+const SOURCE_VERSION = 82;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -3358,6 +3358,14 @@ async function buildShopeeOAuthCallbackRedirect(baseUrl: string, app: any, param
   return redirectUrl.toString();
 }
 
+function buildShopeeOAuthRelayRedirect(targetUrl: string) {
+  const relayBase = Deno.env.get('SHOPEE_OAUTH_RELAY_URL')
+    || 'https://bpdafetvjyvvwbksvowu.supabase.co/functions/v1/shopee-oauth-relay';
+  const relayUrl = new URL(relayBase);
+  relayUrl.searchParams.set('target', targetUrl);
+  return relayUrl.toString();
+}
+
 async function verifyShopeeOAuthCallbackSignature(url: URL, app: any) {
   const params = shopeeOAuthCallbackParams(url);
   const sig = String(url.searchParams.get('sig') || '');
@@ -4411,15 +4419,13 @@ Deno.serve(async (req) => {
     }
     if (action === 'oauth_url') {
       const app = await getApp(accountKey);
-      const path = url.searchParams.get('shop') === '1'
-        ? '/api/v2/shop/auth_partner'
-        : '/api/v2/merchant/auth_partner';
+      const path = '/api/v2/shop/auth_partner';
       const ts = Math.floor(Date.now() / 1000);
       const base = `${app.partner_id}${path}${ts}`;
       const sign = await hmac(app.partner_key, base);
       const callbackMode = url.searchParams.get('callback') === '1';
       const callbackBaseUrl = Deno.env.get('SUPABASE_URL') || 'https://mgqlwgnmwegzsjelbrih.supabase.co';
-      const redirect = callbackMode
+      const callbackRedirect = callbackMode
         ? await buildShopeeOAuthCallbackRedirect(callbackBaseUrl, app, {
           account_key: accountKey,
           main_account_id: String(url.searchParams.get('main_account_id') || await mainAccountIdForAccount(accountKey)),
@@ -4427,9 +4433,12 @@ Deno.serve(async (req) => {
           display_name: String(url.searchParams.get('display_name') || url.searchParams.get('displayName') || accountKey),
           layer_asset_path: String(url.searchParams.get('layer_asset_path') || url.searchParams.get('layerAssetPath') || ''),
         })
+        : '';
+      const redirect = callbackMode
+        ? buildShopeeOAuthRelayRedirect(callbackRedirect)
         : (url.searchParams.get('redirect') || 'https://shopee-dashboard-kohl.vercel.app/v2/');
       const oauthUrl = `https://${host(app.is_sandbox)}${path}?partner_id=${app.partner_id}&timestamp=${ts}&sign=${sign}&redirect=${encodeURIComponent(redirect)}`;
-      return jsonResp({ ok: true, account_key: accountKey, oauth_url: oauthUrl, partner_id: app.partner_id, timestamp: ts, path, redirect, callback_mode: callbackMode });
+      return jsonResp({ ok: true, account_key: accountKey, oauth_url: oauthUrl, partner_id: app.partner_id, timestamp: ts, path, redirect, callback_redirect: callbackRedirect || null, callback_mode: callbackMode });
     }
     if (action === 'force_refresh_all') {
       const regions = (url.searchParams.get('regions') || 'SG,TW,TH,MY,PH,BR').split(',').map(s => s.trim().toUpperCase()).filter(Boolean);

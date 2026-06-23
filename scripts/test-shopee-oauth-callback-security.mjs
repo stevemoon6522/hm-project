@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const bridge = readFileSync('supabase/functions/shopee-bridge/index.ts', 'utf8');
+const relay = readFileSync('supabase/functions/shopee-oauth-relay/index.ts', 'utf8');
 
 const publicActions = bridge.slice(
   bridge.indexOf('const PUBLIC_ACTIONS'),
@@ -30,8 +31,14 @@ assert.match(
 
 assert.match(
   bridge,
-  /if \(action === 'oauth_url'\)[\s\S]*\/api\/v2\/merchant\/auth_partner[\s\S]*callbackMode[\s\S]*buildShopeeOAuthCallbackRedirect/,
-  'oauth_url must be able to generate a signed merchant callback URL',
+  /if \(action === 'oauth_url'\)[\s\S]*\/api\/v2\/shop\/auth_partner[\s\S]*callbackMode[\s\S]*buildShopeeOAuthCallbackRedirect[\s\S]*buildShopeeOAuthRelayRedirect/,
+  'oauth_url must generate documented shop/auth_partner URLs and use the registered-domain relay for callback mode',
+);
+
+assert.doesNotMatch(
+  bridge,
+  /\/api\/v2\/merchant\/auth_partner/,
+  'Shopee does not expose merchant/auth_partner; main-account authorization still uses shop/auth_partner',
 );
 
 assert.match(
@@ -44,6 +51,18 @@ assert.match(
   bridge,
   /function sanitizedShopeeOAuthTokenResponse[\s\S]*access_token[\s\S]*refresh_token[\s\S]*access_token_set[\s\S]*refresh_token_set/,
   'OAuth callback responses must not expose raw Shopee access or refresh tokens',
+);
+
+assert.match(
+  relay,
+  /ALLOWED_TARGET_HOSTS[\s\S]*mgqlwgnmwegzsjelbrih\.supabase\.co[\s\S]*ALLOWED_TARGET_PATH[\s\S]*\/functions\/v1\/shopee-bridge\/oauth_callback/,
+  'OAuth relay must restrict callback forwarding to the dashboard bridge callback only',
+);
+
+assert.match(
+  relay,
+  /FORWARDED_QUERY_KEYS[\s\S]*code[\s\S]*shop_id[\s\S]*main_account_id[\s\S]*request_id/,
+  'OAuth relay must forward Shopee callback identity fields to the signed dashboard callback',
 );
 
 console.log('Shopee OAuth callback security assertions passed');

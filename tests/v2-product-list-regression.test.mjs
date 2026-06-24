@@ -272,10 +272,54 @@ test('master register cards expose master edit action whenever any master row wa
   assert.match(masterRegisterRender, /mrOpenCreatedMasterEdit\(createdProductIds\[0\]\)/, 'registered cards should open the master edit modal from the created master row');
 });
 
+test('master product list resolves image candidates before text fallback', () => {
+  const factory = new Function(
+    `${extractFunctionBlock(html, 'plImageUrlFromShopeeId')}
+     ${extractFunctionBlock(html, 'plImageCandidateValues')}
+     ${extractFunctionBlock(html, 'plPickImageUrl')}
+     ${extractFunctionBlock(html, 'plMainImage')}
+     ${extractFunctionBlock(html, 'plGroupMainImage')}
+     return { plMainImage, plGroupMainImage };`,
+  );
+  const { plMainImage, plGroupMainImage } = factory();
+
+  assert.equal(
+    plMainImage({ main_image: '', shopee_option_image_url: '', extra_images: ['https://cdn.example/cover.jpg'] }),
+    'https://cdn.example/cover.jpg',
+    'single rows should use stored image arrays before showing the artist text fallback',
+  );
+  assert.equal(
+    plGroupMainImage([{ main_image: '' }, { observed: { main_image_urls: ['https://cdn.example/observed.jpg'] } }]),
+    'https://cdn.example/observed.jpg',
+    'group rows should use observed/source representative images when DB main_image is blank',
+  );
+  assert.equal(
+    plMainImage({ shopee_image_id: 'abc123' }),
+    'https://cf.shopee.sg/file/abc123',
+    'Shopee image IDs should still render as CDN thumbnails',
+  );
+});
+
+test('master product list backfills missing representative images from StarOneMall', () => {
+  assert.match(html, /const PL_REPRESENTATIVE_IMAGE_BACKFILL_LIMIT = 8/, 'backfill must stay bounded on product-list load');
+  assert.match(html, /function plBackfillMissingRepresentativeImages\(products\)/, 'product list should expose a representative image backfill helper');
+  assert.match(html, /await db\.auth\.getSession\(\)/, 'backfill must require the signed-in Supabase session');
+  assert.match(html, /fetch\(STARONE_CRAWL_URL,[\s\S]*write_to_source_records: false/, 'backfill should crawl StarOneMall without creating source records');
+  assert.match(html, /const patch = \{ main_image: mainImage \}/, 'backfill must persist the crawled representative image into products.main_image');
+  assert.match(html, /void plBackfillMissingRepresentativeImages\(state\.products\)[\s\S]*renderProducts\(\);[\s\S]*renderPlatformWorkbenches\(\);/, 'loadData should refresh the UI after image backfill');
+});
+
 test('selected master register avoids SKU collision checks against unchecked cards', () => {
   assert.match(masterRegisterPromote, /const activeGroups = promotableGroups\.filter\(mrGroupSelected\)/, 'master register should build an explicit selected-card set');
   assert.match(masterRegisterPromote, /const crossSkuMap = new Map\(\)[\s\S]*for \(const g of activeGroups\)/, 'cross-card SKU map must only include selected cards');
   assert.doesNotMatch(masterRegisterPromote, /const crossSkuMap = new Map\(\)[\s\S]{0,400}for \(const g of groups\)/, 'unchecked cards must not block selected-card registration');
+});
+
+test('master registration persists representative images on every created product row', () => {
+  assert.match(html, /function mrProductMainImageFromRow\(row\)/, 'register flow should centralize the product main image source');
+  assert.match(html, /function mrProductExtraImagesFromRow\(row\)/, 'register flow should centralize detail image persistence');
+  assert.match(masterRegisterPromote, /main_image:\s*productMainImage \|\| null/, 'created/reused rows must persist products.main_image after promotion');
+  assert.match(masterRegisterPromote, /extra_images:\s*mrProductExtraImagesFromRow\(row\)/, 'created/reused rows must persist detail images after promotion');
 });
 
 test('created master edit action still opens when product list refresh fails', () => {

@@ -6886,6 +6886,13 @@ LEGACY END -->
     renderPlatformWorkbenches();
     renderPreOrderList();
     renderReadyTransition();
+    void plBackfillMissingRepresentativeImages(state.products)
+      .then((updated) => {
+        if (!updated) return;
+        renderProducts();
+        renderPlatformWorkbenches();
+      })
+      .catch((e) => console.warn('[v2] representative image backfill skipped:', e));
   }
 
   async function signIn() {
@@ -7506,22 +7513,144 @@ LEGACY END -->
     return `<div class="pl-action-buttons">${editButton}${deleteButton}</div>`;
   }
 
+  function plImageUrlFromShopeeId(imageId) {
+    const id = String(imageId || '').trim();
+    return id ? `https://cf.shopee.sg/file/${id}` : '';
+  }
+
+  function plImageCandidateValues(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.flatMap(plImageCandidateValues);
+    if (typeof value === 'object') {
+      return [
+        value.image_url,
+        value.url,
+        value.src,
+        value.main_image,
+        value.shopee_option_image_url,
+        value.image_id ? plImageUrlFromShopeeId(value.image_id) : '',
+      ].flatMap(plImageCandidateValues);
+    }
+    const raw = String(value || '').trim();
+    if (!raw) return [];
+    if (raw.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed.flatMap(plImageCandidateValues);
+      } catch (_) {}
+    }
+    return [raw];
+  }
+
+  function plPickImageUrl(...values) {
+    for (const value of values.flatMap(plImageCandidateValues)) {
+      const url = String(value || '').trim();
+      if (/^(https?:\/\/|data:image\/)/i.test(url)) return url;
+    }
+    return '';
+  }
+
   function plMainImage(product) {
-    const directUrl = String(product?.main_image || product?.shopee_option_image_url || '').trim();
-    if (directUrl) return directUrl;
-    const shopeeImageId = String(product?.shopee_image_id || '').trim();
-    return shopeeImageId ? `https://cf.shopee.sg/file/${shopeeImageId}` : '';
+    return plPickImageUrl(
+      product?.main_image,
+      product?._main_image,
+      product?.shopee_option_image_url,
+      product?._custom_option_image_url,
+      product?._wms_image_url,
+      product?.image_url,
+      product?.extra_images,
+      product?._extra_images,
+      product?.observed?.main_image_urls,
+      product?.observed_values?.main_image_urls,
+      plImageUrlFromShopeeId(product?.shopee_image_id),
+    );
   }
 
   function plGroupMainImage(rows) {
     const list = Array.isArray(rows) ? rows : [];
-    return list.map((row) => String(row?.main_image || '').trim()).find(Boolean)
-      || list.map((row) => String(row?.shopee_option_image_url || '').trim()).find(Boolean)
-      || list.map((row) => {
-        const shopeeImageId = String(row?.shopee_image_id || '').trim();
-        return shopeeImageId ? `https://cf.shopee.sg/file/${shopeeImageId}` : '';
-      }).find(Boolean)
-      || '';
+    return plPickImageUrl(
+      list.map((row) => row?.main_image),
+      list.map((row) => row?._main_image),
+      list.map((row) => row?.shopee_option_image_url),
+      list.map((row) => row?._custom_option_image_url),
+      list.map((row) => row?._wms_image_url),
+      list.map((row) => row?.image_url),
+      list.map((row) => row?.extra_images),
+      list.map((row) => row?._extra_images),
+      list.map((row) => row?.observed?.main_image_urls),
+      list.map((row) => row?.observed_values?.main_image_urls),
+      list.map((row) => plImageUrlFromShopeeId(row?.shopee_image_id)),
+    );
+  }
+
+  const PL_REPRESENTATIVE_IMAGE_BACKFILL_LIMIT = 8;
+  const PL_REPRESENTATIVE_IMAGE_BACKFILL_TRIED = new Set();
+
+  function plRepresentativeImageBackfillGroups(products) {
+    const groups = plBuildProductGroups(products || []);
+    const candidates = [];
+    groups.forEach((group) => {
+      const rows = group?.rows || [];
+      if (!rows.length || plGroupMainImage(rows)) return;
+      const sourceUrl = rows.map((row) => String(row?.staronemall_url || '').trim()).find(Boolean);
+      if (!sourceUrl || !isValidStaronemallUrl(sourceUrl)) return;
+      const normalizedUrl = normalizeStaronemallInput(sourceUrl);
+      if (PL_REPRESENTATIVE_IMAGE_BACKFILL_TRIED.has(normalizedUrl)) return;
+      PL_REPRESENTATIVE_IMAGE_BACKFILL_TRIED.add(normalizedUrl);
+      candidates.push({ url: normalizedUrl, rows });
+    });
+    return candidates.slice(0, PL_REPRESENTATIVE_IMAGE_BACKFILL_LIMIT);
+  }
+
+  function plRepresentativeBackfillImageList(value) {
+    const seen = new Set();
+    const out = [];
+    plImageCandidateValues(value).forEach((url) => {
+      const clean = String(url || '').trim();
+      if (!/^https?:\/\//i.test(clean) || seen.has(clean)) return;
+      seen.add(clean);
+      out.push(clean);
+    });
+    return out;
+  }
+
+  async function plBackfillMissingRepresentativeImages(products) {
+    const candidates = plRepresentativeImageBackfillGroups(products);
+    if (!candidates.length) return 0;
+    const session = (await db.auth.getSession()).data.session;
+    if (!session) return 0;
+
+    const resp = await fetch(STARONE_CRAWL_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}`, apikey: SUPABASE_ANON },
+      body: JSON.stringify({ urls: candidates.map((item) => item.url), write_to_source_records: false }),
+    });
+    const json = await resp.json().catch(() => null);
+    if (!resp.ok || !json?.ok) throw new Error(json?.message || json?.error || `HTTP ${resp.status}`);
+
+    let updated = 0;
+    const results = Array.isArray(json.results) ? json.results : [];
+    for (const item of candidates) {
+      const hit = results.find((row) => normalizeStaronemallInput(row?.url || '') === item.url) || null;
+      if (!hit || hit.ok === false) continue;
+      const observed = hit.observed_values || {};
+      const mainImage = plPickImageUrl(observed.main_image_urls);
+      if (!mainImage) continue;
+      const detailImages = plRepresentativeBackfillImageList(observed.detail_image_urls);
+      const productIds = item.rows.map((row) => row.id).filter(Boolean);
+      if (!productIds.length) continue;
+      const hasAnyDetailImages = item.rows.some((row) => Array.isArray(row.extra_images) && row.extra_images.filter(Boolean).length);
+      const patch = { main_image: mainImage };
+      if (!hasAnyDetailImages && detailImages.length) patch.extra_images = detailImages;
+      const { error } = await db.from('products').update(patch).in('id', productIds);
+      if (error) throw error;
+      item.rows.forEach((row) => {
+        row.main_image = mainImage;
+        if (patch.extra_images) row.extra_images = detailImages.slice();
+      });
+      updated += productIds.length;
+    }
+    return updated;
   }
 
   function plArtistInitial(product) {
@@ -31880,6 +32009,26 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return patch;
     }
 
+    function mrProductMainImageFromRow(row) {
+      const observedMain = Array.isArray(row?.observed?.main_image_urls) ? row.observed.main_image_urls[0] : '';
+      return String(row?._main_image || row?.main_image || observedMain || row?.shopee_option_image_url || '').trim();
+    }
+
+    function mrProductExtraImagesFromRow(row) {
+      const raw = Array.isArray(row?._extra_images)
+        ? row._extra_images
+        : (Array.isArray(row?.extra_images) ? row.extra_images : []);
+      const seen = new Set();
+      const out = [];
+      raw.forEach((url) => {
+        const clean = String(url || '').trim();
+        if (!clean || seen.has(clean)) return;
+        seen.add(clean);
+        out.push(clean);
+      });
+      return out;
+    }
+
     async function mrPatchCreatedProducts(productIds, group) {
       const ids = (productIds || []).filter(Boolean);
       if (!ids.length) return;
@@ -33202,10 +33351,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             const result = Array.isArray(data) ? data[0] : data;
             row.product_id = result && result.product_id;
             if (row.product_id) {
+              const productMainImage = mrProductMainImageFromRow(row) || vOpt.main_image || '';
               await db.from('products')
                 .update(Object.assign({
-                  main_image: vOpt.main_image || null,
-                  extra_images: vOpt.extra_images || [],
+                  main_image: productMainImage || null,
+                  extra_images: mrProductExtraImagesFromRow(row),
                   sourcing_price: vOpt.sourcing_price || 0,
                   cost_krw: vOpt.cost_krw || 0,
                   inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
@@ -33250,8 +33400,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             await mrPatchCreatedProducts(activeRows.map(r => r.product_id).filter(Boolean), group);
             for (const row of activeRows) {
               if (!row.product_id) continue;
+              const productMainImage = mrProductMainImageFromRow(row);
               await db.from('products')
                 .update({
+                  main_image: productMainImage || null,
+                  extra_images: mrProductExtraImagesFromRow(row),
                   sourcing_price: Number(row._sourcing_price || row.sourcing_price || 0),
                   cost_krw: Number(row._cost_krw || row.cost_krw || 0),
                   inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,

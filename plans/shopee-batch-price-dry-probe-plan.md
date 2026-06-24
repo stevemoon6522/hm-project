@@ -81,16 +81,43 @@ Expected output:
 
 ## Compatibility spike after this step
 
-Only after the dry/probe output is reviewed:
+Status: completed on 2026-06-24.
 
-1. Use the supervised bridge action `batch_update_outlet_price`.
-2. Pass `confirm_live_batch_update_outlet_price="BATCH_PRICE_PROBE_APPROVED"`.
-3. Use one SG item with known `shop_id`, `shop_item_id`, and, if variant, exact
-   `shop_model_id`.
-4. Use the current `last_synced_price` as the submitted `original_price` unless
-   Steve explicitly chooses another test price.
-5. Poll `batch_task_result` with `task_type=1`.
-6. Confirm Seller Center / remote item price did not drift unexpectedly.
+Live probe target:
+
+- SKU: `V1-COR-COLOR-PHO-SCENE 1`
+- Region: `SG`
+- `outlet_shop_id`: `1001961186`
+- `item_id`: `43322467262`
+- `model_id`: `228142123769`
+- `original_price`: `26.39`
+
+Live create-task result:
+
+- HTTP status: `200`
+- Shopee error: `product.error_param`
+- Shopee message: `parameter invalid : not a mart shop`
+- Request ID: `e3e3e7f354fec5eb8622b0569699c600`
+- Local mutation log ID: `915`
+- `task_id`: not returned
+
+Because no `task_id` was issued, real `batch_task_result` polling could not
+proceed. A guarded `batch_task_result` smoke call confirmed the endpoint is
+deployed, but Shopee requires a valid task ID for result lookup.
+
+Read-only shop evidence:
+
+- SG/MY/PH/TH/TW/BR operating shops report `is_mart_shop=false`.
+- SG/MY/PH/TH/TW/BR operating shops report `is_outlet_shop=false`.
+- The same shops report `is_cb=true` and `is_upgraded_cbsc=true`.
+
+Decision:
+
+- Do not use `v2.product.batch_update_outlet_price` for the current V2 normal
+  Shopee price sync.
+- Keep V2 live price sync on shop-level `v2.product.update_price`.
+- Treat this new batch price API as Mart/Outlet-specific until a future
+  Mart/Outlet shop context is explicitly available.
 
 Pass criteria:
 
@@ -108,3 +135,5 @@ Fail criteria:
 
 If fail criteria are met, keep V2 on existing shop-level `update_price` and treat
 the new batch API as outlet/mart-specific until proven otherwise.
+
+This live probe met the fail criteria at task creation time.

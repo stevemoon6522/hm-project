@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os';
 
 const root = process.cwd();
 const scriptPath = join(root, 'scripts/shopee-batch-price-probe-dry-run.mjs');
+const v2Path = join(root, 'v2/index.html');
+const planPath = join(root, 'plans/shopee-batch-price-dry-probe-plan.md');
 const supabaseBridgePath = join(root, 'supabase/functions/shopee-bridge/index.ts');
 const edgeBridgePath = join(root, 'edge-functions/shopee-bridge/index.ts');
 
@@ -67,6 +69,8 @@ for (const token of [
 
 const supabaseBridge = readFileSync(supabaseBridgePath, 'utf8');
 const edgeBridge = readFileSync(edgeBridgePath, 'utf8');
+const v2 = readFileSync(v2Path, 'utf8');
+const plan = readFileSync(planPath, 'utf8');
 assert.equal(sha256(edgeBridge), sha256(supabaseBridge), 'edge-functions and supabase/functions shopee-bridge copies must match');
 
 assert.ok(!sliceBetween(supabaseBridge, 'const PUBLIC_ACTIONS', ']);').includes('batch_update_outlet_price'), 'batch update route must not be public');
@@ -101,6 +105,23 @@ for (const token of [
   'docs_ai/apis/product/v2.product.get_batch_task_result.json',
 ]) {
   assert.ok(taskBlock.includes(token), `batch_task_result block missing token: ${token}`);
+}
+
+assert.ok(
+  v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/update_price'"),
+  'V2 Shopee live price sync must remain on shop-level update_price for normal CBSC shops',
+);
+assert.ok(
+  !v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/batch_update_outlet_price'"),
+  'V2 normal price sync must not use the Mart/Outlet-only batch_update_outlet_price endpoint',
+);
+for (const token of [
+  'parameter invalid : not a mart shop',
+  'is_mart_shop=false',
+  'is_outlet_shop=false',
+  'Keep V2 live price sync on shop-level `v2.product.update_price`',
+]) {
+  assert.ok(plan.includes(token), `batch price plan must record live non-applicability evidence: ${token}`);
 }
 
 console.log('Shopee batch price dry/probe checks passed');

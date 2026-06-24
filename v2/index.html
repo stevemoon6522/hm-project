@@ -26147,8 +26147,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function catExecuteShopeeLive() {
+    const earlySyncBtn = document.getElementById('cat-sync-btn');
+    if (earlySyncBtn && !earlySyncBtn.dataset.catSyncOldText) {
+      earlySyncBtn.dataset.catSyncOldText = earlySyncBtn.textContent || '';
+    }
+    if (earlySyncBtn) { earlySyncBtn.disabled = true; earlySyncBtn.textContent = 'Shopee 동기화 준비...'; }
+    showToast('Shopee 가격 동기화 준비 중...', '');
     catSuppressNextWeightBlurSave = false;
     await catFlushSelectedInlineEdits({ persistWeight: false });
+    if (earlySyncBtn) earlySyncBtn.textContent = 'Shopee 매핑 확인 중...';
     await catEnsureSelectedShopeeListings();
     const { payloads } = catBuildPriceSyncPayloads();
     if (!payloads.length) {
@@ -26157,8 +26164,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
     // V1 parity: the Shopee sync button is an explicit operator action.
     // Do not require an extra confirm; preflight blocks unsafe targets before update_price.
-    const btn = document.getElementById('cat-sync-btn');
-    const oldText = btn ? btn.textContent : '';
+    const btn = earlySyncBtn;
+    const oldText = btn ? (btn.dataset.catSyncOldText || btn.textContent) : '';
     if (btn) { btn.disabled = true; btn.textContent = 'Shopee 동기화 중...'; }
     showToast('Shopee preflight 확인 중...', '');
 
@@ -26226,7 +26233,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         okCount++;
       }
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = oldText; }
+      if (btn) { btn.disabled = false; btn.textContent = oldText; delete btn.dataset.catSyncOldText; }
     }
 
     applyAndRenderCatalog();

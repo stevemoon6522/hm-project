@@ -106,6 +106,16 @@ assert.match(updateBatching, /price_list:\s*\[\]/, 'Shopee update batching must 
 assert.match(updateBatching, /batch\.payload\.price_list\.push\(entry\)/, 'Shopee update batching must append selected model price entries into one item update');
 assert.match(priceSync, /Promise\.all\(chunk\.map\(function\(batch\)/, 'Shopee live price sync must run region/item batches concurrently within the cap');
 assert.match(liveSync, /catRunShopeePriceUpdates\(preflight\.valid\)/, 'Shopee live price sync must use the batched update runner instead of one sequential request per option row');
+assert.ok(
+  liveSync.indexOf("const earlySyncBtn = document.getElementById('cat-sync-btn');") >= 0
+    && liveSync.indexOf("const earlySyncBtn = document.getElementById('cat-sync-btn');") < liveSync.indexOf('await catFlushSelectedInlineEdits'),
+  'Shopee live sync must lock the sync button before async inline flush/listing hydration so clicks never look inert',
+);
+assert.ok(
+  liveSync.indexOf('Shopee 가격 동기화 준비 중') >= 0
+    && liveSync.indexOf('Shopee 가격 동기화 준비 중') < liveSync.indexOf('await catEnsureSelectedShopeeListings()'),
+  'Shopee live sync must show immediate operator feedback before mapping hydration starts',
+);
 assert.match(priceSync, /function catCostOverridesSourcingDerivedCost\(/, 'Shopee inline flush must explicitly decide when direct Cost edits override stale sourcing input');
 assert.ok(
   flushInlineEdits.indexOf('const costInput = tr.querySelector') >= 0

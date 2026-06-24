@@ -49,7 +49,7 @@ Read-only shop evidence:
 | `v2.product.batch_update_outlet_price` | Do not adopt for current V2 | Keep V2 price sync on shop-level `v2.product.update_price` | Live probe returned `parameter invalid : not a mart shop`; current shops are not Mart/Outlet shops | Revisit only if a Mart/Outlet shop is explicitly onboarded |
 | `v2.product.batch_update_outlet_stock` | Do not adopt for current V2/WMS stock sync | No stock sync change | Local doc requires `item_list[].outlet_shop_id` and describes Outlet shop stock; account evidence says no Mart/Outlet shops | Do not connect to inventory/WMS until a valid Mart/Outlet context exists |
 | `v2.product.batch_publish_item_to_outlet_shop` | Do not adopt for current V2 registration | No registration/publish change | Local doc requires `item_list[].mart_item_id`, `item_list[].outlet_shop_id`, and an Outlet publish payload | Do not use for CBSC regional publish; revisit only for Mart/Outlet operations |
-| `v2.product.batch_add_item` | Hold for separate dry/probe | No live call and no replacement of current registration flow yet | This API is not Outlet-specific in the captured doc, but it creates live products asynchronously and needs payload parity validation | Build a docs-only payload comparison against current V2 add/register flow before any live probe |
+| `v2.product.batch_add_item` | Dry/probe available; no live call | No replacement of current registration flow yet | This API is not Outlet-specific in the captured doc, but it creates live products asynchronously and its shop-level Product task differs from current CBSC Global Product registration | Use `scripts/shopee-batch-add-item-probe-dry-run.mjs`; keep `current_v2_replacement_ready=false` until a burnable live plan is approved |
 | `v2.product.get_batch_task_result` | Supporting endpoint only | Keep guarded diagnostic route, no V2 UI flow | It is useful only after a batch create API returns a valid `task_id`; the price probe did not return one | Use only for supervised diagnostics or for a future adopted batch API |
 | SSP offline APIs: `v2.product.get_ssp_list`, `v2.product.get_ssp_info`, `v2.product.add_ssp_item`, `v2.product.link_ssp`, `v2.product.unlink_ssp` | No action in shopee-dashboard | No code change | Repo search found no SSP usage; Shopee states old BR SSP APIs had no production traffic | No migration needed unless another project proves usage |
 | Payment field `buyer_payment_info.ads_voucher_discount` on `v2.payment.get_escrow_detail` and `v2.payment.get_escrow_detail_batch` | Not shopee-dashboard scope | No V2 product/price change | V2 does not currently parse escrow payment detail fields | Consider WMS/order settlement support if Ads Smart Voucher reporting becomes required |
@@ -64,21 +64,21 @@ For current starphotocard Shopee Dashboard V2:
    guard for diagnostics only.
 3. Do not add UI controls for Outlet price, Outlet stock, or Outlet publish until
    there is an actual Mart/Outlet shop context.
-4. Do not run `batch_add_item` live from this update cycle. Its next safe step is
-   a non-mutating payload mapper and static comparison against the existing V2
-   registration payload.
+4. Do not run `batch_add_item` live from this update cycle. The non-mutating
+   payload mapper now exists, and it must keep
+   `current_v2_replacement_ready=false` until Global Product and option-group
+   differences are resolved.
 5. Keep `get_batch_task_result` as an async-task support primitive, not a
    standalone feature.
 
 ## Recommended next work
 
-The next useful implementation task is a `batch_add_item` dry/probe design:
+The batch_add_item dry/probe script is now available:
 
-- take one already-registered V2 product,
-- derive the would-be `item_list[0]` payload from existing V2 registration data,
-- compare required fields with the current add/register flow,
-- print the future task-result reconciliation key,
-- do not call Shopee.
+- `scripts/shopee-batch-add-item-probe-dry-run.mjs`
+- `scripts/test-shopee-batch-add-item-probe.mjs`
 
-This gives us an answer for the only Product batch API that is not already ruled
-out by the Mart/Outlet evidence.
+The next useful implementation task is to run the dry/probe against one existing
+SKU and decide whether a separate burnable live product is worth creating for a
+supervised compatibility spike. Do not use an already listed operating product
+for the first live call because `batch_add_item` would create a new shop item.

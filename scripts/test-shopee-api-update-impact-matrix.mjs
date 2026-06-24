@@ -33,7 +33,8 @@ for (const token of [
   'buyer_payment_info.ads_voucher_discount',
   'error_in_fetching_is_prescription_item',
   'prescription_check_status',
-  'batch_add_item` dry/probe design',
+  'batch_add_item dry/probe script is now available',
+  'current_v2_replacement_ready=false',
 ]) {
   assertIncludes(matrix, token, 'impact matrix');
 }
@@ -76,7 +77,7 @@ assert.equal(
   publishDoc.project_decision.status,
   'do_not_adopt_for_current_starphotocard_v2_registration',
 );
-assert.equal(addDoc.project_decision.status, 'hold_for_separate_dry_probe');
+assert.equal(addDoc.project_decision.status, 'dry_probe_available_no_live_call');
 assert.equal(taskDoc.project_decision.status, 'supporting_endpoint_only');
 
 for (const doc of [stockDoc, publishDoc]) {
@@ -93,6 +94,10 @@ for (const doc of [stockDoc, publishDoc]) {
 assert.ok(
   addDoc.project_decision.evidence.some((entry) => entry.includes('does not use outlet_shop_id')),
   'batch_add_item must be treated separately from Outlet-only API rejection',
+);
+assert.ok(
+  addDoc.project_decision.evidence.some((entry) => entry.includes('current_v2_replacement_ready=false')),
+  'batch_add_item must record the current V2 replacement decision',
 );
 assert.ok(
   taskDoc.project_decision.evidence.some((entry) => entry.includes('valid task_id')),

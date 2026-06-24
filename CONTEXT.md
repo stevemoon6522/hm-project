@@ -28,6 +28,10 @@ _Avoid_: master description, product template
 The brand or manufacturer name sent with a Joom Platform Listing. It is selected as listing content, usually from existing marketplace brand names or the artist name, and is not a canonical Master Product fact.
 _Avoid_: Shopee brand ID, Qoo10 BrandNo, master brand
 
+**Joom Account Brand Candidate**:
+A brand name already observed on a reviewed or active Joom Platform Listing in the seller account. It can be offered as a safer candidate for Joom Brand selection, but it is not a separate marketplace-approved brand registry.
+_Avoid_: approved brand list, master brand, guaranteed brand authorization
+
 **Shopee Global Product**:
 The merchant-level Shopee catalog item that acts as the canonical Shopee parent for CBSC/KRSC-published regional shop listings.
 _Avoid_: region product, shop item

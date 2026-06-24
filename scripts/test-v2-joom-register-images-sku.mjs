@@ -66,6 +66,9 @@ assert(masterRegister.includes('row.joom_category_id = value || null'), 'Joom ca
 assert(masterRegister.includes('function mrLoadJoomBrandOptions'), 'Joom flow must load saved local brand candidates for selection');
 assert(masterRegister.includes('function mrPopulateJoomBrandSelect'), 'Joom flow must render a brand select, not only a free-text input');
 assert(masterRegister.includes('MR_JOOM_BRAND_CUSTOM_VALUE'), 'Joom brand select must keep a custom-entry fallback');
+assert(masterRegister.includes("mrJoomBridgeUrl() + '/brand-options?limit=500'"), 'Joom flow must load brand candidates from the Joom account via the bridge');
+assert(masterRegister.includes('id="mr-joom-brand"') && masterRegister.includes('id="mr-joom-brand-custom"'), 'Joom publish modal must allow brand selection before dry-run/live registration');
+assert(masterRegister.includes('await mrLoadJoomBrandOptions(group);'), 'Joom modal must load account brand options before rendering the draft');
 assert(masterRegister.includes('brand: draft.brand'), 'Joom dry-run signature must include the selected brand');
 assert(masterRegister.includes("if (!brand) errors.push('Joom brand is required.')"), 'Joom draft must block empty brand values');
 assert(masterRegister.includes('function mrRowLifecycle(row)'), 'Master/Joom title helpers must resolve lifecycle from each master product row');
@@ -124,12 +127,18 @@ assert(bridge.includes('async function buildCloudinaryFetchTiles'), 'Joom detail
 assert(bridge.includes('/image/fetch/'), 'Joom detail splitter must produce Cloudinary fetch URLs');
 assert(bridge.includes('const JOOM_EXTRA_IMAGE_TILE_SIZE = 1500') && bridge.includes('c_pad,b_white,w_${targetSize},h_${targetSize}'), 'Joom detail splitter must square-pad and downscale boundary images instead of sending the raw rectangular URL');
 assert(bridge.includes('function joomPlainText') && bridge.includes('replace(/<[^>]+>/g, " ")') && bridge.includes('replace(/[^\\x09\\x0A\\x0D\\x20-\\x7E]/g, "")'), 'Joom bridge descriptions must be plain ASCII text without HTML tags');
+const stripKoreanBlock = sliceBetween(bridge, 'function stripKorean(s: string): string', 'function joomPlainText(value: string): string');
+const joomPlainTextBlock = sliceBetween(bridge, 'function joomPlainText(value: string): string', 'function hasLifecyclePrefix(value: string): boolean');
+assert(!stripKoreanBlock.includes('replace(/\\s+/g, " ")'), 'Joom plain-text sanitizer must not collapse line breaks before description formatting');
+assert(joomPlainTextBlock.includes('replace(/\\\\r\\\\n|\\\\n|\\\\r/g, "\\n")'), 'Joom plain-text sanitizer must restore escaped newline sequences from saved component text');
+assert(joomPlainTextBlock.includes('replace(/\\r\\n?/g, "\\n")'), 'Joom plain-text sanitizer must normalize CRLF while preserving product component lines');
 assert(decorativeEmojiMarkers.every((marker) => !bridge.includes(`"${marker}`)), 'Joom bridge description template must not send decorative emoji/non-ASCII markers');
 assert(bridge.includes('async function createOrUpdateJoomProduct') && bridge.includes('/products/update?sku=') && bridge.includes('recovered_existing_product_id'), 'Joom bridge publish must update an existing rejected SKU instead of blindly creating duplicates');
 assert(bridge.includes('async function uploadTileToProductStorage'), 'Joom detail splitter must fall back to Supabase Storage tile hosting');
 assert(bridge.includes('product-images'), 'Joom storage tile fallback must use the public product-images bucket');
 assert(bridge.includes('const JOOM_MAX_EXTRA_IMAGES = 20'), 'Joom bridge must cap extraImages at the API max of 20');
 assert(buildPayload.includes('if (!brandName) throw new Error("brand required")'), 'Joom bridge must reject publish payloads without a selected brand');
+assert(bridge.includes('action === "brand-options"') && bridge.includes('/products/multi?limit=${safeLimit}') && bridge.includes('Product.brand'), 'Joom bridge must expose account-derived brand candidates from official /products/multi data');
 assert(!bridge.includes('return [imageUrl];'), 'Joom detail processing must not fall back to sending unsquared source URLs');
 assert(bridge.includes('const fallback = joomPlainText(opts.fallbackName || "");') && bridge.indexOf('if (fallback) return titleWithPrefix(prefix, fallback).slice(0, 200);') < bridge.indexOf('if (artist && album)'), 'Joom bridge title should prefer sanitized fallback master name before artist/album shorthand');
 assert(bridge.includes('Math.min(Math.ceil(img.height / tileSize), 9)'), 'Joom detail splitter must use up to 9 square tiles');

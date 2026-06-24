@@ -162,6 +162,36 @@ async function getCategories(): Promise<Array<{ key: string; id: string; label: 
   return _cachedCategories!;
 }
 
+function addJoomBrandOption(map: Map<string, { name: string; count: number; states: Set<string> }>, product: any) {
+  const brand = String(product?.brand || "").replace(/\s+/g, " ").trim();
+  if (!brand || /^no brand$/i.test(brand)) return;
+  const state = String(product?.state || "").toLowerCase();
+  const usableReviewedState = product?.hasActiveVersion === true || state === "active" || state === "warning";
+  if (!usableReviewedState) return;
+  const key = brand.toLowerCase();
+  const current = map.get(key) || { name: brand, count: 0, states: new Set<string>() };
+  current.count += 1;
+  if (state) current.states.add(state);
+  map.set(key, current);
+}
+
+async function getJoomBrandOptions(limit: number): Promise<Array<{ name: string; count: number; states: string[] }>> {
+  // Official local doc: C:\dev\api-refs\marketplaces\joom\openapi.yaml
+  // There is no dedicated approved-brand-list endpoint. /products/multi returns
+  // account products, and Product.brand is the only documented account-scoped
+  // brand source available through API v3.
+  const parsedLimit = Number.isFinite(limit) ? Math.floor(limit) : 500;
+  const safeLimit = Math.max(1, Math.min(parsedLimit || 500, 500));
+  const data = await joomFetch(`/products/multi?limit=${safeLimit}`);
+  const items = Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : []);
+  const map = new Map<string, { name: string; count: number; states: Set<string> }>();
+  for (const product of items) addJoomBrandOption(map, product);
+  return Array.from(map.values())
+    .map((row) => ({ name: row.name, count: row.count, states: Array.from(row.states).sort() }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    .slice(0, 200);
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -181,11 +211,19 @@ function safeSku(base: string, suffix: string): string {
 }
 
 function stripKorean(s: string): string {
-  return (s || "").replace(/[ㄱ-ㅎㅏ-ㅣ가-힣ᄀ-ᇿ]/g, "").replace(/\(\s*\)/g, "").replace(/\s+/g, " ").trim();
+  return (s || "")
+    .replace(/[ㄱ-ㅎㅏ-ㅣ가-힣ᄀ-ᇿ]/g, "")
+    .replace(/\([ \t]*\)/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n[ \t]+/g, "\n")
+    .trim();
 }
 
 function joomPlainText(value: string): string {
-  return stripKorean(value || "")
+  return stripKorean(String(value || "")
+    .replace(/\\r\\n|\\n|\\r/g, "\n")
+    .replace(/\r\n?/g, "\n"))
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
@@ -804,15 +842,29 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === "health" && req.method === "GET") {
       try {
         const token = await getValidAccessToken();
-        return jsonResp({ ok: true, service: "joom-bridge", version: 14, token_ok: !!token });
+        return jsonResp({ ok: true, service: "joom-bridge", version: 15, token_ok: !!token });
       } catch (e: any) {
-        return jsonResp({ ok: false, service: "joom-bridge", version: 14, error: "joom_auth_unavailable", message: String(e?.message || e) }, 503);
+        return jsonResp({ ok: false, service: "joom-bridge", version: 15, error: "joom_auth_unavailable", message: String(e?.message || e) }, 503);
       }
     }
 
     if (action === "categories" && req.method === "GET") {
       const cats = await getCategories();
       return jsonResp({ ok: true, categories: cats });
+    }
+
+    if (action === "brand-options" && req.method === "GET") {
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
+      const limit = Number(url.searchParams.get("limit") || 500);
+      const brands = await getJoomBrandOptions(limit);
+      return jsonResp({
+        ok: true,
+        brands,
+        source: "/products/multi",
+        official_doc: "C:\\dev\\api-refs\\marketplaces\\joom\\openapi.yaml",
+        note: "Joom API v3 documents Product.brand on /products/multi but no dedicated approved brand list endpoint.",
+      });
     }
 
     if ((action === "publish" || action === "dryrun") && req.method === "POST") {

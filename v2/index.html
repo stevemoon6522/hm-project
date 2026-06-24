@@ -18674,6 +18674,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const tierNames = optionSpec.tierNames.length ? optionSpec.tierNames : ['Version'];
     const twoAxis = optionSpec.twoAxis;
     const parentSku = plParentSku(sortedRows);
+    const masterRepresentativeImage = sortedRows
+      .map((row) => String(row?.main_image || '').trim())
+      .find(Boolean) || '';
     const adaptedRows = sortedRows.map((row, idx) => {
       const optionNames = optionSpec.optionNamesForRow(row, idx);
       const masterOptionName = optionNames.join(' / ') || plMasterOptionName(row, plOptionDisplay(row) || row.option_name || `Option ${idx + 1}`) || `Option ${idx + 1}`;
@@ -18690,7 +18693,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         url: row.staronemall_url || '',
         observed: {
           title: row.product_name || '',
-          main_image_urls: row.main_image ? [row.main_image] : [],
+          main_image_urls: masterRepresentativeImage ? [masterRepresentativeImage] : (row.main_image ? [row.main_image] : []),
           detail_image_urls: Array.isArray(row.extra_images) ? row.extra_images : [],
         },
         artist,
@@ -18710,7 +18713,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         _ebayVariationAxis: row.ebay_variation_axis || 'Version',
         _ebayVariationValue: masterOptionName || version || '',
         _ebayOptionImageUrl: row.shopee_option_image_url || row.main_image || '',
-        _ebayMainImage: row.main_image || mainImage,
+        _ebayMainImage: masterRepresentativeImage || row.main_image || mainImage,
         _ebayPriceUsd: Number(row.ebay_last_synced_price || 0),
         _ebayQuantity: Number.isFinite(quantity) && quantity > 0 ? Math.floor(quantity) : 3,
         _ebayRecordLabel: row.record_label || artist,
@@ -35632,11 +35635,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return aspects;
     }
 
-    function mrEbayImageUrls(group, sourceRow, representativeImageUrl = '') {
+    function mrEbayImageUrls(group, sourceRow, layeredMainImageUrl = '') {
       const firstRow = group?.rows?.[0] || {};
       const baseUrl = sourceRow?.url || firstRow.url || '';
       const mainImage = String(
-        representativeImageUrl
+        layeredMainImageUrl
+        || firstRow._ebayLayeredMainImageUrl
         || firstRow._ebayRepresentativeImageUrl
         || firstRow._ebayMainImage
         || mrMasterRepresentativeImage(group)
@@ -35660,14 +35664,32 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     function mrEbayRepresentativeImageUrl(group, sourceRow) {
       const firstRow = group?.rows?.[0] || {};
       const mainImageUrl = String(
-        firstRow._ebayMainImage
-        || mrMasterRepresentativeImage(group)
+        mrMasterRepresentativeImage(group)
+        || firstRow._ebayMainImage
         || sourceRow?.main_image
+        || sourceRow?._main_image
         || ''
       ).trim();
       if (!mainImageUrl) throw new Error('eBay representative image is required before registration.');
       firstRow._ebayRepresentativeImageUrl = mainImageUrl;
       return mainImageUrl;
+    }
+
+    async function mrEbayBuildLayeredMainImageUrl(group, sourceRow, representativeImageUrl = '') {
+      const firstRow = group?.rows?.[0] || {};
+      const mainImageUrl = String(representativeImageUrl || mrEbayRepresentativeImageUrl(group, sourceRow)).trim();
+      if (!mainImageUrl) throw new Error('eBay representative image is required before registration.');
+      if (
+        firstRow._ebayLayeredMainImageUrl
+        && firstRow._ebayLayeredMainImageSourceUrl === mainImageUrl
+      ) {
+        return firstRow._ebayLayeredMainImageUrl;
+      }
+      const layeredUrl = await mrBuildMarketplaceLayeredMainImageUrl('ebay', mainImageUrl, sourceRow || firstRow);
+      firstRow._ebayRepresentativeImageUrl = mainImageUrl;
+      firstRow._ebayLayeredMainImageSourceUrl = mainImageUrl;
+      firstRow._ebayLayeredMainImageUrl = layeredUrl;
+      return layeredUrl;
     }
 
     function mrEbayBuildVariationOptions(draftBase) {
@@ -35772,6 +35794,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const overridePrice = Number(firstRow._ebayPriceUsd || 0);
       const computedPriceUsd = Number(ebayPricing.priceUsd || 0);
       const representativeImageUrl = mrEbayRepresentativeImageUrl(group, sourceRow);
+      const layeredMainImageUrl = await mrEbayBuildLayeredMainImageUrl(group, sourceRow, representativeImageUrl);
       const draft = {
         group,
         firstRow,
@@ -35794,7 +35817,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         ebayPricing,
         exCountry,
         representativeImageUrl,
-        imageUrls: mrEbayImageUrls(group, sourceRow, representativeImageUrl),
+        layeredMainImageUrl,
+        imageUrls: mrEbayImageUrls(group, sourceRow, layeredMainImageUrl),
         aspects: mrEbayBuildAspects(firstRow, sourceRow),
         publishError: '',
       };
@@ -35959,7 +35983,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       draft.firstRow._ebayPriceUsd = draft.priceUsd;
       draft.firstRow._ebayQuantity = draft.quantity;
       draft.firstRow._ebayDescription = draft.description;
-      draft.imageUrls = mrEbayImageUrls(draft.group, draft.sourceRow, draft.representativeImageUrl);
+      draft.imageUrls = mrEbayImageUrls(draft.group, draft.sourceRow, draft.layeredMainImageUrl || draft.representativeImageUrl);
       Object.assign(draft, mrEbayValidateDraft(draft));
       mrEbayUpdateModalStatus(draft);
       return draft;

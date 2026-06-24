@@ -42,6 +42,11 @@ assert.deepEqual(
   'READY STOCK prefix must not become the eBay Release Title',
 );
 assert.deepEqual(
+  deriveFromTitle('[READY STOCK] CORTIS The 1st EP [COLOR OUTSIDE THE LINES] (Weverse Albums ver.)'),
+  { artist: 'CORTIS', album: 'COLOR OUTSIDE THE LINES', version: 'Weverse Albums', member: '' },
+  'CORTIS COLOR OUTSIDE THE LINES must derive the eBay title fields from the master listing title',
+);
+assert.deepEqual(
   deriveFromTitle('[READY STOCK] (JENNIE) The 1st Studio Album [Ruby] (CD Digipack)'),
   { artist: 'JENNIE', album: 'Ruby', version: 'CD Digipack', member: '' },
   'JENNIE Ruby Digipack must derive eBay Artist/Release Title/Version from the actual listing title',
@@ -95,10 +100,37 @@ assert.deepEqual(
   ebayImageUrls(
     { rows: [{ shopee_option_image_url: 'option-a.jpg' }, { shopee_option_image_url: 'option-b.jpg' }] },
     { _extra_images: ['detail-a.jpg'], observed: { detail_image_urls: ['detail-b.jpg'] } },
-    'master-main.jpg',
+    'layered-master-main.jpg',
   ),
-  ['master-main.jpg', 'detail-a.jpg', 'detail-b.jpg'],
-  'eBay default photos must contain the raw representative image and detail images only',
+  ['layered-master-main.jpg', 'detail-a.jpg', 'detail-b.jpg'],
+  'eBay default photos must contain the layered representative image and detail images only',
+);
+
+const representativeStart = html.indexOf('    function mrEbayRepresentativeImageUrl');
+const representativeEnd = html.indexOf('    async function mrEbayBuildLayeredMainImageUrl', representativeStart);
+assert(representativeStart >= 0 && representativeEnd > representativeStart, 'eBay representative image builder must be extractable');
+const ebayRepresentativeImageUrl = new Function(
+  'mrMasterRepresentativeImage',
+  `${html.slice(representativeStart, representativeEnd)}\nreturn mrEbayRepresentativeImageUrl;`,
+)(
+  () => 'master-representative.jpg',
+);
+const cortisRepresentativeGroup = {
+  rows: [{
+    product_name: '[READY STOCK] CORTIS The 1st EP [COLOR OUTSIDE THE LINES] (Weverse Albums ver.)',
+    _ebayMainImage: 'option-image-a.jpg',
+    shopee_option_image_url: 'option-image-a.jpg',
+  }],
+};
+assert.equal(
+  ebayRepresentativeImageUrl(cortisRepresentativeGroup, { _main_image: 'option-image-a.jpg' }),
+  'master-representative.jpg',
+  'CORTIS eBay draft must prefer the master representative image over the first option image',
+);
+assert.equal(
+  cortisRepresentativeGroup.rows[0]._ebayRepresentativeImageUrl,
+  'master-representative.jpg',
+  'CORTIS eBay draft must cache the raw representative source for layered upload',
 );
 
 const skuLikeStart = html.indexOf('    function mrEbayIsSkuLikeVariationValue');
@@ -183,6 +215,10 @@ for (const token of [
   'function mrEbayBuildVariationOptions',
   'function mrEbayRepresentativeImageUrl',
   'firstRow._ebayRepresentativeImageUrl = mainImageUrl',
+  'async function mrEbayBuildLayeredMainImageUrl',
+  "await mrBuildMarketplaceLayeredMainImageUrl('ebay', mainImageUrl, sourceRow || firstRow)",
+  'firstRow._ebayLayeredMainImageUrl = layeredUrl',
+  'imageUrls: mrEbayImageUrls(group, sourceRow, layeredMainImageUrl)',
   'function mrEbayIsSkuLikeVariationValue',
   'mrEbayMasterOptionImageUrl(row)',
   'description: mrEbayDescriptionForPayload(draft.description).slice(0, 4000)',

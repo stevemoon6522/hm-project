@@ -201,7 +201,7 @@ assert.deepEqual(
 const setFirstEbayGroup = buildEbayGroup([
   { id: 'ar3', product_group_id: 'g1', sku: 'M4-BTS-ARIRA-PHO-SET', product_name: '[READY STOCK] (BTS) ARIRANG Rooted in Korea ver. / Rooted in Music ver.', option_name: '2 VER SET', variation_tier_names: ['Version'], variation_option_names: ['2 VER SET'], variation_tier_index: [0], ebay_variation_value: 'SET', ebay_variation_image_url: 'https://img/layered-set.jpg', shopee_option_image_url: 'https://img/raw-set.jpg', cost_krw: 20000, weight_g: 600, inventory: 3 },
   { id: 'ar1', product_group_id: 'g1', sku: 'M4-BTS-ARIRA-PHO-ROOTED-IN-KOREA', product_name: '[READY STOCK] (BTS) ARIRANG Rooted in Korea ver. / Rooted in Music ver.', option_name: 'ROOTED IN KOREA VER', variation_tier_names: ['Version'], variation_option_names: ['ROOTED IN KOREA VER'], variation_tier_index: [1], ebay_variation_value: 'ROOTED IN KOREA', shopee_option_image_url: 'https://img/raw-k.jpg', cost_krw: 10000, weight_g: 300, inventory: 3 },
-  { id: 'ar2', product_group_id: 'g1', sku: 'M4-BTS-ARIRA-PHO-ROOTED-IN-MUSIC', product_name: '[READY STOCK] (BTS) ARIRANG Rooted in Korea ver. / Rooted in Music ver.', option_name: 'ROOTED IN MUSIC VER', variation_tier_names: ['Version'], variation_option_names: ['ROOTED IN MUSIC VER'], variation_tier_index: [2], ebay_variation_value: 'ROOTED IN MUSIC', shopee_option_image_url: 'https://img/raw-m.jpg', cost_krw: 10000, weight_g: 300, inventory: 3 },
+  { id: 'ar2', product_group_id: 'g1', sku: 'M4-BTS-ARIRA-PHO-ROOTED-IN-MUSIC', product_name: '[READY STOCK] (BTS) ARIRANG Rooted in Korea ver. / Rooted in Music ver.', option_name: 'ROOTED IN MUSIC VER', variation_tier_names: ['Version'], variation_option_names: ['ROOTED IN MUSIC VER'], variation_tier_index: [2], ebay_variation_value: 'ROOTED IN MUSIC', main_image: 'https://img/master-cover.jpg', shopee_option_image_url: 'https://img/raw-m.jpg', cost_krw: 10000, weight_g: 300, inventory: 3 },
 ]);
 assert.deepEqual(
   setFirstEbayGroup.rows.map((row) => row._ebayVariationValue),
@@ -212,6 +212,11 @@ assert.equal(
   setFirstEbayGroup.rows.at(-1)._ebayOptionImageUrl,
   'https://img/raw-set.jpg',
   'eBay registration group must prefer current master option image over stale layered eBay variation image',
+);
+assert.equal(
+  setFirstEbayGroup.rows[0]._ebayMainImage,
+  'https://img/master-cover.jpg',
+  'eBay registration group must seed the default cover from the master representative image, not the first option image',
 );
 
 const joomGroupBuilderBlock = sliceBetween(

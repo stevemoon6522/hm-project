@@ -22860,6 +22860,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // In-memory cache of pending weight edits: { [productId]: weightG }.
   // Used when the operator types weight and immediately clicks sync before blur fires.
   const pendingWeightEdits = {};
+  let catSuppressNextWeightBlurSave = false;
+  let catSuppressWeightBlurTimer = null;
 
   // In-memory cache of pending 도매가(sourcing) edits: { [productId]: sourcingKrw }
   // Populated when the operator edits 도매가 or crawls Staronemall; persisted
@@ -24485,6 +24487,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         lastSaved = rawVal;
         const product = _catCache && (_catCache.products || []).find(function(p) { return String(p.id) === String(pid); });
         catUpdateRowPriceCells(pid, catEffectiveCost(product || {}));
+        if (catSuppressNextWeightBlurSave) {
+          catSuppressNextWeightBlurSave = false;
+          if (catSuppressWeightBlurTimer) clearTimeout(catSuppressWeightBlurTimer);
+          catSuppressWeightBlurTimer = null;
+          return;
+        }
         catPersistWeight(pid, roundedWeight, input);
       }
       input.addEventListener('blur', onWeightChange);
@@ -25781,7 +25789,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function catExecuteShopeeLive() {
-    await catFlushSelectedInlineEdits({ persistWeight: true, silentWeightToast: true });
+    catSuppressNextWeightBlurSave = false;
+    await catFlushSelectedInlineEdits({ persistWeight: false });
     await catEnsureSelectedShopeeListings();
     const { payloads } = catBuildPriceSyncPayloads();
     if (!payloads.length) {
@@ -25902,7 +25911,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function catExecuteJoomSync() {
-    await catFlushSelectedInlineEdits({ persistWeight: true, silentWeightToast: true });
+    catSuppressNextWeightBlurSave = false;
+    await catFlushSelectedInlineEdits({ persistWeight: false });
     const products = catSelectedProducts();
     if (!products.length) {
       showToast('Joom 동기화 대상 행을 선택하세요.', 'err');
@@ -26032,7 +26042,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function catExecuteEbaySync() {
-    await catFlushSelectedInlineEdits({ persistWeight: true, silentWeightToast: true });
+    catSuppressNextWeightBlurSave = false;
+    await catFlushSelectedInlineEdits({ persistWeight: false });
     const products = catSelectedProducts();
     if (!products.length) {
       showToast('eBay 동기화 대상 행을 선택하세요.', 'err');
@@ -26149,7 +26160,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // ── Platform + Shopee market controls ───────────────────────────
 
   async function catExecuteQoo10Sync() {
-    await catFlushSelectedInlineEdits({ persistWeight: true, silentWeightToast: true });
+    catSuppressNextWeightBlurSave = false;
+    await catFlushSelectedInlineEdits({ persistWeight: false });
     const products = catSelectedProducts();
     if (!products.length) {
       showToast('Qoo10 동기화 대상을 선택하세요.', 'err');
@@ -26395,7 +26407,20 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (refreshBtn) refreshBtn.addEventListener('click', function() { renderCatalogView(true); });
 
     const syncBtn = document.getElementById('cat-sync-btn');
-    if (syncBtn) syncBtn.addEventListener('click', catExecuteSelectedSync);
+    if (syncBtn) {
+      function suppressWeightBlurSaveForSyncClick() {
+        catSuppressNextWeightBlurSave = true;
+        if (catSuppressWeightBlurTimer) clearTimeout(catSuppressWeightBlurTimer);
+        catSuppressWeightBlurTimer = setTimeout(function() {
+          catSuppressNextWeightBlurSave = false;
+          catSuppressWeightBlurTimer = null;
+        }, 1500);
+      }
+      syncBtn.addEventListener('pointerdown', suppressWeightBlurSaveForSyncClick);
+      syncBtn.addEventListener('mousedown', suppressWeightBlurSaveForSyncClick);
+      syncBtn.addEventListener('touchstart', suppressWeightBlurSaveForSyncClick, { passive: true });
+      syncBtn.addEventListener('click', catExecuteSelectedSync);
+    }
 
     const dryRunBtn = document.getElementById('cat-dry-run-btn');
     if (dryRunBtn) dryRunBtn.addEventListener('click', catShowDryRunModal);

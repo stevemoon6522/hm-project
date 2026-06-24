@@ -108,7 +108,10 @@ assert.match(priceSync, /function catRetryShopeePriceAfterLogisticsRepair\(/, 'S
 assert.match(liveSync, /catRetryShopeePriceAfterLogisticsRepair\(p,\s*errorMsg\)/, 'Shopee live sync must invoke logistics repair retry for channel/logistics price failures');
 assert.match(priceSync, /function catBuildShopeePriceEntry\(/, 'Shopee price sync must have an explicit no-model price entry builder');
 assert.match(priceSync, /model_id:\s*0,\s*original_price:\s*originalPrice/, 'Shopee no-model price updates must send model_id=0 per local API docs');
-assert.match(liveSync, /catFlushSelectedInlineEdits\(\{\s*persistWeight:\s*true,\s*silentWeightToast:\s*true\s*\}\)/, 'Shopee live sync must suppress weight-save success toasts');
+assert.match(liveSync, /catFlushSelectedInlineEdits\(\{\s*persistWeight:\s*false\s*\}\)/, 'Shopee live sync must read weight inputs for price calculation without persisting weight');
+assert.doesNotMatch(liveSync, /catFlushSelectedInlineEdits\(\{\s*persistWeight:\s*true/, 'Shopee live sync must not save weight before price sync');
+assert.match(priceSync, /catSuppressNextWeightBlurSave/, 'Shopee sync click must suppress the weight-input blur save path');
+assert.match(priceSync, /syncBtn\.addEventListener\('pointerdown',\s*suppressWeightBlurSaveForSyncClick\)/, 'Shopee sync button must suppress blur-triggered weight save before click');
 assert.match(flushInlineEdits, /weightChanged[\s\S]*catPersistWeight\(pid,\s*roundedWeight,\s*weightInput,\s*\{\s*silentSuccess:/, 'Shopee inline flush must persist weights only when changed and pass the silent toast flag');
 assert.match(priceSync, /responseJson && \(responseJson\.log_id \|\| responseJson\.previous_log_id\)/, 'Shopee live sync must not double-write mutation logs after Edge logging succeeds');
 

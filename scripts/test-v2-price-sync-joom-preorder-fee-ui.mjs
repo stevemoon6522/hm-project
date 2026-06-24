@@ -43,7 +43,7 @@ assert.match(priceSync, /let _catActivePlatform = 'shopee'/, 'price sync must tr
 assert.match(priceSync, /function catBuildJoomHeaders\(/, 'Joom tab must have dedicated price headers');
 assert.match(priceSync, /function catBuildJoomCells\(/, 'Joom tab must render dedicated price cells');
 assert.match(priceSync, /if \(_catActivePlatform === 'joom'\) return catBuildJoomHeaders\(\)/, 'Joom tab must not render Shopee region headers');
-assert.match(priceSync, /if \(_catActivePlatform === 'joom'\) return catBuildJoomCells\(/, 'Joom tab must not render Shopee region formula cells');
+assert.match(priceSync, /function catMarketCellsForProduct\(product, listingByRegion, effectiveCost, weightG\)[\s\S]*if \(_catActivePlatform === 'shopee'\) return catShopeeMarketsForProduct\([\s\S]*return catPlatformMarketsForProduct\(product, _catActivePlatform, effectiveCost, weightG\)/, 'Joom tab must not render Shopee region formula cells');
 assert.doesNotMatch(v2, /id="cat-platform-tabs"/, 'Shopee price sync view must not expose a generic platform switcher');
 
 assert.match(preOrderMarkup, /id="po-select-all"/, 'PRE ORDER header must include select-all checkbox');

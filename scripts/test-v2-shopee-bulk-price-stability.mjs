@@ -44,6 +44,11 @@ const preflight = sliceBetween(
   'async function catPreflightShopeePayloads(payloads)',
   'function catApplyShopeeListingCache(payload, nowIso)',
 );
+const updateBatching = sliceBetween(
+  priceSync,
+  'function catBuildShopeeUpdateBatches(payloads)',
+  'async function catPostShopeePricePayload(payload)',
+);
 const ensureListings = sliceBetween(
   priceSync,
   'async function catEnsureSelectedShopeeListings()',
@@ -92,9 +97,15 @@ assert.match(ensureListings, /global_model_id:\s*globalModelId \|\|/, 'Shopee li
 assert.match(ensureListings, /existingModel && catShopeeModelMatchesProduct\(existingModel, product\)/, 'Shopee listing hydration must only skip existing shop_model_id when it matches the selected product');
 assert.match(ensureListings, /matchedModel = modelInfo\.models\.find\(function\(m\) \{ return catShopeeModelMatchesProduct\(m, product\); \}\)/, 'Shopee listing hydration must correct stale shop_model_id mappings by SKU');
 assert.match(ensureListings, /catMarkShopeeListingNotListed/, 'Shopee listing hydration must clear stale region mappings before payload build');
-assert.match(liveSync, /catBridgePriceOk\(json\)/, 'Shopee live bulk sync must treat bridge failure_list as an update failure');
+assert.match(priceSync, /function catBridgePriceFailureList\(json\)/, 'Shopee live bulk sync must normalize bridge/Shopee failure_list responses');
+assert.match(priceSync, /catBridgePriceOk\(json\)/, 'Shopee live bulk sync must treat bridge failure_list as an update failure');
 assert.match(liveSync, /catInsertShopeePriceLog\(p, ok \? 'ok' : 'error'/, 'Shopee live bulk sync must audit both successful and failed update_price calls');
 assert.match(liveSync, /preflight\.skipped/, 'Shopee live bulk sync must report skipped stale regions separately from errors');
+assert.match(priceSync, /const SHOPEE_PRICE_UPDATE_PARALLELISM = 4/, 'Shopee live price sync must cap region update concurrency');
+assert.match(updateBatching, /price_list:\s*\[\]/, 'Shopee update batching must build a multi-entry price_list envelope');
+assert.match(updateBatching, /batch\.payload\.price_list\.push\(entry\)/, 'Shopee update batching must append selected model price entries into one item update');
+assert.match(priceSync, /Promise\.all\(chunk\.map\(function\(batch\)/, 'Shopee live price sync must run region/item batches concurrently within the cap');
+assert.match(liveSync, /catRunShopeePriceUpdates\(preflight\.valid\)/, 'Shopee live price sync must use the batched update runner instead of one sequential request per option row');
 assert.match(priceSync, /function catCostOverridesSourcingDerivedCost\(/, 'Shopee inline flush must explicitly decide when direct Cost edits override stale sourcing input');
 assert.ok(
   flushInlineEdits.indexOf('const costInput = tr.querySelector') >= 0
@@ -105,7 +116,7 @@ assert.match(flushInlineEdits, /costOverridesSourcing/, 'Shopee inline flush mus
 assert.match(priceSync, /function catBuildDeliveryOnlyLogisticPatch\(/, 'Shopee price sync must build a delivery-only logistics patch for channel-related update_price failures');
 assert.match(priceSync, /self\\s\*collection[\s\S]*locker[\s\S]*pick\[-\\s\]\?up/, 'Shopee logistics repair must detect self-collection, locker, and pickup channels');
 assert.match(priceSync, /function catRetryShopeePriceAfterLogisticsRepair\(/, 'Shopee price sync must retry update_price after repairing prohibited logistics channels');
-assert.match(liveSync, /catRetryShopeePriceAfterLogisticsRepair\(p,\s*errorMsg\)/, 'Shopee live sync must invoke logistics repair retry for channel/logistics price failures');
+assert.match(priceSync, /catRetryShopeePriceAfterLogisticsRepair\(payload,\s*errorMsg\)/, 'Shopee live sync must invoke logistics repair retry for channel/logistics price failures');
 assert.match(priceSync, /function catBuildShopeePriceEntry\(/, 'Shopee price sync must have an explicit no-model price entry builder');
 assert.match(priceSync, /model_id:\s*0,\s*original_price:\s*originalPrice/, 'Shopee no-model price updates must send model_id=0 per local API docs');
 assert.match(liveSync, /catFlushSelectedInlineEdits\(\{\s*persistWeight:\s*false\s*\}\)/, 'Shopee live sync must read weight inputs for price calculation without persisting weight');
@@ -335,6 +346,70 @@ function runStandalonePayloadHarness() {
   `;
 
   new vm.Script(harness, { filename: 'v2-shopee-standalone-payload-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify(context.result));
+}
+
+function runUpdateBatchHarness(payloads) {
+  const context = {
+    JSON,
+    Map,
+    Number,
+    Set,
+    String,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+
+  const harness = `
+  var SHOPEE_BRIDGE = 'https://bridge.example';
+  var payloads = ${JSON.stringify(payloads)};
+  ${extractFunction(v2, 'catShopeePriceEntryModelKey')}
+  ${extractFunction(v2, 'catBuildShopeeUpdateBatches')}
+  globalThis.result = catBuildShopeeUpdateBatches(payloads).map(function(batch) {
+    return {
+      region: batch.region,
+      itemId: batch.itemId,
+      skus: batch.items.map(function(item) { return item.sku; }),
+      priceList: batch.payload.price_list,
+    };
+  });
+  `;
+
+  new vm.Script(harness, { filename: 'v2-shopee-update-batch-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify(context.result));
+}
+
+function runBatchFailureHarness() {
+  const context = {
+    JSON,
+    Number,
+    String,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+
+  const harness = `
+  ${extractFunction(v2, 'catBridgePriceFailureList')}
+  ${extractFunction(v2, 'catShopeePriceEntryModelKey')}
+  ${extractFunction(v2, 'catShopeePayloadModelKey')}
+  ${extractFunction(v2, 'catShopeeBatchFailureMessage')}
+  var json = {
+    ok: false,
+    failure_list: [
+      { model_id: 9011, failed_reason: 'price exceeds limit for model' }
+    ],
+  };
+  var successPayload = { payload: { price_list: [{ model_id: 9001, original_price: 12 }] } };
+  var failedPayload = { payload: { price_list: [{ model_id: 9011, original_price: 8 }] } };
+  globalThis.result = {
+    success: catShopeeBatchFailureMessage(json, successPayload),
+    failed: catShopeeBatchFailureMessage(json, failedPayload),
+  };
+  `;
+
+  new vm.Script(harness, { filename: 'v2-shopee-batch-failure-harness.mjs' }).runInContext(context);
   return JSON.parse(JSON.stringify(context.result));
 }
 
@@ -674,6 +749,30 @@ assert.deepEqual(
   ],
   'Multi-option Shopee price sync must use each option row Cost and model_id instead of the parent representative Cost',
 );
+assert.deepEqual(
+  runUpdateBatchHarness(optionPayloads),
+  [
+    {
+      region: 'SG',
+      itemId: 431,
+      skus: ['T4-TEA-WEONF-SOL-EJ', 'T4-TEA-WEONF-SOL-FUMA'],
+      priceList: [
+        { model_id: 9001, original_price: 12 },
+        { model_id: 9011, original_price: 8 },
+      ],
+    },
+    {
+      region: 'TW',
+      itemId: 511,
+      skus: ['T4-TEA-WEONF-SOL-EJ', 'T4-TEA-WEONF-SOL-FUMA'],
+      priceList: [
+        { model_id: 9002, original_price: 120 },
+        { model_id: 9012, original_price: 80 },
+      ],
+    },
+  ],
+  'Multi-option Shopee price sync must collapse same item/region option rows into one update_price price_list',
+);
 
 const standalonePayloads = runStandalonePayloadHarness().payloads;
 assert.deepEqual(
@@ -715,6 +814,29 @@ assert.deepEqual(
     },
   ],
   'Standalone Shopee items with a display option_name must stay item-level and use model_id=0',
+);
+assert.deepEqual(
+  runUpdateBatchHarness(standalonePayloads),
+  [
+    {
+      region: 'SG',
+      itemId: 49862317265,
+      skus: ['ATEEZ-LIGHTSTICK-V3'],
+      priceList: [{ model_id: 0, original_price: 67.92 }],
+    },
+    {
+      region: 'TW',
+      itemId: 49862317259,
+      skus: ['ATEEZ-LIGHTSTICK-V3'],
+      priceList: [{ model_id: 0, original_price: 1524 }],
+    },
+  ],
+  'Standalone no-model Shopee price sync must remain one item-level update per region',
+);
+assert.deepEqual(
+  runBatchFailureHarness(),
+  { success: null, failed: 'price exceeds limit for model' },
+  'Batched Shopee update_price failures must be attributed back to the matching model_id only',
 );
 
 const noModelPreflight = await runNoModelPreflightHarness();

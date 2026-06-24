@@ -25019,14 +25019,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   function catBridgePriceOk(json) {
     if (!json || json.ok !== true || json.result?.error) return false;
-    const response = json.result?.response || json.response || {};
-    const failureList = response.failure_list || response.failed_list || json.result?.failure_list || [];
+    const failureList = catBridgePriceFailureList(json);
     return !Array.isArray(failureList) || failureList.length === 0;
   }
 
-  function catBridgePriceMessage(json, fallback) {
+  function catBridgePriceFailureList(json) {
     const response = json?.result?.response || json?.response || {};
-    const failureList = response.failure_list || response.failed_list || json?.result?.failure_list || [];
+    const failureList = response.failure_list || response.failed_list || json?.result?.failure_list || json?.failure_list || [];
+    return Array.isArray(failureList) ? failureList : [];
+  }
+
+  function catBridgePriceMessage(json, fallback) {
+    const failureList = catBridgePriceFailureList(json);
     if (Array.isArray(failureList) && failureList.length) return JSON.stringify(failureList.slice(0, 3));
     return bridgeResultMessage(json || {}) || fallback || 'unknown';
   }
@@ -25330,6 +25334,194 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       json: retryJson,
       errorMsg: retryOk ? null : 'retry after logistics repair failed: ' + catBridgePriceMessage(retryJson, 'HTTP ' + retryResp.status),
     };
+  }
+
+  const SHOPEE_PRICE_UPDATE_PARALLELISM = 4;
+
+  function catShopeePriceEntryModelKey(entry) {
+    const modelId = Number(entry && entry.model_id);
+    if (Number.isFinite(modelId)) return String(modelId);
+    return 'item';
+  }
+
+  function catShopeePayloadModelKey(payload) {
+    const entry = payload && payload.payload && Array.isArray(payload.payload.price_list)
+      ? payload.payload.price_list[0]
+      : null;
+    return catShopeePriceEntryModelKey(entry);
+  }
+
+  function catShopeeBatchFailureMessage(json, payload) {
+    const failures = catBridgePriceFailureList(json);
+    if (!failures.length) return null;
+    const payloadModelKey = catShopeePayloadModelKey(payload);
+    const matched = failures.find(function(failure) {
+      const failureModelId = Number(failure && failure.model_id);
+      if (Number.isFinite(failureModelId)) return String(failureModelId) === payloadModelKey;
+      return payloadModelKey === 'item' || payloadModelKey === '0';
+    });
+    if (!matched) return null;
+    return matched.failed_reason || matched.message || JSON.stringify(matched);
+  }
+
+  function catBuildShopeeUpdateBatches(payloads) {
+    const batches = [];
+    const grouped = new Map();
+    (payloads || []).forEach(function(payload) {
+      const itemId = Number(payload && payload.itemId);
+      const region = String(payload && payload.region || '').toUpperCase();
+      const entry = payload && payload.payload && Array.isArray(payload.payload.price_list)
+        ? payload.payload.price_list[0]
+        : null;
+      if (!region || !Number.isFinite(itemId) || itemId <= 0 || !entry) return;
+
+      const bridgeUrl = payload.bridgeUrl || (SHOPEE_BRIDGE + '/update_price');
+      const baseKey = bridgeUrl + '|' + region + '|' + itemId;
+      const entryKey = catShopeePriceEntryModelKey(entry);
+      let groupKey = baseKey;
+      let batch = grouped.get(groupKey);
+      if (batch && batch.entryKeys.has(entryKey)) {
+        let suffix = 2;
+        do {
+          groupKey = baseKey + '#' + entryKey + '#' + suffix;
+          batch = grouped.get(groupKey);
+          suffix += 1;
+        } while (batch && batch.entryKeys.has(entryKey));
+      }
+      if (!batch) {
+        batch = {
+          region: region,
+          itemId: itemId,
+          bridgeUrl: bridgeUrl,
+          items: [],
+          entryKeys: new Set(),
+          payload: {
+            region: region,
+            item_id: itemId,
+            price_list: [],
+          },
+        };
+        grouped.set(groupKey, batch);
+        batches.push(batch);
+      }
+      batch.items.push(payload);
+      batch.entryKeys.add(entryKey);
+      batch.payload.price_list.push(entry);
+    });
+    return batches;
+  }
+
+  async function catPostShopeePricePayload(payload) {
+    let json = null;
+    let ok = false;
+    let errorMsg = null;
+    let preRetry = null;
+    try {
+      const response = await fetch(payload.bridgeUrl, {
+        method: 'POST',
+        headers: AUTH_HEADERS,
+        body: JSON.stringify(payload.payload),
+      });
+      json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
+      ok = response.ok && catBridgePriceOk(json);
+      if (!ok) errorMsg = catBridgePriceMessage(json, 'HTTP ' + response.status);
+    } catch (e) {
+      errorMsg = e.message || String(e);
+    }
+
+    if (!ok && catShopeePriceErrorNeedsLogisticsRepair(errorMsg)) {
+      preRetry = { json: json, errorMsg: errorMsg };
+      try {
+        const recovered = await catRetryShopeePriceAfterLogisticsRepair(payload, errorMsg);
+        if (recovered.attempted) {
+          json = recovered.json || json;
+          ok = recovered.ok === true;
+          errorMsg = recovered.errorMsg || null;
+        } else {
+          errorMsg = recovered.errorMsg || errorMsg;
+        }
+      } catch (repairErr) {
+        errorMsg = 'logistics repair exception: ' + (repairErr.message || repairErr);
+      }
+    }
+
+    return { ok: ok, json: json, errorMsg: errorMsg, preRetry: preRetry };
+  }
+
+  async function catPostShopeePriceBatch(batch) {
+    let json = null;
+    let ok = false;
+    let errorMsg = null;
+    try {
+      const response = await fetch(batch.bridgeUrl, {
+        method: 'POST',
+        headers: AUTH_HEADERS,
+        body: JSON.stringify(batch.payload),
+      });
+      json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
+      ok = response.ok && catBridgePriceOk(json);
+      if (!ok) errorMsg = catBridgePriceMessage(json, 'HTTP ' + response.status);
+    } catch (e) {
+      errorMsg = e.message || String(e);
+    }
+    return { ok: ok, json: json, errorMsg: errorMsg };
+  }
+
+  async function catExecuteShopeeUpdateBatch(batch) {
+    if (!batch || batch.items.length === 0) return [];
+    if (batch.items.length === 1) {
+      const single = await catPostShopeePricePayload(batch.items[0]);
+      return [Object.assign({ p: batch.items[0] }, single)];
+    }
+
+    const batchResult = await catPostShopeePriceBatch(batch);
+    const failures = catBridgePriceFailureList(batchResult.json);
+    if (failures.length) {
+      const results = [];
+      for (const payload of batch.items) {
+        const itemError = catShopeeBatchFailureMessage(batchResult.json, payload);
+        if (!itemError) {
+          results.push({ p: payload, ok: true, json: batchResult.json, errorMsg: null, preRetry: null });
+        } else if (catShopeePriceErrorNeedsLogisticsRepair(itemError)) {
+          const single = await catPostShopeePricePayload(payload);
+          results.push(Object.assign({ p: payload }, single));
+        } else {
+          results.push({ p: payload, ok: false, json: batchResult.json, errorMsg: itemError, preRetry: null });
+        }
+      }
+      return results;
+    }
+    if (!batchResult.ok) {
+      if (catShopeePriceErrorNeedsLogisticsRepair(batchResult.errorMsg)) {
+        const results = [];
+        for (const payload of batch.items) {
+          const single = await catPostShopeePricePayload(payload);
+          results.push(Object.assign({ p: payload }, single));
+        }
+        return results;
+      }
+      return batch.items.map(function(payload) {
+        return { p: payload, ok: false, json: batchResult.json, errorMsg: batchResult.errorMsg, preRetry: null };
+      });
+    }
+    return batch.items.map(function(payload) {
+      return { p: payload, ok: true, json: batchResult.json, errorMsg: null, preRetry: null };
+    });
+  }
+
+  async function catRunShopeePriceUpdates(payloads) {
+    const batches = catBuildShopeeUpdateBatches(payloads);
+    const results = [];
+    for (let i = 0; i < batches.length; i += SHOPEE_PRICE_UPDATE_PARALLELISM) {
+      const chunk = batches.slice(i, i + SHOPEE_PRICE_UPDATE_PARALLELISM);
+      const chunkResults = await Promise.all(chunk.map(function(batch) {
+        return catExecuteShopeeUpdateBatch(batch);
+      }));
+      chunkResults.forEach(function(batchRows) {
+        batchRows.forEach(function(row) { results.push(row); });
+      });
+    }
+    return results;
   }
 
   function catNormalizeSkuText(value) {
@@ -25820,37 +26012,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         errors.push(blocked.sku + ' ' + blocked.region + ': ' + blocked.reason);
       }
 
-      for (const p of preflight.valid) {
-        let json = null;
-        let ok = false;
-        let errorMsg = null;
-        try {
-          const response = await fetch(p.bridgeUrl, {
-            method: 'POST',
-            headers: AUTH_HEADERS,
-            body: JSON.stringify(p.payload),
-          });
-          json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
-          ok = response.ok && catBridgePriceOk(json);
-          if (!ok) errorMsg = catBridgePriceMessage(json, 'HTTP ' + response.status);
-        } catch (e) {
-          errorMsg = e.message || String(e);
-        }
+      const updateResults = await catRunShopeePriceUpdates(preflight.valid);
+      for (const result of updateResults) {
+        const p = result.p;
+        const json = result.json || null;
+        const ok = result.ok === true;
+        const errorMsg = result.errorMsg || null;
 
-        if (!ok && catShopeePriceErrorNeedsLogisticsRepair(errorMsg)) {
-          await catInsertShopeePriceLog(p, 'error', json, errorMsg);
-          try {
-            const recovered = await catRetryShopeePriceAfterLogisticsRepair(p, errorMsg);
-            if (recovered.attempted) {
-              json = recovered.json || json;
-              ok = recovered.ok === true;
-              errorMsg = recovered.errorMsg || null;
-            } else {
-              errorMsg = recovered.errorMsg || errorMsg;
-            }
-          } catch (repairErr) {
-            errorMsg = 'logistics repair exception: ' + (repairErr.message || repairErr);
-          }
+        if (result.preRetry) {
+          await catInsertShopeePriceLog(p, 'error', result.preRetry.json, result.preRetry.errorMsg);
         }
 
         await catInsertShopeePriceLog(p, ok ? 'ok' : 'error', json, errorMsg);

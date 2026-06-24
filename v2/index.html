@@ -2868,56 +2868,48 @@
           <div class="register-panel-head">
             <div>
               <div class="register-panel-title">Custom Master 직접 등록</div>
-              <div class="register-panel-copy">Staronemall URL 없이 상품명, 옵션, 대표/상세/옵션 이미지를 직접 업로드해 Master preview로 보냅니다.</div>
+              <div class="register-panel-copy">Staronemall URL 없이 필요한 정보만 입력해 Master 상품을 바로 생성합니다.</div>
             </div>
             <span class="pill">No source URL</span>
           </div>
           <div class="register-panel-body">
+            <input type="hidden" id="custom-master-product-kind" value="goods">
             <div class="register-form-row" style="margin-bottom:10px;font-size:12px;">
-              <label>Product type
-                <select id="custom-master-product-kind" style="font-size:12px;padding:5px 8px;">
-                  <option value="album" selected>Album</option>
-                  <option value="goods">Goods / Idol Collectibles</option>
-                </select>
-              </label>
               <label>Lifecycle
                 <select id="custom-master-lifecycle" style="font-size:12px;padding:5px 8px;">
                   <option value="pre_order">PRE ORDER</option>
                   <option value="ready_stock">READY STOCK</option>
                 </select>
               </label>
-              <label id="custom-master-location-wrap" style="display:none;">위치 코드
-                <input type="text" id="custom-master-location" placeholder="예: B1" style="font-size:12px;padding:5px 8px;width:120px;">
-              </label>
-              <label id="custom-master-release-wrap">Qoo10 release date
-                <input type="date" id="custom-master-release-date" style="font-size:12px;padding:5px 8px;">
+              <label>옵션 여부
+                <select id="custom-master-option-mode" style="font-size:12px;padding:5px 8px;">
+                  <option value="single" selected>단일 상품</option>
+                  <option value="options">옵션 있음</option>
+                </select>
               </label>
             </div>
             <div style="display:grid;grid-template-columns:repeat(12,1fr);gap:8px;margin-bottom:10px;">
               <label style="grid-column:span 12;font-size:12px;">Master 상품명
-                <input type="text" id="custom-master-title" placeholder="예: CORTIS [GREENGREEN] Photobook Ver." style="width:100%;font-size:12px;padding:6px 8px;">
+                <input type="text" id="custom-master-title" placeholder="예: [READY STOCK] ATEEZ OFFICIAL LIGHT STICK VER 3" style="width:100%;font-size:12px;padding:6px 8px;">
               </label>
-              <label style="grid-column:span 4;font-size:12px;">Artist
-                <input type="text" id="custom-master-artist" placeholder="CORTIS" style="width:100%;font-size:12px;padding:6px 8px;">
+              <label style="grid-column:span 12;font-size:12px;">상품 구성품
+                <textarea id="custom-master-components" placeholder="- PACKAGE&#10;- LIGHTSTICK&#10;- STRAP" style="width:100%;min-height:110px;font-size:12px;padding:8px;resize:vertical;"></textarea>
               </label>
-              <label style="grid-column:span 4;font-size:12px;">Album
-                <input type="text" id="custom-master-album" placeholder="GREENGREEN" style="width:100%;font-size:12px;padding:6px 8px;">
+              <label style="grid-column:span 4;font-size:12px;">정산가(KRW)
+                <input type="number" id="custom-master-cost" min="0" step="1" placeholder="예: 15000" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
               </label>
-              <label style="grid-column:span 4;font-size:12px;">Version
-                <input type="text" id="custom-master-version" placeholder="Photobook Ver." style="width:100%;font-size:12px;padding:6px 8px;">
-              </label>
-              <label style="grid-column:span 3;font-size:12px;">도매가(KRW)
+              <label style="grid-column:span 4;font-size:12px;">도매가(KRW)
                 <input type="number" id="custom-master-sourcing-price" min="0" step="1" placeholder="예: 15000" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
               </label>
-              <label style="grid-column:span 3;font-size:12px;">정산가(KRW)
-                <input type="number" id="custom-master-cost" min="0" step="1" placeholder="자동 계산 가능" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
-              </label>
-              <label style="grid-column:span 3;font-size:12px;">무게(g)
-                <input type="number" id="custom-master-weight" min="1" step="1" placeholder="예: 200" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
-              </label>
-              <label style="grid-column:span 3;font-size:12px;">옵션 축 이름
+              <label id="custom-master-axis-wrap" style="grid-column:span 4;font-size:12px;display:none;">옵션 축 이름
                 <input type="text" id="custom-master-axis-name" value="Option" style="width:100%;font-size:12px;padding:6px 8px;">
               </label>
+              <details id="custom-master-advanced" style="grid-column:span 12;">
+                <summary style="font-size:12px;cursor:pointer;color:var(--muted);">고급 설정</summary>
+                <label style="display:block;max-width:220px;margin-top:8px;font-size:12px;">무게(g)
+                  <input type="number" id="custom-master-weight" min="1" step="1" value="200" placeholder="예: 200" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
+                </label>
+              </details>
             </div>
             <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:10px;">
               <label style="font-size:12px;">대표 이미지 <span class="req">*</span>
@@ -2927,14 +2919,16 @@
                 <input type="file" id="custom-master-detail-files" accept="image/*" multiple style="display:block;margin-top:5px;font-size:12px;">
               </label>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-              <strong style="font-size:12px;">옵션</strong>
-              <span class="muted" style="font-size:11px;">옵션 이미지 파일은 선택 사항입니다. 비워두면 대표 이미지를 사용합니다.</span>
-              <button type="button" id="custom-master-add-option" style="font-size:11px;padding:3px 8px;margin-left:auto;">+ 옵션 추가</button>
+            <div id="custom-master-option-section" style="display:none;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <strong style="font-size:12px;">옵션</strong>
+                <span class="muted" style="font-size:11px;">옵션 이미지는 선택 사항입니다. 비우면 대표 이미지를 사용합니다.</span>
+                <button type="button" id="custom-master-add-option" style="font-size:11px;padding:3px 8px;margin-left:auto;">+ 옵션 추가</button>
+              </div>
+              <div id="custom-master-options" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;"></div>
             </div>
-            <div id="custom-master-options" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;"></div>
             <div class="register-form-row" style="font-size:12px;">
-              <button type="button" id="custom-master-stage-btn" class="primary" style="font-size:13px;padding:6px 14px;">Custom preview 만들기</button>
+              <button type="button" id="custom-master-stage-btn" class="primary" style="font-size:13px;padding:6px 14px;">마스터 상품 생성</button>
               <span id="custom-master-status" style="color:var(--muted);font-size:12px;"></span>
             </div>
             <div id="custom-master-error" class="notice error" style="display:none;margin-top:10px;"></div>
@@ -31343,11 +31337,47 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     function mrCustomToggleLifecycle() {
-      const lifecycle = mrCustomLifecycle();
-      const locWrap = $('custom-master-location-wrap');
-      const releaseWrap = $('custom-master-release-wrap');
-      if (locWrap) locWrap.style.display = lifecycle === 'ready_stock' ? '' : 'none';
-      if (releaseWrap) releaseWrap.style.display = lifecycle === 'pre_order' ? '' : 'none';
+      return mrCustomLifecycle();
+    }
+
+    function mrCustomHasOptions() {
+      return $('custom-master-option-mode')?.value === 'options';
+    }
+
+    function mrCustomToggleOptionMode() {
+      const hasOptions = mrCustomHasOptions();
+      const axisWrap = $('custom-master-axis-wrap');
+      const optionSection = $('custom-master-option-section');
+      if (axisWrap) axisWrap.style.display = hasOptions ? '' : 'none';
+      if (optionSection) optionSection.style.display = hasOptions ? '' : 'none';
+      if (hasOptions) mrCustomEnsureOptionRow();
+    }
+
+    function mrCustomSkuBaseFromTitle(title) {
+      const cleaned = String(title || '')
+        .replace(/^\s*\[[^\]]+\]\s*/g, '')
+        .replace(/\bOFFICIAL\b/ig, ' ')
+        .replace(/\bLIGHT\s+STICK\b/ig, 'LIGHTSTICK')
+        .replace(/\bVER(?:SION)?\.?\s*([0-9A-Z]+)/ig, 'V$1')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const tokens = cleaned
+        .split(/[^a-zA-Z0-9]+/)
+        .map((token) => marketplaceSkuSlug(token, 16))
+        .filter(Boolean);
+      const compact = [];
+      tokens.forEach((token) => {
+        if (compact.includes(token)) return;
+        compact.push(token);
+      });
+      return compact.slice(0, 5).join('-') || 'CUSTOM';
+    }
+
+    function mrCustomSkuForOption(title, optionName, index, hasOptions) {
+      const base = mrCustomSkuBaseFromTitle(title);
+      if (!hasOptions) return base;
+      const optionSlug = marketplaceSkuSlug(optionName, 16) || `OPTION${index + 1}`;
+      return `${base}-${optionSlug}`;
     }
 
     function mrCustomQoo10Patch(lifecycle, releaseDate) {
@@ -31428,39 +31458,130 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       );
     }
 
+    async function mrPromoteCustomRowsDirect(group) {
+      const activeRows = (group?.rows || []).filter(Boolean);
+      if (!activeRows.length) throw new Error('생성할 Custom Master 옵션이 없습니다.');
+      const localSkus = new Set();
+      for (const row of activeRows) {
+        const sku = String(row._sku || '').trim();
+        if (!sku) throw new Error('SKU가 비어 있습니다.');
+        if (mrHasNonAscii(sku)) throw new Error(`SKU는 영문/숫자만 사용할 수 있습니다: ${sku}`);
+        if (localSkus.has(sku)) throw new Error(`옵션 SKU가 중복됩니다: ${sku}`);
+        if (MR_EXISTING_SKUS.has(sku)) throw new Error(`이미 존재하는 SKU입니다: ${sku}`);
+        localSkus.add(sku);
+      }
+
+      const groupLifecycle = mrGroupLifecycle(group);
+      const variationOptions = activeRows.map((row, index) => ({
+        sku: String(row._sku || '').trim(),
+        sourcing_price: Number(row._sourcing_price || row.sourcing_price || 0),
+        cost_krw: Number(row._cost_krw || row.cost_krw || 0),
+        weight_g: Number(row._weight_g || row.weight_g || 0),
+        inventory: Number(row._inventory || row.inventory || 0),
+        main_image: row._main_image || '',
+        extra_images: row._extra_images || [],
+        option_names: row._singleProductMode ? [] : [row._opt0 || ''],
+        tier_index: row._singleProductMode ? [] : [index],
+        collision_mode: 'reuse',
+      }));
+
+      if (activeRows.length === 1) {
+        const row = activeRows[0];
+        const vOpt = variationOptions[0];
+        const { data, error } = await db.rpc('promote_source_to_product', {
+          p_source_record_id: group.source_record_id,
+          p_sku: vOpt.sku,
+          p_weight_g: vOpt.weight_g,
+          p_lifecycle_state: groupLifecycle,
+          p_option_name: row._singleProductMode ? null : (vOpt.option_names[0] || null),
+          p_cost_krw_override: vOpt.cost_krw,
+          p_overwrite: false,
+          p_idempotency_token: group.idempotency_token,
+        });
+        if (error) throw error;
+        const result = Array.isArray(data) ? data[0] : data;
+        row.product_id = result?.product_id || null;
+        if (!row.product_id) throw new Error('생성된 master product id를 받지 못했습니다.');
+        const productMainImage = mrProductMainImageFromRow(row) || vOpt.main_image || '';
+        const { error: updateError } = await db.from('products')
+          .update(Object.assign({
+            main_image: productMainImage || null,
+            extra_images: mrProductExtraImagesFromRow(row),
+            sourcing_price: vOpt.sourcing_price || 0,
+            cost_krw: vOpt.cost_krw || 0,
+            inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
+            shopee_option_image_url: row._custom_option_image_url || row._main_image || null,
+            cost_updated_at: new Date().toISOString(),
+          }, mrMasterPatchForGroup(group)))
+          .eq('id', row.product_id);
+        if (updateError) throw updateError;
+        return [row.product_id];
+      }
+
+      const { data, error } = await db.rpc('promote_source_group_to_products', {
+        p_source_record_id: group.source_record_id,
+        p_lifecycle_state: groupLifecycle,
+        p_variation_tier_names: group.tierNames.filter(Boolean),
+        p_variation_options: variationOptions,
+        p_card_header_overrides: { cost_krw: activeRows[0]._cost_krw, weight_g: activeRows[0]._weight_g },
+        p_idempotency_token: group.idempotency_token,
+      });
+      if (error) throw error;
+      const rpcRows = Array.isArray(data) ? data : [];
+      for (const row of activeRows) {
+        const rpcRow = rpcRows.find((entry) => entry.sku === String(row._sku || '').trim());
+        row.product_id = rpcRow?.product_id || null;
+        if (!row.product_id) throw new Error(`RPC 응답에서 SKU를 찾지 못했습니다: ${row._sku}`);
+      }
+      await mrPatchCreatedProducts(activeRows.map((row) => row.product_id).filter(Boolean), group);
+      for (const row of activeRows) {
+        const productMainImage = mrProductMainImageFromRow(row);
+        const { error: updateError } = await db.from('products')
+          .update({
+            main_image: productMainImage || null,
+            extra_images: mrProductExtraImagesFromRow(row),
+            sourcing_price: Number(row._sourcing_price || row.sourcing_price || 0),
+            cost_krw: Number(row._cost_krw || row.cost_krw || 0),
+            inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
+            shopee_option_image_url: row._custom_option_image_url || row._main_image || null,
+            cost_updated_at: new Date().toISOString(),
+          })
+          .eq('id', row.product_id);
+        if (updateError) throw updateError;
+      }
+      return activeRows.map((row) => row.product_id).filter(Boolean);
+    }
+
     async function mrStageCustomMaster() {
       const btn = $('custom-master-stage-btn');
       const title = String($('custom-master-title')?.value || '').trim();
-      const productKind = normalizeProductKind($('custom-master-product-kind')?.value || PRODUCT_KIND_ALBUM);
+      const productKind = PRODUCT_KIND_GOODS;
       const categoryDefaults = productKindDefaults(productKind);
-      const artist = String($('custom-master-artist')?.value || '').trim();
-      const album = String($('custom-master-album')?.value || '').trim();
-      const version = String($('custom-master-version')?.value || '').trim();
+      const artist = '';
+      const album = '';
+      const version = '';
       const lifecycle = mrCustomLifecycle();
-      const location = String($('custom-master-location')?.value || '').trim().toUpperCase();
-      const releaseDate = String($('custom-master-release-date')?.value || '').trim();
+      const components = String($('custom-master-components')?.value || '').trim();
       const sourcingPrice = Number($('custom-master-sourcing-price')?.value || 0);
       const explicitCost = Number($('custom-master-cost')?.value || 0);
-      const costKrw = explicitCost > 0 ? explicitCost : rshSettlementFromSourcing(sourcingPrice);
-      const weightG = Number($('custom-master-weight')?.value || 0);
+      const costKrw = explicitCost > 0 ? explicitCost : sourcingPrice;
+      const weightG = Number($('custom-master-weight')?.value || 0) || 200;
       const axisName = String($('custom-master-axis-name')?.value || '').trim() || 'Option';
       const coverFile = $('custom-master-cover-file')?.files?.[0] || null;
       const detailFiles = Array.from($('custom-master-detail-files')?.files || []);
       const rawOptions = mrCustomOptionInputs();
-      const optionInputs = rawOptions.filter(opt => opt.name || opt.file);
+      const hasOptions = mrCustomHasOptions();
+      const optionInputs = hasOptions ? rawOptions.filter(opt => opt.name || opt.file) : [];
 
       if (!title) { mrCustomSetStatus('Master 상품명을 입력해주세요.', true); return; }
-      if (!artist || !mrSlug(artist, 8)) { mrCustomSetStatus('Artist는 SKU 생성을 위해 영문/숫자를 포함해야 합니다.', true); return; }
-      if (!album || !mrSlug(album, 12)) { mrCustomSetStatus('Album은 SKU 생성을 위해 영문/숫자를 포함해야 합니다.', true); return; }
+      if (!components) { mrCustomSetStatus('상품 구성품을 입력해주세요.', true); return; }
       if (!(weightG > 0)) { mrCustomSetStatus('무게(g)를 1 이상으로 입력해주세요.', true); return; }
       if (!(costKrw > 0)) { mrCustomSetStatus('정산가 또는 도매가를 입력해주세요.', true); return; }
-      if (lifecycle === 'ready_stock' && !location) { mrCustomSetStatus('READY STOCK은 위치 코드가 필요합니다.', true); return; }
       if (!coverFile) { mrCustomSetStatus('대표 이미지를 첨부해주세요.', true); return; }
+      if (hasOptions && !optionInputs.length) { mrCustomSetStatus('옵션 있음은 최소 1개의 옵션명이 필요합니다.', true); return; }
       if (optionInputs.some(opt => !opt.name)) { mrCustomSetStatus('옵션 이미지가 있는 행은 옵션명을 입력해주세요.', true); return; }
 
-      const baseSku = [lifecycle === 'ready_stock' ? location : 'PO', mrSlug(artist, 8), mrSlug(album, 12), mrSlug(version, 12)]
-        .filter(Boolean)
-        .join('-') || 'CUSTOM';
+      const baseSku = mrCustomSkuBaseFromTitle(title);
       const baseRow = { _sku: baseSku, sku: baseSku, product_name: title, option_name: 'custom' };
 
       if (btn) { btn.disabled = true; btn.textContent = '업로드 중...'; }
@@ -31468,10 +31589,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       try {
         mrSetLifecycleValue(lifecycle);
-        if ($('mr-location')) {
-          $('mr-location').value = lifecycle === 'ready_stock' ? location : '';
-          $('mr-location').disabled = lifecycle === 'pre_order';
-        }
 
         const coverUrl = await mrCustomUploadImageFile(coverFile, baseRow, 'cover');
         const detailImageUrls = [];
@@ -31481,7 +31598,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }
 
         const stagedOptions = [];
-        const effectiveOptions = optionInputs.length ? optionInputs : [{ name: '', file: null, single: true }];
+        const effectiveOptions = hasOptions ? optionInputs : [{ name: '', file: null, single: true }];
         for (let i = 0; i < effectiveOptions.length; i++) {
           const opt = effectiveOptions[i];
           let optionImageUrl = '';
@@ -31513,6 +31630,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           main_image_urls: [coverUrl],
           detail_image_urls: detailImageUrls,
           custom_options: stagedOptions,
+          components_en: components,
           price_krw: sourcingPrice > 0 ? sourcingPrice : costKrw,
           description_html: '',
         };
@@ -31527,10 +31645,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           sourcing_price: sourcingPrice,
           cost_krw: costKrw,
           weight_g: weightG,
+          components_en: components,
           main_image_urls: [coverUrl],
           detail_image_urls: detailImageUrls,
           options: stagedOptions,
-          qoo10_release_date: releaseDate || null,
         };
 
         mrCustomSetStatus('Custom source record 생성 중...');
@@ -31540,7 +31658,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const sourceRecordId = staged?.source_record_id;
         if (!sourceRecordId) throw new Error('Custom source_record_id가 반환되지 않았습니다.');
         const sourceUrl = staged?.source_url || `custom://master/${externalId.replace(/^custom_master:/, '')}`;
-        const qoo10Patch = mrCustomQoo10Patch(lifecycle, releaseDate);
+        const qoo10Patch = {};
 
         MR_PREV = stagedOptions.map((opt, idx) => {
           const row = Object.assign({
@@ -31563,10 +31681,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             member: opt.option_name || '',
             _opt0: opt.option_name || '',
             _opt1: '',
-            _tierNames: [axisName],
+            _tierNames: hasOptions ? [axisName] : [],
             _twoAxis: false,
             _source_kind: 'custom_master',
-            _singleProductMode: !!opt.single,
+            _singleProductMode: !hasOptions,
             _staronemall_url: '',
             _sourcing_price: sourcingPrice,
             _cost_krw: costKrw,
@@ -31583,27 +31701,40 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             _detail_image_urls: detailImageUrls.slice(),
             _components_image_url: detailImageUrls[0] || '',
             _components_image_urls: detailImageUrls[0] ? [detailImageUrls[0]] : [],
+            _components_en: components,
             _product_name: title,
             _lifecycle_state: lifecycle,
-            collisionMode: 'reuse',
+            collisionMode: null,
             status: 'preview',
             error: null,
           }, qoo10Patch);
-          row._sku = mrComputeSku(row);
+          row._sku = mrCustomSkuForOption(title, opt.option_name || '', idx, hasOptions);
+          row.sku = row._sku;
+          row._skuLocked = true;
           return row;
         });
         MR_PROMOTE_DESELECTED.clear();
         await mrLoadExistingSkus();
-        MR_STAGE = 2;
-        if (typeof window.sdRegisterWorkbenchActivate === 'function') window.sdRegisterWorkbenchActivate('url');
-        $('mr-stage1').style.display = 'none';
-        $('mr-stage2').style.display = '';
-        mrRenderPreviewCards();
-        mrCustomSetStatus(`Custom preview ${MR_PREV.length}건 생성 완료.`);
+        const group = {
+          source_record_id: sourceRecordId,
+          rows: MR_PREV,
+          tierNames: hasOptions ? [axisName] : [],
+          twoAxis: false,
+          idempotency_token: crypto.randomUUID(),
+        };
+        mrCustomSetStatus('마스터 상품 생성 중...');
+        const createdIds = await mrPromoteCustomRowsDirect(group);
+        MR_PREV = [];
+        MR_STAGE = 1;
+        if (typeof loadData === 'function') await loadData();
+        if (typeof renderProducts === 'function') renderProducts();
+        if (createdIds[0]) await mrOpenCreatedMasterEdit(createdIds[0]);
+        mrCustomSetStatus(`마스터 상품 ${createdIds.length}건 생성 완료.`);
+        if (typeof showToast === 'function') showToast(`Custom Master ${createdIds.length}건 생성 완료`, 'ok');
       } catch (e) {
         mrCustomSetStatus(e?.message || String(e), true);
       } finally {
-        if (btn) { btn.disabled = false; btn.textContent = 'Custom preview 만들기'; }
+        if (btn) { btn.disabled = false; btn.textContent = '마스터 상품 생성'; }
       }
     }
 
@@ -36473,16 +36604,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       mrWmsToggleReleaseDate();
       $('custom-master-lifecycle')?.addEventListener('change', mrCustomToggleLifecycle);
       mrCustomToggleLifecycle();
+      mrCustomToggleOptionMode();
+      $('custom-master-option-mode')?.addEventListener('change', mrCustomToggleOptionMode);
       $('custom-master-add-option')?.addEventListener('click', () => mrRenderCustomOptionRow());
       $('custom-master-stage-btn')?.addEventListener('click', mrStageCustomMaster);
-      $('custom-master-sourcing-price')?.addEventListener('input', () => {
-        const costInput = $('custom-master-cost');
-        if (!costInput || String(costInput.value || '').trim()) return;
-        const sourcing = Number($('custom-master-sourcing-price')?.value || 0);
-        const cost = rshSettlementFromSourcing(sourcing);
-        if (cost > 0) costInput.placeholder = `자동 ${cost.toLocaleString()}`;
-      });
-      mrCustomEnsureOptionRow();
 
       $('mr-add-row').addEventListener('click', () => mrAddRow());
       $('mr-clear-rows').addEventListener('click', () => {

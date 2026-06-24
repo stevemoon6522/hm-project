@@ -22,39 +22,62 @@ function sliceBetween(source, start, end) {
 }
 
 const registerView = sliceBetween(html, '<div id="view-register"', '</div><!-- /view-register -->');
+const customPanel = sliceBetween(registerView, 'data-register-workbench-panel="custom"', 'data-register-workbench-panel="url"');
 const masterRegister = sliceBetween(
   html,
   '// MASTER REGISTER (view-register, 2-stage bulk URL+weight)',
   '// FEE / EXCHANGE-RATE SETTINGS',
 );
+const customHandler = sliceBetween(masterRegister, 'async function mrStageCustomMaster()', 'function mrStatusLabel');
 
 assert.match(registerView, /data-register-workbench-target="custom"/, 'register method list must expose Custom Master');
-assert.match(registerView, /data-register-workbench-panel="custom"/, 'register workbench must include the custom panel');
-assert.match(registerView, /id="custom-master-cover-file"/, 'custom panel must require a representative image file');
-assert.match(registerView, /id="custom-master-detail-files"[^>]*multiple/, 'custom panel must accept multiple detail images');
-assert.match(registerView, /옵션 이미지 파일은 선택 사항입니다/, 'custom UI must say option images are optional');
-assert.match(registerView, /id="custom-master-product-kind"/, 'custom panel must expose the product type selector');
-assert.match(registerView, /<option value="album" selected>Album<\/option>/, 'custom product type selector must default to Album');
-assert.match(registerView, /<option value="goods">Goods \/ Idol Collectibles<\/option>/, 'custom product type selector must expose Goods / Idol Collectibles');
+assert.match(customPanel, /id="custom-master-cover-file"/, 'custom panel must require a representative image file');
+assert.match(customPanel, /id="custom-master-detail-files"[^>]*multiple/, 'custom panel must accept multiple detail images');
+assert.match(customPanel, /id="custom-master-components"/, 'custom panel must collect product components');
+assert.match(customPanel, /id="custom-master-cost"/, 'custom panel must collect settlement price');
+assert.match(customPanel, /id="custom-master-sourcing-price"/, 'custom panel may collect wholesale price');
+assert.match(customPanel, /id="custom-master-option-mode"/, 'custom panel must expose single/options mode');
+assert.match(customPanel, /<option value="single" selected>단일 상품<\/option>/, 'custom panel must default to single product mode');
+assert.match(customPanel, /<option value="options">옵션 있음<\/option>/, 'custom panel must support option products');
+assert.match(customPanel, /id="custom-master-axis-wrap"[^>]*display:none/, 'option axis name must be hidden in single mode');
+assert.match(customPanel, /id="custom-master-axis-name" value="Option"/, 'option products must default the axis name to Option');
+assert.match(customPanel, /id="custom-master-option-section"[^>]*display:none/, 'option rows must be hidden in single mode');
+assert.match(customPanel, /옵션 이미지는 선택 사항입니다/, 'custom UI must say option images are optional');
+assert.match(customPanel, /type="hidden" id="custom-master-product-kind" value="goods"/, 'custom product kind must default to hidden goods');
+assert.match(customPanel, />마스터 상품 생성<\/button>/, 'custom action button must create the master directly');
+assert.doesNotMatch(customPanel, /Custom preview 만들기/, 'custom flow must not advertise a preview step');
+assert.doesNotMatch(customPanel, /id="custom-master-artist"/, 'custom panel must not require Artist');
+assert.doesNotMatch(customPanel, /id="custom-master-album"/, 'custom panel must not require Album');
+assert.doesNotMatch(customPanel, /id="custom-master-version"/, 'custom panel must not require Version');
+assert.doesNotMatch(customPanel, /id="custom-master-release-date"/, 'custom panel must not ask for Qoo10 release date');
 
 assert.match(html, /data-master-register-open="global"/, 'product list action bar must open the unified master registration panel');
 assert.doesNotMatch(html, /data-master-register-open="custom"/, 'custom registration must live inside the unified master registration panel');
-assert.match(html, /target === 'custom' \? '커스텀 마스터 등록'/, 'master register panel title must handle custom');
 assert.match(html, /window\.sdRegisterWorkbenchActivate\(\['url', 'custom', 'wms', 'retry'\]\.includes\(target\) \? target : 'global'\)/, 'panel opener must route custom target');
 
-assert.match(masterRegister, /async function mrStageCustomMaster\(\)/, 'custom stage handler must exist');
+assert.match(masterRegister, /async function mrStageCustomMaster\(\)/, 'custom create handler must exist');
+assert.match(masterRegister, /function mrCustomToggleOptionMode\(\)/, 'custom option mode toggle must exist');
+assert.match(masterRegister, /function mrCustomSkuBaseFromTitle\(title\)/, 'custom SKU must be generated from product title');
+assert.match(masterRegister, /async function mrPromoteCustomRowsDirect\(group\)/, 'custom create must promote directly without preview');
 assert.match(masterRegister, /dataset: \{ customOptionFile: '1' \}/, 'custom option rows must support option image files');
-assert.match(masterRegister, /db\.rpc\('stage_custom_master_payload', \{ p_payload: payload \}\)/, 'custom stage must call the staging RPC');
-assert.match(masterRegister, /normalizeProductKind\(\$\('custom-master-product-kind'\)\?\.value \|\| PRODUCT_KIND_ALBUM\)/, 'custom stage must read the custom-only product kind selector');
-assert.match(masterRegister, /product_kind: productKind/, 'custom staged payload and preview rows must carry product_kind');
-assert.match(masterRegister, /_product_kind: productKind/, 'custom preview rows must carry the selected product kind');
-assert.match(masterRegister, /source: 'custom_master'/, 'custom preview rows must be marked as custom source');
-assert.match(masterRegister, /_staronemall_url: ''/, 'custom preview rows must not carry a StarOneMall URL');
-assert.match(masterRegister, /_custom_option_image_url/, 'custom option images must be tracked separately');
-assert.match(masterRegister, /row\._custom_option_image_url \|\| row\._main_image \|\| null/, 'custom option image URL must fall back to the representative image when no per-option file is attached');
-assert.match(masterRegister, /비우면 대표 이미지 사용/, 'custom option image fallback must use the representative image');
+assert.match(customHandler, /const productKind = PRODUCT_KIND_GOODS/, 'custom stage must force Goods product kind');
+assert.match(customHandler, /const costKrw = explicitCost > 0 \? explicitCost : sourcingPrice/, 'custom stage must not auto-multiply wholesale into settlement');
+assert.match(customHandler, /const weightG = Number\(\$\('custom-master-weight'\)\?\.value \|\| 0\) \|\| 200/, 'custom stage must default hidden advanced weight to 200g');
+assert.match(customHandler, /if \(!components\)/, 'custom stage must require product components');
+assert.match(customHandler, /if \(hasOptions && !optionInputs\.length\)/, 'option mode must require at least one option');
+assert.match(customHandler, /mrPromoteCustomRowsDirect\(group\)/, 'custom stage must call direct promote');
+assert.match(customHandler, /mrOpenCreatedMasterEdit\(createdIds\[0\]\)/, 'custom stage must open the created master edit modal');
+assert.doesNotMatch(customHandler, /rshSettlementFromSourcing/, 'custom stage must not use StarOneMall wholesale settlement calculation');
+assert.doesNotMatch(customHandler, /sdRegisterWorkbenchActivate\('url'\)/, 'custom stage must not switch into URL preview');
+assert.doesNotMatch(customHandler, /mrRenderPreviewCards\(\)/, 'custom stage must not render the preview cards');
+assert.match(masterRegister, /db\.rpc\('stage_custom_master_payload', \{ p_payload: payload \}\)/, 'custom stage must still call the staging RPC');
+assert.match(masterRegister, /db\.rpc\('promote_source_to_product'/, 'custom direct create must support single product promotion');
+assert.match(masterRegister, /db\.rpc\('promote_source_group_to_products'/, 'custom direct create must support option group promotion');
+assert.match(masterRegister, /_custom_option_image_url: opt\.option_image_url \|\| ''/, 'custom option images must be tracked separately');
+assert.match(masterRegister, /shopee_option_image_url: row\._custom_option_image_url \|\| row\._main_image \|\| null/, 'custom option image URL must fall back to the representative image');
 assert.match(masterRegister, /function mrIsCustomGroup\(group\)/, 'custom groups must be distinguishable');
 assert.match(masterRegister, /if \(mrIsCustomGroup\(group\)\) return '';/, 'custom groups must not trigger StarOneMall image recrawl');
+
 assert.match(html, /const PRODUCT_KIND_ALBUM = 'album'/, 'Album product kind constant must exist');
 assert.match(html, /const PRODUCT_KIND_GOODS = 'goods'/, 'Goods product kind constant must exist');
 assert.match(html, /album:\s*Object\.freeze\(\{\s*shopee_category_id:\s*100740,[\s\S]*joom_category_id:\s*'music_albums'[\s\S]*qoo10_category_id:\s*'300002851'[\s\S]*ebay_category_id:\s*PLATFORM_EBAY_DEFAULT_CATEGORY_ID/, 'Album defaults must keep existing platform category mappings');

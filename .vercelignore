@@ -11,7 +11,8 @@ TODO.md
 docs
 edge-functions
 plans
-scripts
+scripts/*
+!scripts/verify-v2-deploy-source.mjs
 sketches
 supabase
 tests

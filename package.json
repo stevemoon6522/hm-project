@@ -1,0 +1,9 @@
+{
+  "name": "shopee-dashboard",
+  "private": true,
+  "scripts": {
+    "vercel-build": "node scripts/verify-v2-deploy-source.mjs",
+    "verify:v2-deploy-source": "node scripts/verify-v2-deploy-source.mjs",
+    "verify:v2-deploy-output": "node scripts/verify-v2-deploy-source.mjs --output .vercel/output"
+  }
+}

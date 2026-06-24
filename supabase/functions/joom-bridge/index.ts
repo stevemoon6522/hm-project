@@ -430,9 +430,15 @@ const JOOM_MAX_EXTRA_IMAGES = 20;
 const JOOM_EXTRA_IMAGE_TILE_SIZE = 1500;
 const JOOM_BLANK_IMAGE_SAMPLE_STEPS = 96;
 const JOOM_BLANK_IMAGE_MIN_CONTENT_RATIO = 0.004;
+const JOOM_CLOUDINARY_TILE_CONTENT_CHECK_LIMIT = 3;
 
 function imageUrlKey(value: unknown): string {
   return String(value || "").trim();
+}
+
+function isTrustedStoredProductImageUrl(imageUrl: string): boolean {
+  const url = String(imageUrl || "").trim();
+  return /\.supabase\.co\/storage\/v1\/object\/public\/product-images\//i.test(url);
 }
 
 function uniqueExtraImageUrls(scrapedAssets: any): string[] {
@@ -577,9 +583,20 @@ async function cloudinaryTileHasContent(tileUrl: string): Promise<boolean> {
   }
 }
 
-async function filterLikelyBlankCloudinaryTiles(tileUrls: string[]): Promise<string[]> {
+async function filterLikelyBlankCloudinaryTiles(
+  tileUrls: string[],
+  opts: { maxChecks?: number; skipContentCheck?: boolean } = {},
+): Promise<string[]> {
+  if (opts.skipContentCheck) return tileUrls;
+  const maxChecks = Math.max(0, Math.floor(Number(opts.maxChecks ?? JOOM_CLOUDINARY_TILE_CONTENT_CHECK_LIMIT)));
   const kept: string[] = [];
+  let checked = 0;
   for (const tileUrl of tileUrls) {
+    if (checked >= maxChecks) {
+      kept.push(tileUrl);
+      continue;
+    }
+    checked += 1;
     if (await cloudinaryTileHasContent(tileUrl)) {
       kept.push(tileUrl);
     } else {
@@ -611,27 +628,30 @@ function decodeBase64Image(value: string): Uint8Array {
   return bytes;
 }
 
-async function processDetailImage(imageUrl: string): Promise<string[]> {
+async function processDetailImage(imageUrl: string, maxTiles = JOOM_MAX_EXTRA_IMAGES): Promise<string[]> {
   try {
+    const remainingTiles = Math.max(0, Math.min(JOOM_MAX_EXTRA_IMAGES, Math.floor(Number(maxTiles) || JOOM_MAX_EXTRA_IMAGES)));
+    if (remainingTiles <= 0) return [];
     let skippedBlankTile = false;
     let dims: ImageDimensions | null = null;
+    const skipCloudinaryContentCheck = isTrustedStoredProductImageUrl(imageUrl);
     try {
       dims = await readImageDimensions(imageUrl);
     } catch (dimensionError) {
       console.warn("[joom-bridge] readImageDimensions failed, trying Cloudinary unknown-square fallback:", imageUrl, dimensionError);
     }
     if (dims) {
-      const cloudinaryTiles = await buildCloudinaryFetchTiles(imageUrl, dims);
+      const cloudinaryTiles = (await buildCloudinaryFetchTiles(imageUrl, dims)).slice(0, remainingTiles);
       if (cloudinaryTiles.length) {
-        const filteredTiles = await filterLikelyBlankCloudinaryTiles(cloudinaryTiles);
+        const filteredTiles = await filterLikelyBlankCloudinaryTiles(cloudinaryTiles, { skipContentCheck: skipCloudinaryContentCheck });
         if (filteredTiles.length) return filteredTiles;
         console.warn("[joom-bridge] all Cloudinary tiles were mostly blank; skipping source image:", imageUrl);
         return [];
       }
     } else {
-      const cloudinarySquare = await buildCloudinaryUnknownSquare(imageUrl);
+      const cloudinarySquare = (await buildCloudinaryUnknownSquare(imageUrl)).slice(0, remainingTiles);
       if (cloudinarySquare.length) {
-        const filteredTiles = await filterLikelyBlankCloudinaryTiles(cloudinarySquare);
+        const filteredTiles = await filterLikelyBlankCloudinaryTiles(cloudinarySquare, { skipContentCheck: skipCloudinaryContentCheck });
         if (filteredTiles.length) return filteredTiles;
         console.warn("[joom-bridge] Cloudinary unknown-square tile was mostly blank; skipping source image:", imageUrl);
         return [];
@@ -652,7 +672,7 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
 
     if (img.height > img.width * 1.5) {
       const tileSize = img.width;
-      const numTiles = Math.min(Math.ceil(img.height / tileSize), 9);
+      const numTiles = Math.min(Math.ceil(img.height / tileSize), 9, remainingTiles);
       for (let i = 0; i < numTiles; i++) {
         const y = i * tileSize;
         const h = Math.min(tileSize, img.height - y);
@@ -679,7 +699,7 @@ async function processDetailImage(imageUrl: string): Promise<string[]> {
       }
     } else if (img.width > img.height * 1.5) {
       const tileSize = img.height;
-      const numTiles = Math.min(Math.ceil(img.width / tileSize), 9);
+      const numTiles = Math.min(Math.ceil(img.width / tileSize), 9, remainingTiles);
       for (let i = 0; i < numTiles; i++) {
         const x = i * tileSize;
         const w = Math.min(tileSize, img.width - x);
@@ -785,7 +805,7 @@ async function buildPayload(opts: any): Promise<any> {
   const processedExtras: string[] = [];
   for (const url of rawExtras) {
     if (processedExtras.length >= JOOM_MAX_EXTRA_IMAGES) break;
-    const tiles = await processDetailImage(url);
+    const tiles = await processDetailImage(url, JOOM_MAX_EXTRA_IMAGES - processedExtras.length);
     for (const t of tiles) {
       if (processedExtras.length < JOOM_MAX_EXTRA_IMAGES) processedExtras.push(t);
     }
@@ -1064,7 +1084,7 @@ async function handleRequest(req: Request): Promise<Response> {
 
       for (const imageUrl of rawExtras) {
         if (processedExtras.length >= JOOM_MAX_EXTRA_IMAGES) break;
-        const tiles = await processDetailImage(imageUrl);
+        const tiles = await processDetailImage(imageUrl, JOOM_MAX_EXTRA_IMAGES - processedExtras.length);
         for (const tileUrl of tiles) {
           if (processedExtras.length < JOOM_MAX_EXTRA_IMAGES) processedExtras.push(tileUrl);
         }
@@ -1127,7 +1147,7 @@ async function handleRequest(req: Request): Promise<Response> {
         const processedExtras: string[] = [];
         for (const imageUrl of rawExtraImages) {
           if (processedExtras.length >= JOOM_MAX_EXTRA_IMAGES) break;
-          const tiles = await processDetailImage(imageUrl);
+          const tiles = await processDetailImage(imageUrl, JOOM_MAX_EXTRA_IMAGES - processedExtras.length);
           for (const tileUrl of tiles) {
             if (processedExtras.length < JOOM_MAX_EXTRA_IMAGES) processedExtras.push(tileUrl);
           }

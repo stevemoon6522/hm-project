@@ -1753,6 +1753,535 @@ async function handlePublishVariation(body: any): Promise<Response> {
   return await withEbayPublishRun("variation", body, () => handlePublishVariationCore(body));
 }
 
+function normalizeMasterSyncAspects(value: any): Record<string, string[]> {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const out: Record<string, string[]> = {};
+  for (const [name, rawValues] of Object.entries(source)) {
+    const cleanName = String(name || "").trim();
+    if (!cleanName) continue;
+    const values = (Array.isArray(rawValues) ? rawValues : [rawValues])
+      .map((v) => String(v || "").trim())
+      .filter(Boolean)
+      .slice(0, 30);
+    if (values.length) out[cleanName] = values;
+  }
+  return out;
+}
+
+function isEbaySetVariationValue(value: unknown): boolean {
+  return /(^|[^A-Z0-9])(?:FULL\s*)?SET(?:\s*VER(?:SION)?\.?)?([^A-Z0-9]|$)/i.test(s(value))
+    || /(^|[^A-Z0-9])BUNDLE([^A-Z0-9]|$)/i.test(s(value));
+}
+
+function sortEbayVariationsSetLast<T extends { variationValue?: unknown }>(rows: T[]): T[] {
+  return (rows || [])
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => {
+      const setDelta = Number(isEbaySetVariationValue(a.row?.variationValue)) - Number(isEbaySetVariationValue(b.row?.variationValue));
+      return setDelta || a.index - b.index;
+    })
+    .map(({ row }) => row);
+}
+
+function normalizeMasterSyncVariations(value: any): Array<{ sku: string; variationValue: string; imageUrls: string[] }> {
+  const rows = Array.isArray(value) ? value : [];
+  const normalized = rows.map((row: any, index: number) => {
+    const sku = s(row?.sku).trim();
+    const variationValue = s(row?.variationValue || row?.optionName).trim().slice(0, 50);
+    validateSku(sku);
+    if (!variationValue) throw new Error(`variation ${index + 1}: variationValue is required`);
+    return {
+      sku,
+      variationValue,
+      imageUrls: normalizeImageUrls(row?.imageUrls, 12),
+    };
+  });
+  if (normalized.length < 2) throw new Error("variation master sync requires at least two variations");
+  const skus = normalized.map((row) => row.sku);
+  const values = normalized.map((row) => row.variationValue);
+  if (new Set(skus.map((v) => v.toUpperCase())).size !== skus.length) throw new Error("variation SKU values must be unique");
+  if (new Set(values.map((v) => v.toUpperCase())).size !== values.length) throw new Error("variation values must be unique");
+  return sortEbayVariationsSetLast(normalized);
+}
+
+function stableNormalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map((entry) => stableNormalize(entry));
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
+      out[key] = stableNormalize((value as Record<string, unknown>)[key]);
+    }
+    return out;
+  }
+  return value ?? null;
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(stableNormalize(value));
+}
+
+function valuesChanged(a: unknown, b: unknown): boolean {
+  return stableJson(a) !== stableJson(b);
+}
+
+function sameStringSet(a: unknown, b: unknown): boolean {
+  const left = (Array.isArray(a) ? a : []).map((v) => s(v).trim()).filter(Boolean).sort();
+  const right = (Array.isArray(b) ? b : []).map((v) => s(v).trim()).filter(Boolean).sort();
+  return !valuesChanged(left, right);
+}
+
+function setLastOk(values: string[]): boolean {
+  let seenSet = false;
+  for (const value of values || []) {
+    if (isEbaySetVariationValue(value)) {
+      seenSet = true;
+    } else if (seenSet) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function pickInventoryItemUpdatePayload(item: any): Record<string, unknown> {
+  const fields = [
+    "availability",
+    "condition",
+    "conditionDescription",
+    "conditionDescriptors",
+    "packageWeightAndSize",
+    "product",
+  ];
+  const payload: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (item?.[field] !== undefined && item?.[field] !== null) payload[field] = item[field];
+  }
+  return compactDefinedObject(payload);
+}
+
+function pickProductUpdatePayload(product: any): Record<string, unknown> {
+  const fields = [
+    "aspects",
+    "brand",
+    "description",
+    "ean",
+    "epid",
+    "imageUrls",
+    "isbn",
+    "mpn",
+    "subtitle",
+    "title",
+    "upc",
+    "videoIds",
+  ];
+  const payload: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (product?.[field] !== undefined && product?.[field] !== null) payload[field] = product[field];
+  }
+  return compactDefinedObject(payload);
+}
+
+function pickInventoryGroupUpdatePayload(group: any): Record<string, unknown> {
+  const fields = ["aspects", "description", "imageUrls", "subtitle", "title", "variantSKUs", "variesBy", "videoIds"];
+  const payload: Record<string, unknown> = {};
+  for (const field of fields) {
+    if (group?.[field] !== undefined && group?.[field] !== null) payload[field] = group[field];
+  }
+  return compactDefinedObject(payload);
+}
+
+function comparableVariationItemPayload(item: any): Record<string, unknown> {
+  const payload = pickInventoryItemUpdatePayload(item);
+  const product = pickProductUpdatePayload((payload.product as any) || {});
+  delete product.title;
+  delete product.description;
+  delete product.subtitle;
+  if (product.imageUrls) product.imageUrls = normalizeImageUrls(product.imageUrls, 12);
+  payload.product = compactDefinedObject(product);
+  return payload;
+}
+
+function summarizeInventoryGroupForSync(group: any, axis: string): Record<string, unknown> {
+  const spec = Array.isArray(group?.variesBy?.specifications)
+    ? group.variesBy.specifications.find((entry: any) => s(entry?.name).trim() === axis) || group.variesBy.specifications[0] || {}
+    : {};
+  return {
+    title: group?.title || "",
+    description_length: s(group?.description).length,
+    image_urls: normalizeImageUrls(group?.imageUrls, 24),
+    variant_skus: Array.isArray(group?.variantSKUs) ? group.variantSKUs.map((v: any) => s(v).trim()).filter(Boolean) : [],
+    variation_axis: s(spec?.name || axis).trim(),
+    variation_values: Array.isArray(spec?.values) ? spec.values.map((v: any) => s(v).trim()).filter(Boolean) : [],
+  };
+}
+
+function ebayMasterSyncChangedFields(current: any, next: any, axis: string): string[] {
+  const fields: string[] = [];
+  if (s(current?.title) !== s(next?.title)) fields.push("title");
+  if (s(current?.description) !== s(next?.description)) fields.push("description");
+  if (valuesChanged(normalizeImageUrls(current?.imageUrls, 24), normalizeImageUrls(next?.imageUrls, 24))) fields.push("default_photos");
+  if (valuesChanged(current?.aspects || {}, next?.aspects || {})) fields.push("aspects");
+  if (!sameStringSet(current?.variantSKUs || [], next?.variantSKUs || [])) fields.push("variant_skus");
+  const currentSpec = Array.isArray(current?.variesBy?.specifications)
+    ? current.variesBy.specifications.find((entry: any) => s(entry?.name).trim() === axis) || current.variesBy.specifications[0] || {}
+    : {};
+  const nextSpec = Array.isArray(next?.variesBy?.specifications)
+    ? next.variesBy.specifications.find((entry: any) => s(entry?.name).trim() === axis) || next.variesBy.specifications[0] || {}
+    : {};
+  if (valuesChanged(currentSpec?.values || [], nextSpec?.values || [])) fields.push("variation_order");
+  return fields;
+}
+
+async function handleSyncVariationMasterContent(body: any): Promise<Response> {
+  const dryRun = body?.dry_run === true || body?.dryRun === true;
+  const marketplaceId = s(body?.marketplaceId || "EBAY_US", "EBAY_US").trim() || "EBAY_US";
+  const inventoryGroupKey = s(body?.inventoryGroupKey).trim();
+  const title = s(body?.title).trim().slice(0, 80);
+  const axis = s(body?.variationAxis || "Version").trim().slice(0, 40) || "Version";
+  const categoryId = s(body?.categoryId).trim();
+  validateInventoryGroupKey(inventoryGroupKey);
+  if (!title) throw new Error("title is required");
+  const safeDescription = validateDescription(s(body?.description));
+  const safeImageUrls = normalizeImageUrls(body?.imageUrls, 24);
+  if (!safeImageUrls.length) throw new Error("at least one HTTPS image URL is required");
+  const safeAspects = normalizeMasterSyncAspects(body?.aspects);
+  validateAspects(safeAspects);
+  if (categoryId) validateRequiredMusicAspects(categoryId, safeAspects);
+  const variations = normalizeMasterSyncVariations(body?.variations);
+  validateAspects({ [axis]: variations.map((row) => row.variationValue) });
+
+  const currentGroupRes = await ebayFetch(`/sell/inventory/v1/inventory_item_group/${encodeURIComponent(inventoryGroupKey)}`);
+  if (currentGroupRes.status !== 200) {
+    const passthroughStatus = (currentGroupRes.status === 401 || currentGroupRes.status === 403 || currentGroupRes.status === 429)
+      ? currentGroupRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_inventory_group_lookup_failed",
+      upstream_status: currentGroupRes.status,
+      upstream: formatEbayErrorBody(currentGroupRes.body),
+      inventory_group_key: inventoryGroupKey,
+    }, passthroughStatus);
+  }
+
+  const skus = variations.map((row) => row.sku);
+  const values = variations.map((row) => row.variationValue);
+  const currentSkus = Array.isArray(currentGroupRes.body?.variantSKUs)
+    ? currentGroupRes.body.variantSKUs.map((v: any) => s(v).trim()).filter(Boolean)
+    : [];
+  const missingCurrentSkus = currentSkus.filter((sku) => !skus.includes(sku));
+  if (missingCurrentSkus.length) {
+    return jsonResp({
+      ok: false,
+      error: "master_sync_would_remove_existing_variations",
+      message: "All current eBay group SKUs must be included when updating a variation group.",
+      inventory_group_key: inventoryGroupKey,
+      missing_skus: missingCurrentSkus,
+    }, 409);
+  }
+
+  const nextGroup = {
+    ...pickInventoryGroupUpdatePayload(currentGroupRes.body || {}),
+    title,
+    description: safeDescription,
+    aspects: safeAspects,
+    imageUrls: safeImageUrls,
+    variantSKUs: skus,
+    variesBy: {
+      ...(currentGroupRes.body?.variesBy || {}),
+      aspectsImageVariesBy: [axis],
+      specifications: [{ name: axis, values }],
+    },
+  };
+  const groupChanges = ebayMasterSyncChangedFields(currentGroupRes.body || {}, nextGroup, axis);
+
+  const itemUpdates: any[] = [];
+  for (const variation of variations) {
+    const itemRes = await ebayFetch(`/sell/inventory/v1/inventory_item/${encodeURIComponent(variation.sku)}`);
+    if (itemRes.status !== 200) {
+      const passthroughStatus = (itemRes.status === 401 || itemRes.status === 403 || itemRes.status === 429)
+        ? itemRes.status : 502;
+      return jsonResp({
+        ok: false,
+        error: "upstream_inventory_item_lookup_failed",
+        upstream_status: itemRes.status,
+        upstream: formatEbayErrorBody(itemRes.body),
+        sku: variation.sku,
+      }, passthroughStatus);
+    }
+
+    const currentItem = itemRes.body || {};
+    const currentProduct = currentItem.product || {};
+    const nextProduct: Record<string, unknown> = pickProductUpdatePayload(currentProduct);
+    delete nextProduct.title;
+    delete nextProduct.description;
+    delete nextProduct.subtitle;
+    nextProduct.aspects = mergeVariationAspects(safeAspects, axis, variation.variationValue);
+    const optionImages = variation.imageUrls.length ? variation.imageUrls : normalizeImageUrls(currentProduct.imageUrls, 12);
+    if (optionImages.length) nextProduct.imageUrls = optionImages;
+
+    const nextItem = {
+      ...pickInventoryItemUpdatePayload(currentItem),
+      condition: currentItem.condition || body?.condition || "NEW",
+      product: compactDefinedObject(nextProduct),
+    };
+    const changed = valuesChanged(comparableVariationItemPayload(currentItem), nextItem);
+    itemUpdates.push({
+      sku: variation.sku,
+      variation_value: variation.variationValue,
+      changed,
+      option_image_count: optionImages.length,
+    });
+    if (!dryRun && changed) {
+      const itemPut = await ebayFetch(
+        `/sell/inventory/v1/inventory_item/${encodeURIComponent(variation.sku)}`,
+        { method: "PUT", body: JSON.stringify(nextItem) }
+      );
+      if (itemPut.status !== 204 && itemPut.status !== 200 && itemPut.status !== 201) {
+        const passthroughStatus = (itemPut.status === 401 || itemPut.status === 403 || itemPut.status === 429)
+          ? itemPut.status : 502;
+        return jsonResp({
+          ok: false,
+          error: "upstream_inventory_item_update_failed",
+          upstream_status: itemPut.status,
+          upstream: formatEbayErrorBody(itemPut.body),
+          sku: variation.sku,
+        }, passthroughStatus);
+      }
+    }
+  }
+
+  const changed = groupChanges.length > 0 || itemUpdates.some((row) => row.changed);
+  if (dryRun || !changed) {
+    return jsonResp({
+      ok: true,
+      dry_run: dryRun,
+      updated: false,
+      can_update: changed,
+      operation: "sync-master-content",
+      listing_mode: "variation",
+      marketplace_id: marketplaceId,
+      inventory_group_key: inventoryGroupKey,
+      changes: groupChanges,
+      set_last_ok: setLastOk(values),
+      current: summarizeInventoryGroupForSync(currentGroupRes.body || {}, axis),
+      next: summarizeInventoryGroupForSync(nextGroup, axis),
+      item_updates: itemUpdates,
+    });
+  }
+
+  const groupPut = await ebayFetch(
+    `/sell/inventory/v1/inventory_item_group/${encodeURIComponent(inventoryGroupKey)}`,
+    { method: "PUT", body: JSON.stringify(nextGroup) }
+  );
+  if (groupPut.status !== 204 && groupPut.status !== 200 && groupPut.status !== 201) {
+    const passthroughStatus = (groupPut.status === 401 || groupPut.status === 403 || groupPut.status === 429)
+      ? groupPut.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_inventory_group_update_failed",
+      upstream_status: groupPut.status,
+      upstream: formatEbayErrorBody(groupPut.body),
+      inventory_group_key: inventoryGroupKey,
+    }, passthroughStatus);
+  }
+
+  const verifyRes = await ebayFetch(`/sell/inventory/v1/inventory_item_group/${encodeURIComponent(inventoryGroupKey)}`);
+  const verifyGroup = verifyRes.status === 200 ? verifyRes.body || {} : {};
+  const verifySummary = summarizeInventoryGroupForSync(verifyGroup, axis);
+  const verifiedSkus = Array.isArray(verifySummary.variant_skus) ? verifySummary.variant_skus.map((v: any) => s(v).trim()).filter(Boolean) : [];
+  const verifiedValues = Array.isArray(verifySummary.variation_values) ? verifySummary.variation_values.map((v: any) => s(v).trim()).filter(Boolean) : [];
+  const skuSetOk = sameStringSet(verifiedSkus, skus);
+  const variantSkuOrderAccepted = !valuesChanged(verifiedSkus, skus);
+  const verificationOk = verifyRes.status === 200
+    && s(verifyGroup.title) === title
+    && s(verifyGroup.description) === safeDescription
+    && !valuesChanged(normalizeImageUrls(verifyGroup.imageUrls, 24), safeImageUrls)
+    && skuSetOk
+    && !valuesChanged(verifiedValues, values)
+    && setLastOk(verifiedValues);
+
+  return jsonResp({
+    ok: verificationOk,
+    dry_run: false,
+    updated: true,
+    operation: "sync-master-content",
+    listing_mode: "variation",
+    marketplace_id: marketplaceId,
+    inventory_group_key: inventoryGroupKey,
+    changes: groupChanges,
+    set_last_ok: setLastOk(values),
+    current: summarizeInventoryGroupForSync(currentGroupRes.body || {}, axis),
+    next: summarizeInventoryGroupForSync(nextGroup, axis),
+    verification: {
+      ok: verificationOk,
+      upstream_status: verifyRes.status,
+      summary: verifySummary,
+      sku_set_ok: skuSetOk,
+      variant_sku_order_accepted: variantSkuOrderAccepted,
+    },
+    item_updates: itemUpdates,
+  }, verificationOk ? 200 : 502);
+}
+
+async function handleSyncSingleMasterContent(body: any): Promise<Response> {
+  const dryRun = body?.dry_run === true || body?.dryRun === true;
+  const marketplaceId = s(body?.marketplaceId || "EBAY_US", "EBAY_US").trim() || "EBAY_US";
+  const sku = s(body?.sku).trim();
+  const title = s(body?.title).trim().slice(0, 80);
+  const categoryId = s(body?.categoryId).trim();
+  validateSku(sku);
+  if (!title) throw new Error("title is required");
+  const safeDescription = validateDescription(s(body?.description));
+  const safeImageUrls = normalizeImageUrls(body?.imageUrls, 24);
+  if (!safeImageUrls.length) throw new Error("at least one HTTPS image URL is required");
+  const safeAspects = normalizeMasterSyncAspects(body?.aspects);
+  validateAspects(safeAspects);
+  if (categoryId) validateRequiredMusicAspects(categoryId, safeAspects);
+
+  const itemRes = await ebayFetch(`/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`);
+  if (itemRes.status !== 200) {
+    const passthroughStatus = (itemRes.status === 401 || itemRes.status === 403 || itemRes.status === 429)
+      ? itemRes.status : 502;
+    return jsonResp({
+      ok: false,
+      error: "upstream_inventory_item_lookup_failed",
+      upstream_status: itemRes.status,
+      upstream: formatEbayErrorBody(itemRes.body),
+      sku,
+    }, passthroughStatus);
+  }
+
+  const currentItem = itemRes.body || {};
+  const nextProduct = {
+    ...pickProductUpdatePayload(currentItem.product || {}),
+    title,
+    description: safeDescription,
+    imageUrls: safeImageUrls,
+    aspects: safeAspects,
+  };
+  const nextItem = {
+    ...pickInventoryItemUpdatePayload(currentItem),
+    condition: currentItem.condition || body?.condition || "NEW",
+    product: compactDefinedObject(nextProduct),
+  };
+  const itemChanged = valuesChanged(pickInventoryItemUpdatePayload(currentItem), nextItem);
+
+  const offersRes = await ebayFetch(`/sell/inventory/v1/offer?sku=${encodeURIComponent(sku)}&marketplace_id=${marketplaceId}`);
+  const offers = offersRes.status === 200 ? offersRes.body?.offers || [] : [];
+  const targetOffer = pickPublishedSingleOffer(offers, s(body?.offerId || body?.offer_id).trim());
+  let offerChanged = false;
+  let offerUpdatePayload: Record<string, unknown> | null = null;
+  let offerId = "";
+  if (targetOffer?.offerId) {
+    offerId = s(targetOffer.offerId).trim();
+    const offerRes = await ebayFetch(`/sell/inventory/v1/offer/${encodeURIComponent(offerId)}`);
+    if (offerRes.status === 200) {
+      offerUpdatePayload = buildOfferPolicyUpdatePayload(
+        offerRes.body || {},
+        offerRes.body?.listingPolicies || {},
+        { description: safeDescription, ebay_category_id: categoryId },
+        body || {}
+      );
+      offerUpdatePayload.listingDescription = safeDescription;
+      offerUpdatePayload.includeCatalogProductDetails = false;
+      offerChanged = s(offerRes.body?.listingDescription) !== safeDescription;
+    }
+  }
+
+  const changed = itemChanged || offerChanged;
+  if (dryRun || !changed) {
+    return jsonResp({
+      ok: true,
+      dry_run: dryRun,
+      updated: false,
+      can_update: changed,
+      operation: "sync-master-content",
+      listing_mode: "single",
+      marketplace_id: marketplaceId,
+      sku,
+      changes: [
+        ...(itemChanged ? ["inventory_item_product"] : []),
+        ...(offerChanged ? ["offer_listing_description"] : []),
+      ],
+      offer_id: offerId || null,
+    });
+  }
+
+  if (itemChanged) {
+    const itemPut = await ebayFetch(
+      `/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`,
+      { method: "PUT", body: JSON.stringify(nextItem) }
+    );
+    if (itemPut.status !== 204 && itemPut.status !== 200 && itemPut.status !== 201) {
+      const passthroughStatus = (itemPut.status === 401 || itemPut.status === 403 || itemPut.status === 429)
+        ? itemPut.status : 502;
+      return jsonResp({
+        ok: false,
+        error: "upstream_inventory_item_update_failed",
+        upstream_status: itemPut.status,
+        upstream: formatEbayErrorBody(itemPut.body),
+        sku,
+      }, passthroughStatus);
+    }
+  }
+
+  if (offerId && offerChanged && offerUpdatePayload) {
+    const missingFields = missingPublishedOfferUpdateFields(offerUpdatePayload);
+    if (missingFields.length) {
+      return jsonResp({ ok: false, error: "offer_update_payload_incomplete", sku, offer_id: offerId, missing_fields: missingFields }, 409);
+    }
+    const offerPut = await ebayFetch(
+      `/sell/inventory/v1/offer/${encodeURIComponent(offerId)}`,
+      { method: "PUT", body: JSON.stringify(offerUpdatePayload) }
+    );
+    if (offerPut.status !== 204 && offerPut.status !== 200) {
+      const passthroughStatus = (offerPut.status === 401 || offerPut.status === 403 || offerPut.status === 429)
+        ? offerPut.status : 502;
+      return jsonResp({
+        ok: false,
+        error: "upstream_offer_update_failed",
+        upstream_status: offerPut.status,
+        upstream: formatEbayErrorBody(offerPut.body),
+        sku,
+        offer_id: offerId,
+      }, passthroughStatus);
+    }
+  }
+
+  const verifyRes = await ebayFetch(`/sell/inventory/v1/inventory_item/${encodeURIComponent(sku)}`);
+  const verifyProduct = verifyRes.status === 200 ? verifyRes.body?.product || {} : {};
+  const verificationOk = verifyRes.status === 200
+    && s(verifyProduct.title) === title
+    && s(verifyProduct.description) === safeDescription
+    && !valuesChanged(normalizeImageUrls(verifyProduct.imageUrls, 24), safeImageUrls);
+
+  return jsonResp({
+    ok: verificationOk,
+    dry_run: false,
+    updated: true,
+    operation: "sync-master-content",
+    listing_mode: "single",
+    marketplace_id: marketplaceId,
+    sku,
+    offer_id: offerId || null,
+    changes: [
+      ...(itemChanged ? ["inventory_item_product"] : []),
+      ...(offerChanged ? ["offer_listing_description"] : []),
+    ],
+    verification: {
+      ok: verificationOk,
+      upstream_status: verifyRes.status,
+      image_count: normalizeImageUrls(verifyProduct.imageUrls, 24).length,
+    },
+  }, verificationOk ? 200 : 502);
+}
+
+async function handleSyncMasterContent(body: any): Promise<Response> {
+  const mode = s(body?.listingMode || body?.listing_mode || (body?.inventoryGroupKey ? "variation" : "single")).trim().toLowerCase();
+  if (mode === "variation") return await handleSyncVariationMasterContent(body || {});
+  if (mode === "single") return await handleSyncSingleMasterContent(body || {});
+  return jsonResp({ ok: false, error: `unsupported listingMode: ${mode}` }, 400);
+}
+
 // ---------------------------------------------------------------------------
 // /lookup-item?sku= handler — post-publish verification
 // Citation: Codex BLOCKER §d — assert status=PUBLISHED + listing container present
@@ -3024,6 +3553,13 @@ async function handleRequest(req: Request): Promise<Response> {
       return await handleLookupGroup(inventoryGroupKey, marketplaceId);
     }
 
+    if (action === "sync-master-content" && req.method === "POST") {
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
+      const body = await req.json().catch(() => ({}));
+      return await handleSyncMasterContent(body);
+    }
+
     const authResult = await requireAuthenticatedUser(req);
     if (authResult.response) return authResult.response;
 
@@ -3057,6 +3593,11 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === "publish-variation" && req.method === "POST") {
       const body = await req.json();
       return await handlePublishVariation(body);
+    }
+
+    if (action === "sync-master-content" && req.method === "POST") {
+      const body = await req.json();
+      return await handleSyncMasterContent(body);
     }
 
     if (action === "update-price" && req.method === "POST") {

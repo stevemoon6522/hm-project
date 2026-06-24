@@ -9454,7 +9454,17 @@ LEGACY END -->
       if (!platformDeleteTargets(platform, group).length) errors.push('Qoo10 ItemCode 매핑을 찾지 못했습니다.');
       warnings.push('Qoo10: 대표 이미지는 EditGoodsImage, 상세 이미지는 EditGoodsMultiImage, 상세 설명은 EditGoodsContents로 적용합니다. 옵션 이미지는 아직 미연결입니다.');
     } else if (platform === 'ebay') {
-      errors.push('eBay 대표/상세/설명 업데이트는 bridge 안전 실행 경로가 아직 없어 이번 버튼에서 실행하지 않습니다.');
+      const activeRows = typeof mrEbayActiveRows === 'function' ? mrEbayActiveRows(group) : rows.filter(r => !CROSS_SKU_INACTIVE.has(r.status));
+      const mode = activeRows.length > 1 ? 'variation' : 'single';
+      const first = activeRows[0] || rows[0] || {};
+      if (mode === 'variation' && !(typeof mrEbayBuildGroupKey === 'function' && mrEbayBuildGroupKey(group, first))) {
+        errors.push('eBay inventory group key is missing.');
+      }
+      if (mode === 'single' && !(typeof mrEbayRowSku === 'function' && mrEbayRowSku(first))) {
+        errors.push('eBay SKU is missing.');
+      }
+      warnings.push('eBay: Inventory API will update title, description, and default photos on the existing listing. Default photos use only the layered master main image plus detail images; option images stay on variation SKUs.');
+      if (mode === 'variation') warnings.push('eBay variation order will be rewritten with SET last.');
     }
 
     return { errors, warnings };
@@ -10149,10 +10159,51 @@ LEGACY END -->
     return { ok: true, message: `Qoo10 마스터 변경 적용: ${calls.length}개 API 호출 완료`, raw: calls };
   }
 
+  function platformEbaySortVariationsSetLast(variations) {
+    return (variations || [])
+      .map((row, index) => ({ row, index }))
+      .sort((a, b) => {
+        const av = a.row?.variationValue || a.row?.optionName || '';
+        const bv = b.row?.variationValue || b.row?.optionName || '';
+        const setDelta = Number(plOptionValueIsSet(av)) - Number(plOptionValueIsSet(bv));
+        return setDelta || a.index - b.index;
+      })
+      .map(({ row }) => row);
+  }
+
+  async function platformBuildEbayMasterSyncPayload(group) {
+    const draft = await mrBuildEbayDraft(group);
+    if (Array.isArray(draft.errors) && draft.errors.length) {
+      throw new Error(`eBay master sync validation failed: ${draft.errors.join(' / ')}`);
+    }
+    const payload = mrEbayPayloadFromDraft(draft);
+    payload.operation = 'sync-master-content';
+    payload.masterSync = true;
+    payload.dryRun = false;
+    if (payload.listingMode === 'variation') {
+      payload.variations = platformEbaySortVariationsSetLast(payload.variations);
+    }
+    return payload;
+  }
+
+  async function platformApplyEbayMasterSync(group) {
+    const payload = await platformBuildEbayMasterSyncPayload(group);
+    const json = await platformPostJson(`${coverageBridgeUrl('ebay')}/sync-master-content`, payload);
+    await platformTouchMasterSyncCheckpoint('ebay', group);
+    const changed = Array.isArray(json.changes) ? json.changes : [];
+    const verification = json.verification?.ok === false ? 'verification pending' : 'verified';
+    return {
+      ok: true,
+      message: `eBay master sync: ${changed.length ? changed.join(', ') : 'no remote field changes'} (${verification})`,
+      raw: json,
+    };
+  }
+
   async function platformApplyMasterSync(platform, group) {
     if (platform === 'shopee') return platformApplyShopeeMasterSync(group);
     if (platform === 'joom') return platformApplyJoomMasterSync(group);
     if (platform === 'qoo10') return platformApplyQoo10MasterSync(group);
+    if (platform === 'ebay') return platformApplyEbayMasterSync(group);
     throw new Error(`${PLATFORM_LABELS[platform] || platform} 마스터 변경 적용은 아직 실행 경로가 없습니다.`);
   }
 

@@ -23,6 +23,8 @@ assertIncludes(html, 'platformApplyMasterSync(platform, group)', 'preview execut
 assertIncludes(html, 'platformApplyShopeeMasterSync', 'Shopee executor');
 assertIncludes(html, 'platformApplyJoomMasterSync', 'Joom executor');
 assertIncludes(html, 'platformApplyQoo10MasterSync', 'Qoo10 executor');
+assertIncludes(html, 'platformApplyEbayMasterSync', 'eBay executor');
+assertIncludes(html, 'sync-master-content', 'eBay master content sync route');
 assertIncludes(html, 'rshBuildLayeredCoverDataUrl', 'Shopee layered representative image upload');
 assertIncludes(html, 'platformShopeeUploadProductImageRefs', 'Shopee product image ref uploader');
 assertIncludes(html, 'platformApplyShopeeOptionImageSync', 'Shopee option image sync executor');

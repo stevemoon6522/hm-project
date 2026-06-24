@@ -272,7 +272,7 @@ test('master register cards expose master edit action whenever any master row wa
   assert.match(masterRegisterRender, /mrOpenCreatedMasterEdit\(createdProductIds\[0\]\)/, 'registered cards should open the master edit modal from the created master row');
 });
 
-test('master product list resolves image candidates before text fallback', () => {
+test('master product list keeps detail images out of representative thumbnails', () => {
   const factory = new Function(
     `${extractFunctionBlock(html, 'plImageUrlFromShopeeId')}
      ${extractFunctionBlock(html, 'plImageCandidateValues')}
@@ -284,9 +284,14 @@ test('master product list resolves image candidates before text fallback', () =>
   const { plMainImage, plGroupMainImage } = factory();
 
   assert.equal(
-    plMainImage({ main_image: '', shopee_option_image_url: '', extra_images: ['https://cdn.example/cover.jpg'] }),
-    'https://cdn.example/cover.jpg',
-    'single rows should use stored image arrays before showing the artist text fallback',
+    plMainImage({ main_image: '', shopee_option_image_url: '', extra_images: ['https://cdn.example/detail.jpg'] }),
+    '',
+    'single rows must not promote detail image arrays into representative thumbnails',
+  );
+  assert.equal(
+    plGroupMainImage([{ main_image: '', extra_images: ['https://cdn.example/detail.jpg'] }]),
+    '',
+    'group rows must not promote detail image arrays into representative thumbnails',
   );
   assert.equal(
     plGroupMainImage([{ main_image: '' }, { observed: { main_image_urls: ['https://cdn.example/observed.jpg'] } }]),

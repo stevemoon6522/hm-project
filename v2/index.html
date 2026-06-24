@@ -9458,6 +9458,14 @@ LEGACY END -->
     return Array.from(new Set(labels));
   }
 
+  const PLATFORM_MASTER_SYNC_INACTIVE_STATUSES = new Set(['rejected', 'skipped', 'crawling']);
+
+  function platformMasterSyncActiveRows(group) {
+    const rows = group?.rows || [];
+    if (typeof mrEbayActiveRows === 'function') return mrEbayActiveRows(group);
+    return rows.filter((row) => !PLATFORM_MASTER_SYNC_INACTIVE_STATUSES.has(String(row?.status || '').toLowerCase()));
+  }
+
   function platformMasterSyncValidation(platform, group) {
     const errors = [];
     const warnings = [];
@@ -9479,7 +9487,7 @@ LEGACY END -->
       if (!platformDeleteTargets(platform, group).length) errors.push('Qoo10 ItemCode 매핑을 찾지 못했습니다.');
       warnings.push('Qoo10: 대표 이미지는 EditGoodsImage, 상세 이미지는 EditGoodsMultiImage, 상세 설명은 EditGoodsContents로 적용합니다. 옵션 이미지는 아직 미연결입니다.');
     } else if (platform === 'ebay') {
-      const activeRows = typeof mrEbayActiveRows === 'function' ? mrEbayActiveRows(group) : rows.filter(r => !CROSS_SKU_INACTIVE.has(r.status));
+      const activeRows = platformMasterSyncActiveRows(group);
       const mode = activeRows.length > 1 ? 'variation' : 'single';
       const first = activeRows[0] || rows[0] || {};
       if (mode === 'variation' && !(typeof mrEbayBuildGroupKey === 'function' && mrEbayBuildGroupKey(group, first))) {

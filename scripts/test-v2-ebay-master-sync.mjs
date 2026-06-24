@@ -27,6 +27,8 @@ const validationEnd = html.indexOf('return { errors, warnings };', validationSta
 assert(validationStart > 0 && validationEnd > validationStart, 'eBay master sync validation block must exist');
 const validationBlock = html.slice(validationStart, validationEnd);
 assert(!validationBlock.includes('bridge route missing'), 'eBay validation must not block master sync as missing bridge');
+assert(!validationBlock.includes('CROSS_SKU_INACTIVE'), 'eBay master sync validation must not depend on custom register scoped inactive constants');
+assertIncludes(html, 'function platformMasterSyncActiveRows', 'V2 master sync active-row helper');
 
 assertIncludes(bridge, 'async function handleSyncMasterContent', 'eBay bridge sync dispatcher');
 assertIncludes(bridge, 'async function handleSyncVariationMasterContent', 'eBay bridge variation sync');

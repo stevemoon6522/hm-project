@@ -192,7 +192,11 @@ assert(shopeeBridge.includes("'remote_list_items'"), 'Shopee lookup-sku must ret
 assert(shopeeBridge.includes("if (action === 'update_item_logistics' && req.method === 'POST')"), 'Shopee bridge must expose explicit item logistics updates for price-limit recovery');
 assert(shopeeBridge.includes("shopApiCall(r, '/api/v2/product/update_item'"), 'Shopee item logistics recovery must use product.update_item per local API docs');
 assert(v2.includes("SHOPEE_BRIDGE + '/tokens?region=SG&account_key='"), 'Shopee published_list auto-resolution must map shop_id back to region using token shop ids');
-assert(v2.includes('const matchesRegion = hitRegion ? hitRegion === wanted : (regionShopId && Number(shopId) === Number(regionShopId));'), 'Shopee published_list entries without region must match via shop_id');
+assert(v2.includes('function catShopeePublishedCandidateScore'), 'Shopee published_list auto-resolution must rank candidates before choosing a shop item');
+assert(v2.includes('catShopeePublishedRegionMatchRank'), 'Shopee published_list auto-resolution must prefer the active region shop_id over stale same-region shop rows');
+assert(v2.includes('catShopeePublishedStatusRank'), 'Shopee published_list auto-resolution must prefer NORMAL/status=1 rows over ITEM_UNLIST/status=8 rows');
+assert(v2.includes('function catShopeeLookupNameTerms'), 'Shopee SKU fallback must send bounded product-name terms for item_name recovery');
+assert(/catFetchShopeeSkuLookupHits\(sku,\s*targetRegions,\s*product\)/.test(v2), 'Shopee SKU fallback must pass the selected product into lookup-sku for item_name recovery');
 assert(v2.includes('function catProductNeedsShopeeModel'), 'Variant/global-model rows must require shop_model_id during auto-resolution');
 assert(v2.includes('function catShopeeTierIndexMatches') && v2.includes('variationTierIndex'), 'Shopee shop model matching must fall back to tier_index when SKU/name differ');
 assert(/await catEnsureSelectedShopeeListings\(\);[\s\S]*const \{ payloads \} = catBuildPriceSyncPayloads\(\)/.test(v2), 'Shopee live sync must hydrate shop listings before empty-target validation');

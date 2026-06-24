@@ -13,8 +13,10 @@ function sliceBetween(source, start, end) {
 }
 
 function extractFunction(source, name) {
-  const start = source.indexOf(`function ${name}(`);
+  let start = source.indexOf(`function ${name}(`);
   assert.ok(start >= 0, `missing function ${name}`);
+  const asyncStart = start - 'async '.length;
+  if (asyncStart >= 0 && source.slice(asyncStart, start) === 'async ') start = asyncStart;
   const open = source.indexOf('{', start);
   let depth = 0;
   for (let i = open; i < source.length; i += 1) {
@@ -466,6 +468,96 @@ function runCortisModelMatchHarness() {
   return JSON.parse(JSON.stringify(context.result));
 }
 
+function runPublishedCandidateHarness() {
+  const context = {
+    Map,
+    Number,
+    String,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+
+  const harness = `
+  ${extractFunction(v2, 'catShopeePublishedStatusRank')}
+  ${extractFunction(v2, 'catShopeeListingIsPriceSyncable')}
+  ${extractFunction(v2, 'catShopeePublishedRegionMatchRank')}
+  ${extractFunction(v2, 'catShopeePublishedCandidateScore')}
+  ${extractFunction(v2, 'catShopeePublishedCandidateForRegion')}
+  const brItems = [
+    { shop_id: 1002269093, shop_region: 'BR', item_id: 43322467300, item_status: 8 },
+    { shop_id: 1669858301, shop_region: 'BR', item_id: 51050903742, item_status: 1 },
+  ];
+  globalThis.result = {
+    activeShop: catShopeePublishedCandidateForRegion(brItems, 'BR', {
+      byRegion: new Map([['BR', 1669858301]]),
+      byShopId: new Map([['1669858301', 'BR']]),
+    }),
+    noShopIndex: catShopeePublishedCandidateForRegion(brItems, 'BR', {
+      byRegion: new Map(),
+      byShopId: new Map(),
+    }),
+    unlistedFallback: catShopeePublishedCandidateForRegion([brItems[0]], 'BR', {
+      byRegion: new Map(),
+      byShopId: new Map(),
+    }),
+  };
+  `;
+
+  new vm.Script(harness, { filename: 'v2-shopee-published-candidate-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify(context.result));
+}
+
+async function runSkuLookupNameRequestHarness() {
+  const context = {
+    AUTH_HEADERS: {},
+    Map,
+    Number,
+    Promise,
+    Set,
+    String,
+    URLSearchParams,
+    console,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  context.SHOPEE_BRIDGE = 'https://bridge.example';
+  context.SHOPEE_DEFAULT_ACCOUNT_KEY = 'starphotocard';
+  context.fetch = async function(url) {
+    context.capturedUrl = url;
+    return {
+      ok: true,
+      status: 200,
+      json: async function() { return { ok: true, region_hits: [] }; },
+    };
+  };
+  vm.createContext(context);
+
+  const harness = `
+  ${extractFunction(v2, 'catShopeePublishedStatusRank')}
+  ${extractFunction(v2, 'catShopeeListingIsPriceSyncable')}
+  ${extractFunction(v2, 'catShopeeSkuLookupHitsFromResponse')}
+  ${extractFunction(v2, 'catShopeeLookupNameTerms')}
+  ${extractFunction(v2, 'catFetchShopeeSkuLookupHits')}
+  (async function() {
+    globalThis.terms = catShopeeLookupNameTerms({
+      product_name: '[READY STOCK] CORTIS The 1st EP [COLOR OUTSIDE THE LINES]',
+      option_name: 'SCENE 1',
+    });
+    globalThis.rows = await catFetchShopeeSkuLookupHits('V1-COR-COLOR-PHO-SCENE 1', ['BR'], {
+      product_name: '[READY STOCK] CORTIS The 1st EP [COLOR OUTSIDE THE LINES]',
+      option_name: 'SCENE 1',
+    });
+  })();
+  `;
+
+  await new vm.Script(harness, { filename: 'v2-shopee-lookup-name-request-harness.mjs' }).runInContext(context);
+  return {
+    terms: JSON.parse(JSON.stringify(context.terms)),
+    capturedUrl: context.capturedUrl,
+  };
+}
+
 assert.deepEqual(
   await runFlushHarness({
     productSourcing: 10098,
@@ -663,6 +755,40 @@ assert.deepEqual(
   runCortisModelMatchHarness(),
   { sku: true, tierOnly: true, wrongTier: false },
   'CORTIS-style option rows must match by SKU first and by phantom-first-tier fallback when SKU is unavailable',
+);
+
+const publishedCandidate = runPublishedCandidateHarness();
+assert.equal(
+  Number(publishedCandidate.activeShop.item_id),
+  51050903742,
+  'BR published_list hydration must prefer the active NORMAL BR shop item over the stale ITEM_UNLIST banned-shop item',
+);
+assert.equal(
+  Number(publishedCandidate.noShopIndex.item_id),
+  51050903742,
+  'BR published_list hydration must prefer NORMAL status even when shop token indexing is unavailable',
+);
+assert.equal(
+  Number(publishedCandidate.unlistedFallback.item_id),
+  43322467300,
+  'UNLIST published candidates remain a fallback when they are the only region candidate',
+);
+
+const lookupNameRequest = await runSkuLookupNameRequestHarness();
+const lookupParams = new URL(lookupNameRequest.capturedUrl).searchParams;
+assert.equal(lookupParams.get('sku'), 'V1-COR-COLOR-PHO-SCENE 1', 'Shopee lookup-sku must keep the selected model SKU');
+assert.equal(lookupParams.get('regions'), 'BR', 'Shopee lookup-sku must keep region scoping');
+assert.ok(
+  lookupParams.getAll('item_name').includes('CORTIS'),
+  'Shopee lookup-sku must send an artist/title keyword so CORTIS BR items can be recovered by item_name search',
+);
+assert.ok(
+  lookupParams.getAll('item_name').includes('COLOR OUTSIDE'),
+  'Shopee lookup-sku must send bracket-title keywords for item_name fallback matching',
+);
+assert.ok(
+  lookupNameRequest.terms.length <= 6,
+  'Shopee lookup-sku name-term expansion must stay bounded',
 );
 
 console.log('v2 Shopee bulk price stability checks passed');

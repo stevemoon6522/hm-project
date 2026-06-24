@@ -25456,23 +25456,55 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function catShopeeListingIsPriceSyncable(entry) {
+    return Number.isFinite(catShopeePublishedStatusRank(entry));
+  }
+
+  function catShopeePublishedStatusRank(entry) {
     const raw = entry?.item_status ?? entry?.status;
     const text = String(raw ?? '').toUpperCase();
-    if (!text) return true;
-    if (text === 'NORMAL' || text === 'UNLIST' || text === 'ITEM_NORMAL' || text === 'ITEM_UNLIST') return true;
+    if (!text) return 2;
+    if (text === 'NORMAL' || text === 'ITEM_NORMAL') return 0;
+    if (text === 'UNLIST' || text === 'ITEM_UNLIST') return 3;
     const status = Number(raw);
-    return !Number.isFinite(status) || [1, 8].includes(status);
+    if (!Number.isFinite(status)) return 2;
+    if (status === 1) return 0;
+    if (status === 8) return 3;
+    return Infinity;
+  }
+
+  function catShopeePublishedRegionMatchRank(entry, region, shopIndex) {
+    const wanted = String(region || '').toUpperCase();
+    if (!wanted) return Infinity;
+    const hitRegion = String(entry?.region || entry?.shop_region || entry?.country || '').toUpperCase();
+    const shopId = Number(entry?.shop_id || entry?.shopId);
+    const regionShopId = Number(shopIndex?.byRegion?.get(wanted));
+    const hasRegionShop = Number.isFinite(regionShopId) && regionShopId > 0;
+    const hasShopId = Number.isFinite(shopId) && shopId > 0;
+    if (hasRegionShop && hasShopId && Number(shopId) === Number(regionShopId)) return hitRegion === wanted ? 0 : 1;
+    if (hitRegion === wanted && !hasRegionShop) return 2;
+    if (hitRegion === wanted && !hasShopId) return 2;
+    if (hitRegion === wanted) return 4;
+    return Infinity;
+  }
+
+  function catShopeePublishedCandidateScore(entry, region, shopIndex) {
+    const matchRank = catShopeePublishedRegionMatchRank(entry, region, shopIndex);
+    const statusRank = catShopeePublishedStatusRank(entry);
+    if (!Number.isFinite(matchRank) || !Number.isFinite(statusRank)) return Infinity;
+    return (matchRank * 10) + statusRank;
   }
 
   function catShopeePublishedCandidateForRegion(entries, region, shopIndex) {
-    const wanted = String(region || '').toUpperCase();
-    const regionShopId = shopIndex?.byRegion?.get(wanted) || null;
-    return (entries || []).find(function(entry) {
-      const hitRegion = String(entry.region || entry.shop_region || entry.country || '').toUpperCase();
-      const shopId = Number(entry.shop_id || entry.shopId);
-      const matchesRegion = hitRegion ? hitRegion === wanted : (regionShopId && Number(shopId) === Number(regionShopId));
-      return matchesRegion && catShopeeListingIsPriceSyncable(entry);
-    }) || null;
+    let best = null;
+    let bestScore = Infinity;
+    (entries || []).forEach(function(entry) {
+      const score = catShopeePublishedCandidateScore(entry, region, shopIndex);
+      if (score < bestScore) {
+        best = entry;
+        bestScore = score;
+      }
+    });
+    return best;
   }
 
   function catShopeeSkuLookupHitsFromResponse(json) {
@@ -25490,13 +25522,56 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     });
   }
 
-  async function catFetchShopeeSkuLookupHits(sku, targetRegions) {
+  function catShopeeLookupNameTerms(product) {
+    const terms = [];
+    const seen = new Set();
+    function add(value) {
+      const clean = String(value || '')
+        .replace(/\[(?:READY STOCK|PRE ORDER|ON HAND)\]/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (clean.length < 3) return;
+      const key = clean.toUpperCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      terms.push(clean.slice(0, 120));
+    }
+    const productName = String(product?.product_name || product?.name || '').trim();
+    const optionName = String(product?.option_name || '').trim();
+    add(productName);
+    const body = productName
+      .replace(/\[(?:READY STOCK|PRE ORDER|ON HAND)\]/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    add(body);
+    const prefix = body.split('[')[0].replace(/\s*-\s*$/, '').trim();
+    if (prefix) {
+      add(prefix);
+      const artist = prefix.replace(/^\(([^)]+)\)\s*/, '$1 ').split(/\s+/)[0];
+      add(artist);
+    }
+    const bracketMatches = body.match(/\[([^\]]{3,80})\]/g) || [];
+    bracketMatches.forEach(function(match) {
+      const bracket = match.replace(/^\[/, '').replace(/\]$/, '').replace(/\s+/g, ' ').trim();
+      add(bracket);
+      const words = bracket.split(/\s+/).filter(Boolean);
+      if (words.length >= 2) add(words.slice(0, 2).join(' '));
+      if (words.length >= 3) add(words.slice(0, 3).join(' '));
+    });
+    if (body && optionName) add(body + ' ' + optionName);
+    return terms.slice(0, 6);
+  }
+
+  async function catFetchShopeeSkuLookupHits(sku, targetRegions, product) {
     const cleanSku = String(sku || '').trim();
     if (!cleanSku) return [];
     const qs = new URLSearchParams({
       account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
       regions: targetRegions.join(','),
       sku: cleanSku,
+    });
+    catShopeeLookupNameTerms(product).forEach(function(term) {
+      qs.append('item_name', term);
     });
     const response = await fetch(SHOPEE_BRIDGE + '/lookup-sku?' + qs.toString(), { headers: AUTH_HEADERS });
     const json = await response.json().catch(function() { return { ok: false, error: 'HTTP ' + response.status }; });
@@ -25593,12 +25668,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           publishedCache.set(globalItemId, catPublishedItemsFromResponse(json));
         }
       }
-      if (sku && !skuLookupCache.has(sku)) {
-        skuLookupCache.set(sku, await catFetchShopeeSkuLookupHits(sku, targetRegions));
+      const skuLookupKey = sku ? (sku + '|' + catShopeeLookupNameTerms(product).join('|')) : '';
+      if (sku && !skuLookupCache.has(skuLookupKey)) {
+        skuLookupCache.set(skuLookupKey, await catFetchShopeeSkuLookupHits(sku, targetRegions, product));
       }
 
       const publishedItems = hasGlobalItemId ? (publishedCache.get(globalItemId) || []) : [];
-      const skuLookupItems = sku ? (skuLookupCache.get(sku) || []) : [];
+      const skuLookupItems = sku ? (skuLookupCache.get(skuLookupKey) || []) : [];
       for (const r of targetRegions) {
         const existing = byRegion.get(r);
         let published = existing || null;
@@ -25685,6 +25761,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           shop_model_id: modelId,
           status: 'mapped',
           published_at: new Date().toISOString(),
+          last_error: null,
           raw_payload: {
             source: hasGlobalItemId ? 'price_sync_auto_published_list' : 'price_sync_sku_lookup',
             global_model_id: globalModelId || null,

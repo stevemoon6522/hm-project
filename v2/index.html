@@ -8053,10 +8053,10 @@ LEGACY END -->
     return `<div class="platform-sync-badges">${labels.map((label) => `<span class="platform-sync-badge">${text(label)}</span>`).join('')}</div>`;
   }
 
-  function platformVisibleGroups(platform) {
+  function platformFilteredGroups(platform, statusOverride = null) {
     const filter = platformFilter(platform);
     const q = String(filter.search || '').trim().toLowerCase();
-    const status = String(filter.status || 'all');
+    const status = statusOverride == null ? String(filter.status || 'all') : String(statusOverride || 'all');
     const lifecycle = String(filter.lifecycle || 'all');
     return platformMasterGroups().filter((group) => {
       const first = group.rows?.[0] || {};
@@ -8070,6 +8070,19 @@ LEGACY END -->
           .includes(q)
       ));
     });
+  }
+
+  function platformVisibleGroups(platform) {
+    return platformFilteredGroups(platform);
+  }
+
+  function platformNeedsUpdateGroups(platform) {
+    if (platform === 'alibaba') return [];
+    return platformFilteredGroups(platform, 'needs_update');
+  }
+
+  function platformNeedsUpdateKeys(platform) {
+    return platformNeedsUpdateGroups(platform).map(platformGroupKey).filter(Boolean);
   }
 
   function platformCounts(platform) {
@@ -8356,14 +8369,18 @@ LEGACY END -->
     }).join('');
   }
 
-  function platformQueueToolbarHtml(platform, filter, statusTabs, selectedCount, canRunSelectionAction) {
+  function platformQueueToolbarHtml(platform, filter, statusTabs, selectedCount, canRunSelectionAction, needsUpdateMasterSyncCount = 0) {
     const copy = platformQueueCopy(platform);
+    const needsUpdateMasterSyncLabel = needsUpdateMasterSyncCount
+      ? `수정 필요 ${needsUpdateMasterSyncCount}개 적용`
+      : '수정 필요 적용';
     const buttons = [
       `<button type="button" data-platform-select-visible>표시 항목 선택</button>`,
       `<button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>`,
       `<button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.primaryAction)}</button>`,
     ];
     if (platform !== 'alibaba') {
+      buttons.push(`<button type="button" data-platform-master-sync-needed ${needsUpdateMasterSyncCount ? '' : 'disabled'}>${text(needsUpdateMasterSyncLabel)}</button>`);
       buttons.push(`<button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.editLabel)}</button>`);
       buttons.push(`<button type="button" class="platform-danger-action" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.deleteLabel)}</button>`);
       buttons.push(`<button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.syncLabel)}</button>`);
@@ -8712,6 +8729,10 @@ LEGACY END -->
     const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;
     const canRunSelectionAction = selectedCount > 0 || canUseVisibleSingle;
     const actionTargetCount = selectedCount || (canUseVisibleSingle ? 1 : 0);
+    const needsUpdateMasterSyncCount = platformNeedsUpdateKeys(platform).length;
+    const needsUpdateMasterSyncLabel = needsUpdateMasterSyncCount
+      ? `수정 필요 ${needsUpdateMasterSyncCount}개 적용`
+      : '수정 필요 적용';
     const shopeeActionEnabled = platform === 'shopee' ? selectedCount > 0 : canRunSelectionAction;
     const registerActionLabel = actionTargetCount === 1 ? '등록' : '선택 등록 확인';
     const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
@@ -8741,6 +8762,7 @@ LEGACY END -->
             <button type="button" data-platform-preview="register" class="primary" ${shopeeActionEnabled ? '' : 'disabled'}>등록</button>
             <button type="button" data-platform-preview="edit" ${shopeeActionEnabled ? '' : 'disabled'}>가격 수정</button>
             <button type="button" data-platform-preview="master_sync" ${shopeeActionEnabled ? '' : 'disabled'}>마스터 변경 적용</button>
+            <button type="button" data-platform-master-sync-needed ${needsUpdateMasterSyncCount ? '' : 'disabled'}>${text(needsUpdateMasterSyncLabel)}</button>
             <button type="button" data-platform-sync ${shopeeActionEnabled ? '' : 'disabled'}>SKU 매핑</button>
             <button type="button" class="platform-danger-action" data-platform-preview="delete" ${shopeeActionEnabled ? '' : 'disabled'}>삭제/초기화</button>
             <span class="platform-more-wrap">
@@ -8777,7 +8799,7 @@ LEGACY END -->
     const effectiveSummaryHtml = platform === 'shopee' ? summaryHtml : platformQueueSummaryHtml(platform, selectedCount);
     const effectiveToolbarHtml = platform === 'shopee'
       ? toolbarHtml
-      : platformQueueToolbarHtml(platform, filter, statusTabs, selectedCount, canRunSelectionAction);
+      : platformQueueToolbarHtml(platform, filter, statusTabs, selectedCount, canRunSelectionAction, needsUpdateMasterSyncCount);
     const effectiveDescription = platform === 'shopee'
       ? '전체 마스터 상품을 기준으로 등록 상태를 좁히고, 선택 항목을 미리보기 후 실행합니다.'
       : platformQueueCopy(platform).description;
@@ -8864,6 +8886,15 @@ LEGACY END -->
         else state.platformExpandedGroups.add(key);
         renderPlatformWorkbench(platform);
       });
+    });
+    root.querySelector('[data-platform-master-sync-needed]')?.addEventListener('click', () => {
+      const keys = platformNeedsUpdateKeys(platform);
+      if (!keys.length) {
+        showToast('마스터 변경이 필요한 상품이 없습니다.', 'warn');
+        renderPlatformWorkbench(platform);
+        return;
+      }
+      platformOpenAction(platform, 'master_sync', platformNeedsUpdateKeys(platform));
     });
     root.querySelectorAll('[data-platform-preview]').forEach((btn) => {
       btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformPreview || 'register'));

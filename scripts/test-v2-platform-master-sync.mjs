@@ -18,6 +18,10 @@ function assertIncludes(source, needle, label) {
 
 assertIncludes(html, "master_sync: '마스터 변경 적용'", 'action label');
 assertIncludes(html, 'data-platform-preview="master_sync"', 'toolbar button');
+assertIncludes(html, 'function platformNeedsUpdateGroups', 'needs-update group resolver');
+assertIncludes(html, 'function platformNeedsUpdateKeys', 'needs-update key resolver');
+assertIncludes(html, 'data-platform-master-sync-needed', 'needs-update toolbar action');
+assertIncludes(html, "platformOpenAction(platform, 'master_sync', platformNeedsUpdateKeys(platform))", 'needs-update action handler');
 assertIncludes(html, 'platformMasterSyncValidation(platform, group)', 'preview validation');
 assertIncludes(html, 'platformApplyMasterSync(platform, group)', 'preview executor');
 assertIncludes(html, 'platformApplyShopeeMasterSync', 'Shopee executor');

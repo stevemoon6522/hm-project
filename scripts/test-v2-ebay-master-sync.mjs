@@ -34,11 +34,15 @@ assertIncludes(bridge, 'async function handleSyncSingleMasterContent', 'eBay bri
 assertIncludes(bridge, 'action === "sync-master-content" && req.method === "POST"', 'eBay bridge route');
 assertIncludes(bridge, 'requireBridgeTokenOrAuthenticatedUser(req)', 'eBay bridge browser/internal auth');
 assertIncludes(bridge, 'sortEbayVariationsSetLast(normalized)', 'eBay bridge SET-last normalization');
+assertIncludes(bridge, 'async function loadMasterOptionImagesForEbayVariation', 'eBay bridge master option image resolver');
+assertIncludes(bridge, 'shopee_option_image_url,main_image', 'eBay bridge reads master option image fields');
+assertIncludes(bridge, 'source: product?.shopee_option_image_url ? "products.shopee_option_image_url" : "products.main_image"', 'eBay bridge reports option image source');
 assertIncludes(bridge, 'variantSKUs: skus', 'eBay bridge replaces group SKUs in sorted order');
 assertIncludes(bridge, 'specifications: [{ name: axis, values }]', 'eBay bridge replaces variation values in sorted order');
 assertIncludes(bridge, 'imageUrls: safeImageUrls', 'eBay bridge default photos from payload only');
 assertIncludes(bridge, 'delete nextProduct.title', 'eBay variation item must not override group title');
 assertIncludes(bridge, 'delete nextProduct.description', 'eBay variation item must not override group description');
+assertIncludes(bridge, 'desired_image_urls: optionImages', 'eBay bridge exposes desired option images for verification');
 assertIncludes(bridge, 'operation: "sync-master-content"', 'eBay bridge response operation marker');
 
 console.log('v2 eBay master sync static checks passed');

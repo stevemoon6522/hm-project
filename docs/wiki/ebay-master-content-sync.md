@@ -18,8 +18,9 @@ Existing eBay listings created through the Sell Inventory API are updated in pla
   - group title from current master title builder
   - group description from the eBay clean description builder
   - group default photos from the layered master main image plus detail images only
-  - variation SKU/item aspects and option images preserved on each variation inventory item
+  - variation SKU/item aspects and option images applied on each variation inventory item
   - `SET` variation moved to the final position in both `variantSKUs` and `variesBy.specifications[].values`
+- When a variation payload includes `productId` but no explicit `imageUrls`, the bridge reads the master product row and uses `products.shopee_option_image_url` as the eBay variation photo. If that is missing, it falls back to `products.main_image`.
 - Single-SKU listings update the inventory item product fields and the published offer `listingDescription` when available.
 
 ## Safety Notes

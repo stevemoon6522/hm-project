@@ -1783,7 +1783,7 @@ function sortEbayVariationsSetLast<T extends { variationValue?: unknown }>(rows:
     .map(({ row }) => row);
 }
 
-function normalizeMasterSyncVariations(value: any): Array<{ sku: string; variationValue: string; imageUrls: string[] }> {
+function normalizeMasterSyncVariations(value: any): Array<{ productId: string; sku: string; variationValue: string; imageUrls: string[] }> {
   const rows = Array.isArray(value) ? value : [];
   const normalized = rows.map((row: any, index: number) => {
     const sku = s(row?.sku).trim();
@@ -1791,6 +1791,7 @@ function normalizeMasterSyncVariations(value: any): Array<{ sku: string; variati
     validateSku(sku);
     if (!variationValue) throw new Error(`variation ${index + 1}: variationValue is required`);
     return {
+      productId: s(row?.productId || row?.product_id).trim(),
       sku,
       variationValue,
       imageUrls: normalizeImageUrls(row?.imageUrls, 12),
@@ -1898,6 +1899,39 @@ function comparableVariationItemPayload(item: any): Record<string, unknown> {
   if (product.imageUrls) product.imageUrls = normalizeImageUrls(product.imageUrls, 12);
   payload.product = compactDefinedObject(product);
   return payload;
+}
+
+async function loadMasterOptionImagesForEbayVariation(variation: { productId: string; sku: string; imageUrls: string[] }): Promise<{
+  imageUrls: string[];
+  source: string;
+}> {
+  if (variation.imageUrls.length) return { imageUrls: variation.imageUrls, source: "payload" };
+
+  let product: any = null;
+  const productId = s(variation.productId).trim();
+  const sku = s(variation.sku).trim();
+  if (productId || sku) {
+    let query = supabase
+      .from("products")
+      .select("id,sku,shopee_option_image_url,main_image")
+      .limit(1);
+    query = productId ? query.eq("id", productId) : query.eq("sku", sku);
+    const { data, error } = await query.maybeSingle();
+    if (error) throw new Error(`master option image lookup failed for ${sku || productId}: ${error.message || String(error)}`);
+    product = data || null;
+  }
+
+  const masterOptionImages = normalizeImageUrls([
+    product?.shopee_option_image_url,
+    product?.main_image,
+  ], 12).slice(0, 1);
+  if (masterOptionImages.length) {
+    return {
+      imageUrls: masterOptionImages,
+      source: product?.shopee_option_image_url ? "products.shopee_option_image_url" : "products.main_image",
+    };
+  }
+  return { imageUrls: [], source: "current_inventory_item" };
 }
 
 function summarizeInventoryGroupForSync(group: any, axis: string): Record<string, unknown> {
@@ -2015,7 +2049,8 @@ async function handleSyncVariationMasterContent(body: any): Promise<Response> {
     delete nextProduct.description;
     delete nextProduct.subtitle;
     nextProduct.aspects = mergeVariationAspects(safeAspects, axis, variation.variationValue);
-    const optionImages = variation.imageUrls.length ? variation.imageUrls : normalizeImageUrls(currentProduct.imageUrls, 12);
+    const resolvedImages = await loadMasterOptionImagesForEbayVariation(variation);
+    const optionImages = resolvedImages.imageUrls.length ? resolvedImages.imageUrls : normalizeImageUrls(currentProduct.imageUrls, 12);
     if (optionImages.length) nextProduct.imageUrls = optionImages;
 
     const nextItem = {
@@ -2028,6 +2063,8 @@ async function handleSyncVariationMasterContent(body: any): Promise<Response> {
       sku: variation.sku,
       variation_value: variation.variationValue,
       changed,
+      image_source: resolvedImages.source,
+      desired_image_urls: optionImages,
       option_image_count: optionImages.length,
     });
     if (!dryRun && changed) {

@@ -675,6 +675,118 @@
       font-size: 12px;
       color: var(--muted);
     }
+    .platform-master-sync-dialog .modal {
+      width: min(1120px, 100%);
+    }
+    .platform-master-sync-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      font-size: 12px;
+    }
+    .platform-master-sync-list {
+      display: grid;
+      gap: 10px;
+    }
+    .platform-master-sync-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .platform-master-sync-card-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .platform-master-sync-title {
+      color: #21112f;
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+    .platform-master-sync-meta {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+    .platform-master-sync-fields {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .platform-master-sync-fields span,
+    .platform-master-sync-status {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: #f8fafc;
+      color: #334155;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+    }
+    .platform-master-sync-status.ok {
+      background: #ecfdf5;
+      border-color: #bbf7d0;
+      color: #047857;
+    }
+    .platform-master-sync-status.warn {
+      background: #fff7ed;
+      border-color: #fed7aa;
+      color: #b45309;
+    }
+    .platform-master-sync-status.err {
+      background: #fef2f2;
+      border-color: #fecaca;
+      color: #b91c1c;
+    }
+    .platform-master-sync-grid {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .platform-master-sync-metric {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #f8fafc;
+      padding: 8px;
+      min-width: 0;
+    }
+    .platform-master-sync-metric strong {
+      display: block;
+      color: #1f2937;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .platform-master-sync-metric span {
+      color: var(--muted);
+      display: block;
+      font-size: 11px;
+      margin-top: 2px;
+    }
+    .platform-master-sync-notes {
+      display: grid;
+      gap: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .platform-master-sync-note-err {
+      color: var(--red);
+      font-weight: 700;
+    }
+    @media (max-width: 760px) {
+      .platform-master-sync-card-head {
+        display: grid;
+      }
+      .platform-master-sync-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
     .platform-table {
       table-layout: fixed;
       min-width: 980px;
@@ -5621,6 +5733,7 @@ LEGACY END -->
     platformExpandedGroups: new Set(),
     platformFilters: {},
     platformPreview: null,
+    platformMasterSyncDialog: null,
     platformLastResults: {},
     wmsInventoryBySku: new Map(),
     shopeeNameSync: null,
@@ -8365,9 +8478,7 @@ LEGACY END -->
 
   function platformQueueToolbarHtml(platform, filter, statusTabs, selectedCount, canRunSelectionAction, needsUpdateMasterSyncCount = 0) {
     const copy = platformQueueCopy(platform);
-    const needsUpdateMasterSyncLabel = needsUpdateMasterSyncCount
-      ? `수정 필요 ${needsUpdateMasterSyncCount}개 적용`
-      : '수정 필요 적용';
+    const needsUpdateMasterSyncLabel = '변경 적용';
     const buttons = [
       `<button type="button" data-platform-select-visible>표시 항목 선택</button>`,
       `<button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>`,
@@ -8724,15 +8835,14 @@ LEGACY END -->
     const canRunSelectionAction = selectedCount > 0 || canUseVisibleSingle;
     const actionTargetCount = selectedCount || (canUseVisibleSingle ? 1 : 0);
     const needsUpdateMasterSyncCount = platformNeedsUpdateKeys(platform).length;
-    const needsUpdateMasterSyncLabel = needsUpdateMasterSyncCount
-      ? `수정 필요 ${needsUpdateMasterSyncCount}개 적용`
-      : '수정 필요 적용';
+    const needsUpdateMasterSyncLabel = '변경 적용';
     const shopeeActionEnabled = platform === 'shopee' ? selectedCount > 0 : canRunSelectionAction;
     const registerActionLabel = actionTargetCount === 1 ? '등록' : '선택 등록 확인';
     const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
       `<button type="button" class="platform-status-tab${filter.status === key ? ' is-active' : ''}" data-platform-status="${key}" aria-pressed="${filter.status === key ? 'true' : 'false'}">${PLATFORM_STATUS_LABELS[key]} ${counts[key] || 0}</button>`
     )).join('');
     const previewHtml = state.platformPreview?.platform === platform ? platformPreviewHtml() : '';
+    const masterSyncDialogHtml = state.platformMasterSyncDialog?.platform === platform ? platformMasterSyncDialogHtml(platform) : '';
     const shopeeNameSyncHtml = platform === 'shopee' ? shopeeNameSyncPanelHtml() : '';
     const shopeeEnglishRestoreHtml = platform === 'shopee' ? shopeeEnglishRestorePanelHtml() : '';
     const platformTableClass = platform === 'shopee' ? 'platform-table platform-table-shopee' : 'platform-table';
@@ -8808,6 +8918,7 @@ LEGACY END -->
       ${isAlibaba ? '<div class="notice" style="margin-bottom:10px;">Alibaba(ICBU) 등록은 운영자 설정이 끝나야 실제 동작합니다: alibaba-bridge 시크릿(App Key/Secret/access_token) + ALIBABA_BRIDGE_ENABLED=true + auth_verified 플립. (1차: create_listing + sync, 카테고리/속성/운임은 선택)</div>' : ''}
       ${effectiveToolbarHtml}
       ${previewHtml}
+      ${masterSyncDialogHtml}
       ${shopeeNameSyncHtml}
       ${shopeeEnglishRestoreHtml}
       <div class="panel table-scroll">
@@ -8888,7 +8999,7 @@ LEGACY END -->
         renderPlatformWorkbench(platform);
         return;
       }
-      platformOpenAction(platform, 'master_sync', platformNeedsUpdateKeys(platform));
+      platformOpenMasterSyncDialog(platform, keys);
     });
     root.querySelectorAll('[data-platform-preview]').forEach((btn) => {
       btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformPreview || 'register'));
@@ -8919,6 +9030,10 @@ LEGACY END -->
       renderPlatformWorkbench(platform);
     });
     root.querySelector('[data-platform-preview-execute]')?.addEventListener('click', () => platformExecutePreview());
+    root.querySelector('[data-platform-master-sync-dialog-close]')?.addEventListener('click', () => {
+      platformCloseMasterSyncDialog(platform);
+    });
+    root.querySelector('[data-platform-master-sync-dialog-apply]')?.addEventListener('click', () => platformExecuteMasterSyncDialog());
     root.querySelector('[data-shopee-name-sync-close]')?.addEventListener('click', () => {
       state.shopeeNameSync = null;
       renderPlatformWorkbench('shopee');
@@ -9286,6 +9401,7 @@ LEGACY END -->
       createdAt: new Date().toISOString(),
       running: false,
     };
+    if (state.platformMasterSyncDialog?.platform === platform) state.platformMasterSyncDialog = null;
     renderPlatformWorkbench(platform);
     document.getElementById(`platform-${platform}-root`)?.querySelector('.platform-preview')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
@@ -9521,6 +9637,240 @@ LEGACY END -->
         <div>대표 이미지: ${mainImage ? '1장' : '없음'} · 상세 이미지: ${text(detailCount)}장 · 옵션 이미지: ${text(optionText)}</div>
         <div>설명 길이: ${text(String(description || '').length)}자</div>
       </div>`;
+  }
+
+  function platformOpenMasterSyncDialog(platform, explicitKeys = null) {
+    if (platform === 'alibaba') return;
+    const keys = (explicitKeys || platformNeedsUpdateKeys(platform)).filter(Boolean);
+    if (!keys.length) {
+      showToast('마스터 변경이 필요한 상품이 없습니다.', 'warn');
+      renderPlatformWorkbench(platform);
+      return;
+    }
+    state.platformPreview = null;
+    state.platformMasterSyncDialog = {
+      platform,
+      keys,
+      running: false,
+      results: {},
+    };
+    renderPlatformWorkbench(platform);
+  }
+
+  function platformCloseMasterSyncDialog(platform) {
+    if (state.platformMasterSyncDialog?.platform === platform) {
+      state.platformMasterSyncDialog = null;
+    }
+    renderPlatformWorkbench(platform);
+  }
+
+  function platformMasterSyncDescriptionForDialog(platform, group) {
+    if (platform === 'shopee') return platformMasterSyncShopeeDescription(group);
+    if (platform === 'qoo10') return platformMasterSyncQoo10Description(group);
+    return platformMasterSyncPlainDescription(group);
+  }
+
+  function platformMasterSyncDialogItems(platform) {
+    const dialog = state.platformMasterSyncDialog;
+    if (!dialog || dialog.platform !== platform) return [];
+    return platformSelectedGroups(platform, dialog.keys).map((group) => {
+      const key = platformGroupKey(group);
+      const rows = group?.rows || [];
+      const fields = platformMasterSyncFieldLabels(platform, group);
+      const validation = platformMasterSyncValidation(platform, group);
+      const description = platformMasterSyncDescriptionForDialog(platform, group);
+      const mainImage = platformMasterSyncMainImage(rows);
+      const detailCount = platformMasterSyncDetailImages(rows).length;
+      const optionCount = platformMasterSyncOptionImageRows(group).length;
+      const activeRows = platform === 'ebay' ? platformMasterSyncActiveRows(group) : rows;
+      const warnings = validation.warnings.slice();
+      if (platform === 'ebay' && activeRows.length > 1) warnings.push('SET 순서: SET 옵션은 마지막으로 정렬됩니다.');
+      return {
+        key,
+        group,
+        rows,
+        fields,
+        validation: { errors: validation.errors, warnings },
+        canApply: validation.errors.length === 0,
+        result: dialog.results?.[key] || null,
+        descriptionLength: String(description || '').length,
+        mainImageCount: mainImage ? 1 : 0,
+        detailCount,
+        optionCount,
+        activeRowCount: activeRows.length,
+      };
+    });
+  }
+
+  function platformMasterSyncDialogSummary(items) {
+    const total = items.length;
+    const applicable = items.filter((item) => item.canApply).length;
+    const blocked = total - applicable;
+    const finished = items.filter((item) => ['success', 'error', 'skipped'].includes(item.result?.status)).length;
+    return { total, applicable, blocked, finished };
+  }
+
+  function platformMasterSyncDialogStatus(item) {
+    const result = item.result;
+    if (result?.status === 'running') return { label: '적용 중', tone: 'warn' };
+    if (result?.status === 'success') return { label: '적용 완료', tone: 'ok' };
+    if (result?.status === 'error') return { label: '적용 실패', tone: 'err' };
+    if (result?.status === 'skipped') return { label: '건너뜀', tone: 'warn' };
+    return item.canApply
+      ? { label: '적용 가능', tone: 'ok' }
+      : { label: '확인 필요', tone: 'err' };
+  }
+
+  function platformMasterSyncDialogMetricHtml(label, value, sub = '') {
+    return `<div class="platform-master-sync-metric"><strong>${text(value)}</strong><span>${text(label)}${sub ? ` · ${text(sub)}` : ''}</span></div>`;
+  }
+
+  function platformMasterSyncDialogResultHtml(result) {
+    if (!result) return '';
+    const cls = result.status === 'success'
+      ? 'platform-result-ok'
+      : (result.status === 'running' || result.status === 'skipped' ? '' : 'platform-result-err');
+    return `<div class="${cls}">결과: ${text(result.message || '-')}</div>`;
+  }
+
+  function platformMasterSyncDialogItemHtml(item, index) {
+    const group = item.group;
+    const status = platformMasterSyncDialogStatus(item);
+    const sku = platformGroupSku(group) || '(no sku)';
+    const title = platformGroupTitle(group);
+    const fieldsHtml = item.fields.length
+      ? item.fields.map((field) => `<span>${text(field)}</span>`).join('')
+      : '<span>변경 데이터 없음</span>';
+    const errorsHtml = item.validation.errors.length
+      ? `<div class="platform-master-sync-note-err">확인 필요: ${item.validation.errors.map(text).join('<br>')}</div>`
+      : '';
+    const warningsHtml = item.validation.warnings.length
+      ? item.validation.warnings.map((warning) => `<div>${text(warning)}</div>`).join('')
+      : '';
+    return `
+      <article class="platform-master-sync-card" data-platform-master-sync-dialog-item="${text(item.key)}">
+        <div class="platform-master-sync-card-head">
+          <div>
+            <div class="platform-master-sync-title">${text(sku)} · ${text(title)}</div>
+            <div class="platform-master-sync-meta">변경 대상 ${text(index + 1)} · SKU/옵션 ${text(item.rows.length)}개 · 적용 행 ${text(item.activeRowCount)}개</div>
+          </div>
+          <span class="platform-master-sync-status ${text(status.tone)}">${text(status.label)}</span>
+        </div>
+        <div class="platform-master-sync-fields">${fieldsHtml}</div>
+        <div class="platform-master-sync-grid">
+          ${platformMasterSyncDialogMetricHtml('설명 길이', `${item.descriptionLength}자`)}
+          ${platformMasterSyncDialogMetricHtml('대표 이미지', `${item.mainImageCount}장`)}
+          ${platformMasterSyncDialogMetricHtml('상세 이미지', `${item.detailCount}장`)}
+          ${platformMasterSyncDialogMetricHtml('옵션 이미지', `${item.optionCount}장`, '기본 사진 제외')}
+          ${platformMasterSyncDialogMetricHtml('SKU/옵션', `${item.rows.length}개`)}
+        </div>
+        <div class="platform-master-sync-notes">
+          ${errorsHtml}
+          ${warningsHtml}
+          ${platformMasterSyncDialogResultHtml(item.result)}
+        </div>
+      </article>`;
+  }
+
+  function platformMasterSyncDialogHtml(platform) {
+    const dialog = state.platformMasterSyncDialog;
+    if (!dialog || dialog.platform !== platform) return '';
+    const label = PLATFORM_LABELS[platform] || platform;
+    const items = platformMasterSyncDialogItems(platform);
+    const summary = platformMasterSyncDialogSummary(items);
+    const bodyHtml = items.length
+      ? items.map((item, index) => platformMasterSyncDialogItemHtml(item, index)).join('')
+      : '<div class="empty">변경 적용 대상 상품을 찾지 못했습니다.</div>';
+    const disabled = dialog.running || !summary.applicable ? 'disabled' : '';
+    return `
+      <div class="modal-overlay show platform-master-sync-dialog" role="dialog" aria-modal="true" aria-hidden="false">
+        <div class="modal">
+          <div class="modal-header">
+            <div>
+              <h2>${text(label)} 변경 적용</h2>
+              <div class="platform-master-sync-summary" aria-label="변경 적용 요약">
+                <span class="pill">전체 ${text(summary.total)}개</span>
+                <span class="pill">적용 가능 ${text(summary.applicable)}개</span>
+                <span class="pill">확인 필요 ${text(summary.blocked)}개</span>
+                ${summary.finished ? `<span class="pill">처리 ${text(summary.finished)}개</span>` : ''}
+              </div>
+            </div>
+            <button type="button" data-platform-master-sync-dialog-close aria-label="닫기">닫기</button>
+          </div>
+          <div class="modal-body">
+            <div class="platform-master-sync-list">${bodyHtml}</div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="primary" data-platform-master-sync-dialog-apply ${disabled}>${dialog.running ? '적용 중' : '적용'}</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  async function platformExecuteMasterSyncDialog() {
+    const dialog = state.platformMasterSyncDialog;
+    if (!dialog || dialog.running) return;
+    const platform = dialog.platform;
+    const items = platformMasterSyncDialogItems(platform);
+    if (!items.length) {
+      showToast('변경 적용 대상 상품을 찾지 못했습니다.', 'warn');
+      return;
+    }
+    dialog.running = true;
+    dialog.results = dialog.results || {};
+    let shouldReloadData = false;
+    let attempted = 0;
+    renderPlatformWorkbench(platform);
+
+    for (const item of items) {
+      if (!item.canApply) {
+        dialog.results[item.key] = {
+          status: 'skipped',
+          ok: false,
+          message: item.validation.errors[0] || '확인 필요',
+        };
+        state.platformLastResults[`${platform}:${item.key}`] = dialog.results[item.key];
+        renderPlatformWorkbench(platform);
+        continue;
+      }
+
+      dialog.results[item.key] = { status: 'running', ok: null, message: '적용 중' };
+      state.platformLastResults[`${platform}:${item.key}`] = dialog.results[item.key];
+      renderPlatformWorkbench(platform);
+
+      try {
+        const json = await platformApplyMasterSync(platform, item.group);
+        const ok = json?.ok !== false;
+        dialog.results[item.key] = {
+          status: ok ? 'success' : 'error',
+          ok,
+          message: json?.message || (ok ? '변경 적용 완료' : '변경 적용 실패'),
+        };
+        shouldReloadData = true;
+        attempted += 1;
+      } catch (e) {
+        dialog.results[item.key] = {
+          status: 'error',
+          ok: false,
+          message: e?.message || String(e),
+        };
+        attempted += 1;
+      }
+      state.platformLastResults[`${platform}:${item.key}`] = dialog.results[item.key];
+      renderPlatformWorkbench(platform);
+    }
+
+    dialog.running = false;
+    if (shouldReloadData) {
+      await loadData();
+    } else {
+      try { await refreshPlatformLedSources(); } catch (_) {}
+    }
+    const done = Object.values(dialog.results || {}).filter((result) => result?.status === 'success').length;
+    const skipped = Object.values(dialog.results || {}).filter((result) => result?.status === 'skipped').length;
+    showToast(`변경 적용 완료: 성공 ${done}개${skipped ? `, 확인 필요 ${skipped}개 제외` : ''}${attempted ? '' : ', 실행 없음'}`, done ? 'ok' : 'warn');
+    renderPlatformWorkbench(platform);
+    renderProducts();
   }
 
   function platformDeleteTargets(platform, group) {

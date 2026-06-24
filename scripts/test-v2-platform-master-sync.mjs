@@ -21,7 +21,35 @@ assertIncludes(html, 'data-platform-preview="master_sync"', 'toolbar button');
 assertIncludes(html, 'function platformNeedsUpdateGroups', 'needs-update group resolver');
 assertIncludes(html, 'function platformNeedsUpdateKeys', 'needs-update key resolver');
 assertIncludes(html, 'data-platform-master-sync-needed', 'needs-update toolbar action');
-assertIncludes(html, "platformOpenAction(platform, 'master_sync', platformNeedsUpdateKeys(platform))", 'needs-update action handler');
+assertIncludes(html, 'function platformOpenMasterSyncDialog', 'needs-update modal opener');
+assertIncludes(html, 'function platformMasterSyncDialogHtml', 'needs-update modal renderer');
+assertIncludes(html, 'function platformMasterSyncDialogItems', 'needs-update modal item builder');
+assertIncludes(html, 'function platformMasterSyncDialogSummary', 'needs-update modal summary');
+assertIncludes(html, 'function platformExecuteMasterSyncDialog', 'needs-update modal executor');
+assertIncludes(html, 'data-platform-master-sync-dialog-apply', 'needs-update modal apply button');
+assertIncludes(html, 'platformOpenMasterSyncDialog(platform, keys)', 'needs-update action handler');
+assertIncludes(html, "const needsUpdateMasterSyncLabel = '변경 적용';", 'needs-update toolbar label');
+assertIncludes(html, '적용 가능', 'needs-update applicable status');
+assertIncludes(html, '확인 필요', 'needs-update blocked status');
+assertIncludes(html, '변경 대상', 'needs-update changed-data item label');
+assertIncludes(html, '설명 길이', 'needs-update description metric');
+assertIncludes(html, 'SET 순서', 'needs-update SET ordering note');
+assertIncludes(html, 'status: \'skipped\'', 'needs-update invalid item skip result');
+assertIncludes(html, 'status: ok ? \'success\' : \'error\'', 'needs-update apply result status');
+if (html.includes("platformOpenAction(platform, 'master_sync', platformNeedsUpdateKeys(platform))")) {
+  throw new Error('needs-update toolbar shortcut must open the dedicated modal instead of inline preview');
+}
+const dialogExecStart = html.indexOf('async function platformExecuteMasterSyncDialog');
+const dialogExecEnd = html.indexOf('function platformDeleteTargets', dialogExecStart);
+if (dialogExecStart < 0 || dialogExecEnd <= dialogExecStart) {
+  throw new Error('needs-update modal executor block missing');
+}
+const dialogExecBlock = html.slice(dialogExecStart, dialogExecEnd);
+const skipBeforeApplyIndex = dialogExecBlock.indexOf('if (!item.canApply)');
+const applyIndex = dialogExecBlock.indexOf('platformApplyMasterSync(platform, item.group)');
+if (skipBeforeApplyIndex < 0 || applyIndex < 0 || skipBeforeApplyIndex > applyIndex) {
+  throw new Error('needs-update modal executor must skip invalid items before calling platformApplyMasterSync');
+}
 assertIncludes(html, 'platformMasterSyncValidation(platform, group)', 'preview validation');
 assertIncludes(html, 'platformApplyMasterSync(platform, group)', 'preview executor');
 assertIncludes(html, 'platformApplyShopeeMasterSync', 'Shopee executor');

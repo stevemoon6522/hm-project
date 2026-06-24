@@ -65,6 +65,10 @@ Modes:
 - `--from-db --sku SKU --region SG`: read `products` and
   `product_shopee_listings` through Supabase REST, then build the payload. This
   is read-only network access and still does not call Shopee.
+- `--from-lookup --sku SKU --region SG`: call the existing
+  `shopee-bridge/lookup-sku` read path, require a local
+  `product_shopee_listings` hit, then build the payload. This may call Shopee
+  read APIs inside the bridge, but it never calls the Shopee price mutation API.
 
 Expected output:
 
@@ -79,14 +83,14 @@ Expected output:
 
 Only after the dry/probe output is reviewed:
 
-1. Add a supervised bridge action or one-off operator script that actually calls
-   `batch_update_outlet_price`.
-2. Use one SG item with known `shop_id`, `shop_item_id`, and, if variant, exact
+1. Use the supervised bridge action `batch_update_outlet_price`.
+2. Pass `confirm_live_batch_update_outlet_price="BATCH_PRICE_PROBE_APPROVED"`.
+3. Use one SG item with known `shop_id`, `shop_item_id`, and, if variant, exact
    `shop_model_id`.
-3. Use the current `last_synced_price` as the submitted `original_price` unless
+4. Use the current `last_synced_price` as the submitted `original_price` unless
    Steve explicitly chooses another test price.
-4. Poll `get_batch_task_result` with `task_type=1`.
-5. Confirm Seller Center / remote item price did not drift unexpectedly.
+5. Poll `batch_task_result` with `task_type=1`.
+6. Confirm Seller Center / remote item price did not drift unexpectedly.
 
 Pass criteria:
 

@@ -74,8 +74,8 @@ const ENV_PARTNER_KEY = Deno.env.get("SHOPEE_PARTNER_KEY") || "";
 // CBSC main account ID ??Shopee CB Mall / KRSC group. Same across all 10 region shops in our setup.
 const MAIN_ACCOUNT_ID = Number(Deno.env.get("SHOPEE_MAIN_ACCOUNT_ID") || "1842717");
 const DEFAULT_SHOPEE_ACCOUNT_KEY = "starphotocard";
-// v84: Shopee token/shop lookups support both account-aware and legacy schemas.
-const SOURCE_VERSION = 84;
+// v85: add gated Shopee Product batch price probe endpoints.
+const SOURCE_VERSION = 85;
 const DENO_DEPLOYMENT_ID = Deno.env.get("DENO_DEPLOYMENT_ID") || "";
 const DEPLOYMENT_VERSION_MATCH = DENO_DEPLOYMENT_ID.match(/_(\d+)$/);
 const DEPLOYMENT_VERSION = DEPLOYMENT_VERSION_MATCH ? Number(DEPLOYMENT_VERSION_MATCH[1]) : null;
@@ -86,6 +86,7 @@ const DEFAULT_REFRESH_THRESHOLD_SEC = 7200;
 const DEFAULT_REFRESH_ATTEMPTS = 3;
 const DEFAULT_RETRY_BASE_MS = 1000;
 const SHOPEE_HEADLESS_DELETE_CONFIRM_PHRASE = 'DELETE_SHOPEE_GLOBAL_ITEM';
+const SHOPEE_BATCH_PRICE_CONFIRMATION = 'BATCH_PRICE_PROBE_APPROVED';
 const SHOPEE_DEFAULT_MODEL_PRICE_RATIO_LIMIT = 7;
 const SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS: Record<string, number> = Object.freeze({
   SG: 5,
@@ -1247,12 +1248,52 @@ function mutationTargets(action: string, region: string, requestPayload: any) {
   const modelIds = Array.isArray(requestPayload.global_model)
     ? requestPayload.global_model.map((m: any) => Number(m?.global_model_id)).filter((n: number) => Number.isFinite(n) && n > 0)
     : [];
+  const firstBatchItem = Array.isArray(requestPayload.item_list)
+    ? requestPayload.item_list.find((row: any) => Number(row?.item_id) > 0)
+    : null;
   return {
     region,
     target_global_item_id: Number(requestPayload.global_item_id) || null,
     target_global_model_id: modelIds.length === 1 ? modelIds[0] : null,
-    target_shop_item_id: Number(requestPayload.item_id || requestPayload.shop_item_id) || null,
+    target_shop_item_id: Number(requestPayload.item_id || requestPayload.shop_item_id || firstBatchItem?.item_id) || null,
   };
+}
+
+function normalizeBatchOutletPriceItemList(raw: any) {
+  const errors: string[] = [];
+  if (!Array.isArray(raw)) {
+    return { ok: false, item_list: [], errors: ['item_list must be an array'] };
+  }
+  if (raw.length < 1 || raw.length > 100) {
+    errors.push('item_list length must be between 1 and 100');
+  }
+
+  const item_list = raw.map((row: any, index: number) => {
+    const outlet_shop_id = Number(row?.outlet_shop_id || row?.shop_id);
+    const item_id = Number(row?.item_id || row?.shop_item_id);
+    const priceInput = Array.isArray(row?.price_list) ? row.price_list : [];
+    if (!Number.isFinite(outlet_shop_id) || outlet_shop_id <= 0) errors.push(`item_list[${index}].outlet_shop_id must be positive`);
+    if (!Number.isFinite(item_id) || item_id <= 0) errors.push(`item_list[${index}].item_id must be positive`);
+    if (priceInput.length < 1) errors.push(`item_list[${index}].price_list must have at least 1 row`);
+
+    const price_list = priceInput.map((priceRow: any, priceIndex: number) => {
+      const original_price = Number(priceRow?.original_price);
+      if (!Number.isFinite(original_price) || original_price <= 0) {
+        errors.push(`item_list[${index}].price_list[${priceIndex}].original_price must be greater than 0`);
+      }
+      const model_id = Number(priceRow?.model_id || priceRow?.shop_model_id || 0);
+      if ((priceRow?.model_id !== undefined || priceRow?.shop_model_id !== undefined) && (!Number.isFinite(model_id) || model_id < 0)) {
+        errors.push(`item_list[${index}].price_list[${priceIndex}].model_id must be non-negative when provided`);
+      }
+      const out: Record<string, number> = { original_price };
+      if (Number.isFinite(model_id) && model_id > 0) out.model_id = model_id;
+      return out;
+    });
+
+    return { outlet_shop_id, item_id, price_list };
+  });
+
+  return { ok: errors.length === 0, item_list, errors };
 }
 
 async function insertMutationLog(params: {
@@ -5354,6 +5395,116 @@ Deno.serve(async (req) => {
           'docs_ai/apis/global_product/v2.global_product.get_global_item_info.json:global_item_sku',
           'docs_ai/apis/global_product/v2.global_product.get_global_model_list.json:global_model_sku',
         ],
+      });
+    }
+    if (action === 'batch_update_outlet_price' && req.method === 'POST') {
+      const body = await req.json();
+      const reqAccountKey = normalizeAccountKey(body.account_key || body.accountKey || accountKey);
+      const r = normalizeRegion(body.region || region);
+      if (!r) return jsonResp({ ok: false, error: 'invalid_region', allowed_regions: OPERATING_REGIONS }, 400);
+
+      const normalized = normalizeBatchOutletPriceItemList(body.item_list);
+      if (!normalized.ok) return jsonResp({ ok: false, error: 'invalid_item_list', errors: normalized.errors }, 400);
+
+      const requestPayload = { account_key: reqAccountKey, item_list: normalized.item_list };
+      const payloadHash = await sha256Hex({ action, account_key: reqAccountKey, region: r, request_payload: requestPayload });
+      if (body.dry_run === true) {
+        return jsonResp({
+          ok: true,
+          dry_run: true,
+          account_key: reqAccountKey,
+          region: r,
+          sent_item_list: normalized.item_list,
+          payload_hash: payloadHash,
+          will_call_shopee_price_api: false,
+          source_docs: ['docs_ai/apis/product/v2.product.batch_update_outlet_price.json'],
+          confirmation_required_for_live: {
+            confirm_live_batch_update_outlet_price: SHOPEE_BATCH_PRICE_CONFIRMATION,
+          },
+        });
+      }
+      if (String(body.confirm_live_batch_update_outlet_price || '') !== SHOPEE_BATCH_PRICE_CONFIRMATION) {
+        return jsonResp({
+          ok: false,
+          error: 'live_batch_price_confirmation_required',
+          message: `Set confirm_live_batch_update_outlet_price="${SHOPEE_BATCH_PRICE_CONFIRMATION}" to call Shopee batch_update_outlet_price.`,
+          account_key: reqAccountKey,
+          region: r,
+          payload_hash: payloadHash,
+          will_call_shopee_price_api: false,
+        }, 428);
+      }
+
+      const previous = await findOkMutation(payloadHash);
+      if (previous) {
+        audit('batch_update_outlet_price_idempotent_skip', { account_key: reqAccountKey, region: r, payload_hash: payloadHash, previous_log_id: previous.id });
+        return jsonResp({
+          ok: true,
+          skipped: true,
+          previous_log_id: previous.id,
+          account_key: reqAccountKey,
+          region: r,
+          sent_item_list: normalized.item_list,
+          payload_hash: payloadHash,
+          rollback_policy: V2_ROLLBACK_POLICY,
+        });
+      }
+
+      const started = Date.now();
+      const result = await shopApiCall(r, '/api/v2/product/batch_update_outlet_price', {
+        method: 'POST',
+        body: { item_list: normalized.item_list },
+        account_key: reqAccountKey,
+      });
+      const durationMs = Date.now() - started;
+      const taskId = result?.response?.task_id || null;
+      const ok = !result.error && !!taskId;
+      const errorMsg = ok ? null : `${result?.error || 'missing_task_id'} ${result?.message || ''}`.trim();
+      const log = await insertMutationLog({
+        action: 'batch_update_outlet_price',
+        region: r,
+        payloadHash,
+        requestPayload,
+        status: ok ? 'ok' : 'error',
+        response: result,
+        errorMsg,
+        requestId: result?.request_id || null,
+        durationMs,
+        body: { ...body, account_key: reqAccountKey },
+      });
+      return jsonResp({
+        ok,
+        account_key: reqAccountKey,
+        region: r,
+        task_id: taskId,
+        sent_item_list: normalized.item_list,
+        result,
+        payload_hash: payloadHash,
+        log_id: log.id || null,
+        rollback_policy: V2_ROLLBACK_POLICY,
+      });
+    }
+    if (action === 'batch_task_result' && req.method === 'GET') {
+      const r = normalizeRegion(url.searchParams.get('region') || region);
+      const task_type = Number(url.searchParams.get('task_type') || '0');
+      const task_id = String(url.searchParams.get('task_id') || '').trim();
+      if (!r) return jsonResp({ ok: false, error: 'invalid_region', allowed_regions: OPERATING_REGIONS }, 400);
+      if (!Number.isInteger(task_type) || task_type < 1 || task_type > 4) {
+        return jsonResp({ ok: false, error: 'task_type must be 1, 2, 3, or 4' }, 400);
+      }
+      if (!task_id) return jsonResp({ ok: false, error: 'task_id required' }, 400);
+      const result = await shopApiCall(r, '/api/v2/product/get_batch_task_result', {
+        query: { task_type, task_id },
+        account_key: accountKey,
+      });
+      return jsonResp({
+        ok: !result.error,
+        account_key: accountKey,
+        region: r,
+        task_type,
+        task_id,
+        result,
+        source_docs: ['docs_ai/apis/product/v2.product.get_batch_task_result.json'],
       });
     }
     if (action === 'update_price' && req.method === 'POST') {

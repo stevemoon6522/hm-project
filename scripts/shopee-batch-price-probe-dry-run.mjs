@@ -16,6 +16,7 @@ function usage() {
   node scripts/shopee-batch-price-probe-dry-run.mjs --sample [--emit-curl]
   node scripts/shopee-batch-price-probe-dry-run.mjs --input path.json [--price 12.34] [--emit-curl]
   node scripts/shopee-batch-price-probe-dry-run.mjs --from-db --sku SKU --region SG [--price 12.34] [--emit-curl]
+  node scripts/shopee-batch-price-probe-dry-run.mjs --from-lookup --sku SKU --region SG [--price 12.34] [--emit-curl]
 
 This script is non-mutating. It never calls Shopee batch_update_outlet_price.`;
 }
@@ -25,6 +26,7 @@ function parseArgs(argv) {
     sample: false,
     input: '',
     fromDb: false,
+    fromLookup: false,
     sku: '',
     productId: '',
     region: 'SG',
@@ -32,6 +34,8 @@ function parseArgs(argv) {
     accountKey: '',
     emitCurl: false,
     json: false,
+    lookupMaxItems: 1,
+    lookupMaxGlobalItems: 1,
     docRoot: process.env.SHOPEE_API_REFS_PRODUCT_DIR || DEFAULT_DOC_ROOT,
   };
 
@@ -46,6 +50,7 @@ function parseArgs(argv) {
     if (token === '--sample') args.sample = true;
     else if (token === '--input') args.input = next();
     else if (token === '--from-db') args.fromDb = true;
+    else if (token === '--from-lookup') args.fromLookup = true;
     else if (token === '--sku') args.sku = next();
     else if (token === '--product-id') args.productId = next();
     else if (token === '--region') args.region = String(next()).toUpperCase();
@@ -53,6 +58,8 @@ function parseArgs(argv) {
     else if (token === '--account-key') args.accountKey = next();
     else if (token === '--emit-curl') args.emitCurl = true;
     else if (token === '--json') args.json = true;
+    else if (token === '--lookup-max-items') args.lookupMaxItems = Number(next());
+    else if (token === '--lookup-max-global-items') args.lookupMaxGlobalItems = Number(next());
     else if (token === '--doc-root') args.docRoot = next();
     else if (token === '--help' || token === '-h') {
       console.log(usage());
@@ -68,11 +75,20 @@ function parseArgs(argv) {
   if (args.price != null && (!Number.isFinite(args.price) || args.price <= 0)) {
     throw new Error('--price must be a positive number when provided');
   }
+  if (args.lookupMaxItems != null && (!Number.isFinite(args.lookupMaxItems) || args.lookupMaxItems < 1)) {
+    throw new Error('--lookup-max-items must be a positive number');
+  }
+  if (args.lookupMaxGlobalItems != null && (!Number.isFinite(args.lookupMaxGlobalItems) || args.lookupMaxGlobalItems < 1)) {
+    throw new Error('--lookup-max-global-items must be a positive number');
+  }
+  const selectedModes = [args.sample, Boolean(args.input), args.fromDb, args.fromLookup].filter(Boolean).length;
+  if (selectedModes > 1) throw new Error('Choose only one input mode: --sample, --input, --from-db, or --from-lookup');
+  if (args.fromLookup && !args.sku) throw new Error('--from-lookup requires --sku');
   return args;
 }
 
 function readJson(path) {
-  return JSON.parse(readFileSync(path, 'utf8'));
+  return JSON.parse(readFileSync(path, 'utf8').replace(/^\uFEFF/, ''));
 }
 
 function readV2Env() {
@@ -216,8 +232,65 @@ async function loadFromDb(args, env) {
   return normalizeInput({ product, listing: listings[0] }, args, env);
 }
 
+async function loadFromLookup(args, env) {
+  if (!args.sku) throw new Error('--from-lookup requires --sku');
+  const accountKey = args.accountKey || env.defaultAccountKey;
+  const params = new URLSearchParams({
+    sku: args.sku,
+    regions: args.region,
+    account_key: accountKey,
+    max_items: String(Math.max(1, Math.min(5000, Math.floor(args.lookupMaxItems || 1)))),
+    max_global_items: String(Math.max(1, Math.min(1000, Math.floor(args.lookupMaxGlobalItems || 1)))),
+  });
+  const resp = await fetch(`${env.shopeeBridge}/lookup-sku?${params}`, {
+    headers: {
+      apikey: env.supabaseAnon,
+      Authorization: `Bearer ${env.supabaseAnon}`,
+      Accept: 'application/json',
+    },
+  });
+  const text = await resp.text();
+  let json = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = { parse_error: text };
+  }
+  if (!resp.ok || !json?.ok) {
+    throw new Error(`lookup-sku failed HTTP ${resp.status}: ${text}`);
+  }
+
+  const wantedRegion = String(args.region || 'SG').toUpperCase();
+  const regionRows = Array.isArray(json.region_results) ? json.region_results : [];
+  const row = regionRows.find((entry) => String(entry?.region || '').toUpperCase() === wantedRegion) || null;
+  const hit = row?.hit || (Array.isArray(json.region_hits)
+    ? json.region_hits.find((entry) => String(entry?.region || '').toUpperCase() === wantedRegion)
+    : null);
+  if (!hit || hit.source !== 'product_shopee_listings') {
+    throw new Error(`No local product_shopee_listings hit for sku=${args.sku} region=${wantedRegion}`);
+  }
+
+  return normalizeInput({
+    product: {
+      sku: args.sku,
+      product_name: hit.item_name || '',
+    },
+    listing: {
+      account_key: json.account_key || accountKey,
+      region: wantedRegion,
+      shop_id: hit.shop_id,
+      shop_item_id: hit.shop_item_id || hit.item_id,
+      shop_model_id: hit.shop_model_id || hit.model_id || 0,
+      status: hit.status || hit.item_status || 'mapped',
+      last_synced_price: hit.current_price ?? hit.original_price,
+      last_synced_at: hit.last_synced_at || null,
+    },
+    price: args.price ?? hit.current_price ?? hit.original_price,
+  }, args, env);
+}
+
 function loadInput(args, env) {
-  if (args.sample || (!args.input && !args.fromDb)) return normalizeInput(sampleFixture(), args, env);
+  if (args.sample || (!args.input && !args.fromDb && !args.fromLookup)) return normalizeInput(sampleFixture(), args, env);
   if (args.input) return normalizeInput(readJson(resolve(args.input)), args, env);
   throw new Error('No local input mode selected');
 }
@@ -313,9 +386,10 @@ function toOutput({ args, env, docs, input, batch, payloadValidation }) {
     ok: docs.ok && payloadValidation.ok,
     mode: 'dry-run',
     will_call_shopee: false,
+    will_call_shopee_price_api: false,
     will_mutate_price: false,
     docs,
-    source: args.fromDb ? 'supabase-readonly' : (args.input ? 'local-input' : 'sample-fixture'),
+    source: args.fromDb ? 'supabase-readonly' : (args.fromLookup ? 'bridge-lookup-readonly' : (args.input ? 'local-input' : 'sample-fixture')),
     selected: {
       product: {
         id: input.product.id || null,
@@ -340,11 +414,18 @@ function toOutput({ args, env, docs, input, batch, payloadValidation }) {
     correlation_key: batch.correlation,
     payload_validation: payloadValidation,
     safety_notes: [
-      'This script did not call Shopee.',
+      'This script did not call Shopee batch_update_outlet_price.',
       'A later live compatibility spike must be explicitly approved and should start with one SG item.',
       'Use current last_synced_price for the first live spike unless an operator chooses a different price.',
     ],
   };
+  if (args.fromLookup) {
+    out.lookup_bridge = {
+      endpoint: `${env.shopeeBridge}/lookup-sku`,
+      may_call_shopee_read_apis: true,
+      will_call_shopee_price_api: false,
+    };
+  }
   if (args.emitCurl) out.future_manual_curl_not_executed = buildFutureCurl(env, args, batch);
   return out;
 }
@@ -355,6 +436,7 @@ function printHuman(out) {
   console.log(`ok: ${out.ok}`);
   console.log(`source: ${out.source}`);
   console.log(`will_call_shopee: ${out.will_call_shopee}`);
+  console.log(`will_call_shopee_price_api: ${out.will_call_shopee_price_api}`);
   console.log(`docs_ok: ${out.docs.ok}`);
   if (!out.docs.ok) console.log(`docs_failures: ${out.docs.failures.join('; ')}`);
   console.log(`payload_ok: ${out.payload_validation.ok}`);
@@ -379,7 +461,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const env = readV2Env();
   const docs = validateDocs(args.docRoot);
-  const input = args.fromDb ? await loadFromDb(args, env) : loadInput(args, env);
+  const input = args.fromDb ? await loadFromDb(args, env) : (args.fromLookup ? await loadFromLookup(args, env) : loadInput(args, env));
   const batch = buildBatchPricePayload(input);
   const payloadValidation = validatePayloadShape(batch);
   const out = toOutput({ args, env, docs, input, batch, payloadValidation });

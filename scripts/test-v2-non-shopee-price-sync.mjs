@@ -22,6 +22,10 @@ const edgeEbayBridge = readFileSync(join(root, 'edge-functions', 'ebay-bridge', 
 
 const ebaySync = sliceBetween(v2, 'async function catExecuteEbaySync()', '  // ── Platform + Shopee market controls');
 assert(
+  /await catFlushPendingFeeSettings\(\);\s*await catReloadCountrySettings\(\);\s*applyAndRenderCatalog\(\);/.test(ebaySync),
+  'eBay sync must flush pending fee-setting autosaves and reload country_settings before computing USD prices',
+);
+assert(
   /catPersistProductCost\(product\.id,\s*newCost,\s*now\)[\s\S]*fetch\(EBAY_BRIDGE \+ '\/update-price'/.test(ebaySync),
   'eBay sync must persist the edited settlement price before /update-price so the server-side price guard recomputes from the same cost',
 );
@@ -38,6 +42,16 @@ assert(!ebaySync.includes("product.ebay_sku;\n        if (!sku)"), 'eBay price s
 assert(!ebaySync.includes("ebayStatus !== 'PUBLISHED' || !product.ebay_offer_id"), 'eBay price sync must not reject mapped platform_listings rows for missing products.ebay_offer_id');
 const platformEditFlow = sliceBetween(v2, 'async function platformOpenEditFlow(platform, productIds = [])', '  async function platformSyncSelected(platform');
 assert(platformEditFlow.includes('_catCache = null') && platformEditFlow.includes('await renderCatalogView(true)'), 'platform price edit flow must bypass the price-sync cache so new eBay mappings show immediately');
+
+const feeFlush = sliceBetween(v2, 'async function feeFlushInner()', '    async function feeWriteRow(code)');
+assert(feeFlush.includes('feeApplyRowsToPriceSyncCaches(toSave);'), 'fee saves must apply saved country_settings rows to the price-sync settings map');
+assert(feeFlush.includes('await feeRefreshOpenPriceSyncPreview(toSave);'), 'fee saves must immediately re-render an open price-sync table');
+const feeInvalidation = sliceBetween(v2, 'function feeInvalidateCaches()', '    async function feeResetActive()');
+assert(!feeInvalidation.includes('_catCache = null'), 'fee invalidation must not drop the rendered price-sync cache before preview refresh');
+assert(!feeInvalidation.includes('_catCountrySettingsByRegion = new Map()'), 'fee invalidation must not clear the price-sync country_settings map and fall back to default EX exchange rates');
+assert(v2.includes('async function catReloadCountrySettings()'), 'price sync must share a reload helper for country_settings');
+assert(v2.includes('function catApplyCountrySettingsRows(rows)'), 'fee saves must be able to patch country_settings in the price-sync cache without a full product reload');
+assert(v2.includes('_feeSettingsFlushNow = async function()'), 'fee settings must expose a pending autosave flush for live sync actions');
 
 for (const [label, source] of [['Supabase', ebayBridge], ['edge mirror', edgeEbayBridge]]) {
   assert(source.includes('ReviseInventoryStatus') && source.includes('legacy_trading_price_update'), `${label} eBay bridge must support Trading ReviseInventoryStatus for legacy mapped variation price updates`);

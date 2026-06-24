@@ -103,6 +103,15 @@ const ebayDefault = calculateEbayPrice({
 });
 assert(ebayPartial.ok && ebayDefault.ok, 'eBay EX price must calculate from partial and default settings');
 assertNear(ebayPartial.ebayPrice, ebayDefault.ebayPrice, 0.000001, 'eBay EX partial settings must use the shared EX defaults');
+const ebay1460 = calculateEbayPrice({
+  costKrw: 13127,
+  weightG: 150,
+  countrySettings: { ...DEFAULT_COUNTRY_SETTINGS.EX, exchange_rate: 1460 },
+});
+assert(
+  ebay1460.ok && ebay1460.ebayPrice !== ebayDefault.ebayPrice && ebay1460.ebayPrice < ebayDefault.ebayPrice,
+  'eBay EX USD price must respond to an exchange-rate change such as 1380 -> 1460',
+);
 
 const qoo10 = calculateQoo10Price({
   costKrw: 10000,

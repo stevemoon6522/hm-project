@@ -116,7 +116,7 @@ assert.equal(
   'plain master option names must be preserved',
 );
 
-const hash = (s) => createHash('sha256').update(s).digest('hex');
+const hash = (s) => createHash('sha256').update(s.replace(/\r\n/g, '\n')).digest('hex');
 assert.equal(hash(edge), hash(edgeMirror), 'supabase and edge-functions ebay-bridge copies must match');
 
 for (const token of [

@@ -13,7 +13,7 @@ for (const path of [edgePath, edgeMirrorPath]) {
 
 const edge = readFileSync(edgePath, 'utf8');
 const edgeMirror = readFileSync(edgeMirrorPath, 'utf8');
-const hash = (s) => createHash('sha256').update(s).digest('hex');
+const hash = (s) => createHash('sha256').update(s.replace(/\r\n/g, '\n')).digest('hex');
 assert.equal(hash(edge), hash(edgeMirror), 'supabase and edge-functions ebay-bridge copies must match');
 
 const handleStart = edge.indexOf('async function handleRequest');

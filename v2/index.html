@@ -23008,11 +23008,60 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   // country_settings fetched once and normalized by region for the V1 engine.
   let _catCountrySettingsByRegion = new Map();
+  let _feeSettingsFlushNow = null;
 
   // ── Price calculation
 
   function catCountrySettings(region) {
     return _catCountrySettingsByRegion.get(String(region || '').toUpperCase()) || null;
+  }
+
+  function catSetCountrySettingsRows(countrySettings) {
+    _catCountrySettingsByRegion = new Map();
+    (countrySettings || []).forEach(function(cs) {
+      const code = String(cs.region || cs.country_code || '').toUpperCase();
+      if (code) _catCountrySettingsByRegion.set(code, normalizeCountrySettings(cs, code));
+    });
+    if (_catCache) _catCache.countrySettings = Array.isArray(countrySettings) ? countrySettings : [];
+  }
+
+  function catApplyCountrySettingsRows(rows) {
+    const cleanRows = (rows || []).filter(Boolean);
+    if (!cleanRows.length) return;
+    cleanRows.forEach(function(row) {
+      const code = String(row.region || row.country_code || '').toUpperCase();
+      if (code) _catCountrySettingsByRegion.set(code, normalizeCountrySettings(row, code));
+    });
+    if (_catCache) {
+      const byCode = new Map();
+      (_catCache.countrySettings || []).forEach(function(row) {
+        const code = String(row.region || row.country_code || '').toUpperCase();
+        if (code) byCode.set(code, row);
+      });
+      cleanRows.forEach(function(row) {
+        const code = String(row.region || row.country_code || '').toUpperCase();
+        if (code) byCode.set(code, row);
+      });
+      _catCache.countrySettings = Array.from(byCode.values());
+    }
+  }
+
+  async function catReloadCountrySettings() {
+    const csRes = await fetch(
+      SUPABASE_URL + '/rest/v1/country_settings?select=*',
+      { headers: AUTH_HEADERS }
+    );
+    if (!csRes.ok) throw new Error('country_settings fetch ' + csRes.status);
+    const csData = await csRes.json();
+    const rows = Array.isArray(csData) ? csData : [];
+    catSetCountrySettingsRows(rows);
+    return rows;
+  }
+
+  async function catFlushPendingFeeSettings() {
+    if (typeof _feeSettingsFlushNow === 'function') {
+      await _feeSettingsFlushNow();
+    }
   }
 
   /** Compute a Shopee update_price original_price from the verified V1 formula. */
@@ -23282,22 +23331,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Fetch country_settings once for the V1 pricing engine.
     let countrySettings = [];
     try {
-      const csRes = await fetch(
-        SUPABASE_URL + '/rest/v1/country_settings?select=*',
-        { headers: AUTH_HEADERS }
-      );
-      if (csRes.ok) {
-        const csData = await csRes.json();
-        if (Array.isArray(csData)) countrySettings = csData;
-      }
-    } catch (e) { /* country_settings optional */ }
-
-    // Build country settings map.
-    _catCountrySettingsByRegion = new Map();
-    countrySettings.forEach(function(cs) {
-      const code = String(cs.region || cs.country_code || '').toUpperCase();
-      if (code) _catCountrySettingsByRegion.set(code, normalizeCountrySettings(cs, code));
-    });
+      countrySettings = await catReloadCountrySettings();
+    } catch (e) {
+      console.warn('[CAT] country_settings load failed; using price-engine defaults:', e);
+      catSetCountrySettingsRows([]);
+    }
 
     _catCache = { products: products, listings: listings, platformListings: platformListings, countrySettings: countrySettings, ts: now };
     return _catCache;
@@ -26339,6 +26377,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   async function catExecuteEbaySync() {
     catSuppressNextWeightBlurSave = false;
     await catFlushSelectedInlineEdits({ persistWeight: false });
+    try {
+      await catFlushPendingFeeSettings();
+      await catReloadCountrySettings();
+      applyAndRenderCatalog();
+    } catch (e) {
+      console.warn('[CAT ebay] country_settings refresh failed:', e);
+      showToast('eBay fee settings reload failed. Please retry after the fee save completes.', 'err');
+      return;
+    }
     const products = catSelectedProducts();
     if (!products.length) {
       showToast('eBay 동기화 대상 행을 선택하세요.', 'err');
@@ -36534,6 +36581,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // Codes whose in-memory data differs from DB (pending save)
     let feeDirty = new Set();
     let feeSaveTimer = null;
+    let feeFlushInFlight = null;
 
     // ── Render ──────────────────────────────────────────────────
     function feeRender() {
@@ -36619,6 +36667,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     async function feeFlush() {
+      if (feeFlushInFlight) return feeFlushInFlight;
+      feeFlushInFlight = feeFlushInner();
+      try {
+        return await feeFlushInFlight;
+      } finally {
+        feeFlushInFlight = null;
+      }
+    }
+
+    async function feeFlushInner() {
       const toSave = [...feeDirty];
       feeDirty.clear();
       feeSaveTimer = null;
@@ -36635,13 +36693,25 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         feeSetStatus('저장 실패: ' + failed.join(', '), 'err');
       } else {
         // Invalidate Joom/eBay price caches so next publish uses fresh values
+        feeApplyRowsToPriceSyncCaches(toSave);
         feeInvalidateCaches();
+        await feeRefreshOpenPriceSyncPreview(toSave);
         feeSetStatus('저장 완료 ✓', 'ok');
         setTimeout(function() { feeSetStatus('변경 사항은 자동 저장됩니다', ''); }, 2000);
       }
       // Re-render tabs to remove dirty markers on saved codes
       feeRender();
     }
+
+    _feeSettingsFlushNow = async function() {
+      if (feeSaveTimer) {
+        clearTimeout(feeSaveTimer);
+        feeSaveTimer = null;
+      }
+      if (feeFlushInFlight) return feeFlushInFlight;
+      if (feeDirty.size) return feeFlush();
+      return null;
+    };
 
     async function feeWriteRow(code) {
       const row = feeRows[code];
@@ -36653,6 +36723,22 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     // ── Cache invalidation ──────────────────────────────────────
+    function feeApplyRowsToPriceSyncCaches(codes) {
+      const rows = (codes || []).map(function(code) { return feeRows[code]; }).filter(Boolean);
+      if (rows.length) catApplyCountrySettingsRows(rows);
+    }
+
+    async function feeRefreshOpenPriceSyncPreview() {
+      const priceSyncView = document.getElementById('view-price-sync');
+      if (!priceSyncView || !priceSyncView.classList.contains('active')) return;
+      try {
+        catSyncRegionHeaders();
+        applyAndRenderCatalog();
+      } catch (e) {
+        console.warn('[fee-settings] price-sync preview refresh failed:', e);
+      }
+    }
+
     function feeInvalidateCaches() {
       // These variables live in the outer IIFE scope (Joom SG and eBay EX caches).
       // Access them via window-level assignment fallback — they are module-scoped so
@@ -36664,8 +36750,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       try { _v2EbayExCountryPromise = null; } catch (_) {}
       try { _mrQoo10.countrySettings = null; } catch (_) {}
       try { _mrQoo10.countrySettingsPromise = null; } catch (_) {}
-      try { _catCache = null; } catch (_) {}
-      try { _catCountrySettingsByRegion = new Map(); } catch (_) {}
     }
 
     // ── Reset: reload active country from DB ────────────────────

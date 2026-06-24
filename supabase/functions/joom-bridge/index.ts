@@ -992,6 +992,8 @@ async function handleRequest(req: Request): Promise<Response> {
           hasActiveVersion: product?.hasActiveVersion ?? null,
           listing_status: joomProductListingStatus(product),
           product_name: product?.name || "",
+          brand: product?.brand || null,
+          description: product?.description || "",
           infractions: ((product?.review || {}).infractions || []).map((i: any) => ({
             code: i.code, kind: i.kind, note: i.note, description: i.description,
             where: i.where, isPermanent: i.isPermanent, regions: i.regions,

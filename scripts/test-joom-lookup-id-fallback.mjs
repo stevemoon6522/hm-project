@@ -23,6 +23,8 @@ assert.match(joomAdapter, /state === 'archived' \|\| state === 'not_listed'/, 'J
 for (const [label, source] of [['supabase', joomBridge], ['edge mirror', edgeJoomBridge]]) {
   assert.match(source, /hasActiveVersion: product\?\.hasActiveVersion \?\? null/, `${label} Joom lookup must expose hasActiveVersion`);
   assert.match(source, /listing_status: joomProductListingStatus\(product\)/, `${label} Joom lookup must expose listing_status derived from remote state`);
+  assert.match(source, /brand: product\?\.brand \|\| null/, `${label} Joom lookup must expose remote brand for post-registration verification`);
+  assert.match(source, /description: product\?\.description \|\| ""/, `${label} Joom lookup must expose remote plain-text description for post-registration verification`);
 }
 
 console.log('Joom lookup id fallback checks passed');

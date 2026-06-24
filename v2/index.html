@@ -34514,6 +34514,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const MR_JOOM_BRAND_CUSTOM_VALUE = '__custom__';
     let _mrJoomBrandOptionsCache = null;
     let _mrJoomBrandOptionsPromise = null;
+    let _mrJoomAccountBrandOptionsCache = null;
 
     function mrJoomBridgeUrl() {
       return SHOPEE_BRIDGE.replace('/shopee-bridge', '/joom-bridge');
@@ -34538,9 +34539,75 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!map.has(key)) map.set(key, brand);
     }
 
+    function mrJoomBrandKey(value) {
+      return mrJoomCleanBrand(value).toLowerCase();
+    }
+
+    function mrJoomAccountBrandStateRank(option) {
+      const states = Array.isArray(option?.states) ? option.states.map(s => String(s || '').toLowerCase()) : [];
+      if (states.includes('active')) return 0;
+      if (states.includes('warning')) return 1;
+      if (states.includes('pending')) return 2;
+      return 3;
+    }
+
+    function mrJoomNormalizeAccountBrandOption(row) {
+      const name = mrJoomCleanBrand(row?.name || row?.brand || row);
+      if (!mrJoomIsUsableBrand(name)) return null;
+      return {
+        name,
+        count: Number(row?.count || 0),
+        states: Array.isArray(row?.states) ? row.states.map(s => String(s || '').trim()).filter(Boolean) : [],
+      };
+    }
+
+    function mrJoomAccountBrandMatch(values) {
+      const candidates = (values || [])
+        .map(v => ({ raw: mrJoomCleanBrand(v), key: mrJoomBrandKey(v) }))
+        .filter(v => mrJoomIsUsableBrand(v.raw));
+      if (!_mrJoomAccountBrandOptionsCache || !candidates.length) return '';
+      const matches = [];
+      for (const option of _mrJoomAccountBrandOptionsCache) {
+        const optionKey = mrJoomBrandKey(option.name);
+        const candidateIndex = candidates.findIndex(candidate => candidate.key === optionKey);
+        if (candidateIndex < 0) continue;
+        matches.push({
+          name: option.name,
+          candidateIndex,
+          stateRank: mrJoomAccountBrandStateRank(option),
+          count: Number(option.count || 0),
+        });
+      }
+      matches.sort((a, b) =>
+        a.stateRank - b.stateRank
+        || a.candidateIndex - b.candidateIndex
+        || b.count - a.count
+        || a.name.localeCompare(b.name)
+      );
+      return matches[0]?.name || '';
+    }
+
     function mrJoomDefaultBrand(row) {
       const candidates = [row?._joomBrand, row?.shopee_brand_name, row?.qoo10_brand_name, row?.artist];
       return candidates.map(mrJoomCleanBrand).find(mrJoomIsUsableBrand) || '';
+    }
+
+    function mrJoomPreferredBrandForGroup(group) {
+      const rows = group?.rows || [];
+      const exactAccountBrand = mrJoomAccountBrandMatch(rows.flatMap(row => [
+        row?._joomBrand,
+        row?.artist,
+        row?.shopee_brand_name,
+        row?.qoo10_brand_name,
+      ]));
+      if (exactAccountBrand) return exactAccountBrand;
+      return mrJoomDefaultBrand(rows[0] || {});
+    }
+
+    function mrApplyPreferredJoomBrand(group) {
+      const preferred = mrJoomPreferredBrandForGroup(group);
+      if (preferred) mrSetJoomGroupBrand(group, preferred);
+      return preferred;
     }
 
     function mrSetJoomGroupBrand(group, value) {
@@ -34596,10 +34663,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           const resp = await fetch(mrJoomBridgeUrl() + '/brand-options?limit=500', { headers: AUTH_HEADERS });
           const json = await resp.json();
           if (resp.ok && json.ok) {
-            (json.brands || []).forEach(row => mrJoomAddBrandOption(map, row?.name || row?.brand || row));
+            _mrJoomAccountBrandOptionsCache = (json.brands || [])
+              .map(mrJoomNormalizeAccountBrandOption)
+              .filter(Boolean);
+            _mrJoomAccountBrandOptionsCache.forEach(row => mrJoomAddBrandOption(map, row.name));
           }
         } catch (e) {
           console.warn('[mrJoom] Joom account brand options load failed; using saved local candidates', e);
+          if (!_mrJoomAccountBrandOptionsCache) _mrJoomAccountBrandOptionsCache = [];
         }
         try {
           const { data, error } = await db
@@ -35204,6 +35275,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       try {
         await mrEnsureJoomSourceImages(group);
         await mrLoadJoomBrandOptions(group);
+        mrApplyPreferredJoomBrand(group);
         const joomCountry = await _v2LoadJoomCountry();
         const draft = mrBuildJoomDraft(group, joomCountry);
         _mrPendingJoomDraftSignature = mrJoomDraftSignature(draft);

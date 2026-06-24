@@ -66,11 +66,40 @@ assert(masterRegister.includes('row.joom_category_id = value || null'), 'Joom ca
 assert(masterRegister.includes('function mrLoadJoomBrandOptions'), 'Joom flow must load saved local brand candidates for selection');
 assert(masterRegister.includes('function mrPopulateJoomBrandSelect'), 'Joom flow must render a brand select, not only a free-text input');
 assert(masterRegister.includes('MR_JOOM_BRAND_CUSTOM_VALUE'), 'Joom brand select must keep a custom-entry fallback');
+assert(masterRegister.includes('let _mrJoomAccountBrandOptionsCache = null'), 'Joom flow must keep account-derived brand candidates separate from local saved brand names');
+assert(masterRegister.includes('function mrJoomAccountBrandMatch'), 'Joom flow must match product brand candidates against observed Joom account brands');
+assert(masterRegister.includes('function mrApplyPreferredJoomBrand'), 'Joom flow must auto-select a safer account-observed brand before rendering the draft');
 assert(masterRegister.includes("mrJoomBridgeUrl() + '/brand-options?limit=500'"), 'Joom flow must load brand candidates from the Joom account via the bridge');
 assert(masterRegister.includes('id="mr-joom-brand"') && masterRegister.includes('id="mr-joom-brand-custom"'), 'Joom publish modal must allow brand selection before dry-run/live registration');
 assert(masterRegister.includes('await mrLoadJoomBrandOptions(group);'), 'Joom modal must load account brand options before rendering the draft');
+assert(masterRegister.includes('mrApplyPreferredJoomBrand(group);'), 'Joom modal must apply the best account-derived brand candidate before draft/dry-run');
 assert(masterRegister.includes('brand: draft.brand'), 'Joom dry-run signature must include the selected brand');
 assert(masterRegister.includes("if (!brand) errors.push('Joom brand is required.')"), 'Joom draft must block empty brand values');
+
+const brandPreferenceBlock = sliceBetween(
+  masterRegister,
+  'const MR_JOOM_BRAND_CACHE_KEY',
+  'function mrReadStoredJoomBrandOptions',
+);
+const brandPreferenceResult = new Function(`${brandPreferenceBlock}
+  _mrJoomAccountBrandOptionsCache = [
+    { name: 'BTS', count: 46, states: ['active'] },
+    { name: 'Hybe Labels', count: 1, states: ['warning'] },
+  ];
+  const group = { rows: [{
+    _joomBrand: 'Hybe Labels',
+    shopee_brand_name: 'Hybe Labels',
+    qoo10_brand_name: '',
+    artist: 'BTS',
+  }] };
+  return {
+    preferred: mrJoomPreferredBrandForGroup(group),
+    applied: mrApplyPreferredJoomBrand(group),
+    rowBrand: group.rows[0]._joomBrand,
+  };
+`)();
+assert(brandPreferenceResult.preferred === 'BTS' && brandPreferenceResult.applied === 'BTS' && brandPreferenceResult.rowBrand === 'BTS', 'Joom brand preference should choose the active account-observed artist brand over a warning marketplace brand');
+
 assert(masterRegister.includes('function mrRowLifecycle(row)'), 'Master/Joom title helpers must resolve lifecycle from each master product row');
 assert(masterRegister.includes('normalizeMasterProductNameForLifecycle(title, mrRowLifecycle(row), derived'), 'Master product names must use row.lifecycle_state instead of the master-register radio default');
 assert(masterRegister.includes('function mrJoomNamePrefix(row)'), 'Joom title prefix must be derived from the master product lifecycle');

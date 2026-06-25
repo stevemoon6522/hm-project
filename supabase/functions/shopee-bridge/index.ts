@@ -1717,9 +1717,40 @@ async function runV2MutationAction(action: string, body: any) {
     const response = await executeLoggedMutation(action, r, requestPayload, body, payload =>
       shopApiCall(r, '/api/v2/product/init_tier_variation', { method: 'POST', body: payload, account_key: accountKey })
     );
+    let mapping_results: any = null;
+    if (response?.ok) {
+      try {
+        const shopModelsResult = await shopApiCall(r, '/api/v2/product/get_model_list', { query: { item_id }, account_key: accountKey });
+        const shopModels = Array.isArray(shopModelsResult?.response?.model) ? shopModelsResult.response.model : [];
+        const mappingRows = variation.model.map((sourceModel: any) => {
+          const sku = shopeeModelSkuForMapping(sourceModel);
+          const tierKey = shopeeTierKeyForMapping(sourceModel);
+          const shopModel = shopModels.find((m: any) => shopeeSkuEquals(m?.model_sku, sku))
+            || shopModels.find((m: any) => shopeeTierKeyForMapping(m) === tierKey)
+            || {};
+          return {
+            product_id: sourceModel?.product_id || sourceModel?.productId || body.product_id || body.productId || null,
+            sku,
+            model_sku: sku,
+            shopee_global_model_sku: sku,
+            account_key: accountKey,
+            region: r,
+            shop_id: body.shop_id || null,
+            shop_item_id: item_id,
+            shop_model_id: numberOrNull(shopModel?.model_id || shopModel?.shop_model_id),
+            status: 'mapped',
+            raw_payload: { source: 'product.init_tier_variation', raw: response.result || response, shop_model: shopModel },
+          };
+        }).filter((row: any) => row.sku);
+        mapping_results = await persistShopeeRegistrationMappings(accountKey, mappingRows);
+      } catch (e: any) {
+        mapping_results = { ok: false, error: String(e?.message || e) };
+      }
+    }
     return {
       ...response,
       item_id,
+      mapping_results,
       sent_model_count: model.length,
       sent_tier_count: standardise_tier_variation.length,
       tier_payload_kind: 'standardise_tier_variation',
@@ -2635,6 +2666,7 @@ async function verifyPublishedListOutcomeOnce(region: string, shopId: number, gl
     return {
       ok: true,
       region,
+      global_item_id: globalItemId,
       shop_id: shopId,
       publish_task_id: publishTaskId,
       item_id: Number(hit.item_id),
@@ -2685,6 +2717,7 @@ async function reconcilePublishResultsWithPublishedList(globalItemId: number, ta
         ...(existing || {}),
         ok: true,
         region,
+        global_item_id: globalItemId,
         shop_id: Number(hit.shop_id || shopId || existing?.shop_id || 0) || null,
         item_id: Number(hit.item_id),
         publish_status: 'verified_via_final_published_list_reconcile',
@@ -2768,6 +2801,58 @@ async function syncShopModelPricesAfterPublish(region: string, itemId: number, t
   return { ok: !result.error && failureList.length === 0, sent_price_list: priceList, failure_list: failureList, raw: result };
 }
 
+function shopeeModelSkuForMapping(model: any): string {
+  return String(model?.global_model_sku || model?.model_sku || model?.sku || '').trim();
+}
+
+function shopeeTierKeyForMapping(model: any): string {
+  return JSON.stringify(Array.isArray(model?.tier_index) ? model.tier_index.map((x: any) => Number(x)) : []);
+}
+
+async function fetchShopeeModelMappingRowsForPublishedItem(region: string, itemId: number, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+  const variation = normalizeVariation(target?.variation || body?.variation);
+  if (!variation || !Number.isFinite(itemId) || itemId <= 0) return [];
+
+  const shopModelsResult = await shopApiCall(region, '/api/v2/product/get_model_list', {
+    query: { item_id: itemId },
+    account_key: accountKey,
+  });
+  const shopModels = Array.isArray(shopModelsResult?.response?.model) ? shopModelsResult.response.model : [];
+
+  let globalModels: any[] = [];
+  const globalItemId = Number(body?.global_item_id || target?.global_item_id || 0);
+  if (Number.isFinite(globalItemId) && globalItemId > 0) {
+    const globalModelsResult = await merchantApiCall(region, '/api/v2/global_product/get_global_model_list', {
+      query: { global_item_id: globalItemId },
+      account_key: accountKey,
+    });
+    globalModels = shopeeGlobalModelList(globalModelsResult);
+  }
+
+  return variation.model.map((sourceModel: any) => {
+    const sku = shopeeModelSkuForMapping(sourceModel);
+    const tierKey = shopeeTierKeyForMapping(sourceModel);
+    const shopModel = shopModels.find((model: any) => shopeeSkuEquals(model?.model_sku, sku))
+      || shopModels.find((model: any) => shopeeTierKeyForMapping(model) === tierKey)
+      || {};
+    const globalModel = globalModels.find((model: any) => shopeeSkuEquals(model?.global_model_sku || model?.model_sku, sku))
+      || globalModels.find((model: any) => shopeeTierKeyForMapping(model) === tierKey)
+      || {};
+    return {
+      sku,
+      model_sku: sku,
+      global_model_sku: sku,
+      global_model_id: numberOrNull(sourceModel?.global_model_id) || numberOrNull(globalModel?.global_model_id || globalModel?.model_id),
+      shop_model_id: numberOrNull(shopModel?.model_id || shopModel?.shop_model_id),
+      raw_payload: {
+        source: 'post_publish_model_mapping',
+        shop_model: shopModel,
+        global_model: globalModel,
+      },
+    };
+  }).filter((row: any) => row.sku);
+}
+
 async function finalizePublishOutcomeAfterSuccess(outcome: any, region: string, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   if (!outcome?.ok || !outcome?.item_id) return outcome;
   if (outcome.price_sync?.ok) return outcome;
@@ -2783,7 +2868,114 @@ async function finalizePublishOutcomeAfterSuccess(outcome: any, region: string, 
     outcome.error = reason;
     outcome.price_sync_warning = reason;
   }
+  try {
+    const modelMappings = await fetchShopeeModelMappingRowsForPublishedItem(region, Number(outcome.item_id), target, body, accountKey);
+    if (modelMappings.length) outcome.model_mappings = modelMappings;
+  } catch (e: any) {
+    outcome.model_mapping_warning = String(e?.message || e);
+  }
   return outcome;
+}
+
+function shopeePublishResultMessage(info: any): string | null {
+  const taskBody = info?.raw_task?.response || info?.task?.response || info?.raw_task || info?.task || {};
+  const failedList = Array.isArray(taskBody.publish_result)
+    ? taskBody.publish_result.filter((row: any) => row && (row.error || row.failed_reason || row.message))
+    : [];
+  const taskFailed = taskBody.failed || failedList[0];
+  const failedReason = taskFailed?.failed_reason || taskFailed?.message || taskFailed?.error;
+  const parts = [
+    info?.error,
+    info?.message,
+    info?.stage ? `stage=${info.stage}` : '',
+    failedReason ? `task_failed=${failedReason}` : '',
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+  return parts.length ? parts.join(' | ').slice(0, 1200) : null;
+}
+
+function shopeeRequestedRegionsFromPublishTargets(targets: any[] = [], results: any[] = [], fallbackRegion = 'SG'): string[] {
+  const regions = [
+    ...(targets || []).map((target: any) => target?.region),
+    ...(results || []).map((row: any) => row?.region),
+    fallbackRegion,
+  ].map((value) => String(value || '').toUpperCase()).filter(Boolean);
+  return [...new Set(regions)];
+}
+
+function buildShopeePublishMappingRows(globalItemId: number | null, body: any, targets: any[] = [], results: any[] = [], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, fallbackRegion = 'SG'): ShopeeRegistrationMappingInput[] {
+  const variation = normalizeVariation(body?.variation);
+  const variantModels = variation?.model || [];
+  const resultByRegion = new Map<string, any>();
+  for (const row of results || []) {
+    const region = String(row?.region || '').toUpperCase();
+    if (region && !resultByRegion.has(region)) resultByRegion.set(region, row);
+  }
+  const targetByRegion = new Map<string, any>();
+  for (const target of targets || []) {
+    const region = String(target?.region || '').toUpperCase();
+    if (region && !targetByRegion.has(region)) targetByRegion.set(region, target);
+  }
+
+  const rows: ShopeeRegistrationMappingInput[] = [];
+  const requestedRegions = shopeeRequestedRegionsFromPublishTargets(targets, results, fallbackRegion);
+  for (const region of requestedRegions) {
+    const info = resultByRegion.get(region) || { region, ok: false, error: 'no result from bridge', message: 'no result from bridge' };
+    const target = targetByRegion.get(region) || {};
+    const shopItemId = numberOrNull(info?.item_id ?? info?.shop_item_id);
+    const rowGlobalItemId = Object.prototype.hasOwnProperty.call(info || {}, 'global_item_id')
+      ? numberOrNull(info.global_item_id)
+      : numberOrNull(globalItemId);
+    const status = info?.ok === true && shopItemId ? 'mapped' : 'failed';
+    const base = {
+      account_key: accountKey,
+      region,
+      shop_id: numberOrNull(info?.shop_id || target?.shop_id),
+      shop_item_id: shopItemId,
+      global_item_id: rowGlobalItemId,
+      status,
+      last_error: status === 'mapped' ? null : shopeePublishResultMessage(info),
+      days_to_ship: target?.days_to_ship || body?.days_to_ship || null,
+      raw_payload: {
+        source: 'bridge_publish_result',
+        publish_result: info,
+      },
+    };
+    if (variantModels.length) {
+      const modelMappings = new Map<string, any>();
+      for (const modelRow of info?.model_mappings || []) {
+        const sku = shopeeModelSkuForMapping(modelRow);
+        if (sku && !modelMappings.has(sku)) modelMappings.set(sku, modelRow);
+      }
+      for (const model of variantModels) {
+        const sku = shopeeModelSkuForMapping(model);
+        if (!sku) continue;
+        const modelMapping = modelMappings.get(sku) || {};
+        rows.push({
+          ...base,
+          product_id: model.product_id || model.productId || null,
+          sku,
+          model_sku: sku,
+          global_model_sku: sku,
+          shopee_global_model_sku: sku,
+          global_model_id: numberOrNull(modelMapping.global_model_id) || numberOrNull(model.global_model_id),
+          shop_model_id: numberOrNull(modelMapping.shop_model_id),
+          raw_payload: {
+            ...(base.raw_payload as any),
+            source_model: model,
+            model_mapping: modelMapping,
+          },
+        });
+      }
+      continue;
+    }
+    rows.push({
+      ...base,
+      product_id: body?.product_id || body?.productId || body?.source_product_id || body?.master_product_id || null,
+      sku: body?.sku || body?.item_sku || null,
+      item_sku: body?.sku || body?.item_sku || null,
+    });
+  }
+  return rows;
 }
 
 function publishFailureText(...parts: any[]): string {
@@ -3729,6 +3921,37 @@ async function markShopeeGlobalItemDeleted(globalItemId: number, body: any, raw:
   return { ok: true, rows: data || [], raw };
 }
 
+type ShopeeRegistrationMappingInput = {
+  product_id?: string | null;
+  productId?: string | null;
+  id?: string | null;
+  product_sku?: string | null;
+  sku?: string | null;
+  item_sku?: string | null;
+  model_sku?: string | null;
+  shopee_global_model_sku?: string | null;
+  global_model_sku?: string | null;
+  account_key?: string | null;
+  accountKey?: string | null;
+  region?: string | null;
+  global_item_id?: number | string | null;
+  global_model_id?: number | string | null;
+  shop_id?: number | string | null;
+  shop_item_id?: number | string | null;
+  item_id?: number | string | null;
+  shop_model_id?: number | string | null;
+  model_id?: number | string | null;
+  status?: string | null;
+  published_at?: string | null;
+  last_error?: string | null;
+  error?: string | null;
+  message?: string | null;
+  last_synced_price?: number | string | null;
+  last_synced_at?: string | null;
+  days_to_ship?: number | string | null;
+  raw_payload?: any;
+};
+
 async function resolveProductIdForMapping(row: any): Promise<string> {
   const explicit = String(row?.product_id || row?.productId || row?.id || '').trim();
   if (explicit) return explicit;
@@ -3754,7 +3977,109 @@ async function resolveProductIdForMapping(row: any): Promise<string> {
       .maybeSingle();
     if (!byModelSku.error && byModelSku.data?.id) return String(byModelSku.data.id);
   }
+  const globalItemId = Number(row?.global_item_id || 0);
+  const globalModelId = Number(row?.global_model_id || 0);
+  const shopItemId = Number(row?.shop_item_id || row?.item_id || 0);
+  const shopModelId = Number(row?.shop_model_id || row?.model_id || 0);
+  if (globalItemId || globalModelId || shopItemId || shopModelId) {
+    let query = supabase
+      .from('product_shopee_listings')
+      .select('product_id')
+      .limit(1);
+    if (globalModelId) query = query.eq('global_model_id', globalModelId);
+    else if (shopModelId) query = query.eq('shop_model_id', shopModelId);
+    else if (shopItemId) query = query.eq('shop_item_id', shopItemId);
+    else query = query.eq('global_item_id', globalItemId);
+    const existing = await query.maybeSingle();
+    if (!existing.error && existing.data?.product_id) return String(existing.data.product_id);
+  }
   return '';
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function shopeeMappingError(row: any): string | null {
+  const parts = [
+    row?.last_error,
+    row?.error,
+    row?.message,
+    row?.stage ? `stage=${row.stage}` : '',
+  ].map((value) => String(value || '').trim()).filter(Boolean);
+  return parts.length ? parts.join(' | ').slice(0, 1200) : null;
+}
+
+function shopeeMappingStatus(row: any): string {
+  const explicit = String(row?.status || '').trim();
+  if (explicit) return explicit;
+  const shopItemId = numberOrNull(row?.shop_item_id ?? row?.item_id);
+  return shopItemId ? 'mapped' : 'failed';
+}
+
+async function persistShopeeRegistrationMappings(accountKey: string, listings: ShopeeRegistrationMappingInput[] = []) {
+  const normalizedAccountKey = normalizeAccountKey(accountKey || DEFAULT_SHOPEE_ACCOUNT_KEY);
+  const now = new Date().toISOString();
+  const payload: any[] = [];
+  const skipped: any[] = [];
+
+  for (const row of listings || []) {
+    const productId = await resolveProductIdForMapping(row);
+    const region = String(row?.region || '').trim().toUpperCase();
+    if (!productId || !region) {
+      skipped.push({
+        ok: false,
+        error: 'product_id and region required',
+        sku: row?.sku || row?.model_sku || row?.shopee_global_model_sku || row?.global_model_sku || row?.item_sku || null,
+        region: row?.region || null,
+      });
+      continue;
+    }
+    const status = shopeeMappingStatus(row);
+    payload.push({
+      product_id: productId,
+      account_key: normalizeAccountKey(row?.account_key || row?.accountKey || normalizedAccountKey),
+      region,
+      global_item_id: Object.prototype.hasOwnProperty.call(row || {}, 'global_item_id') ? numberOrNull(row.global_item_id) : null,
+      global_model_id: numberOrNull(row?.global_model_id),
+      shop_id: numberOrNull(row?.shop_id),
+      shop_item_id: numberOrNull(row?.shop_item_id ?? row?.item_id),
+      shop_model_id: numberOrNull(row?.shop_model_id ?? row?.model_id),
+      status,
+      published_at: row?.published_at || (status === 'mapped' ? now : null),
+      last_error: status === 'mapped' ? null : shopeeMappingError(row),
+      last_synced_price: row?.last_synced_price != null ? Number(row.last_synced_price) : null,
+      last_synced_at: row?.last_synced_at || now,
+      days_to_ship: row?.days_to_ship != null ? Number(row.days_to_ship) : null,
+      raw_payload: row?.raw_payload || null,
+      updated_at: now,
+    });
+  }
+
+  if (!payload.length) {
+    return {
+      ok: skipped.length === 0,
+      attempted: listings.length,
+      saved_count: 0,
+      skipped,
+      rows: [],
+    };
+  }
+
+  const { data, error } = await supabase
+    .from('product_shopee_listings')
+    .upsert(payload, { onConflict: 'product_id,account_key,region' })
+    .select('product_id,account_key,region,global_item_id,global_model_id,shop_id,shop_item_id,shop_model_id,status,last_error');
+  return {
+    ok: !error && skipped.length === 0,
+    attempted: listings.length,
+    saved_count: Array.isArray(data) ? data.length : 0,
+    skipped,
+    rows: data || [],
+    error: error?.message || null,
+  };
 }
 
 async function recordRegistrationMapping(req: Request): Promise<Response> {
@@ -3791,38 +4116,11 @@ async function recordRegistrationMapping(req: Request): Promise<Response> {
   }
 
   if (listings.length) {
-    const payload: any[] = [];
-    for (const row of listings) {
-      const productId = await resolveProductIdForMapping(row);
-      const status = String(row?.status || '').trim() || (row?.shop_item_id ? 'mapped' : 'failed');
-      const next = {
-        product_id: productId,
-        account_key: normalizeAccountKey(row?.account_key || accountKey),
-        region: String(row?.region || '').trim().toUpperCase(),
-        global_item_id: row?.global_item_id != null ? Number(row.global_item_id) : globalItemId,
-        global_model_id: row?.global_model_id != null ? Number(row.global_model_id) : null,
-        shop_id: row?.shop_id != null ? Number(row.shop_id) : null,
-        shop_item_id: row?.shop_item_id != null ? Number(row.shop_item_id) : null,
-        shop_model_id: row?.shop_model_id != null ? Number(row.shop_model_id) : null,
-        status,
-        published_at: row?.published_at || (status === 'mapped' ? now : null),
-        last_error: row?.last_error || null,
-        last_synced_price: row?.last_synced_price != null ? Number(row.last_synced_price) : null,
-        last_synced_at: row?.last_synced_at || now,
-        days_to_ship: row?.days_to_ship != null ? Number(row.days_to_ship) : null,
-        raw_payload: row?.raw_payload || null,
-        updated_at: now,
-      };
-      if (next.product_id && next.region) payload.push(next);
-      else listingResults.push({ ok: false, error: 'product_id required', sku: row?.sku || row?.model_sku || row?.shopee_global_model_sku || null, region: row?.region || null });
-    }
-    if (payload.length) {
-      const { data, error } = await supabase
-        .from('product_shopee_listings')
-        .upsert(payload, { onConflict: 'product_id,account_key,region' })
-        .select('product_id,account_key,region,global_item_id,global_model_id,shop_id,shop_item_id,shop_model_id,status,last_error');
-      listingResults.push(error ? { ok: false, error: error.message } : { ok: true, rows: data || [] });
-    }
+    const persisted = await persistShopeeRegistrationMappings(accountKey, listings.map((row: any) => ({
+      ...row,
+      global_item_id: Object.prototype.hasOwnProperty.call(row || {}, 'global_item_id') ? row.global_item_id : globalItemId,
+    })));
+    listingResults.push(persisted);
   }
 
   return jsonResp({
@@ -4585,7 +4883,14 @@ Deno.serve(async (req) => {
       });
       const reconciledResults = await reconcilePublishResultsWithPublishedList(global_item_id, targetInputs, results, reqAccountKey, region);
       const responseResults = reconciledResults.map((row) => ({ account_key: reqAccountKey, ...row }));
-      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: reqAccountKey, global_item_id, logistics_repairs: publishLogisticsRepair, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults });
+      let mappingResults: any = null;
+      try {
+        const mappingRows = buildShopeePublishMappingRows(global_item_id, { ...body, global_item_id }, targetInputs, responseResults, reqAccountKey, region);
+        mappingResults = await persistShopeeRegistrationMappings(reqAccountKey, mappingRows);
+      } catch (e: any) {
+        mappingResults = { ok: false, error: String(e?.message || e) };
+      }
+      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: reqAccountKey, global_item_id, logistics_repairs: publishLogisticsRepair, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, mapping_results: mappingResults });
     }
     if (action === 'oauth_exchange') {
       const app = await getApp(accountKey);
@@ -4841,6 +5146,7 @@ Deno.serve(async (req) => {
       }
       const global_item_id = addRes.response?.global_item_id;
       if (!global_item_id) return jsonResp({ ok: false, region: r, stage: 'add_global_item', error: 'no global_item_id', raw: addRes }, 502);
+      body.global_item_id = global_item_id;
       stage_logs.push(`add_global_item ok: global_item_id=${global_item_id}`);
 
       // §6-1 failure state machine: variation setup with explicit stage tracking.
@@ -5144,7 +5450,14 @@ Deno.serve(async (req) => {
       });
       const reconciledResults = await reconcilePublishResultsWithPublishedList(global_item_id, targetInputs, results, accountKey, r, stage_logs);
       const responseResults = reconciledResults.map((row) => ({ account_key: accountKey, ...row }));
-      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id, stage_logs, regional_global_price_adjustments: regionalGlobalPriceAdjustments, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, publishable_shops, publishable_status });
+      let mappingResults: any = null;
+      try {
+        const mappingRows = buildShopeePublishMappingRows(global_item_id, body, targetInputs, responseResults, accountKey, r);
+        mappingResults = await persistShopeeRegistrationMappings(accountKey, mappingRows);
+      } catch (e: any) {
+        mappingResults = { ok: false, error: String(e?.message || e) };
+      }
+      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id, stage_logs, regional_global_price_adjustments: regionalGlobalPriceAdjustments, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, mapping_results: mappingResults, publishable_shops, publishable_status });
       }); // end withPublishRequestId for register_cbsc
     }
     if (action === 'item_info') {
@@ -6216,7 +6529,48 @@ Deno.serve(async (req) => {
 
       const result = await shopApiCall(r, '/api/v2/product/add_item', { method: 'POST', body: payload, account_key: reqAccountKey });
       if (result.error) return jsonResp({ ok: false, account_key: reqAccountKey, region: r, error: result.error, message: result.message, sent: payload, raw: result }, 502);
-      return jsonResp({ ok: true, account_key: reqAccountKey, region: r, item_id: result.response?.item_id, sent: payload, raw: result });
+      const itemId = Number(result.response?.item_id);
+      let shopId: number | null = null;
+      try { shopId = await getRegionShopId(r, reqAccountKey); } catch (_) { shopId = null; }
+      let mappingRows: ShopeeRegistrationMappingInput[] = [];
+      try {
+        const modelRows = await fetchShopeeModelMappingRowsForPublishedItem(r, itemId, body, body, reqAccountKey);
+        mappingRows = modelRows.length
+          ? modelRows.map((row: any) => ({
+            ...row,
+            account_key: reqAccountKey,
+            region: r,
+            shop_id: shopId,
+            shop_item_id: Number(result.response?.item_id),
+            status: 'mapped',
+            raw_payload: { source: 'product.add_item', raw: result, model_mapping: row.raw_payload || null },
+          }))
+          : [{
+            product_id: body.product_id || body.productId || body.source_product_id || body.master_product_id || null,
+            sku,
+            item_sku: sku,
+            account_key: reqAccountKey,
+            region: r,
+            shop_id: shopId,
+            shop_item_id: Number(result.response?.item_id),
+            status: 'mapped',
+            raw_payload: { source: 'product.add_item', raw: result },
+          }];
+      } catch (_) {
+        mappingRows = [{
+          product_id: body.product_id || body.productId || body.source_product_id || body.master_product_id || null,
+          sku,
+          item_sku: sku,
+          account_key: reqAccountKey,
+          region: r,
+          shop_id: shopId,
+          shop_item_id: Number(result.response?.item_id),
+          status: 'mapped',
+          raw_payload: { source: 'product.add_item', raw: result },
+        }];
+      }
+      const mappingResults = await persistShopeeRegistrationMappings(reqAccountKey, mappingRows);
+      return jsonResp({ ok: true, account_key: reqAccountKey, region: r, item_id: result.response?.item_id, mapping_results: mappingResults, sent: payload, raw: result });
     }
 
     // POST /unlist_item: publish/unpublish an existing shop-level item.

@@ -25674,6 +25674,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!Number.isFinite(ts)) return false;
       return (now - ts) < PREFLIGHT_TRUST_TTL_MS;
     }
+    function isMappedListing(listing) {
+      return !!listing && listing.status === 'mapped';
+    }
 
     const allKeys = new Map();
     const mixedKeys = new Set();
@@ -25683,7 +25686,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const key = p.region + ':' + itemId;
       if (!allKeys.has(key)) allKeys.set(key, { region: p.region, itemId: itemId });
       const trustedModelId = Number(p.modelId || p.listing?.shop_model_id);
-      if (!isTrustedListing(p.listing)) {
+      const mappedModelReady = isMappedListing(p.listing) && p.needsModel && Number.isFinite(trustedModelId) && trustedModelId > 0;
+      if (!mappedModelReady && !isTrustedListing(p.listing)) {
         mixedKeys.add(key);
       } else if (p.needsModel && (!Number.isFinite(trustedModelId) || trustedModelId <= 0)) {
         mixedKeys.add(key);
@@ -25698,7 +25702,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const key = p.region + ':' + itemId;
       if (mixedKeys.has(key)) continue;
       const modelId = p.listing && p.listing.shop_model_id ? Number(p.listing.shop_model_id) : null;
-      if (isTrustedListing(p.listing) && p.needsModel && p.modelId) {
+      if (isMappedListing(p.listing) && p.needsModel && p.modelId) {
         if (!trustedModelIds.has(key)) trustedModelIds.set(key, new Set());
         trustedModelIds.get(key).add(Number(p.modelId));
       } else if (modelId && !p.needsModel) {

@@ -90,7 +90,7 @@ assert.match(preflight, /p\.needsModel && !p\.modelId/, 'Shopee preflight must b
 assert.match(preflight, /if \(!info\.hasModel\)[\s\S]*p\.needsModel = false[\s\S]*catBuildShopeePriceEntry/, 'Shopee preflight must downgrade false variant mappings when the remote item has no models');
 assert.match(preflight, /skipped\.push/, 'Shopee preflight must skip stale remote item ids without failing valid region price updates');
 assert.doesNotMatch(preflight, /!isTrustedListing\(p\.listing\) \|\| p\.needsModel/, 'Fresh mapped Shopee variant rows must not force remote model preflight');
-assert.match(preflight, /isTrustedListing\(p\.listing\)[\s\S]*p\.needsModel[\s\S]*p\.modelId[\s\S]*trustedModelIds/, 'Fresh mapped Shopee variant rows with shop_model_id must use local mapping as the fast path');
+assert.match(preflight, /listing\.status === 'mapped'[\s\S]*p\.needsModel[\s\S]*p\.modelId[\s\S]*trustedModelIds/, 'Mapped Shopee variant rows with shop_model_id must use local mapping as the fast path');
 assert.match(preflight, /catShopeeModelMatchesPayloadSku\(matchedModel, p\)/, 'Shopee preflight must verify model_id belongs to the selected SKU before update_price');
 assert.match(ensureListings, /const globalModelId = catProductGlobalModelId\(product, byRegion\)/, 'Shopee live sync must carry global_model_id into listing hydration');
 assert.match(ensureListings, /account_key:\s*SHOPEE_DEFAULT_ACCOUNT_KEY,[\s\S]*global_item_id:\s*String\(globalItemId\)/, 'Shopee live sync must scope published_list hydration to the active account and global item');
@@ -569,7 +569,7 @@ async function runTrustedVariantPreflightHarness() {
         status: 'mapped',
         shop_item_id: 431,
         shop_model_id: 9001,
-        last_synced_at: new Date().toISOString(),
+        last_synced_at: '2020-01-01T00:00:00.000Z',
       },
       payload: {
         region: 'SG',
@@ -966,7 +966,7 @@ assert.deepEqual(
     blocked: [],
     skipped: [],
   },
-  'Fresh mapped Shopee variant rows with shop_model_id must skip remote model preflight',
+  'Mapped Shopee variant rows with shop_model_id must skip remote model preflight even when older than the freshness TTL',
 );
 
 assert.deepEqual(

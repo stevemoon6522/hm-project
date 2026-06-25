@@ -338,6 +338,48 @@ test('group master thumbnails do not fall back to option images', () => {
   );
 });
 
+test('filtered group thumbnails still use the full group image set', () => {
+  const factory = new Function(
+    `const state = { products: [] };
+     function text(value) { return String(value ?? ''); }
+     function plArtistInitial() { return 'ATEEZ'; }
+     function plGroupRowsById(productGroupId) {
+       return state.products.filter((row) => String(row?.product_group_id || '') === String(productGroupId || ''));
+     }
+     ${extractFunctionBlock(html, 'plImageUrlFromShopeeId')}
+     ${extractFunctionBlock(html, 'plImageCandidateValues')}
+     ${extractFunctionBlock(html, 'plPickImageUrl')}
+     ${extractFunctionBlock(html, 'plMainImage')}
+     ${extractFunctionBlock(html, 'plGroupSharedMainImageValues')}
+     ${extractFunctionBlock(html, 'plGroupMainImage')}
+     ${extractFunctionBlock(html, 'plAllRowsForGroup')}
+     ${extractFunctionBlock(html, 'plProductThumb')}
+     return { state, plProductThumb };`,
+  );
+  const { state, plProductThumb } = factory();
+  state.products = [
+    { product_group_id: 'ateez-gold', sku: 'O1-ATE-4GOLD-PHO-A', main_image: 'https://cdn.example/option-a.jpg', shopee_option_image_url: 'https://cdn.example/option-a.jpg' },
+    { product_group_id: 'ateez-gold', sku: 'O1-ATE-4GOLD-PHO-D', main_image: 'https://cdn.example/option-diary.jpg', shopee_option_image_url: 'https://cdn.example/option-diary.jpg' },
+    { product_group_id: 'ateez-gold', sku: 'O1-ATE-4GOLD-PHO-Z', main_image: 'https://cdn.example/option-z.jpg', shopee_option_image_url: 'https://cdn.example/option-z.jpg' },
+  ];
+
+  assert.doesNotMatch(
+    plProductThumb(state.products[0], [state.products[0]]),
+    /option-a\.jpg/,
+    'SKU-filtered groups must not treat a single visible option image as the master representative',
+  );
+
+  state.products = [
+    { product_group_id: 'ateez-gold', sku: 'A', main_image: 'https://cdn.example/master-cover.jpg', shopee_option_image_url: 'https://cdn.example/option-a.jpg' },
+    { product_group_id: 'ateez-gold', sku: 'B', main_image: 'https://cdn.example/master-cover.jpg', shopee_option_image_url: 'https://cdn.example/option-b.jpg' },
+  ];
+  assert.match(
+    plProductThumb(state.products[0], [state.products[0]]),
+    /master-cover\.jpg/,
+    'SKU-filtered groups should still render a real shared representative image',
+  );
+});
+
 test('master product list backfills missing representative images from StarOneMall', () => {
   assert.match(html, /const PL_REPRESENTATIVE_IMAGE_BACKFILL_LIMIT = 8/, 'backfill must stay bounded on product-list load');
   assert.match(html, /function plBackfillMissingRepresentativeImages\(products\)/, 'product list should expose a representative image backfill helper');

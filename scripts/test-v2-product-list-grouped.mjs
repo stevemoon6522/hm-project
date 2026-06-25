@@ -131,6 +131,8 @@ assert(
 );
 assert(
   html.includes('function plGroupSharedMainImageValues(rows)')
+    && productList.includes('function plAllRowsForGroup(product, groupRows)')
+    && productList.includes('const fullRows = plGroupRowsById(groupId)')
     && productList.includes('function plGroupMainImage(rows)')
     && !plGroupMainImageSource.includes('._main_image')
     && !plGroupMainImageSource.includes('.shopee_option_image_url')

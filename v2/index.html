@@ -7771,8 +7771,17 @@ LEGACY END -->
     return (clean.split(/\s+/)[0] || 'SPC').slice(0, 6).toUpperCase();
   }
 
+  function plAllRowsForGroup(product, groupRows) {
+    const visibleRows = Array.isArray(groupRows) ? groupRows : [];
+    const groupId = String(product?.product_group_id || visibleRows[0]?.product_group_id || '').trim();
+    if (!groupId) return visibleRows;
+    const fullRows = plGroupRowsById(groupId);
+    return fullRows.length ? fullRows : visibleRows;
+  }
+
   function plProductThumb(product, groupRows = null) {
-    const src = Array.isArray(groupRows) ? plGroupMainImage(groupRows) : plMainImage(product);
+    const fullGroupRows = Array.isArray(groupRows) ? plAllRowsForGroup(product, groupRows) : null;
+    const src = fullGroupRows ? plGroupMainImage(fullGroupRows) : plMainImage(product);
     if (src) {
       return `<span class="pl-master-thumb"><img src="${text(src)}" alt="" loading="lazy" onerror="this.remove();"></span>`;
     }

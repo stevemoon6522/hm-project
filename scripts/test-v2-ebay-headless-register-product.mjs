@@ -97,6 +97,11 @@ assert.deepEqual(
   { artist: 'CORTIS', album: 'GREENGREEN', version: 'WEVERSE', member: '' },
   'headless builder must ignore stock-state tags for artist/album/version derivation',
 );
+assert.deepEqual(
+  deriveEbayKpopFromTitle('[READY STOCK] (ILLIT) - NOT CUTE ANYMORE [NOT CUTE Ver. / NOT MY NAME Ver.]'),
+  { artist: 'ILLIT', album: 'NOT CUTE ANYMORE', version: '', member: '' },
+  'headless builder must mirror shared master-title parsing for parenthesized dash-prefix artists and bracketed option versions',
+);
 
 const ratesMatch = edge.match(/const EBAY_US_DIRECT_SHIPPING_RATES_KRW: Record<number, number> = \{([\s\S]*?)\};/);
 assert(ratesMatch, 'US direct shipping rates must be declared');

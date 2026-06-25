@@ -668,8 +668,26 @@ function firstMeaningfulBracketValue(title: string): string {
   return "";
 }
 
+function looksLikeVersionBracket(value: unknown): boolean {
+  const normalized = normalizeDerivedTitleToken(value);
+  return /\bVER(?:SION)?\.?\b/i.test(normalized) || /\s\/\s/.test(normalized);
+}
+
+function firstMeaningfulAlbumBracketValue(title: string): string {
+  const re = /\[([^\]]+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(title))) {
+    const value = normalizeDerivedTitleToken(m[1]);
+    if (!value || isListingStatusTag(value) || looksLikeVersionBracket(value)) continue;
+    return value;
+  }
+  return "";
+}
+
 function fallbackAlbumFromDashRemainder(value: string): string {
-  return normalizeDerivedTitleToken(value)
+  return normalizeDerivedTitleToken(
+    String(value || "").replace(/\[[^\]]*(?:\bVER(?:SION)?\.?\b|\/)[^\]]*\]/gi, " ")
+  )
     .replace(/\([^)]*\)/g, " ")
     .replace(/\b(?:\d+(?:st|nd|rd|th)?\s+)?(?:EP|ALBUM|MINI|FULL|SINGLE)\b.*$/i, " ")
     .replace(/\b(?:WEVERSE|PLATFORM|PHOTOBOOK|DIGIPACK|JEWEL|STANDARD)\s+VER\.?.*$/i, " ")
@@ -697,14 +715,16 @@ function deriveEbayKpopFromTitle(title: unknown): { artist: string; album: strin
   const dashM = eng.match(/^(.+?)\s+-\s+(.+)$/);
   let remainder = eng;
   if (dashM) {
-    const artist = normalizeDerivedTitleToken(dashM[1].replace(/\([^)]*\)\s*$/, ""));
+    const parenthesizedArtist = dashM[1].match(/^\s*\(([^)]+)\)\s*$/);
+    const artistSource = parenthesizedArtist ? parenthesizedArtist[1] : dashM[1].replace(/\([^)]*\)\s*$/, "");
+    const artist = normalizeDerivedTitleToken(artistSource);
     if (artist) out.artist = artist;
     remainder = stripListingStatusPrefix(dashM[2]);
   } else {
     out.artist = leadingUppercaseTokenBlock(eng);
   }
 
-  const album = firstMeaningfulBracketValue(remainder) || firstMeaningfulBracketValue(eng);
+  const album = firstMeaningfulAlbumBracketValue(remainder) || firstMeaningfulAlbumBracketValue(eng);
   if (album) out.album = album;
   else if (dashM) out.album = fallbackAlbumFromDashRemainder(remainder);
 

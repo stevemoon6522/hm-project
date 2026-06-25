@@ -52,6 +52,11 @@ assert.deepEqual(
   'JENNIE Ruby Digipack must derive eBay Artist/Release Title/Version from the actual listing title',
 );
 assert.deepEqual(
+  deriveFromTitle('[READY STOCK] (ILLIT) - NOT CUTE ANYMORE [NOT CUTE Ver. / NOT MY NAME Ver.]'),
+  { artist: 'ILLIT', album: 'NOT CUTE ANYMORE', version: '', member: '' },
+  'parenthesized artist before a dash must become the derived master artist, and bracketed version options must not become the album title',
+);
+assert.deepEqual(
   deriveFromTitle('CORTIS (코르티스) The 2nd EP [GREENGREEN] (CORTIS Ball ver.)'),
   { artist: 'CORTIS', album: 'GREENGREEN', version: 'CORTIS Ball', member: '' },
   'existing CORTIS bracket-title derivation must keep working',

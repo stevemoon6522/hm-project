@@ -53,6 +53,7 @@ const bulkDeleteUi = sliceBetween(
   'function updateBulkDeleteUi() {',
   'async function bulkDeleteSelectedProducts() {',
 );
+const plGroupMainImageSource = extractFunction(html, 'plGroupMainImage');
 
 assert(productView.includes('<table class="pl-table">'), 'product list table must use wrapping table class');
 assert(productView.includes('Official Barcode'), 'master table must expose official barcode after the product name');
@@ -124,16 +125,17 @@ assert(
   'master groups must sort by newest registration time, not by first visible source index',
 );
 assert(
-  productList.includes('const shopeeImageId = String(product?.shopee_image_id || \'\').trim()')
-    && productList.includes('https://cf.shopee.sg/file/${shopeeImageId}'),
+  html.includes('function plImageUrlFromShopeeId(imageId)')
+    && html.includes('https://cf.shopee.sg/file/${id}'),
   'product thumbnails must fall back to saved Shopee image_id when no master image URL exists',
 );
 assert(
-  productList.includes('function plGroupMainImage(rows)')
-    && productList.includes("list.map((row) => String(row?.main_image || '').trim()).find(Boolean)")
-    && productList.includes("list.map((row) => String(row?.shopee_option_image_url || '').trim()).find(Boolean)")
+  html.includes('function plGroupSharedMainImageValues(rows)')
+    && productList.includes('function plGroupMainImage(rows)')
+    && !plGroupMainImageSource.includes('._main_image')
+    && !plGroupMainImageSource.includes('.shopee_option_image_url')
     && productList.includes('${plProductThumb(first, rows)}'),
-  'group master thumbnails must derive a representative image from any option row, not only the first row',
+  'group master thumbnails must use shared representative images only, not row option images',
 );
 assert(
   productList.includes('rows.map((row) => renderProductOptionRow(row, group.key, true))'),

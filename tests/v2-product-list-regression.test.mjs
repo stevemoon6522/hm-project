@@ -278,6 +278,7 @@ test('master product list keeps detail images out of representative thumbnails',
      ${extractFunctionBlock(html, 'plImageCandidateValues')}
      ${extractFunctionBlock(html, 'plPickImageUrl')}
      ${extractFunctionBlock(html, 'plMainImage')}
+     ${extractFunctionBlock(html, 'plGroupSharedMainImageValues')}
      ${extractFunctionBlock(html, 'plGroupMainImage')}
      return { plMainImage, plGroupMainImage };`,
   );
@@ -305,6 +306,38 @@ test('master product list keeps detail images out of representative thumbnails',
   );
 });
 
+test('group master thumbnails do not fall back to option images', () => {
+  const factory = new Function(
+    `${extractFunctionBlock(html, 'plImageUrlFromShopeeId')}
+     ${extractFunctionBlock(html, 'plImageCandidateValues')}
+     ${extractFunctionBlock(html, 'plPickImageUrl')}
+     ${extractFunctionBlock(html, 'plMainImage')}
+     ${extractFunctionBlock(html, 'plGroupSharedMainImageValues')}
+     ${extractFunctionBlock(html, 'plGroupMainImage')}
+     return { plMainImage, plGroupMainImage };`,
+  );
+  const { plGroupMainImage } = factory();
+
+  assert.equal(
+    plGroupMainImage([
+      { sku: 'O1-ATE-4GOLD-PHO-A', main_image: 'https://cdn.example/option-a.jpg', shopee_option_image_url: 'https://cdn.example/option-a.jpg' },
+      { sku: 'O1-ATE-4GOLD-PHO-D', main_image: 'https://cdn.example/option-diary.jpg', shopee_option_image_url: 'https://cdn.example/option-diary.jpg' },
+      { sku: 'O1-ATE-4GOLD-PHO-Z', main_image: 'https://cdn.example/option-z.jpg', shopee_option_image_url: 'https://cdn.example/option-z.jpg' },
+    ]),
+    '',
+    'distinct per-option images must not become the group representative thumbnail',
+  );
+
+  assert.equal(
+    plGroupMainImage([
+      { sku: 'A', main_image: 'https://cdn.example/master-cover.jpg', shopee_option_image_url: 'https://cdn.example/option-a.jpg' },
+      { sku: 'B', main_image: 'https://cdn.example/master-cover.jpg', shopee_option_image_url: 'https://cdn.example/option-b.jpg' },
+    ]),
+    'https://cdn.example/master-cover.jpg',
+    'a shared main_image across grouped rows is a valid representative image',
+  );
+});
+
 test('master product list backfills missing representative images from StarOneMall', () => {
   assert.match(html, /const PL_REPRESENTATIVE_IMAGE_BACKFILL_LIMIT = 8/, 'backfill must stay bounded on product-list load');
   assert.match(html, /function plBackfillMissingRepresentativeImages\(products\)/, 'product list should expose a representative image backfill helper');
@@ -323,8 +356,15 @@ test('selected master register avoids SKU collision checks against unchecked car
 test('master registration persists representative images on every created product row', () => {
   assert.match(html, /function mrProductMainImageFromRow\(row\)/, 'register flow should centralize the product main image source');
   assert.match(html, /function mrProductExtraImagesFromRow\(row\)/, 'register flow should centralize detail image persistence');
-  assert.match(masterRegisterPromote, /main_image:\s*productMainImage \|\| null/, 'created/reused rows must persist products.main_image after promotion');
+  assert.match(masterRegisterPromote, /main_image:\s*representativeImage \|\| null/, 'created/reused rows must persist products.main_image after promotion');
   assert.match(masterRegisterPromote, /extra_images:\s*mrProductExtraImagesFromRow\(row\)/, 'created/reused rows must persist detail images after promotion');
+});
+
+test('master registration persists group representative separately from option images', () => {
+  assert.match(html, /function mrGroupRepresentativeImage\(group\)/, 'register flow should centralize group representative image selection');
+  assert.match(html, /const representativeImage = mrGroupRepresentativeImage\(group\)/, 'promotion should compute one representative image per group');
+  assert.match(html, /main_image:\s*representativeImage \|\| null/, 'created rows must persist the shared representative image into products.main_image');
+  assert.match(html, /shopee_option_image_url:\s*mrRowOptionImageUrl\(row,\s*representativeImage\)/, 'created rows must persist row option images separately');
 });
 
 test('created master edit action still opens when product list refresh fails', () => {

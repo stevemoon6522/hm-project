@@ -7676,15 +7676,19 @@ LEGACY END -->
     );
   }
 
+  function plGroupSharedMainImageValues(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    const values = list
+      .map((row) => plPickImageUrl(row?.main_image))
+      .filter(Boolean);
+    const unique = Array.from(new Set(values));
+    return unique.length === 1 ? unique : [];
+  }
+
   function plGroupMainImage(rows) {
     const list = Array.isArray(rows) ? rows : [];
     return plPickImageUrl(
-      list.map((row) => row?.main_image),
-      list.map((row) => row?._main_image),
-      list.map((row) => row?.shopee_option_image_url),
-      list.map((row) => row?._custom_option_image_url),
-      list.map((row) => row?._wms_image_url),
-      list.map((row) => row?.image_url),
+      plGroupSharedMainImageValues(list),
       list.map((row) => row?.observed?.main_image_urls),
       list.map((row) => row?.observed_values?.main_image_urls),
       list.map((row) => plImageUrlFromShopeeId(row?.shopee_image_id)),
@@ -7768,7 +7772,7 @@ LEGACY END -->
   }
 
   function plProductThumb(product, groupRows = null) {
-    const src = Array.isArray(groupRows) ? (plGroupMainImage(groupRows) || plMainImage(product)) : plMainImage(product);
+    const src = Array.isArray(groupRows) ? plGroupMainImage(groupRows) : plMainImage(product);
     if (src) {
       return `<span class="pl-master-thumb"><img src="${text(src)}" alt="" loading="lazy" onerror="this.remove();"></span>`;
     }
@@ -30806,6 +30810,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           const sourceInputRow = MR_ROWS.find(x => x.tempId === r.tempId);
           if (sourceInputRow) sourceInputRow.source_record_id = hit.source_record_id;
           r.observed = Object.assign({}, hit.observed_values || {}, { product_kind: PRODUCT_KIND_ALBUM });
+          r._representative_image_url = mrObservedArray(r.observed.main_image_urls)[0] || '';
+          if (!r._main_image) r._main_image = r._representative_image_url || '';
           r.deduped = !!hit.deduped;
           r.product_kind = PRODUCT_KIND_ALBUM;
           r._product_kind = PRODUCT_KIND_ALBUM;
@@ -31185,12 +31191,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           row._staronemall_url = staronemallUrl;
         }
 
-        const currentMain = String(row._main_image || '').trim();
-        const wmsMain = String(row._wms_image_url || row.image_url || '').trim();
-        const hasManualMain = !!String(row._main_image_file_name || '').trim();
-        if (mainImages[0] && (!currentMain || (!hasManualMain && currentMain === wmsMain))) {
-          row._main_image = mainImages[0];
+        if (mainImages[0]) {
+          row._representative_image_url = mainImages[0];
           row._staronemall_autofilled_main_image = true;
+        }
+        const currentOption = String(row._main_image || '').trim();
+        const wmsOption = String(row._wms_image_url || row.image_url || '').trim();
+        const hasManualOption = !!String(row._main_image_file_name || '').trim();
+        if (!currentOption && !hasManualOption) {
+          row._main_image = wmsOption || mainImages[0] || '';
         }
 
         if (detailImages.length) {
@@ -31677,7 +31686,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         cost_krw: costKrw,
         weight_g: weightG,
         _weight_g: weightG,
-        _main_image: mainImages[0] || row.image_url || '',
+        _representative_image_url: mainImages[0] || '',
+        _main_image: row.image_url || mainImages[0] || '',
         _extra_images: detailImages.slice(),
         _detail_image_urls: detailImages,
         _product_name: title,
@@ -31991,15 +32001,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const result = Array.isArray(data) ? data[0] : data;
         row.product_id = result?.product_id || null;
         if (!row.product_id) throw new Error('생성된 master product id를 받지 못했습니다.');
-        const productMainImage = mrProductMainImageFromRow(row) || vOpt.main_image || '';
+        const representativeImage = mrGroupRepresentativeImage(group) || mrProductMainImageFromRow(row) || vOpt.main_image || '';
         const { error: updateError } = await db.from('products')
           .update(Object.assign({
-            main_image: productMainImage || null,
+            main_image: representativeImage || null,
             extra_images: mrProductExtraImagesFromRow(row),
             sourcing_price: vOpt.sourcing_price || 0,
             cost_krw: vOpt.cost_krw || 0,
             inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
-            shopee_option_image_url: row._custom_option_image_url || row._main_image || null,
+            shopee_option_image_url: mrRowOptionImageUrl(row, representativeImage) || null,
             cost_updated_at: new Date().toISOString(),
           }, mrMasterPatchForGroup(group)))
           .eq('id', row.product_id);
@@ -32023,16 +32033,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (!row.product_id) throw new Error(`RPC 응답에서 SKU를 찾지 못했습니다: ${row._sku}`);
       }
       await mrPatchCreatedProducts(activeRows.map((row) => row.product_id).filter(Boolean), group);
+      const representativeImage = mrGroupRepresentativeImage(group);
       for (const row of activeRows) {
-        const productMainImage = mrProductMainImageFromRow(row);
         const { error: updateError } = await db.from('products')
           .update({
-            main_image: productMainImage || null,
+            main_image: representativeImage || null,
             extra_images: mrProductExtraImagesFromRow(row),
             sourcing_price: Number(row._sourcing_price || row.sourcing_price || 0),
             cost_krw: Number(row._cost_krw || row.cost_krw || 0),
             inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
-            shopee_option_image_url: row._custom_option_image_url || row._main_image || null,
+            shopee_option_image_url: mrRowOptionImageUrl(row, representativeImage) || null,
             cost_updated_at: new Date().toISOString(),
           })
           .eq('id', row.product_id);
@@ -32801,9 +32811,42 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return patch;
     }
 
+    function mrSharedGroupMainImage(rows) {
+      const values = (Array.isArray(rows) ? rows : [])
+        .map(row => String(row?.main_image || '').trim())
+        .filter(Boolean);
+      const unique = Array.from(new Set(values));
+      return unique.length === 1 ? unique[0] : '';
+    }
+
+    function mrGroupRepresentativeImage(group) {
+      const rows = group?.rows || [];
+      const firstRow = rows[0] || {};
+      const observedMain = Array.isArray(firstRow.observed?.main_image_urls) ? firstRow.observed.main_image_urls[0] : '';
+      return String(
+        firstRow._representative_image_url
+        || firstRow._master_representative_image_url
+        || observedMain
+        || mrSharedGroupMainImage(rows)
+        || firstRow.discovery_thumbnail_url
+        || ''
+      ).trim();
+    }
+
+    function mrRowOptionImageUrl(row, representativeImage = '') {
+      const representative = String(representativeImage || '').trim();
+      const option = String(
+        row?._custom_option_image_url
+        || row?.shopee_option_image_url
+        || row?._main_image
+        || ''
+      ).trim();
+      return option || representative;
+    }
+
     function mrProductMainImageFromRow(row) {
       const observedMain = Array.isArray(row?.observed?.main_image_urls) ? row.observed.main_image_urls[0] : '';
-      return String(row?._main_image || row?.main_image || observedMain || row?.shopee_option_image_url || '').trim();
+      return String(row?._representative_image_url || row?.main_image || observedMain || '').trim();
     }
 
     function mrProductExtraImagesFromRow(row) {
@@ -34102,6 +34145,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const activeRows = group.rows.filter(r => r.status === 'preview' || r.status === 'failed');
         if (activeRows.length === 0) continue;
         const groupLifecycle = mrGroupLifecycle(group);
+        const representativeImage = mrGroupRepresentativeImage(group);
 
         // Build variation_options array
         const variationOptions = activeRows.map(r => ({
@@ -34143,17 +34187,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             const result = Array.isArray(data) ? data[0] : data;
             row.product_id = result && result.product_id;
             if (row.product_id) {
-              const productMainImage = mrProductMainImageFromRow(row) || vOpt.main_image || '';
+              const rowRepresentativeImage = representativeImage || mrProductMainImageFromRow(row) || vOpt.main_image || '';
               await db.from('products')
                 .update(Object.assign({
-                  main_image: productMainImage || null,
+                  main_image: rowRepresentativeImage || null,
                   extra_images: mrProductExtraImagesFromRow(row),
                   sourcing_price: vOpt.sourcing_price || 0,
                   cost_krw: vOpt.cost_krw || 0,
                   inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
-                  shopee_option_image_url: String(row._main_image || row.shopee_option_image_url || '').trim() || null,
+                  shopee_option_image_url: mrRowOptionImageUrl(row, rowRepresentativeImage) || null,
                 }, Object.prototype.hasOwnProperty.call(row, '_custom_option_image_url') ? {
-                  shopee_option_image_url: row._custom_option_image_url || row._main_image || null,
+                  shopee_option_image_url: mrRowOptionImageUrl(row, rowRepresentativeImage) || null,
                 } : {}, mrMasterPatchForGroup(group)))
                 .eq('id', row.product_id);
             }
@@ -34192,17 +34236,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             await mrPatchCreatedProducts(activeRows.map(r => r.product_id).filter(Boolean), group);
             for (const row of activeRows) {
               if (!row.product_id) continue;
-              const productMainImage = mrProductMainImageFromRow(row);
               await db.from('products')
                 .update({
-                  main_image: productMainImage || null,
+                  main_image: representativeImage || null,
                   extra_images: mrProductExtraImagesFromRow(row),
                   sourcing_price: Number(row._sourcing_price || row.sourcing_price || 0),
                   cost_krw: Number(row._cost_krw || row.cost_krw || 0),
                   inventory: Number(row._inventory_quantity ?? row.inventory ?? 0) || 0,
-                  shopee_option_image_url: String(row._main_image || row.shopee_option_image_url || '').trim() || null,
+                  shopee_option_image_url: mrRowOptionImageUrl(row, representativeImage) || null,
                   ...(Object.prototype.hasOwnProperty.call(row, '_custom_option_image_url')
-                    ? { shopee_option_image_url: row._custom_option_image_url || row._main_image || null }
+                    ? { shopee_option_image_url: mrRowOptionImageUrl(row, representativeImage) || null }
                     : {}),
                   cost_updated_at: new Date().toISOString(),
                 })
@@ -35253,15 +35296,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     function mrMasterRepresentativeImage(group) {
       const rows = group?.rows || [];
       const firstRow = rows[0] || {};
-      const observedMain = Array.isArray(firstRow.observed?.main_image_urls) ? firstRow.observed.main_image_urls : [];
       const observedDetail = Array.isArray(firstRow.observed?.detail_image_urls) ? firstRow.observed.detail_image_urls : [];
+      const representativeImage = mrGroupRepresentativeImage(group);
       const candidates = [
         firstRow._joomMainImageOverride,
-        firstRow.main_image,
-        ...rows.map(r => r.main_image),
-        ...observedMain,
-        firstRow._main_image,
-        ...rows.map(r => r._main_image),
+        representativeImage,
         ...(firstRow._extra_images || []),
         ...(firstRow.extra_images || []),
         ...observedDetail,

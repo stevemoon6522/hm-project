@@ -89,7 +89,7 @@ assert.match(masterRegister, /db\.rpc\('promote_source_group_to_products'/, 'cus
 assert.match(masterRegister, /_custom_option_image_url: opt\.option_image_url \|\| ''/, 'custom option images must be tracked separately');
 assert.match(masterRegister, /row\._sku = opt\.sku \|\| mrCustomSkuForOption/, 'custom option rows must prefer manual SKU over generated SKU');
 assert.match(masterRegister, /_inventory_quantity: opt\.inventory/, 'custom option inventory must be stored on the preview row before direct promotion');
-assert.match(masterRegister, /shopee_option_image_url: row\._custom_option_image_url \|\| row\._main_image \|\| null/, 'custom option image URL must fall back to the representative image');
+assert.match(masterRegister, /shopee_option_image_url: mrRowOptionImageUrl\(row, representativeImage\) \|\| null/, 'custom option image URL must fall back through the shared option-image helper');
 assert.match(masterRegister, /function mrIsCustomGroup\(group\)/, 'custom groups must be distinguishable');
 assert.match(masterRegister, /if \(mrIsCustomGroup\(group\)\) return '';/, 'custom groups must not trigger StarOneMall image recrawl');
 

@@ -367,6 +367,143 @@ async function createOrUpdateJoomProduct(payload: any): Promise<{ data: any; ope
   return { data, operation: "create", existingProductId: existing?.id || null };
 }
 
+async function hydrateJoomProductForMapping(product: any, productSku: string): Promise<any> {
+  const variants = Array.isArray(product?.variants) ? product.variants : [];
+  const hasVariantIdentity = variants.some((variant: any) => variant?.id && variant?.sku && variant?.currency);
+  if (product?.id && hasVariantIdentity) return product;
+  const productId = String(product?.id || "").trim();
+  if (productId) return await joomFetch(`/products?id=${encodeURIComponent(productId)}`);
+  const sku = String(productSku || product?.sku || "").trim();
+  if (sku) return await joomFetch(`/products?sku=${encodeURIComponent(sku)}`);
+  return product;
+}
+
+function joomPublishResponseVariants(product: any): any[] {
+  const productId = String(product?.id || "").trim();
+  return (Array.isArray(product?.variants) ? product.variants : []).map((v: any) => ({
+    id: v.id ? String(v.id) : null,
+    productId: v.productId ? String(v.productId) : (productId || null),
+    sku: v.sku,
+    price: v.price,
+    currency: v.currency,
+    inventory: v.inventory,
+    enabled: v.enabled,
+    size: v.size,
+    shippingWeight: v.shippingWeight,
+  }));
+}
+
+async function persistJoomRegistrationMappings(body: any, product: any, listingStatus: string): Promise<any[]> {
+  const variantsConfig = Array.isArray(body?.variantsConfig) ? body.variantsConfig : [];
+  const variants = joomPublishResponseVariants(product);
+  const variantBySku = new Map<string, any>();
+  for (const variant of variants) {
+    const sku = String(variant?.sku || "").trim();
+    if (sku) variantBySku.set(sku, variant);
+  }
+
+  const now = new Date().toISOString();
+  const joomProductId = String(product?.id || "").trim();
+  const productStatus = String(product?.state || listingStatus || "").trim();
+  const mappingStatus = listingStatus === "listed" ? "mapped" : listingStatus || "pending";
+  const results: any[] = [];
+
+  for (const cfg of variantsConfig) {
+    const sku = String(cfg?.sku || "").trim();
+    if (!sku) continue;
+    const variant = variantBySku.get(sku);
+    let productId = String(
+      cfg?.product_id || cfg?.productId || cfg?.source_product_id || (variantsConfig.length === 1 ? body?.source_product_id : "") || "",
+    ).trim();
+    if (!productId) {
+      const { data: localProduct } = await supabase
+        .from("products")
+        .select("id")
+        .eq("sku", sku)
+        .maybeSingle();
+      productId = String(localProduct?.id || "").trim();
+    }
+    const joomVariantId = String(variant?.id || "").trim();
+    const currency = String(variant?.currency || cfg?.currency || "USD").trim();
+    const price = variant?.price ?? cfg?.price ?? null;
+
+    if (!variant || !joomVariantId) {
+      const failedUpdate = supabase.from("products").update({
+        joom_product_id: joomProductId || null,
+        joom_variant_id: null,
+        joom_currency: currency || null,
+        joom_status: productStatus || null,
+        joom_mapping_status: "mapping_failed",
+        joom_mapping_error: "joom_variant_id_missing_after_publish",
+        joom_last_synced_price: price,
+        joom_last_synced_at: now,
+        updated_at: now,
+      });
+      const { error: failedErr } = productId
+        ? await failedUpdate.eq("id", productId)
+        : await failedUpdate.eq("sku", sku);
+      results.push({ sku, product_id: productId || null, ok: false, mapping_status: "mapping_failed", error: failedErr?.message || "joom_variant_id_missing_after_publish" });
+      continue;
+    }
+
+    const productUpdatePayload = {
+      joom_product_id: joomProductId,
+      joom_variant_id: joomVariantId,
+      joom_currency: currency || null,
+      joom_status: productStatus || null,
+      joom_published_at: now,
+      joom_last_synced_price: price,
+      joom_last_synced_at: now,
+      joom_mapping_status: mappingStatus,
+      joom_mapping_error: null,
+      updated_at: now,
+    };
+    const { error: productErr } = productId
+      ? await supabase.from("products").update(productUpdatePayload).eq("id", productId)
+      : await supabase.from("products").update(productUpdatePayload).eq("sku", sku);
+
+    let listingId: string | null = null;
+    let listingErr: any = null;
+    const resolvedProductId = productId;
+    if (resolvedProductId) {
+      const { data, error } = await supabase.rpc("absorb_platform_sku_lookup", {
+        p_master_product_id: resolvedProductId,
+        p_platform: "joom",
+        p_external_sku: sku,
+        p_platform_item_id: joomProductId,
+        p_external_variant_id: joomVariantId,
+        p_country: "GLOBAL",
+        p_shop_id: null,
+        p_listing_status: listingStatus || "pending",
+        p_raw_payload: {
+          source: "joom-bridge.publish",
+          joom_product_id: joomProductId,
+          joom_variant_id: joomVariantId,
+          sku,
+          price,
+          currency,
+        },
+      });
+      listingId = data || null;
+      listingErr = error;
+    }
+
+    results.push({
+      sku,
+      product_id: productId || null,
+      ok: !productErr && !listingErr,
+      joom_product_id: joomProductId,
+      joom_variant_id: joomVariantId,
+      joom_currency: currency || null,
+      mapping_status: mappingStatus,
+      platform_listing_id: listingId,
+      error: productErr?.message || listingErr?.message || null,
+    });
+  }
+
+  return results;
+}
+
 // ---------------------------------------------------------------------------
 // Cloudinary upload helper (for split image tiles)
 // ---------------------------------------------------------------------------
@@ -925,27 +1062,36 @@ async function handleRequest(req: Request): Promise<Response> {
         });
       }
 
-      const { data, operation, existingProductId } = await createOrUpdateJoomProduct(payload);
+      const created = await createOrUpdateJoomProduct(payload);
+      let data = created.data;
+      let mappingHydrationError: string | null = null;
+      try {
+        data = await hydrateJoomProductForMapping(created.data, payload.sku);
+      } catch (e) {
+        mappingHydrationError = e instanceof Error ? e.message : String(e);
+        console.warn("[joom-bridge] publish mapping hydrate failed:", mappingHydrationError);
+      }
       const joomCategoryId = String(data.categoryId || data.category?.id || data.categoryByJoom?.id || "");
+      const listingStatus = joomProductListingStatus(data);
+      const mappingResults = await persistJoomRegistrationMappings(body, data, listingStatus);
       return jsonResp({
         ok: true,
-        operation,
-        recovered_existing_product_id: existingProductId || null,
+        operation: created.operation,
+        recovered_existing_product_id: created.existingProductId || null,
         joom_product_id: data.id,
         joom_sku: data.sku,
         state: data.state,
         joom_product_state: data.state || null,
         hasActiveVersion: data.hasActiveVersion ?? null,
-        listing_status: joomProductListingStatus(data),
+        listing_status: listingStatus,
         main_image_state: data.mainImage?.imageState,
         requested_category_id: categoryId,
         joom_category_id: joomCategoryId || null,
         category_assigned: joomCategoryId === categoryId,
         brand_assigned: !!data.brand,
-        variants: (data.variants || []).map((v: any) => ({
-          sku: v.sku, price: v.price, inventory: v.inventory,
-          enabled: v.enabled, size: v.size, shippingWeight: v.shippingWeight,
-        })),
+        variants: joomPublishResponseVariants(data),
+        mapping_results: mappingResults,
+        mapping_hydration_error: mappingHydrationError,
         infractions: ((data.review || {}).infractions || []).map((i: any) => ({
           code: i.code, kind: i.kind, note: i.note, description: i.description,
           where: i.where, isPermanent: i.isPermanent, regions: i.regions,

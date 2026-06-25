@@ -175,9 +175,10 @@ function buildCreateBody(ctx: BridgeContext): Record<string, unknown> | AdapterR
         product_id: row.id || null,
       };
     }).filter((row: any) => row.sku)
-    : [{ name: 'DEFAULT', sku, inventory, enabled: true, weight, image: imgs[0] }];
+    : [{ name: 'DEFAULT', sku, inventory, enabled: true, weight, image: imgs[0], product_id: master.id || null }];
   return {
     row: { sku, cost, weight },
+    source_product_id: master.id || null,
     scrapedAssets: {
       mainImage: imgs[0],
       name: lifecycleProductName(master.product_name, lifecycleOf(master), sku),
@@ -205,14 +206,29 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
     const optionProducts = variationBundle
       ? variationBundle.items.map((item: any) => {
         const variant = Array.isArray(raw?.variants) ? raw.variants.find((row: any) => s(row?.sku) === s(item.row?.sku)) : null;
-        return { product_id: item.row?.id || null, sku: item.row?.sku || '', option_value: item.optionValue, variant_id: variant?.id || variant?.sku || item.row?.sku || '' };
+        return {
+          product_id: item.row?.id || null,
+          sku: item.row?.sku || '',
+          option_value: item.optionValue,
+          variant_id: variant?.id ? s(variant.id) : '',
+          currency: variant?.currency || null,
+        };
       })
       : [];
+    const primaryVariant = Array.isArray(raw?.variants)
+      ? (raw.variants.find((row: any) => s(row?.sku) === s(ctx.masterProduct?.sku)) || raw.variants[0])
+      : null;
     return {
       ok: true,
       platformItemId: s(raw?.joom_product_id || raw?.id),
       listingStatus: ctx.dryRun ? 'draft' : mapJoomStatus(raw),
-      rawResponse: { ...raw, option_products: optionProducts },
+      rawResponse: {
+        ...raw,
+        joom_variant_id: primaryVariant?.id ? s(primaryVariant.id) : (raw?.joom_variant_id || null),
+        joom_currency: primaryVariant?.currency || raw?.joom_currency || null,
+        option_products: optionProducts,
+        mapping_results: raw?.mapping_results || [],
+      },
     };
   }
   return {

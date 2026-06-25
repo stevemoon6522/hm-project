@@ -35367,6 +35367,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         return {
           index: idx + 1,
           rowKey: mrRowKey(r),
+          productId: r.product_id || r.id || null,
           optionName,
           optionSku,
           masterSku,
@@ -35411,6 +35412,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         enabled: true,
         weight: o.weightG,
         image: o.imageUrl,
+        product_id: o.productId || null,
       }));
 
       return {
@@ -35451,6 +35453,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       const payload = {
         row: { sku: draft.parentSku, cost: draft.productCostKrw, weight: draft.productWeightG },
+        source_product_id: firstRow.product_id || firstRow.id || null,
         scrapedAssets: {
           name: mrMasterProductName(firstRow),
           mainImage: draft.mainImageUrl,
@@ -35901,13 +35904,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
           for (const row of activeRows) {
             const matched = (json.variants || []).find(v => v.sku === row._sku);
-            if (!matched) continue;
+            if (!matched || !matched.id) continue;
             const joomListingStatus = mrJoomListingStatusFromResponse(json);
             const joomMappingStatus = mrJoomMappingStatusFromResponse(json);
             await db.from('products').update({
               joom_product_id: json.joom_product_id,
-              joom_variant_id: matched.sku,
-              joom_currency: 'USD',
+              joom_variant_id: matched.id,
+              joom_currency: matched.currency || 'USD',
               joom_status: json.state || joomListingStatus,
               joom_published_at: new Date().toISOString(),
               joom_last_synced_price: matched.price,
@@ -36085,13 +36088,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           // DB UPDATE per row
           for (const row of group.rows) {
             const matched = (json.variants || []).find(v => v.sku === row._sku);
-            if (!matched) continue;
+            if (!matched || !matched.id) continue;
             const joomListingStatus = mrJoomListingStatusFromResponse(json);
             const joomMappingStatus = mrJoomMappingStatusFromResponse(json);
             await db.from('products').update({
               joom_product_id: json.joom_product_id,
-              joom_variant_id: matched.sku,
-              joom_currency: 'USD',
+              joom_variant_id: matched.id,
+              joom_currency: matched.currency || 'USD',
               joom_status: json.state || joomListingStatus,
               joom_published_at: new Date().toISOString(),
               joom_last_synced_price: matched.price,

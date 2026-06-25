@@ -428,6 +428,7 @@ async function uploadTileToCloudinary(imageData: Uint8Array): Promise<string | n
 type ImageDimensions = { width: number; height: number };
 const JOOM_MAX_EXTRA_IMAGES = 20;
 const JOOM_EXTRA_IMAGE_TILE_SIZE = 1500;
+const JOOM_IMAGE_DIMENSION_PROBE_BYTES = 1024 * 1024;
 const JOOM_BLANK_IMAGE_SAMPLE_STEPS = 96;
 const JOOM_BLANK_IMAGE_MIN_CONTENT_RATIO = 0.004;
 const JOOM_CLOUDINARY_TILE_CONTENT_CHECK_LIMIT = 3;
@@ -484,7 +485,7 @@ function parsePngSize(bytes: Uint8Array): ImageDimensions | null {
 
 async function readImageDimensions(imageUrl: string): Promise<ImageDimensions | null> {
   const resp = await fetch(imageUrl, {
-    headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://www.staronemall.com/", "Range": "bytes=0-65535" },
+    headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://www.staronemall.com/", "Range": `bytes=0-${JOOM_IMAGE_DIMENSION_PROBE_BYTES - 1}` },
     signal: AbortSignal.timeout(15000),
   });
   if (!resp.ok && resp.status !== 206) return null;
@@ -524,7 +525,7 @@ async function buildCloudinaryUnknownSquare(imageUrl: string): Promise<string[]>
   // @ts-ignore
   const cloudName = Deno.env.get("CLOUDINARY_CLOUD_NAME") || "";
   if (!cloudName) return [];
-  return [`https://res.cloudinary.com/${cloudName}/image/fetch/c_pad,b_white,w_1500,h_1500,f_jpg,q_90/${encodeURIComponent(imageUrl)}`];
+  return [`https://res.cloudinary.com/${cloudName}/image/fetch/c_pad,b_white,w_1500,h_1500/f_jpg,q_90/${encodeURIComponent(imageUrl)}`];
 }
 
 function isLikelyBlankImage(img: any): boolean {
@@ -571,7 +572,10 @@ async function cloudinaryTileHasContent(tileUrl: string): Promise<boolean> {
       headers: { "User-Agent": "Mozilla/5.0", "Referer": "https://www.staronemall.com/" },
       signal: AbortSignal.timeout(15000),
     });
-    if (!resp.ok) throw new Error(`tile fetch failed: HTTP ${resp.status}`);
+    if (!resp.ok) {
+      console.warn("[joom-bridge] Cloudinary tile fetch failed:", tileUrl, `HTTP ${resp.status}`);
+      return false;
+    }
     const bytes = new Uint8Array(await resp.arrayBuffer());
     // @ts-ignore
     const { Image } = await import("https://deno.land/x/imagescript@1.3.0/mod.ts");
@@ -646,7 +650,6 @@ async function processDetailImage(imageUrl: string, maxTiles = JOOM_MAX_EXTRA_IM
         const filteredTiles = await filterLikelyBlankCloudinaryTiles(cloudinaryTiles, { skipContentCheck: skipCloudinaryContentCheck });
         if (filteredTiles.length) return filteredTiles;
         console.warn("[joom-bridge] all Cloudinary tiles were mostly blank; skipping source image:", imageUrl);
-        return [];
       }
     } else {
       const cloudinarySquare = (await buildCloudinaryUnknownSquare(imageUrl)).slice(0, remainingTiles);
@@ -654,7 +657,6 @@ async function processDetailImage(imageUrl: string, maxTiles = JOOM_MAX_EXTRA_IM
         const filteredTiles = await filterLikelyBlankCloudinaryTiles(cloudinarySquare, { skipContentCheck: skipCloudinaryContentCheck });
         if (filteredTiles.length) return filteredTiles;
         console.warn("[joom-bridge] Cloudinary unknown-square tile was mostly blank; skipping source image:", imageUrl);
-        return [];
       }
     }
 

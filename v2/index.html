@@ -3018,9 +3018,14 @@
               </label>
               <details id="custom-master-advanced" style="grid-column:span 12;">
                 <summary style="font-size:12px;cursor:pointer;color:var(--muted);">고급 설정</summary>
-                <label style="display:block;max-width:220px;margin-top:8px;font-size:12px;">무게(g)
-                  <input type="number" id="custom-master-weight" min="1" step="1" value="200" placeholder="예: 200" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
-                </label>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+                  <label style="display:block;max-width:220px;font-size:12px;">무게(g)
+                    <input type="number" id="custom-master-weight" min="1" step="1" value="200" placeholder="예: 200" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
+                  </label>
+                  <label style="display:block;max-width:220px;font-size:12px;">기본 재고
+                    <input type="number" id="custom-master-inventory" min="1" step="1" value="50" placeholder="예: 50" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
+                  </label>
+                </div>
               </details>
             </div>
             <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-bottom:10px;">
@@ -31820,19 +31825,65 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const wrap = $('custom-master-options');
       if (!wrap) return null;
       const rowId = `custom-opt-${MR_CUSTOM_NEXT_OPTION++}`;
+      const defaultSourcing = Number($('custom-master-sourcing-price')?.value || 0) || '';
+      const defaultCost = Number($('custom-master-cost')?.value || 0) || defaultSourcing || '';
+      const defaultWeight = Number($('custom-master-weight')?.value || 0) || 200;
+      const defaultInventory = Number($('custom-master-inventory')?.value || 0) || 50;
+      const valueOrDefault = (value, fallback) => (
+        value !== undefined && value !== null && value !== '' ? String(value) : String(fallback || '')
+      );
+      const makeTextInput = (labelText, attrs) => {
+        const label = el('label', { style: 'font-size:12px;' }, labelText);
+        label.appendChild(el('input', Object.assign({
+          type: 'text',
+          style: 'width:100%;font-size:12px;padding:6px 8px;',
+        }, attrs)));
+        return label;
+      };
+      const makeNumberInput = (labelText, attrs) => {
+        const label = el('label', { style: 'font-size:12px;' }, labelText);
+        label.appendChild(el('input', Object.assign({
+          type: 'number',
+          min: '0',
+          step: '1',
+          style: 'width:100%;font-size:12px;padding:6px 8px;text-align:right;',
+        }, attrs)));
+        return label;
+      };
       const row = el('div', {
         dataset: { customMasterOptionRow: rowId },
-        style: 'display:grid;grid-template-columns:minmax(180px,1fr) minmax(220px,1fr) auto;gap:8px;align-items:end;padding:8px;border:1px solid var(--border);border-radius:8px;background:#fff;',
+        style: 'display:grid;grid-template-columns:minmax(150px,1.2fr) minmax(130px,1fr) repeat(4,minmax(82px,.7fr)) minmax(190px,1.2fr) auto;gap:8px;align-items:end;padding:8px;border:1px solid var(--border);border-radius:8px;background:#fff;',
       });
-      const nameLabel = el('label', { style: 'font-size:12px;' }, '옵션명');
-      const nameInput = el('input', {
-        type: 'text',
+      const nameLabel = makeTextInput('옵션명', {
         value: prefill.name || '',
         placeholder: '예: Photobook Ver. / Member Name',
         dataset: { customOptionName: '1' },
-        style: 'width:100%;font-size:12px;padding:6px 8px;',
       });
-      nameLabel.appendChild(nameInput);
+      const skuLabel = makeTextInput('SKU (선택)', {
+        value: prefill.sku || '',
+        placeholder: '비우면 자동 생성',
+        dataset: { customOptionSku: '1' },
+      });
+      const sourcingLabel = makeNumberInput('도매가', {
+        value: valueOrDefault(prefill.sourcingPrice ?? prefill.sourcing_price, defaultSourcing),
+        placeholder: '기본값',
+        dataset: { customOptionSourcing: '1' },
+      });
+      const costLabel = makeNumberInput('정산가', {
+        value: valueOrDefault(prefill.costKrw ?? prefill.cost_krw, defaultCost),
+        placeholder: '기본값',
+        dataset: { customOptionCost: '1' },
+      });
+      const weightLabel = makeNumberInput('무게(g)', {
+        min: '1',
+        value: valueOrDefault(prefill.weightG ?? prefill.weight_g, defaultWeight),
+        dataset: { customOptionWeight: '1' },
+      });
+      const inventoryLabel = makeNumberInput('재고', {
+        min: '1',
+        value: valueOrDefault(prefill.inventory, defaultInventory),
+        dataset: { customOptionInventory: '1' },
+      });
       const fileLabel = el('label', { style: 'font-size:12px;' }, '옵션 이미지');
       const fileInput = el('input', {
         type: 'file',
@@ -31847,6 +31898,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         mrCustomEnsureOptionRow();
       });
       row.appendChild(nameLabel);
+      row.appendChild(skuLabel);
+      row.appendChild(sourcingLabel);
+      row.appendChild(costLabel);
+      row.appendChild(weightLabel);
+      row.appendChild(inventoryLabel);
       row.appendChild(fileLabel);
       row.appendChild(removeBtn);
       wrap.appendChild(row);
@@ -31863,8 +31919,23 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return Array.from($('custom-master-options')?.querySelectorAll('[data-custom-master-option-row]') || [])
         .map((row) => {
           const name = String(row.querySelector('[data-custom-option-name]')?.value || '').trim();
+          const sku = String(row.querySelector('[data-custom-option-sku]')?.value || '').trim();
+          const readNumber = (selector) => {
+            const raw = String(row.querySelector(selector)?.value ?? '').trim();
+            if (!raw) return null;
+            const value = Number(raw);
+            return Number.isFinite(value) ? value : null;
+          };
           const file = row.querySelector('[data-custom-option-file]')?.files?.[0] || null;
-          return { name, file };
+          return {
+            name,
+            sku,
+            sourcingPrice: readNumber('[data-custom-option-sourcing]'),
+            costKrw: readNumber('[data-custom-option-cost]'),
+            weightG: readNumber('[data-custom-option-weight]'),
+            inventory: readNumber('[data-custom-option-inventory]'),
+            file,
+          };
         });
     }
 
@@ -31984,20 +32055,22 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const explicitCost = Number($('custom-master-cost')?.value || 0);
       const costKrw = explicitCost > 0 ? explicitCost : sourcingPrice;
       const weightG = Number($('custom-master-weight')?.value || 0) || 200;
+      const inventory = Number($('custom-master-inventory')?.value || 0) || 50;
       const axisName = String($('custom-master-axis-name')?.value || '').trim() || 'Option';
       const coverFile = $('custom-master-cover-file')?.files?.[0] || null;
       const detailFiles = Array.from($('custom-master-detail-files')?.files || []);
       const rawOptions = mrCustomOptionInputs();
       const hasOptions = mrCustomHasOptions();
-      const optionInputs = hasOptions ? rawOptions.filter(opt => opt.name || opt.file) : [];
+      const optionInputs = hasOptions ? rawOptions.filter(opt => opt.name || opt.sku || opt.file) : [];
 
       if (!title) { mrCustomSetStatus('Master 상품명을 입력해주세요.', true); return; }
       if (!components) { mrCustomSetStatus('상품 구성품을 입력해주세요.', true); return; }
       if (!(weightG > 0)) { mrCustomSetStatus('무게(g)를 1 이상으로 입력해주세요.', true); return; }
-      if (!(costKrw > 0)) { mrCustomSetStatus('정산가 또는 도매가를 입력해주세요.', true); return; }
+      if (!(inventory > 0)) { mrCustomSetStatus('기본 재고를 1 이상으로 입력해주세요.', true); return; }
+      if (!hasOptions && !(costKrw > 0)) { mrCustomSetStatus('정산가 또는 도매가를 입력해주세요.', true); return; }
       if (!coverFile) { mrCustomSetStatus('대표 이미지를 첨부해주세요.', true); return; }
       if (hasOptions && !optionInputs.length) { mrCustomSetStatus('옵션 있음은 최소 1개의 옵션명이 필요합니다.', true); return; }
-      if (optionInputs.some(opt => !opt.name)) { mrCustomSetStatus('옵션 이미지가 있는 행은 옵션명을 입력해주세요.', true); return; }
+      if (optionInputs.some(opt => !opt.name)) { mrCustomSetStatus('옵션 정보가 있는 행은 옵션명을 입력해주세요.', true); return; }
 
       const baseSku = mrCustomSkuBaseFromTitle(title);
       const baseRow = { _sku: baseSku, sku: baseSku, product_name: title, option_name: 'custom' };
@@ -32008,6 +32081,34 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       try {
         mrSetLifecycleValue(lifecycle);
 
+        const effectiveOptions = hasOptions ? optionInputs : [{
+          name: '',
+          sku: '',
+          file: null,
+          single: true,
+          sourcingPrice,
+          costKrw,
+          weightG,
+          inventory,
+        }];
+        const normalizedOptions = effectiveOptions.map((opt, idx) => {
+          const optionSourcingPrice = Number(opt.sourcingPrice || 0) > 0 ? Number(opt.sourcingPrice || 0) : sourcingPrice;
+          const optionCostKrw = Number(opt.costKrw || 0) > 0 ? Number(opt.costKrw || 0) : optionSourcingPrice;
+          const optionWeightG = Number(opt.weightG || 0) > 0 ? Number(opt.weightG || 0) : weightG;
+          const optionInventory = Number(opt.inventory || 0) > 0 ? Math.floor(Number(opt.inventory || 0)) : inventory;
+          const label = opt.name || `Option ${idx + 1}`;
+          if (!(optionCostKrw > 0)) throw new Error(`${label}: 정산가 또는 도매가를 1 이상으로 입력해주세요.`);
+          if (!(optionWeightG > 0)) throw new Error(`${label}: 무게(g)를 1 이상으로 입력해주세요.`);
+          if (!(optionInventory > 0)) throw new Error(`${label}: 재고를 1 이상으로 입력해주세요.`);
+          return Object.assign({}, opt, {
+            sku: String(opt.sku || '').trim(),
+            sourcing_price: optionSourcingPrice,
+            cost_krw: optionCostKrw,
+            weight_g: optionWeightG,
+            inventory: optionInventory,
+          });
+        });
+
         const coverUrl = await mrCustomUploadImageFile(coverFile, baseRow, 'cover');
         const detailImageUrls = [];
         for (let i = 0; i < detailFiles.length; i++) {
@@ -32016,12 +32117,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         }
 
         const stagedOptions = [];
-        const effectiveOptions = hasOptions ? optionInputs : [{ name: '', file: null, single: true }];
-        for (let i = 0; i < effectiveOptions.length; i++) {
-          const opt = effectiveOptions[i];
+        for (let i = 0; i < normalizedOptions.length; i++) {
+          const opt = normalizedOptions[i];
           let optionImageUrl = '';
           if (opt.file) {
-            mrCustomSetStatus(`옵션 이미지 업로드 중... (${i + 1}/${effectiveOptions.length})`);
+            mrCustomSetStatus(`옵션 이미지 업로드 중... (${i + 1}/${normalizedOptions.length})`);
             optionImageUrl = await mrCustomUploadImageFile(
               opt.file,
               { ...baseRow, option_name: opt.name || `option-${i + 1}` },
@@ -32030,6 +32130,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           }
           stagedOptions.push({
             option_name: opt.name || '',
+            sku: opt.sku || '',
+            sourcing_price: opt.sourcing_price,
+            cost_krw: opt.cost_krw,
+            weight_g: opt.weight_g,
+            inventory: opt.inventory,
             option_image_url: optionImageUrl,
             option_image_file_name: opt.file?.name || '',
             single: !!opt.single,
@@ -32104,12 +32209,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             _source_kind: 'custom_master',
             _singleProductMode: !hasOptions,
             _staronemall_url: '',
-            _sourcing_price: sourcingPrice,
-            _cost_krw: costKrw,
-            sourcing_price: sourcingPrice,
-            cost_krw: costKrw,
-            weight_g: weightG,
-            _weight_g: weightG,
+            _sourcing_price: opt.sourcing_price,
+            _cost_krw: opt.cost_krw,
+            sourcing_price: opt.sourcing_price,
+            cost_krw: opt.cost_krw,
+            weight_g: opt.weight_g,
+            _weight_g: opt.weight_g,
+            _inventory_quantity: opt.inventory,
+            _inventory: opt.inventory,
+            inventory: opt.inventory,
             _main_image: coverUrl,
             _main_image_file_name: coverFile.name,
             _custom_option_image_url: opt.option_image_url || '',
@@ -32126,7 +32234,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             status: 'preview',
             error: null,
           }, qoo10Patch);
-          row._sku = mrCustomSkuForOption(title, opt.option_name || '', idx, hasOptions);
+          row._sku = opt.sku || mrCustomSkuForOption(title, opt.option_name || '', idx, hasOptions);
           row.sku = row._sku;
           row._skuLocked = true;
           return row;

@@ -295,6 +295,28 @@ function validateQoo10SkuHit(sku: string, json: any): { ok: true } | { ok: false
   return { ok: true };
 }
 
+function buildQoo10OptionProducts(options: any[], bridgeJson: any) {
+  const enrichedOptions = Array.isArray(bridgeJson?.options) ? bridgeJson.options : [];
+  return options.map((row) => {
+    const sku = norm(row.sku);
+    const enriched = enrichedOptions.find((option: any) => sameSku(option?.sku, sku))
+      || enrichedOptions.find((option: any) => sameSku(option?.option_code, sku))
+      || (enrichedOptions.length === 1 ? enrichedOptions[0] : null);
+    const optionCode = norm(enriched?.option_code);
+    const variantId = norm(enriched?.variant_id || optionCode || sku);
+    return {
+      product_id: row.product_id,
+      sku,
+      option_value: row.option_value,
+      option_code: optionCode || null,
+      variant_id: variantId || null,
+      variant_source: norm(enriched?.variant_source) || (optionCode ? 'option_code' : 'requested_seller_option_code'),
+      mapping_status: norm(enriched?.mapping_status) || null,
+      remote_verified: enriched?.remote_verified === true,
+    };
+  });
+}
+
 async function executeSync(ctx: AdapterContext): Promise<AdapterResult> {
   const sku = norm(ctx.masterProduct?.sku);
   if (!sku) return { ok: false, listingStatus: 'not_listed', errorCode: 'INPUT_INVALID', errorMsg: 'products.sku is empty; cannot perform Qoo10 SKU lookup' };
@@ -409,13 +431,13 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
   return {
     ok: true,
     platformItemId,
-    listingStatus: 'listed',
+    listingStatus: mapQoo10ListingStatus(result.json.listing_status || result.json.item_status || result.json.ItemStatus),
     rawResponse: {
       ...result.json,
       platform_item_id: platformItemId,
       seller_code: sellerCode,
       qoo10_pricing_strategy: reconciledPricing.pricingStrategy,
-      option_products: options.map((row) => ({ product_id: row.product_id, sku: row.sku, option_value: row.option_value })),
+      option_products: buildQoo10OptionProducts(options, result.json),
     },
   };
 }

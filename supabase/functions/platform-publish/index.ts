@@ -897,7 +897,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
           p_platform: platform,
           p_external_sku: optionSku,
           p_platform_item_id: adapterResult.platformItemId ?? (raw as any).platform_item_id ?? null,
-          p_external_variant_id: option?.variant_id ?? option?.offer_id ?? optionSku,
+          p_external_variant_id: option?.variant_id ?? option?.option_code ?? option?.offer_id ?? optionSku,
           p_country: country ?? null,
           p_shop_id: shop_id ?? null,
           p_listing_status: adapterResult.listingStatus,

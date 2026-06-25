@@ -13,8 +13,8 @@ import { AUTH_CORS, requireAuthenticatedUser } from "../_shared/auth.ts";
 // Normalized doc path note: the Qoo10 docs live under
 // C:\dev\api-refs\marketplaces\qoo10\api-pages\*\*.md. This bridge uses
 // SetNewGoods, GetSellerDeliveryGroupInfo, SearchBrand, EditGoodsHeaderFooter,
-// UpdateGoods, EditGoodsContents, EditGoodsInventory, SetGoodsPriceQty, and
-// EditGoodsStatus.
+// GetItemDetailInfo, GetGoodsOptionInfo, UpdateGoods, EditGoodsContents,
+// EditGoodsInventory, SetGoodsPriceQty, and EditGoodsStatus.
 
 const QOO10_API_BASE = (Deno as any).env.get("QOO10_API_BASE") || "https://api.qoo10.jp/GMKT.INC.Front.QAPIService/ebayjapan.qapi";
 const QOO10_API_KEY = (Deno as any).env.get("QOO10_API_KEY") || (Deno as any).env.get("QOO10_CERT_KEY") || "";
@@ -247,15 +247,166 @@ async function fetchInventoryByItemCode(itemCode: string) {
   return { ok: true, rows: inventoryRows(res.raw).map(normalizeInventory), raw: res.raw };
 }
 
+async function fetchQoo10ItemDetailForMapping(itemCode: string, sellerCode = "") {
+  const params: Record<string, string> = { ItemCode: itemCode };
+  if (sellerCode) params.SellerCode = sellerCode;
+  // Official local doc: C:\dev\api-refs\marketplaces\qoo10\api-pages\*\10007-GetItemDetailInfo.md
+  const res = await qoo10Fetch("ItemsLookup.GetItemDetailInfo", params);
+  if (res.status < 200 || res.status >= 300) return { ok: false, error: `qoo10_http_${res.status}`, raw: res.raw };
+  if (!qoo10Success(res.raw)) {
+    const fail = lookupFailureFromRaw(res.raw, "qoo10_item_detail_lookup_failed");
+    return { ok: false, error: fail.message, notFound: fail.notFound, raw: res.raw };
+  }
+  const rows = inventoryRows(res.raw).map(normalizeItem).filter((row) => row.itemCode || row.sellerCode || row.itemStatus);
+  const exact = rows.find((row) => sameSku(row.itemCode, itemCode))
+    || rows.find((row) => sameSku(row.sellerCode, sellerCode))
+    || rows[0]
+    || normalizeItem(res.raw?.ResultObject || res.raw || {});
+  return {
+    ok: true,
+    item_code: exact.itemCode || itemCode,
+    seller_code: exact.sellerCode || sellerCode || null,
+    item_status: exact.itemStatus || null,
+    listing_status: mapQoo10ListingStatus(exact.itemStatus),
+    raw: res.raw,
+  };
+}
+
+async function fetchQoo10OptionMappings(itemCode: string, sellerCode = "") {
+  const params: Record<string, string> = { ItemCode: itemCode };
+  if (sellerCode) params.SellerCode = sellerCode;
+  // Official local doc: C:\dev\api-refs\marketplaces\qoo10\api-pages\*\10004-GetGoodsOptionInfo.md
+  const res = await qoo10Fetch("ItemsLookup.GetGoodsOptionInfo", params);
+  if (res.status >= 200 && res.status < 300 && qoo10Success(res.raw)) {
+    const rows = inventoryRows(res.raw)
+      .map(normalizeInventory)
+      .filter((row) => row.optionCode || row.itemTypeCode || row.value1 || row.value2);
+    if (rows.length > 0) return { ok: true, source: "GetGoodsOptionInfo", rows, raw: res.raw };
+  }
+
+  const fallback = await fetchInventoryByItemCode(itemCode);
+  if (fallback.ok) return { ok: true, source: "GetGoodsInventoryInfo", rows: fallback.rows, raw: fallback.raw };
+  const fail = res.status < 200 || res.status >= 300
+    ? { error: `qoo10_http_${res.status}`, raw: res.raw }
+    : lookupFailureFromRaw(res.raw, "qoo10_option_lookup_failed");
+  return { ok: false, error: fail.error || fail.message || "qoo10_option_lookup_failed", raw: res.raw, fallback };
+}
+
+function findQoo10OptionMatch(option: any, remoteOptions: any[]) {
+  const sku = norm(option?.sku);
+  const value = norm(option?.optionValue || option?.option_value || option?.value);
+  return remoteOptions.find((row) => sameSku(row.optionCode, sku))
+    || remoteOptions.find((row) => sameSku(row.itemTypeCode, sku))
+    || remoteOptions.find((row) => value && sameSku(row.value1, value))
+    || (remoteOptions.length === 1 ? remoteOptions[0] : null);
+}
+
+async function hydrateQoo10RegistrationMappings(itemCode: string, sellerCode: string, requestedOptions: any[]) {
+  const detail = await fetchQoo10ItemDetailForMapping(itemCode, sellerCode);
+  const optionLookup = await fetchQoo10OptionMappings(itemCode, sellerCode);
+  const remoteOptions = optionLookup.ok ? optionLookup.rows : [];
+  const itemStatus = detail.ok ? detail.item_status : null;
+  const listingStatus = itemStatus ? mapQoo10ListingStatus(itemStatus) : "pending";
+  const fallbackStatus = listingStatus === "needs_review" ? "pending" : listingStatus;
+
+  const options = (requestedOptions || []).map((option) => {
+    const match = findQoo10OptionMatch(option, remoteOptions);
+    const optionCode = firstNonEmpty(match?.optionCode, match?.itemTypeCode);
+    const requestedSku = norm(option?.sku);
+    const singleItemVariant = requestedOptions.length <= 1 ? firstNonEmpty(sellerCode, requestedSku) : "";
+    const variantId = optionCode || singleItemVariant || requestedSku;
+    const variantSource = optionCode
+      ? (sameSku(optionCode, requestedSku) ? "seller_option_code" : "option_code")
+      : (singleItemVariant ? "seller_product_code" : "requested_seller_option_code");
+    const verified = Boolean(match || singleItemVariant);
+    return {
+      ...option,
+      option_code: optionCode || null,
+      option_name: [match?.value1, match?.value2].filter(Boolean).join(" / ") || option.optionValue || option.option_value || null,
+      variant_id: variantId || null,
+      variant_source: variantSource,
+      mapping_status: verified ? "mapped" : "needs_review",
+      remote_verified: verified,
+      remote_option: match?.raw || null,
+    };
+  });
+
+  const mapping_results = options.map((option) => ({
+    ok: Boolean(option.product_id && option.sku && option.variant_id),
+    product_id: option.product_id || null,
+    sku: option.sku || null,
+    platform_item_id: itemCode,
+    external_variant_id: option.variant_id || null,
+    option_code: option.option_code || null,
+    variant_source: option.variant_source || null,
+    mapping_status: option.mapping_status || "needs_review",
+    error: option.product_id && option.sku && option.variant_id ? null : "qoo10_registration_mapping_incomplete",
+  }));
+
+  return {
+    ok: true,
+    goods_no: itemCode,
+    platform_item_id: itemCode,
+    seller_code: sellerCode || null,
+    item_status: itemStatus,
+    listing_status: fallbackStatus,
+    options,
+    mapping_results,
+    detail_raw: detail.ok ? detail.raw : detail,
+    option_lookup_raw: optionLookup.ok ? optionLookup.raw : optionLookup,
+    option_lookup_source: optionLookup.ok ? optionLookup.source : null,
+  };
+}
+
+async function persistQoo10RegistrationMappings(itemCode: string, listingStatus: string, options: any[], rawPayload: any = {}) {
+  const results: any[] = [];
+  for (const option of options || []) {
+    const productId = norm(option?.product_id);
+    const sku = norm(option?.sku);
+    if (!productId || !sku) {
+      results.push({ ok: false, product_id: productId || null, sku: sku || null, error: "product_id_or_sku_missing" });
+      continue;
+    }
+    const externalVariantId = firstNonEmpty(option?.variant_id, option?.option_code, sku);
+    const { data, error } = await supabase.rpc("absorb_platform_sku_lookup", {
+      p_master_product_id: productId,
+      p_platform: "qoo10",
+      p_external_sku: sku,
+      p_platform_item_id: itemCode,
+      p_external_variant_id: externalVariantId,
+      p_country: null,
+      p_shop_id: null,
+      p_listing_status: listingStatus || "pending",
+      p_raw_payload: {
+        source: "qoo10-bridge.create-listing",
+        platform_item_id: itemCode,
+        option,
+        raw: rawPayload,
+      },
+    });
+    results.push({
+      ok: !error,
+      product_id: productId,
+      sku,
+      platform_item_id: itemCode,
+      external_variant_id: externalVariantId,
+      platform_listing_id: data || null,
+      error: error?.message || null,
+    });
+  }
+  return results;
+}
+
 async function lookupByKnownItemCode(sku: string, itemCode: string) {
-  const inventory = await fetchInventoryByItemCode(itemCode);
+  const inventory = await fetchQoo10OptionMappings(itemCode);
   if (!inventory.ok) return null;
-  const match = inventory.rows.find((row: any) => sameSku(row.itemTypeCode, sku));
+  const match = inventory.rows.find((row: any) => sameSku(row.optionCode, sku) || sameSku(row.itemTypeCode, sku));
   if (!match) return null;
+  const optionCode = firstNonEmpty(match.optionCode, match.itemTypeCode, sku);
   return {
     goods_no: itemCode,
     seller_code: sku,
-    option_code: match.itemTypeCode || sku,
+    option_code: optionCode,
     option_name: [match.value1, match.value2].filter(Boolean).join(" / ") || null,
     status: "listed",
     match_type: "option_item_type_code",
@@ -381,6 +532,17 @@ function normalizeQoo10DashDate(value: unknown) {
 
 function normalizeGoodsNo(raw: any): string {
   return firstNonEmpty(raw?.ResultObject?.GdNo, raw?.ResultObject?.GoodsNo, raw?.ResultObject?.ItemCode, raw?.GdNo, raw?.GoodsNo, raw?.ItemCode);
+}
+
+function mapQoo10ListingStatus(rawStatus: unknown): string {
+  const status = norm(rawStatus).toUpperCase();
+  if (!status || status === "LISTED" || status === "S2" || status === "2") return "listed";
+  if (status === "S0" || status === "S1" || status === "0" || status === "1") return "pending";
+  if (status === "S3") return "paused";
+  if (status === "S4" || status === "3" || status === "DELETED" || status === "DISCONTINUED") return "not_listed";
+  if (status === "S5") return "banned";
+  if (status === "S8") return "rejected";
+  return "needs_review";
 }
 
 function buildItemType(options: any[], basePrice: number, forceOptions = false) {
@@ -834,14 +996,28 @@ async function handleCreateListing(req: Request): Promise<Response> {
   if (!goodsNo) return jsonResp({ ok: false, error: "qoo10_create_listing_missing_goods_no", raw: res.raw }, 502);
 
   const headerResult = await applyHeaderFooter(goodsNo, sellerCode, String(body.header_html || ""));
+  const hydration = await hydrateQoo10RegistrationMappings(goodsNo, sellerCode, itemTypeResult.options);
+  const persistedMappings = body.persist_mappings === false || body.persistMappings === false
+    ? { skipped: true, reason: "persist_mappings_false" }
+    : await persistQoo10RegistrationMappings(goodsNo, hydration.listing_status, hydration.options, {
+      create: res.raw,
+      header_result: headerResult,
+    });
   return jsonResp({
     ok: true,
     goods_no: goodsNo,
     platform_item_id: goodsNo,
     seller_code: sellerCode,
-    options: itemTypeResult.options,
+    item_status: hydration.item_status,
+    listing_status: hydration.listing_status,
+    options: hydration.options,
+    mapping_results: hydration.mapping_results,
+    persisted_mappings: persistedMappings,
+    option_lookup_source: hydration.option_lookup_source,
     raw: res.raw,
     header_result: headerResult,
+    detail_raw: hydration.detail_raw,
+    option_lookup_raw: hydration.option_lookup_raw,
   });
 }
 

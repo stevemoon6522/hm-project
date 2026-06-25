@@ -1190,6 +1190,159 @@ async function finishEbayPublishRun(runId: string | null, status: "published" | 
   }
 }
 
+async function persistEbayPlatformListingMapping(args: {
+  productId: string;
+  sku: string;
+  ebayItemId: string;
+  externalVariantId?: string | null;
+  marketplaceId?: string | null;
+  listingMode: "single" | "variation";
+  title?: string | null;
+  priceUsd?: unknown;
+  quantity?: unknown;
+  rawPayload?: any;
+}): Promise<string | null> {
+  const productId = s(args.productId).trim();
+  const sku = s(args.sku).trim();
+  const ebayItemId = s(args.ebayItemId).trim();
+  if (!productId || !sku || !ebayItemId) return null;
+
+  const now = new Date().toISOString();
+  const country = s(args.marketplaceId || "EBAY_US").trim() || "EBAY_US";
+  const externalVariantId = s(args.externalVariantId || "").trim() || null;
+  const remotePrice = Number(args.priceUsd || 0);
+  const remoteStock = Number(args.quantity || 0);
+  const patch = {
+    master_product_id: productId,
+    platform: "ebay",
+    shop_id: null,
+    country,
+    platform_item_id: ebayItemId,
+    external_variant_id: externalVariantId,
+    external_sku: sku,
+    title: s(args.title).trim() || null,
+    currency: "USD",
+    remote_price: Number.isFinite(remotePrice) && remotePrice > 0 ? remotePrice : null,
+    remote_stock: Number.isFinite(remoteStock) && remoteStock >= 0 ? remoteStock : null,
+    listing_status: "listed",
+    mapping_status: "mapped",
+    publish_origin: "v2_created",
+    last_payload: args.rawPayload || {},
+    last_sync_at: now,
+    last_seen_at: now,
+    error_msg: null,
+    error_code: null,
+    deleted_at: null,
+    updated_at: now,
+  };
+
+  const { data: existing, error: lookupError } = await supabase
+    .from("platform_listings")
+    .select("id")
+    .eq("master_product_id", productId)
+    .eq("platform", "ebay")
+    .is("shop_id", null)
+    .is("deleted_at", null)
+    .or(`country.eq.${country},country.is.null`)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lookupError) throw new Error(`platform listing lookup failed: ${lookupError.message || String(lookupError)}`);
+
+  if (existing?.id) {
+    const { data: updated, error: updateError } = await supabase
+      .from("platform_listings")
+      .update(patch)
+      .eq("id", existing.id)
+      .select("id")
+      .maybeSingle();
+    if (updateError) throw new Error(`platform listing update failed: ${updateError.message || String(updateError)}`);
+    if (updated?.id) return updated.id;
+  }
+
+  const { data: exactUpdated, error: exactUpdateError } = await supabase
+    .from("platform_listings")
+    .update(patch)
+    .eq("master_product_id", productId)
+    .eq("platform", "ebay")
+    .eq("country", country)
+    .is("shop_id", null)
+    .is("deleted_at", null)
+    .select("id")
+    .maybeSingle();
+  if (exactUpdateError) throw new Error(`platform listing update failed: ${exactUpdateError.message || String(exactUpdateError)}`);
+  if (exactUpdated?.id) return exactUpdated.id;
+
+  const { data: inserted, error: insertError } = await supabase
+    .from("platform_listings")
+    .insert(patch)
+    .select("id")
+    .maybeSingle();
+  if (!insertError) return inserted?.id || null;
+
+  if (String(insertError.code || "") !== "23505") {
+    throw new Error(`platform listing insert failed: ${insertError.message || String(insertError)}`);
+  }
+
+  const { data: recovered, error: recoverError } = await supabase
+    .from("platform_listings")
+    .update(patch)
+    .eq("master_product_id", productId)
+    .eq("platform", "ebay")
+    .eq("country", country)
+    .is("shop_id", null)
+    .select("id")
+    .maybeSingle();
+  if (recoverError) throw new Error(`platform listing recover failed: ${recoverError.message || String(recoverError)}`);
+  return recovered?.id || null;
+}
+
+async function persistEbayPublishPlatformMappings(
+  listingMode: "single" | "variation",
+  body: any,
+  raw: any
+): Promise<string[]> {
+  const ebayItemId = s(raw?.ebay_item_id).trim();
+  if (!ebayItemId) return [];
+
+  if (listingMode === "single") {
+    const id = await persistEbayPlatformListingMapping({
+      productId: body.productId || body.product_id,
+      sku: body.sku,
+      ebayItemId,
+      externalVariantId: raw.ebay_offer_id || null,
+      marketplaceId: raw.marketplace_id || body.marketplaceId || "EBAY_US",
+      listingMode,
+      title: body.title,
+      priceUsd: body.priceUsd,
+      quantity: body.quantity,
+      rawPayload: { listingMode, request: body, response: raw },
+    });
+    return id ? [id] : [];
+  }
+
+  const offersBySku = raw?.offers_by_sku && typeof raw.offers_by_sku === "object" ? raw.offers_by_sku : {};
+  const ids: string[] = [];
+  for (const variation of Array.isArray(body.variations) ? body.variations : []) {
+    const sku = s(variation?.sku).trim();
+    const offer = offersBySku[sku] || {};
+    const id = await persistEbayPlatformListingMapping({
+      productId: variation?.productId || variation?.product_id,
+      sku,
+      ebayItemId,
+      externalVariantId: offer.offerId || offer.ebay_offer_id || sku,
+      marketplaceId: raw.marketplace_id || body.marketplaceId || "EBAY_US",
+      listingMode,
+      title: body.title,
+      priceUsd: variation?.priceUsd,
+      quantity: variation?.quantity,
+      rawPayload: { listingMode, inventoryGroupKey: body.inventoryGroupKey, variation, offer, response: raw },
+    });
+    if (id) ids.push(id);
+  }
+  return ids;
+}
+
 async function jsonFromResponse(resp: Response): Promise<any> {
   try { return await resp.clone().json(); } catch { return {}; }
 }
@@ -1203,8 +1356,16 @@ async function withEbayPublishRun(
   try {
     const resp = await fn();
     const raw = await jsonFromResponse(resp);
+    if (resp.status < 400 && raw?.ok) {
+      try {
+        const platformListingIds = await persistEbayPublishPlatformMappings(listingMode, body, raw);
+        if (platformListingIds.length) raw.platform_listing_ids = platformListingIds;
+      } catch (e) {
+        console.warn("[ebay-bridge] platform listing persist skipped", e);
+      }
+    }
     await finishEbayPublishRun(runId, resp.status < 400 && raw?.ok ? "published" : "failed", raw, raw?.error || raw?.message || "");
-    return resp;
+    return jsonResp(raw, resp.status);
   } catch (e: any) {
     await finishEbayPublishRun(runId, "failed", {}, String(e?.message || e));
     throw e;
@@ -2813,6 +2974,10 @@ async function handleRegisterProduct(body: any): Promise<Response> {
   const lookupResp = await handleLookupItem(payload.sku, payload.marketplaceId || "EBAY_US");
   const lookupJson = await jsonFromResponse(lookupResp);
   const persisted = await persistHeadlessEbayPublishResult(product, payload, publishJson);
+  const platformListingIds = await persistEbayPublishPlatformMappings("single", payload, publishJson).catch((e) => {
+    console.warn("[ebay-bridge] headless platform listing persist skipped", e);
+    return [];
+  });
 
   return jsonResp({
     ok: true,
@@ -2828,6 +2993,7 @@ async function handleRegisterProduct(body: any): Promise<Response> {
     verification: lookupJson?.verification || null,
     lookup_ok: lookupResp.ok && lookupJson?.verification?.published_verification_passed === true,
     persisted,
+    platform_listing_ids: platformListingIds,
     publish: publishJson,
     lookup: lookupJson,
   });

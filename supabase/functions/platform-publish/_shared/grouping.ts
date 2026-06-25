@@ -11,6 +11,110 @@ function cleanOption(value: unknown): string {
   return text(value).replace(/^\[[^\]]+\]\s*/g, '').slice(0, 50).trim();
 }
 
+function normalizeKpopTitleToken(value: unknown): string {
+  return text(value)
+    .replace(/[^\x00-\x7F]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^[\s"'`]+|[\s"'`]+$/g, '');
+}
+
+function isKpopListingStatusTag(value: unknown): boolean {
+  return /^(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)$/i.test(text(value));
+}
+
+function stripKpopListingStatusPrefix(value: unknown): string {
+  let out = text(value);
+  for (let i = 0; i < 5; i += 1) {
+    const next = out
+      .replace(/^\s*\[(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\]\s*/i, '')
+      .replace(/^\s*(?:PRE\s*[- ]?\s*ORDER|READY\s*[- ]?\s*STOCK|ON\s*HAND|FAST\s*DELIVERY)\s*[-:]\s*/i, '')
+      .trim();
+    if (next === out) break;
+    out = next;
+  }
+  return normalizeKpopTitleToken(out);
+}
+
+function looksLikeKpopVersionBracket(value: unknown): boolean {
+  const normalized = normalizeKpopTitleToken(value);
+  return /\bVER(?:SION)?\.?\b/i.test(normalized) || /\s\/\s/.test(normalized);
+}
+
+function firstMeaningfulKpopAlbumBracketValue(title: string): string {
+  const re = /\[([^\]]+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(title))) {
+    const value = normalizeKpopTitleToken(m[1]);
+    if (!value || isKpopListingStatusTag(value) || looksLikeKpopVersionBracket(value)) continue;
+    return value;
+  }
+  return '';
+}
+
+function fallbackKpopAlbumFromDashRemainder(value: string): string {
+  return normalizeKpopTitleToken(
+    text(value).replace(/\[[^\]]*(?:\bVER(?:SION)?\.?\b|\/)[^\]]*\]/gi, ' '),
+  )
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\b(?:\d+(?:st|nd|rd|th)?\s+)?(?:EP|ALBUM|MINI|FULL|SINGLE)\b.*$/i, ' ')
+    .replace(/\b(?:WEVERSE|PLATFORM|PHOTOBOOK|DIGIPACK|JEWEL|STANDARD)\s+VER\.?.*$/i, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function leadingUppercaseTokenBlock(value: string): string {
+  const tokens = text(value).split(/\s+/);
+  const artistTokens: string[] = [];
+  for (const token of tokens) {
+    const cleaned = token.replace(/^[^A-Za-z0-9&]+|[^A-Za-z0-9&]+$/g, '');
+    if (!cleaned) continue;
+    if (!/^[A-Z0-9&]+$/.test(cleaned) || !/[A-Z]/.test(cleaned)) break;
+    artistTokens.push(cleaned);
+  }
+  return artistTokens.join(' ');
+}
+
+export function deriveKpopFromTitle(value: unknown): { artist: string; album: string; version: string } {
+  const out = { artist: '', album: '', version: '' };
+  const eng = stripKpopListingStatusPrefix(value);
+  if (!eng) return out;
+
+  // Handles parenthesized dash-prefix artists, e.g. "(ILLIT) - NOT CUTE ANYMORE".
+  const dashM = eng.match(/^(.+?)\s+-\s+(.+)$/);
+  let remainder = eng;
+  if (dashM) {
+    const artistRaw = dashM[1].trim();
+    const parenthesizedArtist = artistRaw.match(/^\(([^()]+)\)$/);
+    const artistSource = parenthesizedArtist ? parenthesizedArtist[1] : artistRaw.replace(/\([^)]*\)\s*$/, '');
+    const artist = normalizeKpopTitleToken(artistSource);
+    if (artist) out.artist = artist;
+    remainder = stripKpopListingStatusPrefix(dashM[2]);
+  } else {
+    out.artist = leadingUppercaseTokenBlock(eng);
+  }
+
+  out.album = firstMeaningfulKpopAlbumBracketValue(remainder)
+    || firstMeaningfulKpopAlbumBracketValue(eng)
+    || (dashM ? fallbackKpopAlbumFromDashRemainder(remainder) : '');
+
+  const verM = eng.match(/\(([^)]+?)\s+[Vv][Ee][Rr]\.?\s*\)/);
+  if (verM) out.version = normalizeKpopTitleToken(verM[1]);
+  if (!out.version) {
+    const parenRe = /\(([^)]+)\)/g;
+    const candidates: string[] = [];
+    let parenM: RegExpExecArray | null;
+    while ((parenM = parenRe.exec(eng))) {
+      const candidate = normalizeKpopTitleToken(parenM[1]);
+      if (!candidate || isKpopListingStatusTag(candidate)) continue;
+      if (out.artist && candidate.toUpperCase() === out.artist.toUpperCase()) continue;
+      candidates.push(candidate.replace(/\s+[Vv][Ee][Rr]\.?$/i, '').trim());
+    }
+    out.version = candidates.filter(Boolean).pop() || '';
+  }
+  return out;
+}
+
 function lifecycleOf(row: ProductRow = {}, fallback: ProductRow = {}): string {
   const raw = text(row.lifecycle_state || fallback.lifecycle_state).toLowerCase();
   return raw === 'pre_order' ? 'pre_order' : 'ready_stock';

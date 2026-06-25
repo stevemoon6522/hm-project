@@ -4,7 +4,7 @@
 
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
 import { resolveEbayFulfillmentPolicy } from '../_shared/fulfillment.ts';
-import { buildVariationItems, inferKpopArtistName, parentSku, publishableGroupRows } from '../_shared/grouping.ts';
+import { buildVariationItems, deriveKpopFromTitle, inferKpopArtistName, parentSku, publishableGroupRows } from '../_shared/grouping.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
@@ -273,9 +273,13 @@ async function ebayPriceUsd(master: Record<string, unknown>): Promise<string> {
 }
 
 function aspectsFrom(master: Record<string, unknown>) {
-  const existingArtist = s(master.artist || master.brand || master.shopee_brand_name || '').trim();
-  const artist = existingArtist && !/^no brand$/i.test(existingArtist) ? existingArtist : inferKpopArtistName(master);
-  const title = stripLifecycleTags(master.album || master.release_title || master.product_name || master.sku);
+  const derived = deriveKpopFromTitle(master.product_name || master.sku);
+  const existingArtistRaw = s(master.artist || master.brand || master.shopee_brand_name || '').trim();
+  const existingArtist = existingArtistRaw.match(/^\(([^()]+)\)$/)?.[1]?.trim() || existingArtistRaw;
+  const artist = existingArtist && !/^no brand$/i.test(existingArtist)
+    ? existingArtist
+    : (derived.artist || inferKpopArtistName(master));
+  const title = s(master.album || master.release_title || derived.album || stripLifecycleTags(master.product_name || master.sku)).trim();
   const aspects: Record<string, string[]> = {
     Type: ['Album'],
     Format: ['CD'],

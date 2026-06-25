@@ -29012,7 +29012,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   async function coverageFetchFallback() {
     const [productsRes, shopeeRes, platformRes] = await Promise.all([
       db.from('products')
-        .select('id,sku,product_name,option_name,lifecycle_state,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,joom_published_at,updated_at')
+        .select('id,sku,product_name,option_name,lifecycle_state,joom_product_id,joom_variant_id,joom_currency,joom_mapping_status,joom_mapping_error,joom_last_synced_price,joom_last_synced_at,joom_published_at,ebay_sku,ebay_offer_id,ebay_item_id,ebay_status,ebay_last_synced_price,ebay_marketplace_id,ebay_last_synced_at,ebay_published_at,updated_at')
         .order('sku', { ascending: true }),
       db.from('product_shopee_listings')
         .select('product_id,account_key,region,shop_item_id,shop_model_id,status,last_synced_price,last_synced_at')
@@ -29058,6 +29058,24 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         remote_price: product.joom_last_synced_price,
         last_sync_at: product.joom_last_synced_at || product.joom_published_at || product.updated_at,
         error_msg: product.joom_mapping_error,
+      });
+    });
+    products.forEach(function(product) {
+      const status = String(product.ebay_status || '').toUpperCase();
+      if (!product.ebay_item_id || importedPlatformKeys.has(key(product.id, 'ebay'))) return;
+      if (!['PUBLISHED', 'MAPPED', 'LISTED'].includes(status)) return;
+      pushRow(product.id, 'ebay', {
+        platform: 'ebay',
+        country: product.ebay_marketplace_id || 'EBAY_US',
+        platform_item_id: product.ebay_item_id,
+        external_variant_id: product.ebay_offer_id || product.ebay_sku,
+        external_sku: product.ebay_sku || product.sku,
+        listing_status: 'listed',
+        mapping_status: 'mapped',
+        currency: 'USD',
+        remote_price: product.ebay_last_synced_price,
+        last_sync_at: product.ebay_last_synced_at || product.ebay_published_at || product.updated_at,
+        error_msg: null,
       });
     });
 

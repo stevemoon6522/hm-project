@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const root = process.cwd();
@@ -30,6 +30,9 @@ const ebayBridge = readFileSync(join(root, 'supabase', 'functions', 'ebay-bridge
 const edgeEbayBridge = readFileSync(join(root, 'edge-functions', 'ebay-bridge', 'index.ts'), 'utf8');
 const edgeJoomBridge = readFileSync(join(root, 'edge-functions', 'joom-bridge', 'index.ts'), 'utf8');
 const supabaseJoomBridge = readFileSync(join(root, 'supabase', 'functions', 'joom-bridge', 'index.ts'), 'utf8');
+const grouping = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', '_shared', 'grouping.ts'), 'utf8');
+const ebayMappingMigrationPath = join(root, 'supabase', 'migrations', '202606250001_ebay_platform_listings_backfill.sql');
+const ebayMappingMigration = existsSync(ebayMappingMigrationPath) ? readFileSync(ebayMappingMigrationPath, 'utf8') : '';
 const globalImportMigration = readFileSync(
   join(root, 'supabase', 'migrations', '202605290002_shopee_global_import_master.sql'),
   'utf8',
@@ -90,6 +93,9 @@ assert(html.includes('async function coverageFetchFallback()'), 'coverage view m
 assert(html.includes("'/rest/v1/platform_listing_coverage'"), 'coverage fetch must call platform_listing_coverage');
 assert(html.includes('joom_product_id,joom_variant_id'), 'coverage fallback must include legacy Joom product mappings');
 assert(html.includes("pushRow(product.id, 'joom'"), 'coverage fallback must convert legacy Joom mappings into coverage rows');
+assert(html.includes('ebay_sku,ebay_offer_id,ebay_item_id'), 'coverage fallback must include legacy eBay product mappings');
+assert(html.includes("pushRow(product.id, 'ebay'"), 'coverage fallback must convert legacy eBay mappings into coverage rows');
+assert(ebayMappingMigration.includes('products.ebay_item_id') || html.includes('products.ebay_item_id'), 'coverage migration/test path must cover eBay legacy item IDs');
 
 for (const platform of ['shopee', 'joom', 'qoo10', 'ebay']) {
   assert(html.includes(`value="${platform}"`) || html.includes(`'${platform}'`), `coverage UI must include ${platform}`);
@@ -151,7 +157,10 @@ assert(qoo10Bridge.includes('"S2,S1,S3,S0,S4,S5,S8"'), 'Qoo10 SKU scan must incl
 assert(joomAdapter.includes('function lifecycleProductName') && joomAdapter.includes('name: lifecycleProductName(master.product_name, lifecycleOf(master), sku)'), 'Joom adapter fallback scraped name must be lifecycle-normalized');
 assert(ebayAdapter.includes('function lifecycleProductName') && ebayAdapter.includes('const lifecycleState = lifecycleOf(master)') && ebayAdapter.includes('title: lifecycleProductName(master.product_name, lifecycleState, sku).slice(0, 80)'), 'eBay adapter fallback title must be lifecycle-normalized');
 assert(ebayAdapter.includes('lifecycleState,'), 'eBay adapter create payload must forward lifecycleState for fulfillment-policy selection');
-assert(ebayAdapter.includes('const title = stripLifecycleTags(master.album || master.release_title || master.product_name || master.sku);'), 'eBay adapter release-title aspect must not carry stock-state tags');
+assert(ebayAdapter.includes('deriveKpopFromTitle'), 'eBay platform-publish adapter must use shared K-pop title parser');
+assert(grouping.includes('export function deriveKpopFromTitle'), 'shared grouping helpers must export deriveKpopFromTitle');
+assert(grouping.includes('parenthesized dash-prefix artists'), 'shared parser must document the ILLIT parenthesized artist case');
+assert(ebayAdapter.includes('const title = s(master.album || master.release_title || derived.album || stripLifecycleTags(master.product_name || master.sku)).trim();'), 'eBay adapter release-title aspect must not carry stock-state tags');
 assert(shopeeAdapter.includes('function shopeeLifecycleProductName') && shopeeAdapter.includes('const lifecycle_state: string = shopeeLifecycleOf(master, (ctx as any).lifecycle_state);'), 'Shopee multi-region adapter must derive lifecycle with a ready-stock-safe helper');
 assert(shopeeAdapter.includes('|| shopeeLifecycleProductName(master.product_name, lifecycle_state, master.sku)') && shopeeAdapter.includes('is_pre_order,'), 'Shopee adapter fallback name and preorder flag must follow lifecycle');
 assert(shopeeAdapter.includes('global_item_name: shopeeLifecycleProductName(masterProduct.product_name, lifecycle_state, masterProduct.sku) || undefined'), 'Shopee metadata update must not push stale stock-state title tags');

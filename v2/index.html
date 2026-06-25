@@ -25663,7 +25663,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const skipped = [];
 
     // Stability/perf: avoid N×region sequential get_model_list calls during Shopee bulk price edits.
-    // Fresh mapped listings are trusted; any item with an untrusted target is fetched once and reused.
+    // Fresh mapped listings are trusted; stale or incomplete mappings are fetched once and reused.
     const PREFLIGHT_TRUST_TTL_MS = 6 * 60 * 60 * 1000;
     const now = Date.now();
     function isTrustedListing(listing) {
@@ -25682,7 +25682,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!Number.isFinite(itemId) || itemId <= 0) continue;
       const key = p.region + ':' + itemId;
       if (!allKeys.has(key)) allKeys.set(key, { region: p.region, itemId: itemId });
-      if (!isTrustedListing(p.listing) || p.needsModel) mixedKeys.add(key);
+      const trustedModelId = Number(p.modelId || p.listing?.shop_model_id);
+      if (!isTrustedListing(p.listing)) {
+        mixedKeys.add(key);
+      } else if (p.needsModel && (!Number.isFinite(trustedModelId) || trustedModelId <= 0)) {
+        mixedKeys.add(key);
+      }
     }
 
     const trustedModelIds = new Map();
@@ -25693,7 +25698,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const key = p.region + ':' + itemId;
       if (mixedKeys.has(key)) continue;
       const modelId = p.listing && p.listing.shop_model_id ? Number(p.listing.shop_model_id) : null;
-      if (modelId && !p.needsModel) {
+      if (isTrustedListing(p.listing) && p.needsModel && p.modelId) {
+        if (!trustedModelIds.has(key)) trustedModelIds.set(key, new Set());
+        trustedModelIds.get(key).add(Number(p.modelId));
+      } else if (modelId && !p.needsModel) {
         if (!trustedModelIds.has(key)) trustedModelIds.set(key, new Set());
         trustedModelIds.get(key).add(modelId);
       } else if (!p.needsModel) {
@@ -25755,7 +25763,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         blocked.push(Object.assign({}, p, { reason: 'variant mapping requires shop_model_id' }));
         continue;
       }
-      if (p.needsModel && p.modelId) {
+      if (p.needsModel && p.modelId && !info._trusted) {
         const matchedModel = (info.models || []).find(function(m) { return Number(m && m.model_id) === Number(p.modelId); });
         if (!catShopeeModelMatchesPayloadSku(matchedModel, p)) {
           blocked.push(Object.assign({}, p, { reason: 'model_id ' + p.modelId + ' does not match SKU ' + (p.sku || '') }));

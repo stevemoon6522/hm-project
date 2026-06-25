@@ -89,7 +89,8 @@ assert.match(preflight, /else if \(!p\.needsModel\)/, 'Shopee preflight must not
 assert.match(preflight, /p\.needsModel && !p\.modelId/, 'Shopee preflight must block variant rows without shop_model_id before update_price');
 assert.match(preflight, /if \(!info\.hasModel\)[\s\S]*p\.needsModel = false[\s\S]*catBuildShopeePriceEntry/, 'Shopee preflight must downgrade false variant mappings when the remote item has no models');
 assert.match(preflight, /skipped\.push/, 'Shopee preflight must skip stale remote item ids without failing valid region price updates');
-assert.match(preflight, /!isTrustedListing\(p\.listing\) \|\| p\.needsModel/, 'Shopee preflight must re-check remote models for variant rows even when local mapping is fresh');
+assert.doesNotMatch(preflight, /!isTrustedListing\(p\.listing\) \|\| p\.needsModel/, 'Fresh mapped Shopee variant rows must not force remote model preflight');
+assert.match(preflight, /isTrustedListing\(p\.listing\)[\s\S]*p\.needsModel[\s\S]*p\.modelId[\s\S]*trustedModelIds/, 'Fresh mapped Shopee variant rows with shop_model_id must use local mapping as the fast path');
 assert.match(preflight, /catShopeeModelMatchesPayloadSku\(matchedModel, p\)/, 'Shopee preflight must verify model_id belongs to the selected SKU before update_price');
 assert.match(ensureListings, /const globalModelId = catProductGlobalModelId\(product, byRegion\)/, 'Shopee live sync must carry global_model_id into listing hydration');
 assert.match(ensureListings, /account_key:\s*SHOPEE_DEFAULT_ACCOUNT_KEY,[\s\S]*global_item_id:\s*String\(globalItemId\)/, 'Shopee live sync must scope published_list hydration to the active account and global item');
@@ -521,6 +522,77 @@ async function runMissingRegionPreflightHarness() {
   return JSON.parse(JSON.stringify(context.result));
 }
 
+async function runTrustedVariantPreflightHarness() {
+  const context = {
+    Date,
+    JSON,
+    Map,
+    Math,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+
+  const harness = `
+  ${extractFunction(v2, 'catBuildShopeePriceEntry')}
+  ${extractFunction(v2, 'catNormalizeSkuText')}
+  ${extractFunction(v2, 'catShopeeTierIndexValues')}
+  ${extractFunction(v2, 'catShopeeTierIndexMatches')}
+  ${extractFunction(v2, 'catShopeeRemoteListingMissingMessage')}
+  ${extractFunction(v2, 'catShopeeModelMatchesPayloadSku')}
+  let fetchCalls = 0;
+  async function catFetchShopeeModelIndex() {
+    fetchCalls += 1;
+    return {
+      ok: true,
+      hasModel: true,
+      modelIds: new Set([9001]),
+      models: [{ model_id: 9001, model_sku: 'T4-TEA-WEONF-SOL-EJ', model_name: 'EJ', tier_index: [0] }],
+    };
+  }
+  ${preflight}
+  (async function() {
+    const payloads = [{
+      productId: 'option-ej',
+      sku: 'T4-TEA-WEONF-SOL-EJ',
+      region: 'SG',
+      itemId: 431,
+      modelId: 9001,
+      needsModel: true,
+      price: 12,
+      listing: {
+        status: 'mapped',
+        shop_item_id: 431,
+        shop_model_id: 9001,
+        last_synced_at: new Date().toISOString(),
+      },
+      payload: {
+        region: 'SG',
+        item_id: 431,
+        price_list: [{ model_id: 9001, original_price: 12 }],
+      },
+    }];
+    const result = await catPreflightShopeePayloads(payloads);
+    globalThis.result = {
+      fetchCalls,
+      valid: result.valid.map(function(p) {
+        return { sku: p.sku, region: p.region, modelId: p.modelId, needsModel: p.needsModel };
+      }),
+      blocked: result.blocked.map(function(p) { return { sku: p.sku, region: p.region, reason: p.reason }; }),
+      skipped: result.skipped.map(function(p) { return { sku: p.sku, region: p.region, reason: p.reason }; }),
+    };
+  })();
+  `;
+
+  await new vm.Script(harness, { filename: 'v2-shopee-trusted-variant-preflight-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify(context.result));
+}
+
 function runCortisModelMatchHarness() {
   const context = {
     Array,
@@ -884,6 +956,17 @@ assert.deepEqual(
     reason: 'remote listing not found: .error_busi please input correct product id',
   }],
   'Stale BR mappings should be skipped with the exact remote item-not-found reason',
+);
+
+assert.deepEqual(
+  await runTrustedVariantPreflightHarness(),
+  {
+    fetchCalls: 0,
+    valid: [{ sku: 'T4-TEA-WEONF-SOL-EJ', region: 'SG', modelId: 9001, needsModel: true }],
+    blocked: [],
+    skipped: [],
+  },
+  'Fresh mapped Shopee variant rows with shop_model_id must skip remote model preflight',
 );
 
 assert.deepEqual(

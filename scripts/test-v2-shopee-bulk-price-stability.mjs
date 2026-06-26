@@ -113,6 +113,10 @@ assert.match(liveSync, /catSyncTimingMark\(timing,\s*'update'\)/, 'Shopee live s
 assert.match(liveSync, /catSyncTimingMark\(timing,\s*'persist'\)/, 'Shopee live sync timing must measure DB persistence');
 assert.match(updateBatching, /price_list:\s*\[\]/, 'Shopee update batching must build a multi-entry price_list envelope');
 assert.match(updateBatching, /batch\.payload\.price_list\.push\(entry\)/, 'Shopee update batching must append selected model price entries into one item update');
+assert.match(priceSync, /async function catPostShopeePriceBridgeBatch\(batches\)/, 'Shopee price sync must have a bridge-side batch transport helper');
+assert.match(priceSync, /SHOPEE_BRIDGE \+ '\/update_price_batch'/, 'Shopee price sync must call the bridge-side update_price_batch route');
+assert.match(priceSync, /catExecuteShopeeUpdateBatchesViaBridge\(/, 'Shopee price sync must prefer the bridge-side batch route after preflight');
+assert.match(priceSync, /catExecuteShopeeUpdateBatch\(batch\)/, 'Shopee price sync must keep the existing per-item fallback path');
 assert.match(priceSync, /Promise\.all\(chunk\.map\(function\(batch\)/, 'Shopee live price sync must run region/item batches concurrently within the cap');
 assert.match(liveSync, /catRunShopeePriceUpdates\(preflight\.valid\)/, 'Shopee live price sync must use the batched update runner instead of one sequential request per option row');
 assert.ok(
@@ -146,8 +150,12 @@ assert.match(flushInlineEdits, /weightChanged[\s\S]*catPersistWeight\(pid,\s*rou
 assert.match(priceSync, /responseJson && \(responseJson\.log_id \|\| responseJson\.previous_log_id\)/, 'Shopee live sync must not double-write mutation logs after Edge logging succeeds');
 
 const bridgeSource = fs.readFileSync(new URL('../supabase/functions/shopee-bridge/index.ts', import.meta.url), 'utf8');
-assert.match(bridgeSource, /if \(action === 'update_price' && req\.method === 'POST'\)[\s\S]*insertMutationLog\({[\s\S]*action: 'update_price'/, 'Shopee update_price bridge route must log via service-role Edge function');
+assert.match(bridgeSource, /async function executeShopUpdatePriceMutation\(/, 'Shopee update_price bridge logic must be shared by single and batch routes');
+assert.match(bridgeSource, /if \(action === 'update_price' && req\.method === 'POST'\)[\s\S]*executeShopUpdatePriceMutation\(/, 'Shopee single update_price route must call the shared mutation helper');
+assert.match(bridgeSource, /if \(action === 'update_price_batch' && req\.method === 'POST'\)[\s\S]*mapWithConcurrency\(/, 'Shopee update_price_batch route must fan out with bounded bridge-side concurrency');
 assert.match(bridgeSource, /shop_update_price_idempotent_skip/, 'Shopee update_price bridge route must idempotently skip already-logged ok payloads');
+assert.match(bridgeSource, /shop_update_price_batch_complete/, 'Shopee update_price_batch route must audit aggregate batch completion');
+assert.match(bridgeSource, /UPDATE_PRICE_BATCH_PARALLELISM = 6/, 'Shopee update_price_batch route should keep the six active regions in one bounded bridge-side wave');
 
 async function runFlushHarness({ productSourcing, productCost, sourcingInputValue, costInputValue, productWeight = 150, weightInputValue = 150, persistWeight = false, silentWeightToast = false }) {
   const context = {
@@ -430,6 +438,474 @@ function runBatchFailureHarness() {
 
   new vm.Script(harness, { filename: 'v2-shopee-batch-failure-harness.mjs' }).runInContext(context);
   return JSON.parse(JSON.stringify(context.result));
+}
+
+async function runBridgeBatchSuccessHarness() {
+  const context = {
+    Array,
+    JSON,
+    Map,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    URLSearchParams,
+    console,
+    globalThis: null,
+    AUTH_HEADERS: { Authorization: 'Bearer test' },
+    SHOPEE_BRIDGE: 'https://bridge.test',
+    SHOPEE_DEFAULT_ACCOUNT_KEY: 'starphotocard',
+    SHOPEE_PRICE_UPDATE_PARALLELISM: 6,
+    SHOPEE_PRICE_UPDATE_BRIDGE_BATCH_SIZE: 60,
+    fetchCalls: [],
+  };
+  context.globalThis = context;
+  context.fetch = async function(url, options) {
+    context.fetchCalls.push({ url, body: JSON.parse(options.body) });
+    return {
+      ok: true,
+      status: 200,
+      json: async function() {
+        return {
+          ok: true,
+          results: [
+            { ok: true, client_ref: 'SG:412:0', region: 'SG', item_id: 412, log_id: 'sg-log', result: { response: { success_list: [{ model_id: 1, original_price: 18.26 }] } } },
+            { ok: true, client_ref: 'TW:530:1', region: 'TW', item_id: 530, log_id: 'tw-log', result: { response: { success_list: [{ model_id: 2, original_price: 418 }] } } },
+          ],
+        };
+      },
+    };
+  };
+  vm.createContext(context);
+  const harness = `
+    function bridgeResultMessage(json) { return json && (json.error || json.message) || ''; }
+    ${extractFunction(v2, 'catBridgePriceFailureList')}
+    ${extractFunction(v2, 'catBridgePriceMessage')}
+    ${extractFunction(v2, 'catShopeePriceEntryModelKey')}
+    ${extractFunction(v2, 'catShopeePayloadModelKey')}
+    ${extractFunction(v2, 'catShopeeBatchFailureMessage')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatches')}
+    ${extractFunction(v2, 'catShopeePriceErrorNeedsLogisticsRepair')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatchRequestRows')}
+    ${extractFunction(v2, 'catShopeeBatchRouteResultMessage')}
+    ${extractFunction(v2, 'catBridgeBatchRouteUnavailable')}
+    ${extractFunction(v2, 'catPostShopeePriceBridgeBatch')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesViaBridge')}
+    ${extractFunction(v2, 'catRunShopeePriceUpdates')}
+    (async function() {
+      globalThis.rows = await catRunShopeePriceUpdates([
+        { sku: 'SKU-SG', region: 'SG', itemId: 412, modelId: 1, bridgeUrl: SHOPEE_BRIDGE + '/update_price', payload: { region: 'SG', item_id: 412, price_list: [{ model_id: 1, original_price: 18.26 }] } },
+        { sku: 'SKU-TW', region: 'TW', itemId: 530, modelId: 2, bridgeUrl: SHOPEE_BRIDGE + '/update_price', payload: { region: 'TW', item_id: 530, price_list: [{ model_id: 2, original_price: 418 }] } },
+      ]);
+    })();
+  `;
+  await new vm.Script(harness, { filename: 'v2-shopee-bridge-batch-success-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify({ rows: context.rows, fetchCalls: context.fetchCalls }));
+}
+
+async function runBridgeBatchUnavailableFallbackHarness() {
+  const context = {
+    Array,
+    JSON,
+    Map,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    URLSearchParams,
+    console,
+    globalThis: null,
+    AUTH_HEADERS: { Authorization: 'Bearer test' },
+    SHOPEE_BRIDGE: 'https://bridge.test',
+    SHOPEE_DEFAULT_ACCOUNT_KEY: 'starphotocard',
+    SHOPEE_PRICE_UPDATE_PARALLELISM: 6,
+    SHOPEE_PRICE_UPDATE_BRIDGE_BATCH_SIZE: 60,
+    fetchCalls: [],
+  };
+  context.globalThis = context;
+  context.fetch = async function(url, options) {
+    context.fetchCalls.push({ url, body: JSON.parse(options.body) });
+    if (String(url).endsWith('/update_price_batch')) {
+      return { ok: false, status: 404, json: async function() { return { ok: false, error: 'unknown action' }; } };
+    }
+    return { ok: true, status: 200, json: async function() { return { ok: true, log_id: 'single-log', result: { response: { failure_list: [] } } }; } };
+  };
+  vm.createContext(context);
+  const harness = `
+    function bridgeResultMessage(json) { return json && (json.error || json.message) || ''; }
+    ${extractFunction(v2, 'catBridgePriceOk')}
+    ${extractFunction(v2, 'catBridgePriceFailureList')}
+    ${extractFunction(v2, 'catBridgePriceMessage')}
+    ${extractFunction(v2, 'catShopeePriceEntryModelKey')}
+    ${extractFunction(v2, 'catShopeePayloadModelKey')}
+    ${extractFunction(v2, 'catShopeeBatchFailureMessage')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatches')}
+    ${extractFunction(v2, 'catShopeePriceErrorNeedsLogisticsRepair')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatchRequestRows')}
+    ${extractFunction(v2, 'catShopeeBatchRouteResultMessage')}
+    ${extractFunction(v2, 'catBridgeBatchRouteUnavailable')}
+    ${extractFunction(v2, 'catPostShopeePricePayload')}
+    ${extractFunction(v2, 'catPostShopeePriceBatch')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatch')}
+    ${extractFunction(v2, 'catPostShopeePriceBridgeBatch')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesViaBridge')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesLegacy')}
+    ${extractFunction(v2, 'catRunShopeePriceUpdates')}
+    (async function() {
+      globalThis.rows = await catRunShopeePriceUpdates([
+        { sku: 'SKU-SG', region: 'SG', itemId: 412, modelId: 1, bridgeUrl: SHOPEE_BRIDGE + '/update_price', payload: { region: 'SG', item_id: 412, price_list: [{ model_id: 1, original_price: 18.26 }] } },
+      ]);
+    })();
+  `;
+  await new vm.Script(harness, { filename: 'v2-shopee-bridge-batch-fallback-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify({ rows: context.rows, fetchCalls: context.fetchCalls }));
+}
+
+async function runBridgeBatchServerErrorFallbackHarness() {
+  const context = {
+    Array,
+    JSON,
+    Map,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    URLSearchParams,
+    console,
+    globalThis: null,
+    AUTH_HEADERS: { Authorization: 'Bearer test' },
+    SHOPEE_BRIDGE: 'https://bridge.test',
+    SHOPEE_DEFAULT_ACCOUNT_KEY: 'starphotocard',
+    SHOPEE_PRICE_UPDATE_PARALLELISM: 6,
+    SHOPEE_PRICE_UPDATE_BRIDGE_BATCH_SIZE: 60,
+    fetchCalls: [],
+  };
+  context.globalThis = context;
+  context.fetch = async function(url, options) {
+    context.fetchCalls.push({ url, body: JSON.parse(options.body) });
+    if (String(url).endsWith('/update_price_batch')) {
+      return { ok: false, status: 500, json: async function() { return { ok: false, error: 'edge_runtime_error' }; } };
+    }
+    return { ok: true, status: 200, json: async function() { return { ok: true, log_id: 'single-log', result: { response: { failure_list: [] } } }; } };
+  };
+  vm.createContext(context);
+  const harness = `
+    function bridgeResultMessage(json) { return json && (json.error || json.message) || ''; }
+    ${extractFunction(v2, 'catBridgePriceOk')}
+    ${extractFunction(v2, 'catBridgePriceFailureList')}
+    ${extractFunction(v2, 'catBridgePriceMessage')}
+    ${extractFunction(v2, 'catShopeePriceEntryModelKey')}
+    ${extractFunction(v2, 'catShopeePayloadModelKey')}
+    ${extractFunction(v2, 'catShopeeBatchFailureMessage')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatches')}
+    ${extractFunction(v2, 'catShopeePriceErrorNeedsLogisticsRepair')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatchRequestRows')}
+    ${extractFunction(v2, 'catShopeeBatchRouteResultMessage')}
+    ${extractFunction(v2, 'catBridgeBatchRouteUnavailable')}
+    ${extractFunction(v2, 'catPostShopeePricePayload')}
+    ${extractFunction(v2, 'catPostShopeePriceBatch')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatch')}
+    ${extractFunction(v2, 'catPostShopeePriceBridgeBatch')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesViaBridge')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesLegacy')}
+    ${extractFunction(v2, 'catRunShopeePriceUpdates')}
+    (async function() {
+      globalThis.rows = await catRunShopeePriceUpdates([
+        { sku: 'SKU-SG', region: 'SG', itemId: 412, modelId: 1, bridgeUrl: SHOPEE_BRIDGE + '/update_price', payload: { region: 'SG', item_id: 412, price_list: [{ model_id: 1, original_price: 18.26 }] } },
+      ]);
+    })();
+  `;
+  await new vm.Script(harness, { filename: 'v2-shopee-bridge-batch-500-fallback-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify({ rows: context.rows, fetchCalls: context.fetchCalls }));
+}
+
+async function runBridgeBatchMissingResultsFallbackHarness({ parseFailure = false } = {}) {
+  const context = {
+    Array,
+    JSON,
+    Map,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    URLSearchParams,
+    console,
+    globalThis: null,
+    AUTH_HEADERS: { Authorization: 'Bearer test' },
+    SHOPEE_BRIDGE: 'https://bridge.test',
+    SHOPEE_DEFAULT_ACCOUNT_KEY: 'starphotocard',
+    SHOPEE_PRICE_UPDATE_PARALLELISM: 6,
+    SHOPEE_PRICE_UPDATE_BRIDGE_BATCH_SIZE: 60,
+    fetchCalls: [],
+  };
+  context.globalThis = context;
+  context.fetch = async function(url, options) {
+    context.fetchCalls.push({ url, body: JSON.parse(options.body) });
+    if (String(url).endsWith('/update_price_batch')) {
+      return {
+        ok: true,
+        status: 200,
+        json: async function() {
+          if (parseFailure) throw new Error('empty response');
+          return { ok: true };
+        },
+      };
+    }
+    return { ok: true, status: 200, json: async function() { return { ok: true, log_id: 'single-log', result: { response: { failure_list: [] } } }; } };
+  };
+  vm.createContext(context);
+  const harness = `
+    function bridgeResultMessage(json) { return json && (json.error || json.message) || ''; }
+    ${extractFunction(v2, 'catBridgePriceOk')}
+    ${extractFunction(v2, 'catBridgePriceFailureList')}
+    ${extractFunction(v2, 'catBridgePriceMessage')}
+    ${extractFunction(v2, 'catShopeePriceEntryModelKey')}
+    ${extractFunction(v2, 'catShopeePayloadModelKey')}
+    ${extractFunction(v2, 'catShopeeBatchFailureMessage')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatches')}
+    ${extractFunction(v2, 'catShopeePriceErrorNeedsLogisticsRepair')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatchRequestRows')}
+    ${extractFunction(v2, 'catShopeeBatchRouteResultMessage')}
+    ${extractFunction(v2, 'catBridgeBatchRouteUnavailable')}
+    ${extractFunction(v2, 'catPostShopeePricePayload')}
+    ${extractFunction(v2, 'catPostShopeePriceBatch')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatch')}
+    ${extractFunction(v2, 'catPostShopeePriceBridgeBatch')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesViaBridge')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesLegacy')}
+    ${extractFunction(v2, 'catRunShopeePriceUpdates')}
+    (async function() {
+      globalThis.rows = await catRunShopeePriceUpdates([
+        { sku: 'SKU-SG', region: 'SG', itemId: 412, modelId: 1, bridgeUrl: SHOPEE_BRIDGE + '/update_price', payload: { region: 'SG', item_id: 412, price_list: [{ model_id: 1, original_price: 18.26 }] } },
+      ]);
+    })();
+  `;
+  await new vm.Script(harness, { filename: 'v2-shopee-bridge-batch-missing-results-fallback-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify({ rows: context.rows, fetchCalls: context.fetchCalls }));
+}
+
+async function runBridgeBatchChunkingHarness() {
+  const payloads = Array.from({ length: 61 }, function(_, index) {
+    return {
+      sku: 'SKU-' + index,
+      region: 'SG',
+      itemId: 100000 + index,
+      modelId: 200000 + index,
+      bridgeUrl: 'https://bridge.test/update_price',
+      payload: {
+        region: 'SG',
+        item_id: 100000 + index,
+        price_list: [{ model_id: 200000 + index, original_price: 10 + index }],
+      },
+    };
+  });
+  const context = {
+    Array,
+    JSON,
+    Map,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    URLSearchParams,
+    console,
+    globalThis: null,
+    AUTH_HEADERS: { Authorization: 'Bearer test' },
+    SHOPEE_BRIDGE: 'https://bridge.test',
+    SHOPEE_DEFAULT_ACCOUNT_KEY: 'starphotocard',
+    SHOPEE_PRICE_UPDATE_PARALLELISM: 6,
+    SHOPEE_PRICE_UPDATE_BRIDGE_BATCH_SIZE: 60,
+    fetchCalls: [],
+  };
+  context.globalThis = context;
+  context.fetch = async function(url, options) {
+    const body = JSON.parse(options.body);
+    context.fetchCalls.push({ url, body });
+    return {
+      ok: true,
+      status: 200,
+      json: async function() {
+        return {
+          ok: true,
+          results: (body.updates || []).map(function(row) {
+            return { ok: true, client_ref: row.client_ref, region: row.region, item_id: row.item_id, log_id: 'log-' + row.item_id, result: { response: { failure_list: [] } } };
+          }),
+        };
+      },
+    };
+  };
+  vm.createContext(context);
+  const harness = `
+    function bridgeResultMessage(json) { return json && (json.error || json.message) || ''; }
+    var payloads = ${JSON.stringify(payloads)};
+    ${extractFunction(v2, 'catBridgePriceFailureList')}
+    ${extractFunction(v2, 'catBridgePriceMessage')}
+    ${extractFunction(v2, 'catShopeePriceEntryModelKey')}
+    ${extractFunction(v2, 'catShopeePayloadModelKey')}
+    ${extractFunction(v2, 'catShopeeBatchFailureMessage')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatches')}
+    ${extractFunction(v2, 'catShopeePriceErrorNeedsLogisticsRepair')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatchRequestRows')}
+    ${extractFunction(v2, 'catShopeeBatchRouteResultMessage')}
+    ${extractFunction(v2, 'catBridgeBatchRouteUnavailable')}
+    ${extractFunction(v2, 'catPostShopeePriceBridgeBatch')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesViaBridge')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesLegacy')}
+    ${extractFunction(v2, 'catRunShopeePriceUpdates')}
+    (async function() {
+      globalThis.rows = await catRunShopeePriceUpdates(payloads);
+    })();
+  `;
+  await new vm.Script(harness, { filename: 'v2-shopee-bridge-batch-chunking-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify({ rows: context.rows, fetchCalls: context.fetchCalls }));
+}
+
+async function runBridgeBatchFailureAttributionHarness() {
+  const context = {
+    Array,
+    JSON,
+    Map,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    URLSearchParams,
+    console,
+    globalThis: null,
+    AUTH_HEADERS: { Authorization: 'Bearer test' },
+    SHOPEE_BRIDGE: 'https://bridge.test',
+    SHOPEE_DEFAULT_ACCOUNT_KEY: 'starphotocard',
+    SHOPEE_PRICE_UPDATE_PARALLELISM: 6,
+    SHOPEE_PRICE_UPDATE_BRIDGE_BATCH_SIZE: 60,
+    fetchCalls: [],
+  };
+  context.globalThis = context;
+  context.fetch = async function(url, options) {
+    context.fetchCalls.push({ url, body: JSON.parse(options.body) });
+    return {
+      ok: true,
+      status: 200,
+      json: async function() {
+        return {
+          ok: false,
+          results: [{
+            ok: false,
+            client_ref: 'SG:412:0',
+            region: 'SG',
+            item_id: 412,
+            failure_list: [{ model_id: 2, failed_reason: 'model price rejected for model 2' }],
+            result: { response: { failure_list: [{ model_id: 2, failed_reason: 'model price rejected for model 2' }] } },
+          }],
+        };
+      },
+    };
+  };
+  vm.createContext(context);
+  const harness = `
+    function bridgeResultMessage(json) { return json && (json.error || json.message) || ''; }
+    ${extractFunction(v2, 'catBridgePriceFailureList')}
+    ${extractFunction(v2, 'catBridgePriceMessage')}
+    ${extractFunction(v2, 'catShopeePriceEntryModelKey')}
+    ${extractFunction(v2, 'catShopeePayloadModelKey')}
+    ${extractFunction(v2, 'catShopeeBatchFailureMessage')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatches')}
+    ${extractFunction(v2, 'catShopeePriceErrorNeedsLogisticsRepair')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatchRequestRows')}
+    ${extractFunction(v2, 'catShopeeBatchRouteResultMessage')}
+    ${extractFunction(v2, 'catBridgeBatchRouteUnavailable')}
+    ${extractFunction(v2, 'catPostShopeePriceBridgeBatch')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesViaBridge')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesLegacy')}
+    ${extractFunction(v2, 'catRunShopeePriceUpdates')}
+    (async function() {
+      globalThis.rows = await catRunShopeePriceUpdates([
+        { sku: 'SKU-OK', region: 'SG', itemId: 412, modelId: 1, bridgeUrl: SHOPEE_BRIDGE + '/update_price', payload: { region: 'SG', item_id: 412, price_list: [{ model_id: 1, original_price: 18.26 }] } },
+        { sku: 'SKU-FAIL', region: 'SG', itemId: 412, modelId: 2, bridgeUrl: SHOPEE_BRIDGE + '/update_price', payload: { region: 'SG', item_id: 412, price_list: [{ model_id: 2, original_price: 19.26 }] } },
+      ]);
+    })();
+  `;
+  await new vm.Script(harness, { filename: 'v2-shopee-bridge-batch-failure-attribution-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify({ rows: context.rows, fetchCalls: context.fetchCalls }));
+}
+
+async function runBridgeBatchLogisticsTargetHarness() {
+  const context = {
+    Array,
+    JSON,
+    Map,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    URLSearchParams,
+    console,
+    globalThis: null,
+    AUTH_HEADERS: { Authorization: 'Bearer test' },
+    SHOPEE_BRIDGE: 'https://bridge.test',
+    SHOPEE_DEFAULT_ACCOUNT_KEY: 'starphotocard',
+    SHOPEE_PRICE_UPDATE_PARALLELISM: 6,
+    SHOPEE_PRICE_UPDATE_BRIDGE_BATCH_SIZE: 60,
+    fetchCalls: [],
+    singleRetrySkus: [],
+  };
+  context.globalThis = context;
+  context.fetch = async function(url, options) {
+    context.fetchCalls.push({ url, body: JSON.parse(options.body) });
+    return {
+      ok: true,
+      status: 200,
+      json: async function() {
+        return {
+          ok: false,
+          results: [{
+            ok: false,
+            client_ref: 'SG:412:0',
+            region: 'SG',
+            item_id: 412,
+            failure_list: [{ model_id: 2, failed_reason: 'Shipping channel cannot be enabled as product price exceeds limit.' }],
+            result: { response: { failure_list: [{ model_id: 2, failed_reason: 'Shipping channel cannot be enabled as product price exceeds limit.' }] } },
+          }],
+        };
+      },
+    };
+  };
+  vm.createContext(context);
+  const harness = `
+    function bridgeResultMessage(json) { return json && (json.error || json.message) || ''; }
+    async function catPostShopeePricePayload(payload) {
+      globalThis.singleRetrySkus.push(payload.sku);
+      return { ok: true, json: { ok: true, log_id: 'single-retry-' + payload.sku }, errorMsg: null, preRetry: { errorMsg: 'batch logistics failure' } };
+    }
+    ${extractFunction(v2, 'catBridgePriceFailureList')}
+    ${extractFunction(v2, 'catBridgePriceMessage')}
+    ${extractFunction(v2, 'catShopeePriceEntryModelKey')}
+    ${extractFunction(v2, 'catShopeePayloadModelKey')}
+    ${extractFunction(v2, 'catShopeeBatchFailureMessage')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatches')}
+    ${extractFunction(v2, 'catShopeePriceErrorNeedsLogisticsRepair')}
+    ${extractFunction(v2, 'catBuildShopeeUpdateBatchRequestRows')}
+    ${extractFunction(v2, 'catShopeeBatchRouteResultMessage')}
+    ${extractFunction(v2, 'catBridgeBatchRouteUnavailable')}
+    ${extractFunction(v2, 'catPostShopeePriceBridgeBatch')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesViaBridge')}
+    ${extractFunction(v2, 'catExecuteShopeeUpdateBatchesLegacy')}
+    ${extractFunction(v2, 'catRunShopeePriceUpdates')}
+    (async function() {
+      globalThis.rows = await catRunShopeePriceUpdates([
+        { sku: 'SKU-OK', region: 'SG', itemId: 412, modelId: 1, bridgeUrl: SHOPEE_BRIDGE + '/update_price', payload: { region: 'SG', item_id: 412, price_list: [{ model_id: 1, original_price: 18.26 }] } },
+        { sku: 'SKU-LOGISTICS', region: 'SG', itemId: 412, modelId: 2, bridgeUrl: SHOPEE_BRIDGE + '/update_price', payload: { region: 'SG', item_id: 412, price_list: [{ model_id: 2, original_price: 19.26 }] } },
+      ]);
+    })();
+  `;
+  await new vm.Script(harness, { filename: 'v2-shopee-bridge-batch-logistics-target-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify({ rows: context.rows, fetchCalls: context.fetchCalls, singleRetrySkus: context.singleRetrySkus }));
 }
 
 async function runPersistResultsHarness() {
@@ -1037,6 +1513,65 @@ assert.deepEqual(
   runBatchFailureHarness(),
   { success: null, failed: 'price exceeds limit for model' },
   'Batched Shopee update_price failures must be attributed back to the matching model_id only',
+);
+
+const bridgeBatchSuccess = await runBridgeBatchSuccessHarness();
+assert.equal(bridgeBatchSuccess.fetchCalls.length, 1, 'bridge batch route should send one browser fetch for multiple update_price batches');
+assert.equal(bridgeBatchSuccess.fetchCalls[0].url, 'https://bridge.test/update_price_batch');
+assert.equal(bridgeBatchSuccess.fetchCalls[0].body.updates.length, 2, 'bridge batch route should include each region/item update as one row');
+assert.equal(bridgeBatchSuccess.rows.length, 2, 'bridge batch route response should expand back to per-payload results');
+assert.equal(bridgeBatchSuccess.rows[0].ok, true, 'first bridge batch row should be successful');
+assert.equal(bridgeBatchSuccess.rows[1].json.log_id, 'tw-log', 'second bridge batch row should retain the bridge mutation log id');
+
+const bridgeBatchFallback = await runBridgeBatchUnavailableFallbackHarness();
+assert.equal(bridgeBatchFallback.fetchCalls.length, 2, 'unavailable bridge batch route should fall back to existing update_price transport');
+assert.equal(bridgeBatchFallback.fetchCalls[0].url, 'https://bridge.test/update_price_batch');
+assert.equal(bridgeBatchFallback.fetchCalls[1].url, 'https://bridge.test/update_price');
+assert.equal(bridgeBatchFallback.rows[0].ok, true, 'fallback update_price transport should preserve successful result shape');
+
+const bridgeBatchServerErrorFallback = await runBridgeBatchServerErrorFallbackHarness();
+assert.equal(bridgeBatchServerErrorFallback.fetchCalls.length, 2, 'server-error bridge batch route should fall back to existing update_price transport');
+assert.equal(bridgeBatchServerErrorFallback.fetchCalls[0].url, 'https://bridge.test/update_price_batch');
+assert.equal(bridgeBatchServerErrorFallback.fetchCalls[1].url, 'https://bridge.test/update_price');
+assert.equal(bridgeBatchServerErrorFallback.rows[0].ok, true, 'server-error fallback should preserve successful result shape');
+
+const bridgeBatchMissingResultsFallback = await runBridgeBatchMissingResultsFallbackHarness();
+assert.equal(bridgeBatchMissingResultsFallback.fetchCalls.length, 2, '2xx bridge batch response without results should fall back to existing update_price transport');
+assert.equal(bridgeBatchMissingResultsFallback.fetchCalls[0].url, 'https://bridge.test/update_price_batch');
+assert.equal(bridgeBatchMissingResultsFallback.fetchCalls[1].url, 'https://bridge.test/update_price');
+assert.equal(bridgeBatchMissingResultsFallback.rows[0].ok, true, 'missing-results fallback should preserve successful result shape');
+
+const bridgeBatchParseFailureFallback = await runBridgeBatchMissingResultsFallbackHarness({ parseFailure: true });
+assert.equal(bridgeBatchParseFailureFallback.fetchCalls.length, 2, 'unparseable 2xx bridge batch response should fall back to existing update_price transport');
+assert.equal(bridgeBatchParseFailureFallback.fetchCalls[0].url, 'https://bridge.test/update_price_batch');
+assert.equal(bridgeBatchParseFailureFallback.fetchCalls[1].url, 'https://bridge.test/update_price');
+assert.equal(bridgeBatchParseFailureFallback.rows[0].ok, true, 'parse-failure fallback should preserve successful result shape');
+
+const bridgeBatchChunking = await runBridgeBatchChunkingHarness();
+assert.equal(bridgeBatchChunking.fetchCalls.length, 2, 'bridge batch transport must chunk more than 60 update rows');
+assert.equal(bridgeBatchChunking.fetchCalls[0].body.updates.length, 60, 'first bridge batch chunk should stay within bridge limit');
+assert.equal(bridgeBatchChunking.fetchCalls[1].body.updates.length, 1, 'second bridge batch chunk should carry the overflow row');
+assert.equal(bridgeBatchChunking.rows.length, 61, 'chunked bridge batch responses should expand back to all payload results');
+
+const bridgeBatchFailureAttribution = await runBridgeBatchFailureAttributionHarness();
+assert.deepEqual(
+  bridgeBatchFailureAttribution.rows.map(function(row) { return { sku: row.p.sku, ok: row.ok, errorMsg: row.errorMsg }; }),
+  [
+    { sku: 'SKU-OK', ok: true, errorMsg: null },
+    { sku: 'SKU-FAIL', ok: false, errorMsg: 'model price rejected for model 2' },
+  ],
+  'bridge batch failure_list must mark only the matching model payload as failed',
+);
+
+const bridgeBatchLogisticsTarget = await runBridgeBatchLogisticsTargetHarness();
+assert.deepEqual(bridgeBatchLogisticsTarget.singleRetrySkus, ['SKU-LOGISTICS'], 'bridge batch logistics failures should retry only the affected payload through the single update path');
+assert.deepEqual(
+  bridgeBatchLogisticsTarget.rows.map(function(row) { return { sku: row.p.sku, ok: row.ok, logId: row.json && row.json.log_id }; }),
+  [
+    { sku: 'SKU-OK', ok: true, logId: undefined },
+    { sku: 'SKU-LOGISTICS', ok: true, logId: 'single-retry-SKU-LOGISTICS' },
+  ],
+  'bridge batch logistics retry should preserve the unaffected payload as successful and recover the affected payload',
 );
 
 const persistHarness = await runPersistResultsHarness();

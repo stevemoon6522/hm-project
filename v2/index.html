@@ -26095,6 +26095,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   const SHOPEE_PRICE_UPDATE_PARALLELISM = 6;
+  const SHOPEE_PRICE_UPDATE_BRIDGE_BATCH_SIZE = 60;
 
   function catShopeePriceEntryModelKey(entry) {
     const modelId = Number(entry && entry.model_id);
@@ -26169,6 +26170,21 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return batches;
   }
 
+  function catBuildShopeeUpdateBatchRequestRows(batches) {
+    return (batches || []).map(function(batch, index) {
+      const clientRef = batch.clientRef || [batch.region, batch.itemId, index].join(':');
+      batch.clientRef = clientRef;
+      return {
+        client_ref: clientRef,
+        region: batch.region,
+        item_id: batch.itemId,
+        price_list: batch.payload && Array.isArray(batch.payload.price_list)
+          ? batch.payload.price_list
+          : [],
+      };
+    });
+  }
+
   async function catPostShopeePricePayload(payload) {
     let json = null;
     let ok = false;
@@ -26225,6 +26241,149 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return { ok: ok, json: json, errorMsg: errorMsg };
   }
 
+  function catShopeeBatchRouteResultMessage(result, fallback) {
+    if (!result) return fallback || 'unknown';
+    const failureList = catBridgePriceFailureList(result);
+    if (failureList.length) return JSON.stringify(failureList.slice(0, 3));
+    if (result.error) return result.error;
+    if (result.result?.error || result.result?.message) {
+      return [result.result.error, result.result.message].filter(Boolean).join(' ');
+    }
+    return catBridgePriceMessage(result, fallback);
+  }
+
+  function catBridgeBatchRouteUnavailable(status, json, errorMsg) {
+    const hasResults = json && Array.isArray(json.results);
+    const text = String(errorMsg || json?.error || json?.message || '').toLowerCase();
+    return status === 0
+      || status === 404
+      || status === 405
+      || status >= 500
+      || (status >= 200 && status < 300 && !hasResults)
+      || /not found|unsupported action|unknown action|updates length must be <=/.test(text);
+  }
+
+  async function catPostShopeePriceBridgeBatch(batches) {
+    const rows = catBuildShopeeUpdateBatchRequestRows(batches);
+    let json = null;
+    let ok = false;
+    let errorMsg = null;
+    let status = 0;
+    try {
+      const response = await fetch(SHOPEE_BRIDGE + '/update_price_batch', {
+        method: 'POST',
+        headers: AUTH_HEADERS,
+        body: JSON.stringify({
+          account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
+          updates: rows,
+        }),
+      });
+      status = response.status;
+      let parseFailed = false;
+      json = await response.json().catch(function() {
+        parseFailed = true;
+        return { ok: false, error: 'invalid update_price_batch response JSON' };
+      });
+      const hasResults = json && Array.isArray(json.results);
+      ok = response.ok && hasResults;
+      if (!ok) {
+        if (response.ok && !hasResults) {
+          errorMsg = parseFailed ? 'update_price_batch invalid JSON response' : 'update_price_batch missing results';
+        } else {
+          errorMsg = catBridgePriceMessage(json, 'HTTP ' + response.status);
+        }
+      }
+    } catch (e) {
+      errorMsg = e.message || String(e);
+    }
+    return {
+      ok: ok,
+      json: json,
+      status: status,
+      errorMsg: errorMsg,
+      unavailable: catBridgeBatchRouteUnavailable(status, json, errorMsg),
+    };
+  }
+
+  async function catExecuteShopeeUpdateBatchesViaBridge(batches) {
+    if (!batches || !batches.length) return { usedBatchRoute: true, rows: [] };
+    const batchRoute = await catPostShopeePriceBridgeBatch(batches);
+    if (!batchRoute.ok) {
+      if (batchRoute.unavailable) return { usedBatchRoute: false, rows: [] };
+      const failedRows = [];
+      for (const batch of batches) {
+        for (const payload of batch.items) {
+          failedRows.push({
+            p: payload,
+            ok: false,
+            json: batchRoute.json,
+            errorMsg: batchRoute.errorMsg || 'update_price_batch failed',
+            preRetry: null,
+          });
+        }
+      }
+      return { usedBatchRoute: true, rows: failedRows };
+    }
+
+    const resultByClientRef = new Map();
+    (batchRoute.json.results || []).forEach(function(result) {
+      if (result && result.client_ref) resultByClientRef.set(String(result.client_ref), result);
+    });
+
+    const rows = [];
+    for (const batch of batches) {
+      const result = resultByClientRef.get(String(batch.clientRef)) || null;
+      if (!result) {
+        for (const payload of batch.items) {
+          rows.push({
+            p: payload,
+            ok: false,
+            json: batchRoute.json,
+            errorMsg: 'update_price_batch missing result for ' + batch.clientRef,
+            preRetry: null,
+          });
+        }
+        continue;
+      }
+
+      const failures = catBridgePriceFailureList(result);
+      if (failures.length) {
+        for (const payload of batch.items) {
+          const itemError = catShopeeBatchFailureMessage(result, payload);
+          if (!itemError) {
+            rows.push({ p: payload, ok: true, json: result, errorMsg: null, preRetry: null });
+          } else if (catShopeePriceErrorNeedsLogisticsRepair(itemError)) {
+            const single = await catPostShopeePricePayload(payload);
+            rows.push(Object.assign({ p: payload }, single));
+          } else {
+            rows.push({ p: payload, ok: false, json: result, errorMsg: itemError, preRetry: null });
+          }
+        }
+        continue;
+      }
+
+      if (result.ok !== true) {
+        const message = catShopeeBatchRouteResultMessage(result, 'update_price_batch row failed');
+        if (catShopeePriceErrorNeedsLogisticsRepair(message)) {
+          for (const payload of batch.items) {
+            const single = await catPostShopeePricePayload(payload);
+            rows.push(Object.assign({ p: payload }, single));
+          }
+        } else {
+          for (const payload of batch.items) {
+            rows.push({ p: payload, ok: false, json: result, errorMsg: message, preRetry: null });
+          }
+        }
+        continue;
+      }
+
+      for (const payload of batch.items) {
+        rows.push({ p: payload, ok: true, json: result, errorMsg: null, preRetry: null });
+      }
+    }
+    return { usedBatchRoute: true, rows: rows };
+  }
+
   async function catExecuteShopeeUpdateBatch(batch) {
     if (!batch || batch.items.length === 0) return [];
     if (batch.items.length === 1) {
@@ -26269,6 +26428,25 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   async function catRunShopeePriceUpdates(payloads) {
     const batches = catBuildShopeeUpdateBatches(payloads);
+    const results = [];
+    let useBridgeBatch = true;
+    for (let i = 0; i < batches.length; i += SHOPEE_PRICE_UPDATE_BRIDGE_BATCH_SIZE) {
+      const batchChunk = batches.slice(i, i + SHOPEE_PRICE_UPDATE_BRIDGE_BATCH_SIZE);
+      if (useBridgeBatch) {
+        const bridgeBatch = await catExecuteShopeeUpdateBatchesViaBridge(batchChunk);
+        if (bridgeBatch.usedBatchRoute) {
+          bridgeBatch.rows.forEach(function(row) { results.push(row); });
+          continue;
+        }
+        useBridgeBatch = false;
+      }
+      const chunkResults = await catExecuteShopeeUpdateBatchesLegacy(batchChunk);
+      chunkResults.forEach(function(row) { results.push(row); });
+    }
+    return results;
+  }
+
+  async function catExecuteShopeeUpdateBatchesLegacy(batches) {
     const results = [];
     for (let i = 0; i < batches.length; i += SHOPEE_PRICE_UPDATE_PARALLELISM) {
       const chunk = batches.slice(i, i + SHOPEE_PRICE_UPDATE_PARALLELISM);

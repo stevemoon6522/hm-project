@@ -868,6 +868,8 @@ async function merchantApiCall(region: string, path: string, opts: any = {}) {
 const V2_WIZARD_ACTOR = 'v2-wizard';
 const V2_ROLLBACK_POLICY = 'no_auto_rollback_resume_only';
 const V2_DEGRADED_APPROVAL = 'APPROVE_V2_DEGRADED_MUTATION';
+const UPDATE_PRICE_BATCH_PARALLELISM = 6;
+const UPDATE_PRICE_BATCH_MAX_UPDATES = 60;
 const V2_MUTATION_ACTIONS = new Set([
   'update_global_item',
   'update_global_model',
@@ -1529,6 +1531,167 @@ async function executeLoggedMutation(action: string, region: string, requestPayl
     token_refresh: tokenRefresh,
     rollback_policy: V2_ROLLBACK_POLICY,
     resume_hint: status === 'error' ? 'Use /v2_failed_mutations?run_id=... then resubmit the failed request_payload or call /v2_resume_failed.' : null,
+  };
+}
+
+function normalizeUpdatePriceRegion(value: unknown): string {
+  return String(value || 'SG').trim().toUpperCase();
+}
+
+function normalizeUpdatePriceRow(input: any, fallbackRegion = 'SG'): any {
+  const region = normalizeUpdatePriceRegion(input?.region || fallbackRegion);
+  const itemId = Number.parseInt(String(input?.item_id ?? input?.itemId ?? ''), 10);
+  const priceList = Array.isArray(input?.price_list) ? input.price_list : [];
+  const clientRef = input?.client_ref || input?.clientRef || null;
+
+  if (!region) return { ok: false, error: 'region required' };
+  if (!Number.isFinite(itemId) || itemId <= 0) return { ok: false, error: 'item_id required' };
+  if (!Array.isArray(priceList) || priceList.length < 1) return { ok: false, error: 'price_list required' };
+  if (priceList.length > 50) return { ok: false, error: 'price_list length must be between 1 and 50' };
+
+  const normalizedPriceList = priceList.map((entry: any, index: number) => {
+    const originalPrice = Number(entry?.original_price);
+    if (!Number.isFinite(originalPrice) || originalPrice <= 0) {
+      return { ok: false, error: `price_list[${index}].original_price required` };
+    }
+    const row: any = { original_price: originalPrice };
+    if (entry?.model_id !== undefined && entry?.model_id !== null && entry?.model_id !== '') {
+      const modelId = Number(entry.model_id);
+      if (!Number.isFinite(modelId) || modelId < 0) {
+        return { ok: false, error: `price_list[${index}].model_id invalid` };
+      }
+      row.model_id = modelId;
+    }
+    return { ok: true, row };
+  });
+
+  const invalid = normalizedPriceList.find((entry: any) => !entry.ok);
+  if (invalid) return { ok: false, error: invalid.error };
+
+  return {
+    ok: true,
+    row: {
+      region,
+      item_id: itemId,
+      price_list: normalizedPriceList.map((entry: any) => entry.row),
+      client_ref: clientRef,
+    },
+  };
+}
+
+function normalizeUpdatePriceBatchRows(body: any): any {
+  const rows = Array.isArray(body?.updates)
+    ? body.updates
+    : (Array.isArray(body?.batches) ? body.batches : (Array.isArray(body?.items) ? body.items : []));
+  if (!Array.isArray(rows) || rows.length < 1) {
+    return { ok: false, status: 400, error: 'updates required' };
+  }
+  if (rows.length > UPDATE_PRICE_BATCH_MAX_UPDATES) {
+    return { ok: false, status: 400, error: `updates length must be <= ${UPDATE_PRICE_BATCH_MAX_UPDATES}` };
+  }
+  const normalized = rows.map((row: any, index: number) => {
+    const result = normalizeUpdatePriceRow(row, body?.region || 'SG');
+    if (!result.ok) return { ok: false, index, error: result.error };
+    return { ok: true, index, row: result.row };
+  });
+  const invalid = normalized.find((entry: any) => !entry.ok);
+  if (invalid) {
+    return { ok: false, status: 400, error: `updates[${invalid.index}]: ${invalid.error}` };
+  }
+  return { ok: true, rows: normalized.map((entry: any) => entry.row) };
+}
+
+async function executeShopUpdatePriceMutation(params: {
+  accountKey: string;
+  region: string;
+  itemId: number;
+  priceList: any[];
+  body: any;
+  clientRef?: string | null;
+}) {
+  const action = 'update_price';
+  const requestPayload = {
+    account_key: params.accountKey,
+    item_id: params.itemId,
+    price_list: params.priceList,
+  };
+  const payloadHash = await sha256Hex({
+    action,
+    account_key: params.accountKey,
+    region: params.region,
+    request_payload: requestPayload,
+  });
+  const previous = await findOkMutation(payloadHash);
+  if (previous) {
+    audit('shop_update_price_idempotent_skip', {
+      account_key: params.accountKey,
+      region: params.region,
+      item_id: params.itemId,
+      payload_hash: payloadHash,
+      previous_log_id: previous.id,
+      client_ref: params.clientRef || null,
+    });
+    return {
+      ok: true,
+      skipped: true,
+      previous_log_id: previous.id,
+      account_key: params.accountKey,
+      region: params.region,
+      item_id: params.itemId,
+      client_ref: params.clientRef || null,
+      sent_price_list: params.priceList,
+      failure_list: [],
+      payload_hash: payloadHash,
+      rollback_policy: V2_ROLLBACK_POLICY,
+    };
+  }
+
+  const started = Date.now();
+  const result = await shopApiCall(params.region, '/api/v2/product/update_price', {
+    method: 'POST',
+    body: {
+      item_id: params.itemId,
+      price_list: params.priceList,
+    },
+    account_key: params.accountKey,
+  });
+  const durationMs = Date.now() - started;
+  const failureList = Array.isArray(result?.response?.failure_list) ? result.response.failure_list : [];
+  const ok = !result?.error && failureList.length === 0;
+  const errorMsg = result?.error
+    ? `${result.error || ''} ${result.message || ''}`.trim()
+    : (failureList.length ? 'update_price failure_list: ' + JSON.stringify(failureList).slice(0, 500) : null);
+  const log = await insertMutationLog({
+    action,
+    region: params.region,
+    payloadHash,
+    requestPayload,
+    status: ok ? 'ok' : 'error',
+    response: result,
+    errorMsg,
+    requestId: result?.request_id || null,
+    durationMs,
+    body: {
+      ...params.body,
+      account_key: params.accountKey,
+      region: params.region,
+      item_id: params.itemId,
+      price_list: params.priceList,
+      client_ref: params.clientRef || null,
+    },
+  });
+  return {
+    ok,
+    account_key: params.accountKey,
+    region: params.region,
+    item_id: params.itemId,
+    client_ref: params.clientRef || null,
+    sent_price_list: params.priceList,
+    failure_list: failureList,
+    result,
+    payload_hash: payloadHash,
+    log_id: log.id || null,
+    rollback_policy: V2_ROLLBACK_POLICY,
   };
 }
 
@@ -5896,61 +6059,71 @@ Deno.serve(async (req) => {
     if (action === 'update_price' && req.method === 'POST') {
       const body = await req.json();
       const reqAccountKey = normalizeAccountKey(body.account_key || body.accountKey || accountKey);
-      const r = body.region || 'SG';
-      const item_id = parseInt(body.item_id);
-      const price_list = body.price_list || [];
-      if (!item_id) return jsonResp({ ok: false, error: 'item_id required' }, 400);
-      if (!Array.isArray(price_list) || !price_list.length) return jsonResp({ ok: false, error: 'price_list required' }, 400);
-      const requestPayload = { account_key: reqAccountKey, item_id, price_list };
-      const payloadHash = await sha256Hex({ action, account_key: reqAccountKey, region: r, request_payload: requestPayload });
-      const previous = await findOkMutation(payloadHash);
-      if (previous) {
-        audit('shop_update_price_idempotent_skip', { account_key: reqAccountKey, region: r, item_id, payload_hash: payloadHash, previous_log_id: previous.id });
-        return jsonResp({
-          ok: true,
-          skipped: true,
-          previous_log_id: previous.id,
-          account_key: reqAccountKey,
-          region: r,
-          item_id,
-          sent_price_list: price_list,
-          failure_list: [],
-          payload_hash: payloadHash,
-          rollback_policy: V2_ROLLBACK_POLICY,
-        });
+      const normalized = normalizeUpdatePriceRow(body, body.region || 'SG');
+      if (!normalized.ok) return jsonResp({ ok: false, error: normalized.error }, 400);
+      const row = normalized.row;
+      const result = await executeShopUpdatePriceMutation({
+        accountKey: reqAccountKey,
+        region: row.region,
+        itemId: row.item_id,
+        priceList: row.price_list,
+        body,
+        clientRef: row.client_ref,
+      });
+      return jsonResp(result);
+    }
+    if (action === 'update_price_batch' && req.method === 'POST') {
+      const body = await req.json();
+      const reqAccountKey = normalizeAccountKey(body.account_key || body.accountKey || accountKey);
+      const normalized = normalizeUpdatePriceBatchRows(body);
+      if (!normalized.ok) {
+        return jsonResp({ ok: false, error: normalized.error }, normalized.status || 400);
       }
+
       const started = Date.now();
-      const result = await shopApiCall(r, '/api/v2/product/update_price', { method: 'POST', body: { item_id, price_list }, account_key: reqAccountKey });
-      const durationMs = Date.now() - started;
-      const failureList = Array.isArray(result?.response?.failure_list) ? result.response.failure_list : [];
-      const ok = !result.error && failureList.length === 0;
-      const errorMsg = result?.error
-        ? `${result.error || ''} ${result.message || ''}`.trim()
-        : (failureList.length ? 'update_price failure_list: ' + JSON.stringify(failureList).slice(0, 500) : null);
-      const log = await insertMutationLog({
-        action: 'update_price',
-        region: r,
-        payloadHash,
-        requestPayload,
-        status: ok ? 'ok' : 'error',
-        response: result,
-        errorMsg,
-        requestId: result?.request_id || null,
-        durationMs,
-        body: { ...body, account_key: reqAccountKey },
+      const results = await mapWithConcurrency(normalized.rows, UPDATE_PRICE_BATCH_PARALLELISM, async (row: any) => {
+        try {
+          return await executeShopUpdatePriceMutation({
+            accountKey: reqAccountKey,
+            region: row.region,
+            itemId: row.item_id,
+            priceList: row.price_list,
+            body,
+            clientRef: row.client_ref,
+          });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          return {
+            ok: false,
+            account_key: reqAccountKey,
+            region: row.region,
+            item_id: row.item_id,
+            client_ref: row.client_ref || null,
+            sent_price_list: row.price_list,
+            failure_list: [],
+            error: message,
+            rollback_policy: V2_ROLLBACK_POLICY,
+          };
+        }
       });
-      return jsonResp({
-        ok,
+      const failureCount = results.filter((result: any) => result?.ok !== true).length;
+      const response = {
+        ok: failureCount === 0,
         account_key: reqAccountKey,
-        region: r,
-        item_id,
-        sent_price_list: price_list,
-        failure_list: failureList,
-        result,
-        payload_hash: payloadHash,
-        log_id: log.id || null,
+        results,
+        ok_count: results.length - failureCount,
+        failure_count: failureCount,
+        duration_ms: Date.now() - started,
         rollback_policy: V2_ROLLBACK_POLICY,
+      };
+      audit('shop_update_price_batch_complete', {
+        account_key: reqAccountKey,
+        update_count: results.length,
+        ok_count: response.ok_count,
+        failure_count: failureCount,
+        duration_ms: response.duration_ms,
       });
+      return jsonResp(response);
     }
     if (action === 'update_item_logistics' && req.method === 'POST') {
       const body = await req.json();

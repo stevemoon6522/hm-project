@@ -115,6 +115,21 @@ assert.ok(
   !v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/batch_update_outlet_price'"),
   'V2 normal price sync must not use the Mart/Outlet-only batch_update_outlet_price endpoint',
 );
+const updatePriceBatchBlock = sliceBetween(
+  supabaseBridge,
+  "if (action === 'update_price_batch' && req.method === 'POST')",
+  "if (action === 'update_item_logistics' && req.method === 'POST')",
+);
+const updatePriceHelperBlock = sliceBetween(
+  supabaseBridge,
+  'async function executeShopUpdatePriceMutation(',
+  'async function runV2MutationAction(',
+);
+assert.ok(updatePriceBatchBlock.includes('executeShopUpdatePriceMutation'), 'update_price_batch must fan out through the shared shop-level update_price helper');
+assert.ok(updatePriceHelperBlock.includes("'/api/v2/product/update_price'"), 'shared update_price helper must call shop-level v2.product.update_price');
+assert.ok(!updatePriceBatchBlock.includes("'/api/v2/product/batch_update_outlet_price'"), 'update_price_batch must not use the Outlet/Mart-only Shopee batch_update_outlet_price endpoint');
+assert.ok(v2.includes("SHOPEE_BRIDGE + '/update_price_batch'"), 'V2 normal price sync should use the bridge-side update_price_batch wrapper');
+assert.ok(!v2.includes("SHOPEE_BRIDGE + '/batch_update_outlet_price'"), 'V2 normal price sync must not call the Outlet/Mart-only bridge route');
 for (const token of [
   'parameter invalid : not a mart shop',
   'is_mart_shop=false',

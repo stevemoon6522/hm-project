@@ -93,13 +93,18 @@ for (const token of [
 }
 
 const updatePriceBlock = sliceBetween(edge, "if (action === 'update_price' && req.method === 'POST')", "if (action === 'update_item_sku' && req.method === 'POST')");
+const updatePriceHelperBlock = sliceBetween(edge, 'async function executeShopUpdatePriceMutation(', 'async function runV2MutationAction(');
+assert(updatePriceBlock.includes('executeShopUpdatePriceMutation'), 'update_price route must call the shared update_price mutation helper');
 for (const token of [
   "result?.response?.failure_list",
   "failureList.length === 0",
   "failure_list: failureList",
 ]) {
-  assert(updatePriceBlock.includes(token), `update_price missing failure_list handling: ${token}`);
+  assert(updatePriceHelperBlock.includes(token), `update_price helper missing failure_list handling: ${token}`);
 }
+assert(edge.includes("if (action === 'update_price_batch' && req.method === 'POST')"), 'shopee-bridge must expose update_price_batch');
+assert(edge.includes('executeShopUpdatePriceMutation'), 'shopee-bridge must share update_price mutation execution between single and batch routes');
+assert(edge.includes('UPDATE_PRICE_BATCH_PARALLELISM'), 'shopee-bridge must bound update_price_batch fan-out concurrency');
 
 for (const token of [
   'function parsePngDimensions',

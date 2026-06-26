@@ -2985,8 +2985,13 @@
             <span class="pill">No source URL</span>
           </div>
           <div class="register-panel-body">
-            <input type="hidden" id="custom-master-product-kind" value="goods">
             <div class="register-form-row" style="margin-bottom:10px;font-size:12px;">
+              <label>상품 유형
+                <select id="custom-master-product-kind" style="font-size:12px;padding:5px 8px;">
+                  <option value="goods" selected>Goods</option>
+                  <option value="album">Album</option>
+                </select>
+              </label>
               <label>Lifecycle
                 <select id="custom-master-lifecycle" style="font-size:12px;padding:5px 8px;">
                   <option value="pre_order">PRE ORDER</option>
@@ -3024,6 +3029,27 @@
                   </label>
                   <label style="display:block;max-width:220px;font-size:12px;">기본 재고
                     <input type="number" id="custom-master-inventory" min="1" step="1" value="50" placeholder="예: 50" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
+                  </label>
+                  <label style="display:block;max-width:220px;font-size:12px;">Shopee category
+                    <select id="custom-master-shopee-category" style="width:100%;font-size:12px;padding:6px 8px;">
+                      <option value="101390" selected>101390 Goods</option>
+                      <option value="100740">100740 Album</option>
+                    </select>
+                  </label>
+                  <label style="display:block;max-width:260px;font-size:12px;">Joom category
+                    <select id="custom-master-joom-category" style="width:100%;font-size:12px;padding:6px 8px;">
+                      <option value="1733235756332554566-61-2-11859-1440023039" selected>Memorabilia</option>
+                      <option value="music_albums">Music Albums</option>
+                      <option value="music_albums_cd">Record CD</option>
+                      <option value="trading_cards">Trading Cards</option>
+                      <option value="fan_attributes">Fan Attributes</option>
+                    </select>
+                  </label>
+                  <label style="display:block;max-width:220px;font-size:12px;">Qoo10 category
+                    <input type="text" id="custom-master-qoo10-category" value="300002855" maxlength="9" placeholder="300002855" style="width:100%;font-size:12px;padding:6px 8px;">
+                  </label>
+                  <label style="display:block;max-width:220px;font-size:12px;">eBay category
+                    <input type="text" id="custom-master-ebay-category" value="108857" placeholder="108857" style="width:100%;font-size:12px;padding:6px 8px;">
                   </label>
                 </div>
               </details>
@@ -32216,11 +32242,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return activeRows.map((row) => row.product_id).filter(Boolean);
     }
 
+    function mrCustomSetControlValue(id, value) {
+      const control = $(id);
+      if (!control) return;
+      control.value = String(value ?? '');
+    }
+
+    function mrCustomReadCategoryDefaults(productKind) {
+      const defaults = productKindDefaults(productKind);
+      return {
+        shopee_category_id: Number($('custom-master-shopee-category')?.value || defaults.shopee_category_id) || null,
+        joom_category_id: normalizeJoomCategoryId($('custom-master-joom-category')?.value || defaults.joom_category_id || '') || null,
+        qoo10_category_id: String($('custom-master-qoo10-category')?.value || defaults.qoo10_category_id || '').trim() || null,
+        ebay_category_id: String($('custom-master-ebay-category')?.value || defaults.ebay_category_id || '').trim() || null,
+      };
+    }
+
+    function mrCustomSyncCategoryDefaults() {
+      const productKind = normalizeProductKind($('custom-master-product-kind')?.value || PRODUCT_KIND_GOODS);
+      const defaults = productKindDefaults(productKind);
+      mrCustomSetControlValue('custom-master-shopee-category', defaults.shopee_category_id || '');
+      mrCustomSetControlValue('custom-master-joom-category', normalizeJoomCategoryId(defaults.joom_category_id || ''));
+      mrCustomSetControlValue('custom-master-qoo10-category', defaults.qoo10_category_id || '');
+      mrCustomSetControlValue('custom-master-ebay-category', defaults.ebay_category_id || '');
+    }
+
     async function mrStageCustomMaster() {
       const btn = $('custom-master-stage-btn');
       const title = String($('custom-master-title')?.value || '').trim();
-      const productKind = PRODUCT_KIND_GOODS;
-      const categoryDefaults = productKindDefaults(productKind);
+      const productKind = normalizeProductKind($('custom-master-product-kind')?.value || PRODUCT_KIND_GOODS);
+      const categoryDefaults = mrCustomReadCategoryDefaults(productKind);
       const artist = '';
       const album = '';
       const version = '';
@@ -37414,6 +37465,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       mrWmsToggleReleaseDate();
       $('custom-master-lifecycle')?.addEventListener('change', mrCustomToggleLifecycle);
       mrCustomToggleLifecycle();
+      $('custom-master-product-kind')?.addEventListener('change', mrCustomSyncCategoryDefaults);
+      mrCustomSyncCategoryDefaults();
       mrCustomToggleOptionMode();
       $('custom-master-option-mode')?.addEventListener('change', mrCustomToggleOptionMode);
       $('custom-master-add-option')?.addEventListener('click', () => mrRenderCustomOptionRow());

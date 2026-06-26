@@ -45,7 +45,13 @@ assert.match(customPanel, /id="custom-master-axis-wrap"[^>]*display:none/, 'opti
 assert.match(customPanel, /id="custom-master-axis-name" value="Option"/, 'option products must default the axis name to Option');
 assert.match(customPanel, /id="custom-master-option-section"[^>]*display:none/, 'option rows must be hidden in single mode');
 assert.match(customPanel, /옵션 이미지는 선택 사항입니다/, 'custom UI must say option images are optional');
-assert.match(customPanel, /type="hidden" id="custom-master-product-kind" value="goods"/, 'custom product kind must default to hidden goods');
+assert.match(customPanel, /id="custom-master-product-kind"/, 'custom panel must expose product kind selection');
+assert.match(customPanel, /<option value="goods" selected>/, 'custom product kind must default to Goods');
+assert.match(customPanel, /<option value="album">/, 'custom product kind must allow Album defaults');
+assert.match(customPanel, /id="custom-master-shopee-category"/, 'custom panel must allow Shopee category override');
+assert.match(customPanel, /id="custom-master-joom-category"/, 'custom panel must allow Joom category override');
+assert.match(customPanel, /id="custom-master-qoo10-category"/, 'custom panel must allow Qoo10 category override');
+assert.match(customPanel, /id="custom-master-ebay-category"/, 'custom panel must allow eBay category override');
 assert.match(customPanel, />마스터 상품 생성<\/button>/, 'custom action button must create the master directly');
 assert.doesNotMatch(customPanel, /Custom preview 만들기/, 'custom flow must not advertise a preview step');
 assert.doesNotMatch(customPanel, /id="custom-master-artist"/, 'custom panel must not require Artist');
@@ -67,7 +73,11 @@ assert.match(masterRegister, /dataset: \{ customOptionSourcing: '1' \}/, 'custom
 assert.match(masterRegister, /dataset: \{ customOptionCost: '1' \}/, 'custom option rows must support option-level settlement price');
 assert.match(masterRegister, /dataset: \{ customOptionWeight: '1' \}/, 'custom option rows must support option-level weight');
 assert.match(masterRegister, /dataset: \{ customOptionInventory: '1' \}/, 'custom option rows must support option-level inventory');
-assert.match(customHandler, /const productKind = PRODUCT_KIND_GOODS/, 'custom stage must force Goods product kind');
+assert.match(masterRegister, /function mrCustomReadCategoryDefaults\(productKind\)/, 'custom category helper must read product kind defaults plus overrides');
+assert.match(masterRegister, /function mrCustomSyncCategoryDefaults\(\)/, 'custom category helper must sync visible defaults when product kind changes');
+assert.match(masterRegister, /\$\('custom-master-product-kind'\)\?\.addEventListener\('change', mrCustomSyncCategoryDefaults\)/, 'custom product kind changes must refresh platform category defaults');
+assert.match(customHandler, /const productKind = normalizeProductKind\(\$\('custom-master-product-kind'\)\?\.value \|\| PRODUCT_KIND_GOODS\)/, 'custom stage must use selected product kind');
+assert.match(customHandler, /const categoryDefaults = mrCustomReadCategoryDefaults\(productKind\)/, 'custom stage must use selected platform category overrides');
 assert.match(customHandler, /const costKrw = explicitCost > 0 \? explicitCost : sourcingPrice/, 'custom stage must not auto-multiply wholesale into settlement');
 assert.match(customHandler, /const weightG = Number\(\$\('custom-master-weight'\)\?\.value \|\| 0\) \|\| 200/, 'custom stage must default hidden advanced weight to 200g');
 assert.match(customHandler, /const inventory = Number\(\$\('custom-master-inventory'\)\?\.value \|\| 0\) \|\| 50/, 'custom stage must default inventory to a publishable quantity');

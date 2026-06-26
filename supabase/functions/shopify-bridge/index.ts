@@ -1,0 +1,594 @@
+// @ts-nocheck
+// shopify-bridge: Shopify Admin GraphQL bridge for V2 product registration.
+//
+// Local docs:
+//   C:\dev\api-refs\marketplaces\shopify\product-create.graphql.md
+//   C:\dev\api-refs\marketplaces\shopify\product-variants-bulk-create.graphql.md
+//   C:\dev\api-refs\marketplaces\shopify\inventory-set-quantities.graphql.md
+//   C:\dev\api-refs\marketplaces\shopify\publishable-publish.graphql.md
+//
+// OAuth source: Shopify authorization-code grant
+// https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/authorization-code-grant
+
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
+import { AUTH_CORS, requireAuthenticatedUser } from '../_shared/auth.ts';
+
+const SHOPIFY_API_VERSION = (Deno as any).env.get('SHOPIFY_API_VERSION') || '2026-04';
+const SHOPIFY_CLIENT_ID = (Deno as any).env.get('SHOPIFY_CLIENT_ID') || '';
+const SHOPIFY_CLIENT_SECRET = (Deno as any).env.get('SHOPIFY_CLIENT_SECRET') || '';
+const SHOPIFY_REDIRECT_URI = (Deno as any).env.get('SHOPIFY_REDIRECT_URI') || '';
+const SHOPIFY_SCOPES = ((Deno as any).env.get('SHOPIFY_SCOPES') || 'read_products,write_products').split(',').map((s: string) => s.trim()).filter(Boolean).join(',');
+const PLATFORM_BRIDGE_INTERNAL_TOKEN = (Deno as any).env.get('PLATFORM_BRIDGE_INTERNAL_TOKEN') || '';
+
+const SUPABASE_URL = (Deno as any).env.get('SUPABASE_URL') || '';
+const SUPABASE_SERVICE_ROLE_KEY = (Deno as any).env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+
+const CORS: Record<string, string> = {
+  ...AUTH_CORS,
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info, x-platform-bridge-token',
+  'Access-Control-Max-Age': '3600',
+};
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
+function jsonResp(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...CORS, 'Content-Type': 'application/json' },
+  });
+}
+
+function norm(value: unknown): string {
+  return String(value ?? '').trim();
+}
+
+function uniq(values: unknown[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const text = norm(value);
+    const key = text.toLowerCase();
+    if (!text || seen.has(key)) continue;
+    seen.add(key);
+    out.push(text);
+  }
+  return out;
+}
+
+function normalizeShopDomain(value: unknown): string {
+  let shop = norm(value).toLowerCase();
+  shop = shop.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (!shop) return '';
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(shop)) return '';
+  return shop;
+}
+
+function requireInternalBridge(req: Request): Response | null {
+  const got = norm(req.headers.get('x-platform-bridge-token'));
+  if (!PLATFORM_BRIDGE_INTERNAL_TOKEN || got !== PLATFORM_BRIDGE_INTERNAL_TOKEN) {
+    return jsonResp({ ok: false, error: 'internal_bridge_required' }, 401);
+  }
+  return null;
+}
+
+async function requireBridgeTokenOrAuthenticatedUser(req: Request): Promise<Response | null> {
+  const got = norm(req.headers.get('x-platform-bridge-token'));
+  if (PLATFORM_BRIDGE_INTERNAL_TOKEN && got === PLATFORM_BRIDGE_INTERNAL_TOKEN) return null;
+  const auth = await requireAuthenticatedUser(req);
+  return auth.response || null;
+}
+
+async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(sig)).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function verifyShopifyOAuthHmac(url: URL): Promise<boolean> {
+  const hmac = norm(url.searchParams.get('hmac'));
+  if (!hmac || !SHOPIFY_CLIENT_SECRET) return false;
+  const pairs: string[] = [];
+  const keys = [...new Set([...url.searchParams.keys()])].filter((key) => key !== 'hmac' && key !== 'signature').sort();
+  for (const key of keys) {
+    const values = url.searchParams.getAll(key).sort();
+    for (const value of values) pairs.push(`${key}=${value}`);
+  }
+  const digest = await hmacSha256Hex(SHOPIFY_CLIENT_SECRET, pairs.join('&'));
+  return digest === hmac;
+}
+
+function shopifyAdminUrl(shopDomain: string): string {
+  return `https://${shopDomain}/admin/api/${SHOPIFY_API_VERSION}/graphql.json`;
+}
+
+async function shopifyGraphql(shop: any, query: string, variables: Record<string, unknown> = {}) {
+  const res = await fetch(shopifyAdminUrl(shop.shop_domain), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+      'X-Shopify-Access-Token': shop.access_token,
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const raw = await res.json().catch(() => ({ errors: [{ message: `HTTP ${res.status}` }] }));
+  return { status: res.status, raw };
+}
+
+function graphUserErrors(raw: any, key: string): any[] {
+  const errors = raw?.data?.[key]?.userErrors;
+  return Array.isArray(errors) ? errors : [];
+}
+
+function graphErrorMessage(raw: any, key = ''): string {
+  const userErrors = key ? graphUserErrors(raw, key) : [];
+  if (userErrors.length) return userErrors.map((e: any) => norm(e.message)).filter(Boolean).join(' / ');
+  if (Array.isArray(raw?.errors) && raw.errors.length) return raw.errors.map((e: any) => norm(e.message)).filter(Boolean).join(' / ');
+  return norm(raw?.error || raw?.message) || 'Shopify GraphQL request failed';
+}
+
+function mapShopifyListingStatus(product: any): string {
+  const status = norm(product?.status).toUpperCase();
+  if (product?.publishedAt) return 'listed';
+  if (status === 'ACTIVE') return 'listed';
+  if (status === 'ARCHIVED') return 'paused';
+  if (status === 'DRAFT') return 'draft';
+  return product?.id ? 'draft' : 'not_listed';
+}
+
+async function configuredShop(shopDomain = '') {
+  let q = supabase
+    .from('shopify_shops')
+    .select('id,shop_domain,shop_name,access_token,scopes,default_location_gid,default_publication_gid,currency,status,auth_verified')
+    .eq('status', 'active')
+    .order('updated_at', { ascending: false })
+    .limit(1);
+  if (shopDomain) q = q.eq('shop_domain', shopDomain);
+  const { data, error } = await q.maybeSingle();
+  if (error) throw new Error(`shopify_shops lookup failed: ${error.message}`);
+  if (!data) throw new Error(shopDomain ? `Shopify shop not configured: ${shopDomain}` : 'No active Shopify shop configured');
+  return data;
+}
+
+function productOptionsFrom(body: any) {
+  const input = Array.isArray(body.product?.productOptions) ? body.product.productOptions : [];
+  if (input.length) return input;
+  return [{ name: 'Title', values: [{ name: 'Default Title' }] }];
+}
+
+function mediaFrom(body: any) {
+  const images = Array.isArray(body.media) ? body.media : [];
+  return images
+    .map((row: any) => ({
+      originalSource: norm(row?.originalSource || row?.url || row),
+      mediaContentType: 'IMAGE',
+      alt: norm(row?.alt || body.product?.title || 'Product image').slice(0, 512),
+    }))
+    .filter((row: any) => /^https:\/\//i.test(row.originalSource))
+    .slice(0, 10);
+}
+
+function variantsFrom(body: any) {
+  const variants = Array.isArray(body.variants) ? body.variants : [];
+  return variants.map((variant: any) => {
+    const price = norm(variant.price);
+    const sku = norm(variant.sku);
+    const optionValues = Array.isArray(variant.optionValues) && variant.optionValues.length
+      ? variant.optionValues
+      : [{ optionName: 'Title', name: 'Default Title' }];
+    const out: Record<string, unknown> = {
+      optionValues,
+      inventoryItem: { sku, tracked: variant.tracked === true },
+    };
+    if (price) out.price = price;
+    if (variant.compareAtPrice) out.compareAtPrice = norm(variant.compareAtPrice);
+    if (variant.inventoryPolicy) out.inventoryPolicy = norm(variant.inventoryPolicy).toUpperCase();
+    return out;
+  }).filter((variant: any) => norm(variant.inventoryItem?.sku));
+}
+
+async function handleHealthz(): Promise<Response> {
+  return jsonResp({
+    ok: true,
+    service: 'shopify-bridge',
+    version: 1,
+    api_version: SHOPIFY_API_VERSION,
+    client_configured: Boolean(SHOPIFY_CLIENT_ID && SHOPIFY_CLIENT_SECRET),
+    redirect_uri_configured: Boolean(SHOPIFY_REDIRECT_URI),
+    supabase_configured: Boolean(SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY),
+  });
+}
+
+async function handleOAuthUrl(req: Request): Promise<Response> {
+  const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+  if (denied) return denied;
+  if (!SHOPIFY_CLIENT_ID || !SHOPIFY_REDIRECT_URI) return jsonResp({ ok: false, error: 'shopify_oauth_env_missing' }, 500);
+  const url = new URL(req.url);
+  const shopDomain = normalizeShopDomain(url.searchParams.get('shop'));
+  if (!shopDomain) return jsonResp({ ok: false, error: 'shop parameter must be a *.myshopify.com domain' }, 400);
+  const state = crypto.randomUUID();
+  const auth = await requireAuthenticatedUser(req);
+  const actorId = auth?.user?.id || null;
+  await supabase.from('shopify_oauth_states').insert({
+    state,
+    shop_domain: shopDomain,
+    actor_id: actorId,
+    expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+  });
+  const oauth = new URL(`https://${shopDomain}/admin/oauth/authorize`);
+  oauth.searchParams.set('client_id', SHOPIFY_CLIENT_ID);
+  oauth.searchParams.set('scope', SHOPIFY_SCOPES);
+  oauth.searchParams.set('redirect_uri', SHOPIFY_REDIRECT_URI);
+  oauth.searchParams.set('state', state);
+  return jsonResp({ ok: true, shop_domain: shopDomain, state, url: oauth.toString(), scopes: SHOPIFY_SCOPES.split(',') });
+}
+
+async function exchangeOAuthCode(shopDomain: string, code: string) {
+  const res = await fetch(`https://${shopDomain}/admin/oauth/access_token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+    body: JSON.stringify({ client_id: SHOPIFY_CLIENT_ID, client_secret: SHOPIFY_CLIENT_SECRET, code }),
+  });
+  const raw = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+  return { status: res.status, raw };
+}
+
+async function readShopDefaults(shop: any) {
+  const query = `
+    query ShopifyBridgeShopDefaults {
+      shop { name myshopifyDomain currencyCode }
+      locations(first: 10) { nodes { id name isActive } }
+      publications(first: 10) { nodes { id name } }
+    }
+  `;
+  const { raw } = await shopifyGraphql(shop, query, {});
+  const activeLocation = (raw?.data?.locations?.nodes || []).find((row: any) => row?.isActive) || raw?.data?.locations?.nodes?.[0] || null;
+  const publication = raw?.data?.publications?.nodes?.[0] || null;
+  return {
+    shop_name: raw?.data?.shop?.name || null,
+    currency: raw?.data?.shop?.currencyCode || null,
+    default_location_gid: activeLocation?.id || null,
+    default_publication_gid: publication?.id || null,
+    raw,
+  };
+}
+
+async function handleOAuthCallback(req: Request): Promise<Response> {
+  if (!SHOPIFY_CLIENT_ID || !SHOPIFY_CLIENT_SECRET) return jsonResp({ ok: false, error: 'shopify_oauth_env_missing' }, 500);
+  const url = new URL(req.url);
+  const shopDomain = normalizeShopDomain(url.searchParams.get('shop'));
+  const code = norm(url.searchParams.get('code'));
+  const state = norm(url.searchParams.get('state'));
+  if (!shopDomain || !code || !state) return jsonResp({ ok: false, error: 'shop, code and state are required' }, 400);
+  if (!(await verifyShopifyOAuthHmac(url))) return jsonResp({ ok: false, error: 'shopify_hmac_invalid' }, 401);
+
+  const { data: stateRow } = await supabase
+    .from('shopify_oauth_states')
+    .select('state,shop_domain,expires_at,used_at')
+    .eq('state', state)
+    .maybeSingle();
+  if (!stateRow || stateRow.used_at || stateRow.shop_domain !== shopDomain || new Date(stateRow.expires_at).getTime() < Date.now()) {
+    return jsonResp({ ok: false, error: 'shopify_oauth_state_invalid' }, 401);
+  }
+
+  const exchanged = await exchangeOAuthCode(shopDomain, code);
+  if (exchanged.status < 200 || exchanged.status >= 300 || !exchanged.raw?.access_token) {
+    return jsonResp({ ok: false, error: 'shopify_oauth_exchange_failed', status: exchanged.status, raw: exchanged.raw }, 502);
+  }
+
+  const scopes = uniq(norm(exchanged.raw.scope).split(','));
+  const tempShop = { shop_domain: shopDomain, access_token: exchanged.raw.access_token };
+  const defaults = await readShopDefaults(tempShop);
+  await supabase.from('shopify_shops').upsert({
+    shop_domain: shopDomain,
+    shop_name: defaults.shop_name,
+    access_token: exchanged.raw.access_token,
+    scopes,
+    default_location_gid: defaults.default_location_gid,
+    default_publication_gid: defaults.default_publication_gid,
+    currency: defaults.currency,
+    status: 'active',
+    auth_verified: true,
+    last_verified_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'shop_domain' });
+  await supabase
+    .from('platform_capabilities')
+    .update({ auth_verified: true, updated_at: new Date().toISOString() })
+    .eq('platform', 'shopify')
+    .in('capability', ['create_listing', 'sync']);
+  await supabase.from('shopify_oauth_states').update({ used_at: new Date().toISOString() }).eq('state', state);
+
+  return jsonResp({
+    ok: true,
+    shop_domain: shopDomain,
+    shop_name: defaults.shop_name,
+    scopes,
+    currency: defaults.currency,
+    default_location_gid: defaults.default_location_gid,
+    default_publication_gid: defaults.default_publication_gid,
+  });
+}
+
+async function handleShop(req: Request): Promise<Response> {
+  const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+  if (denied) return denied;
+  const shopDomain = normalizeShopDomain(new URL(req.url).searchParams.get('shop'));
+  const shop = await configuredShop(shopDomain);
+  return jsonResp({
+    ok: true,
+    shop: {
+      shop_domain: shop.shop_domain,
+      shop_name: shop.shop_name,
+      scopes: shop.scopes,
+      default_location_gid: shop.default_location_gid,
+      default_publication_gid: shop.default_publication_gid,
+      currency: shop.currency,
+      status: shop.status,
+      auth_verified: shop.auth_verified,
+    },
+  });
+}
+
+async function createProduct(shop: any, body: any) {
+  const product = body.product || {};
+  const title = norm(product.title);
+  if (!title) return { ok: false, status: 400, raw: { error: 'title required' } };
+  const productInput: Record<string, unknown> = {
+    title,
+    status: 'DRAFT',
+  };
+  if (norm(product.descriptionHtml)) productInput.descriptionHtml = norm(product.descriptionHtml);
+  if (norm(product.vendor)) productInput.vendor = norm(product.vendor);
+  if (norm(product.productType)) productInput.productType = norm(product.productType);
+  if (Array.isArray(product.tags) && product.tags.length) productInput.tags = uniq(product.tags).slice(0, 50);
+  const productOptions = productOptionsFrom(body);
+  if (productOptions.length) productInput.productOptions = productOptions;
+  const media = mediaFrom(body);
+
+  const query = `
+    mutation ShopifyBridgeProductCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
+      productCreate(product: $product, media: $media) {
+        product { id title status handle publishedAt }
+        userErrors { field message code }
+      }
+    }
+  `;
+  const { status, raw } = await shopifyGraphql(shop, query, { product: productInput, media });
+  if (status < 200 || status >= 300 || raw?.errors?.length || graphUserErrors(raw, 'productCreate').length) {
+    return { ok: false, status, raw, error: graphErrorMessage(raw, 'productCreate') };
+  }
+  return { ok: true, status, raw, product: raw?.data?.productCreate?.product };
+}
+
+async function createVariants(shop: any, productId: string, body: any) {
+  const variants = variantsFrom(body);
+  if (!variants.length) return { ok: true, status: 200, raw: { skipped: true }, variants: [] };
+  const query = `
+    mutation ShopifyBridgeProductVariantsBulkCreate(
+      $productId: ID!,
+      $variants: [ProductVariantsBulkInput!]!,
+      $strategy: ProductVariantsBulkCreateStrategy
+    ) {
+      productVariantsBulkCreate(productId: $productId, variants: $variants, strategy: $strategy) {
+        product { id title status publishedAt }
+        productVariants {
+          id
+          title
+          sku
+          price
+          selectedOptions { name value }
+          inventoryItem { id sku tracked }
+        }
+        userErrors { field message code }
+      }
+    }
+  `;
+  const variables = { productId, variants, strategy: 'REMOVE_STANDALONE_VARIANT' };
+  const { status, raw } = await shopifyGraphql(shop, query, variables);
+  if (status < 200 || status >= 300 || raw?.errors?.length || graphUserErrors(raw, 'productVariantsBulkCreate').length) {
+    return { ok: false, status, raw, error: graphErrorMessage(raw, 'productVariantsBulkCreate') };
+  }
+  return {
+    ok: true,
+    status,
+    raw,
+    variants: raw?.data?.productVariantsBulkCreate?.productVariants || [],
+    product: raw?.data?.productVariantsBulkCreate?.product || null,
+  };
+}
+
+async function inventorySetQuantities(shop: any, quantities: any[], reason = 'correction') {
+  const query = `
+    mutation ShopifyBridgeInventorySetQuantities($input: InventorySetQuantitiesInput!) {
+      inventorySetQuantities(input: $input) {
+        inventoryAdjustmentGroup { createdAt reason }
+        userErrors { field message code }
+      }
+    }
+  `;
+  return shopifyGraphql(shop, query, { input: { name: 'available', reason, quantities } });
+}
+
+async function publishablePublish(shop: any, productId: string, publicationId: string) {
+  const query = `
+    mutation ShopifyBridgePublishablePublish($id: ID!, $input: [PublicationInput!]!) {
+      publishablePublish(id: $id, input: $input) {
+        publishable { ... on Product { id title status publishedAt } }
+        userErrors { field message code }
+      }
+    }
+  `;
+  return shopifyGraphql(shop, query, { id: productId, input: [{ publicationId }] });
+}
+
+async function handleCreateProduct(req: Request): Promise<Response> {
+  const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+  if (denied) return denied;
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== 'object') return jsonResp({ ok: false, error: 'JSON body required' }, 400);
+  const shopDomain = normalizeShopDomain(body.shop_domain);
+  const shop = await configuredShop(shopDomain);
+  const variants = variantsFrom(body);
+  if (!variants.length) return jsonResp({ ok: false, error: 'variants[] with sku is required' }, 400);
+
+  const dryRun = body.dry_run === true;
+  const dryRunPayload = {
+    productCreate: {
+      product: {
+        ...(body.product || {}),
+        status: 'DRAFT',
+        productOptions: productOptionsFrom(body),
+      },
+      media: mediaFrom(body),
+    },
+    productVariantsBulkCreate: {
+      variants,
+      strategy: 'REMOVE_STANDALONE_VARIANT',
+    },
+  };
+  if (dryRun) {
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      shop_domain: shop.shop_domain,
+      payload: dryRunPayload,
+      mutations: ['productCreate', 'productVariantsBulkCreate'],
+    });
+  }
+
+  const created = await createProduct(shop, body);
+  if (!created.ok || !created.product?.id) {
+    return jsonResp({ ok: false, error: created.error || 'productCreate failed', raw: created.raw }, created.status || 502);
+  }
+
+  const variantResult = await createVariants(shop, created.product.id, body);
+  if (!variantResult.ok) {
+    return jsonResp({
+      ok: false,
+      error: variantResult.error || 'productVariantsBulkCreate failed',
+      product_id: created.product.id,
+      raw: variantResult.raw,
+    }, variantResult.status || 502);
+  }
+
+  let inventoryResult = null;
+  if (body.set_inventory === true) {
+    const locationId = norm(body.default_location_gid || shop.default_location_gid);
+    const quantities = variants
+      .map((requested: any) => {
+        const createdVariant = (variantResult.variants || []).find((row: any) => norm(row?.sku) === norm(requested.inventoryItem?.sku));
+        const inventoryItemId = createdVariant?.inventoryItem?.id;
+        if (!inventoryItemId || !locationId || requested.quantity == null) return null;
+        return { inventoryItemId, locationId, quantity: Math.max(0, Math.floor(Number(requested.quantity) || 0)) };
+      })
+      .filter(Boolean);
+    if (quantities.length) inventoryResult = await inventorySetQuantities(shop, quantities, 'correction');
+  }
+
+  let publishResult = null;
+  if (body.publish === true) {
+    const publicationId = norm(body.default_publication_gid || shop.default_publication_gid);
+    if (publicationId) publishResult = await publishablePublish(shop, created.product.id, publicationId);
+  }
+
+  const product = variantResult.product || created.product;
+  return jsonResp({
+    ok: true,
+    shop_domain: shop.shop_domain,
+    product_id: created.product.id,
+    platform_item_id: created.product.id,
+    listing_status: publishResult ? mapShopifyListingStatus(product) : 'draft',
+    product,
+    variants: variantResult.variants,
+    variant_id: variantResult.variants?.[0]?.id || null,
+    inventory_result: inventoryResult?.raw || null,
+    publish_result: publishResult?.raw || null,
+    throttle_status: variantResult.raw?.extensions?.cost?.throttleStatus || created.raw?.extensions?.cost?.throttleStatus || null,
+  });
+}
+
+async function handleLookupSku(req: Request): Promise<Response> {
+  const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+  if (denied) return denied;
+  const url = new URL(req.url);
+  const sku = norm(url.searchParams.get('sku'));
+  if (!sku) return jsonResp({ ok: false, error: 'sku query param required' }, 400);
+  const shopDomain = normalizeShopDomain(url.searchParams.get('shop') || url.searchParams.get('shop_domain'));
+  const shop = await configuredShop(shopDomain);
+  const queryText = `sku:${sku.replace(/"/g, '')}`;
+  const query = `
+    query ShopifyBridgeProductVariantBySku($query: String!) {
+      productVariants(first: 10, query: $query) {
+        nodes {
+          id
+          title
+          sku
+          price
+          selectedOptions { name value }
+          inventoryItem { id sku tracked }
+          product { id title status handle publishedAt }
+        }
+      }
+    }
+  `;
+  const { status, raw } = await shopifyGraphql(shop, query, { query: queryText });
+  if (status < 200 || status >= 300 || raw?.errors?.length) {
+    return jsonResp({ ok: false, error: graphErrorMessage(raw), raw }, status || 502);
+  }
+  const nodes = raw?.data?.productVariants?.nodes || [];
+  const hit = nodes.find((node: any) => norm(node?.sku) === sku) || nodes[0] || null;
+  if (!hit) {
+    return jsonResp({ ok: false, error: 'product_not_found', sku, raw }, 404);
+  }
+  return jsonResp({
+    ok: true,
+    shop_domain: shop.shop_domain,
+    sku,
+    product_id: hit.product?.id || null,
+    platform_item_id: hit.product?.id || null,
+    variant_id: hit.id,
+    external_variant_id: hit.id,
+    listing_status: mapShopifyListingStatus(hit.product),
+    status: hit.product?.status || null,
+    title: hit.product?.title || hit.title || null,
+    price: hit.price || null,
+    inventory_item_id: hit.inventoryItem?.id || null,
+    selected_options: hit.selectedOptions || [],
+    raw,
+  });
+}
+
+async function handleRequest(req: Request): Promise<Response> {
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+  const url = new URL(req.url);
+  const action = url.pathname.split('/').filter(Boolean).pop() || '';
+
+  try {
+    if (action === 'healthz' && req.method === 'GET') return await handleHealthz();
+    if (action === 'oauth-url' && req.method === 'GET') return await handleOAuthUrl(req);
+    if (action === 'oauth-callback' && (req.method === 'GET' || req.method === 'POST')) return await handleOAuthCallback(req);
+    if (action === 'shop' && req.method === 'GET') return await handleShop(req);
+    if (action === 'create-product' && req.method === 'POST') return await handleCreateProduct(req);
+    if (action === 'lookup-sku' && req.method === 'GET') return await handleLookupSku(req);
+    if (action === 'internal-check' && req.method === 'GET') {
+      const denied = requireInternalBridge(req);
+      if (denied) return denied;
+      return jsonResp({ ok: true, service: 'shopify-bridge' });
+    }
+    return jsonResp({ ok: false, error: `unknown action: ${action} (${req.method})` }, 404);
+  } catch (e: any) {
+    console.error('[shopify-bridge] error', e?.message || e);
+    return jsonResp({ ok: false, error: String(e?.message || e) }, 500);
+  }
+}
+
+Deno.serve(handleRequest);

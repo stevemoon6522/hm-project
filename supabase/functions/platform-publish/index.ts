@@ -28,6 +28,7 @@ import { joomAdapter } from './adapters/joom.ts';
 import { ebayAdapter } from './adapters/ebay.ts';
 import { qoo10Adapter } from './adapters/qoo10.ts';
 import { alibabaAdapter } from './adapters/alibaba.ts';
+import { shopifyAdapter } from './adapters/shopify.ts';
 
 // ---------------------------------------------------------------------------
 // Adapter registry
@@ -38,6 +39,7 @@ const ADAPTERS: Record<string, PlatformAdapter> = {
   ebay: ebayAdapter,
   qoo10: qoo10Adapter,
   alibaba: alibabaAdapter,
+  shopify: shopifyAdapter,
 };
 function pickAdapter(platform: string): PlatformAdapter {
   return ADAPTERS[platform] ?? stubAdapter;
@@ -54,9 +56,9 @@ const ALERT_HMAC_SECRET = (Deno as any)['env']['get']('ALERT_HMAC_SECRET') || ''
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
-const VALID_PLATFORMS = new Set(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba']);
+const VALID_PLATFORMS = new Set(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba', 'shopify']);
 const QOO10_GOODS_CATEGORY_ID = '300002855';
-const PRODUCT_SELECT = 'id, sku, product_kind, product_name, option_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, shopee_option_image_url, components_extracted_en, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, joom_category_id, ebay_sku, ebay_category_id, ebay_inventory_group_key, ebay_listing_mode, ebay_variation_axis, ebay_variation_value, ebay_variation_image_url, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, shopee_global_model_sku, alibaba_category_id, alibaba_attributes, alibaba_group_id, alibaba_freight_template_id, alibaba_moq, alibaba_unit, alibaba_price_usd';
+const PRODUCT_SELECT = 'id, sku, product_kind, product_name, option_name, description, main_image, extra_images, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, shopee_option_image_url, components_extracted_en, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, joom_category_id, ebay_sku, ebay_category_id, ebay_inventory_group_key, ebay_listing_mode, ebay_variation_axis, ebay_variation_value, ebay_variation_image_url, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, shopee_global_model_sku, alibaba_category_id, alibaba_attributes, alibaba_group_id, alibaba_freight_template_id, alibaba_moq, alibaba_unit, alibaba_price_usd, shopify_vendor, shopify_product_type, shopify_tags, shopify_price, shopify_currency, shopify_template_suffix';
 
 // §A.2 gate 6: banned Shopee shop IDs.
 // 1002269093 = legacy BR shop permanently banned 2026-05.
@@ -381,7 +383,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // Qoo10 and Alibaba both stay auth_verified=false until an operator runs a
   // platform auth smoke test and flips the flag (plans/alibaba-deep-lemon.md §5).
   // =========================================================================
-  const AUTH_VERIFIED_GATED = new Set(['qoo10', 'alibaba']);
+  const AUTH_VERIFIED_GATED = new Set(['qoo10', 'alibaba', 'shopify']);
   if (AUTH_VERIFIED_GATED.has(platform) && !capRow.auth_verified) {
     audit('auth_not_verified', { platform, capability });
     await writeAuditLog(svc, {
@@ -802,6 +804,8 @@ Deno.serve(async (req: Request): Promise<Response> => {
         qoo10: (body as any).qoo10 || {},
         // Alibaba create_listing extras supplied by the V2 registration modal.
         alibaba: (body as any).alibaba || {},
+        // Shopify create_listing extras supplied by the V2 registration modal.
+        shopify: (body as any).shopify || {},
       } as any);
     } catch (e) {
       adapterResult = {
@@ -822,7 +826,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
 
   if (!dry_run) {
     const shouldClearMissing = shouldClearRemoteMissingMapping(capability, adapterResult);
-    const shouldAbsorbLookup = !shouldClearMissing && adapterResult.ok && capability === 'sync' && ['joom', 'qoo10', 'ebay'].includes(platform);
+    const shouldAbsorbLookup = !shouldClearMissing && adapterResult.ok && capability === 'sync' && ['joom', 'qoo10', 'ebay', 'shopify'].includes(platform);
     const raw = adapterResult.rawResponse || {};
     let rpcName = 'upsert_platform_listing';
     let rpcArgs: Record<string, unknown> = {
@@ -886,7 +890,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     // Grouped create flows create one marketplace listing with several option
     // SKUs. Mirror that parent listing into each option product so rollups and
     // follow-up syncs can address the individual SKU rows.
-    if (adapterResult.ok && ['qoo10', 'joom', 'ebay'].includes(platform) && capability === 'create_listing') {
+    if (adapterResult.ok && ['qoo10', 'joom', 'ebay', 'shopify'].includes(platform) && capability === 'create_listing') {
       const optionProducts = Array.isArray((raw as any).option_products) ? (raw as any).option_products : [];
       for (const option of optionProducts) {
         const optionProductId = String(option?.product_id || '').trim();

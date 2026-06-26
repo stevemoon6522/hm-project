@@ -2849,6 +2849,10 @@
         <span class="nav-label">Alibaba</span>
         <span class="nav-meta">등록 / 동기화</span>
       </button>
+      <button class="nav-tab" onclick="showView('view-platform-shopify')">
+        <span class="nav-label">Shopify</span>
+        <span class="nav-meta">Draft / SKU sync</span>
+      </button>
       <button class="nav-tab" onclick="showView('view-b2b-catalog')">
         <span class="nav-label">B2B Catalog</span>
         <span class="nav-meta">StarOneMall source</span>
@@ -3743,6 +3747,10 @@
 
     <div id="view-platform-alibaba" class="view">
       <div id="platform-alibaba-root" class="platform-root" data-platform="alibaba"></div>
+    </div>
+
+    <div id="view-platform-shopify" class="view">
+      <div id="platform-shopify-root" class="platform-root" data-platform="shopify"></div>
     </div>
 
     <!-- ═══════════════════════════════════════════════
@@ -5777,13 +5785,14 @@ LEGACY END -->
     shopeeGlobalPendingLifecycle: null,
   };
 
-  const PLATFORM_TABS = Object.freeze(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba']);
+  const PLATFORM_TABS = Object.freeze(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba', 'shopify']);
   const PLATFORM_LABELS = Object.freeze({
     shopee: 'Shopee',
     joom: 'Joom',
     qoo10: 'Qoo10',
     ebay: 'eBay',
     alibaba: 'Alibaba',
+    shopify: 'Shopify',
   });
   const PLATFORM_STATUS_LABELS = Object.freeze({
     all: '전체',
@@ -5804,6 +5813,7 @@ LEGACY END -->
     joom: 'DELETE_JOOM_PRODUCT',
     qoo10: 'DELETE_QOO10_LISTING',
     ebay: 'WITHDRAW_EBAY_LISTING',
+    shopify: 'ARCHIVE_SHOPIFY_PRODUCT',
   });
   const PLATFORM_JOOM_GOODS_CATEGORY_ID = '1733235756332554566-61-2-11859-1440023039'; // Memorabilia
   const PLATFORM_QOO10_GOODS_CATEGORY_ID = '300002855'; // KPOP goods
@@ -5838,6 +5848,7 @@ LEGACY END -->
     qoo10: ['price', 'stock', 'images'],
     ebay: ['price', 'inventory', 'images'],
     alibaba: [],
+    shopify: [],
   });
   const PLATFORM_QUEUE_COPY = Object.freeze({
     joom: Object.freeze({
@@ -5876,6 +5887,15 @@ LEGACY END -->
       syncLabel: '',
       summaryLabel: 'B2B 기준',
     }),
+    shopify: {
+      description: 'Shopify Draft products, variant SKU mappings, and sync status. Publication and inventory push stay gated until shop defaults are verified.',
+      primaryAction: 'Shopify Draft',
+      registerLabel: 'Shopify Draft',
+      editLabel: '',
+      deleteLabel: '',
+      syncLabel: 'SKU sync',
+      summaryLabel: 'Draft queue',
+    },
   });
   const SHOPEE_PLATFORM_ACTIVE_REGIONS = Object.freeze(['SG', 'TW', 'TH', 'MY', 'PH', 'BR']);
   const SHOPEE_BANNED_SHOP_IDS = new Set(['1002269093']);
@@ -8482,7 +8502,7 @@ LEGACY END -->
     const editTarget = plMasterEditTargetKey(group?.rows?.[0] || {});
     const editButton = platform === 'alibaba'
       ? (editTarget ? `<button type="button" class="platform-row-button sync" data-edit-master="${text(editTarget)}"${disabled}>이미지</button>` : '')
-      : `<button type="button" class="platform-row-button sync" data-platform-quick="edit" data-platform-key="${text(key)}"${disabled}>${text(copy.editLabel)}</button>`;
+      : (copy.editLabel ? `<button type="button" class="platform-row-button sync" data-platform-quick="edit" data-platform-key="${text(key)}"${disabled}>${text(copy.editLabel)}</button>` : '');
     const deleteButton = copy.deleteLabel
       ? `<button type="button" class="platform-row-button danger" data-platform-quick="delete" data-platform-key="${text(key)}"${disabled}>${text(copy.deleteLabel)}</button>`
       : '';
@@ -8529,10 +8549,10 @@ LEGACY END -->
       `<button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.primaryAction)}</button>`,
     ];
     if (platform !== 'alibaba') {
-      buttons.push(`<button type="button" data-platform-master-sync-needed ${needsUpdateMasterSyncCount ? '' : 'disabled'}>${text(needsUpdateMasterSyncLabel)}</button>`);
-      buttons.push(`<button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.editLabel)}</button>`);
-      buttons.push(`<button type="button" class="platform-danger-action" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.deleteLabel)}</button>`);
-      buttons.push(`<button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.syncLabel)}</button>`);
+      if (platform !== 'shopify') buttons.push(`<button type="button" data-platform-master-sync-needed ${needsUpdateMasterSyncCount ? '' : 'disabled'}>${text(needsUpdateMasterSyncLabel)}</button>`);
+      if (copy.editLabel) buttons.push(`<button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.editLabel)}</button>`);
+      if (copy.deleteLabel) buttons.push(`<button type="button" class="platform-danger-action" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.deleteLabel)}</button>`);
+      if (copy.syncLabel) buttons.push(`<button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.syncLabel)}</button>`);
     }
     return `<div class="platform-toolbar">
       <div class="platform-filters">
@@ -9467,6 +9487,10 @@ LEGACY END -->
         showToast('선택한 마스터 상품이 없습니다.', 'err');
         return;
       }
+      if (platformCanUseDispatcher(platform, action, groups[0])) {
+        platformOpenPreview(platform, action, explicitKeys);
+        return;
+      }
       if (groups.length > 1) {
         platformOpenPreview(platform, action, explicitKeys);
         showToast(`${PLATFORM_LABELS[platform] || platform} 등록 대상이 여러 개입니다. 선택 확인 후 1개씩 실행하세요.`, 'ok');
@@ -10025,11 +10049,14 @@ LEGACY END -->
         if (!Number(first.alibaba_price_usd || 0)) warnings.push('Alibaba FOB 단가(USD)가 비어 있습니다 — 등록 모달에서 입력하세요.');
         if (!first.alibaba_category_id) warnings.push('Alibaba 카테고리 미지정 — AI 자동 분류됩니다.');
       }
+      if (platform === 'shopify' && !first.main_image && !(Array.isArray(first.extra_images) && first.extra_images.length)) {
+        errors.push('Shopify: public https product image is required before Draft creation.');
+      }
       if (platform === 'ebay' && !explicitEbayCategoryId) {
         if (isGoods) warnings.push('Goods 상품은 eBay 등록 모달에서 category ID를 입력해야 합니다.');
         else warnings.push(`eBay category ID가 없어서 기본 Music > CDs (${PLATFORM_EBAY_DEFAULT_CATEGORY_ID})로 등록합니다.`);
       }
-      if (platform !== 'alibaba') {
+      if (platform !== 'alibaba' && platform !== 'shopify') {
         rows.forEach((row) => {
           if (!Number(row.cost_krw || 0)) errors.push(`${row.sku || row.id}: cost_krw가 없습니다.`);
           if (!Number(row.weight_g || 0)) errors.push(`${row.sku || row.id}: weight_g가 없습니다.`);
@@ -10107,7 +10134,7 @@ LEGACY END -->
     // Registration execution stays on the proven pre-tab modals. Those modals
     // contain the platform-specific dry-run and validation controls operators
     // need before a real listing is submitted.
-    return false;
+    return platform === 'shopify' && action === 'register';
   }
 
   async function platformExecutePreview() {
@@ -10710,7 +10737,7 @@ LEGACY END -->
   async function platformPublishDirect(platform, row, action) {
     const session = (await db.auth.getSession()).data.session;
     if (!session) throw new Error('로그인이 필요합니다.');
-    const capability = platform === 'shopee' ? 'create_listing_multi_region' : 'create_listing';
+    const capability = platform === 'shopify' ? 'create_listing' : (platform === 'shopee' ? 'create_listing_multi_region' : 'create_listing');
     const body = {
       platform,
       capability,
@@ -10727,6 +10754,8 @@ LEGACY END -->
       body.country = 'EBAY_US';
     } else if (platform === 'qoo10') {
       body.country = 'JP';
+    } else if (platform === 'shopify') {
+      body.shopify = { status: 'DRAFT' };
     }
     const resp = await fetch(PLATFORM_PUBLISH, {
       method: 'POST',
@@ -13336,7 +13365,7 @@ LEGACY END -->
     const rollup = rollupFor(productId, platform);
     const product = state.products.find((p) => String(p.id) === String(productId));
     const sku = product?.sku || '(no sku)';
-    const platformLabel = { shopee: 'Shopee', joom: 'Joom', qoo10: 'Qoo10', ebay: 'eBay', alibaba: 'Alibaba' }[platform] || platform;
+    const platformLabel = { shopee: 'Shopee', joom: 'Joom', qoo10: 'Qoo10', ebay: 'eBay', alibaba: 'Alibaba', shopify: 'Shopify' }[platform] || platform;
     const detail = rollup?.per_shop_detail || {};
     const orderedRegions = platform === 'shopee'
       ? ['SG', 'TW', 'TH', 'MY', 'PH', 'BR']
@@ -29374,12 +29403,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // ════════════════════════════════════════════════════════════════
   // PLATFORM COVERAGE VIEW — existing listings absorption dashboard
   // ════════════════════════════════════════════════════════════════
-  const COVERAGE_PLATFORMS = ['shopee', 'joom', 'qoo10', 'ebay'];
+  const COVERAGE_PLATFORMS = ['shopee', 'joom', 'qoo10', 'ebay', 'shopify'];
   const COVERAGE_LABELS = {
     shopee: 'Shopee',
     joom: 'Joom',
     qoo10: 'Qoo10',
     ebay: 'eBay',
+    shopify: 'Shopify',
   };
   const coverageState = {
     initialized: false,
@@ -29618,10 +29648,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function coverageBridgeUrl(platform) {
+    // coverageBridgeUrl('shopify') routes SKU health checks to shopify-bridge.
     if (platform === 'shopee') return SHOPEE_BRIDGE;
     if (platform === 'joom') return SHOPEE_BRIDGE.replace('/shopee-bridge', '/joom-bridge');
     if (platform === 'ebay') return SHOPEE_BRIDGE.replace('/shopee-bridge', '/ebay-bridge');
     if (platform === 'qoo10') return SHOPEE_BRIDGE.replace('/shopee-bridge', '/qoo10-bridge');
+    if (platform === 'shopify') return SHOPEE_BRIDGE.replace('/shopee-bridge', '/shopify-bridge');
     return '';
   }
 
@@ -29920,6 +29952,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   async function coverageLookupPlatformBySku(platform, sku, productId) {
     if (platform === 'shopee') return coverageLookupShopeePublishedBySku(sku, productId);
     if (platform === 'joom' || platform === 'ebay') return coverageLookupViaPlatformPublish(platform, sku, productId);
+    if (platform === 'shopify') return coverageLookupViaPlatformPublish('shopify', sku, productId);
     if (platform === 'qoo10') return coverageLookupQoo10BySku(sku, productId);
     return { platform, sku, found: false, unsupported: true, error: 'unsupported_platform', raw: {} };
   }

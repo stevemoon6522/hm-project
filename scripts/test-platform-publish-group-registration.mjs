@@ -11,6 +11,7 @@ const shopee = read('supabase', 'functions', 'platform-publish', 'adapters', 'sh
 const joom = read('supabase', 'functions', 'platform-publish', 'adapters', 'joom.ts');
 const qoo10 = read('supabase', 'functions', 'platform-publish', 'adapters', 'qoo10.ts');
 const ebay = read('supabase', 'functions', 'platform-publish', 'adapters', 'ebay.ts');
+const shopify = read('supabase', 'functions', 'platform-publish', 'adapters', 'shopify.ts');
 
 assert.match(grouping, /function publishableGroupRows/, 'shared grouping helper must expose publishable group row selection');
 assert.match(grouping, /rowHasPublishableStock/, 'group helper must avoid ready-stock zero-inventory options when alternatives exist');
@@ -25,7 +26,7 @@ assert.match(dispatcher, /const PRODUCT_SELECT = .*ebay_sku.*shopee_global_model
 assert.match(dispatcher, /let groupProducts: any\[\] = \[\]/, 'dispatcher must prepare grouped products for create flows');
 assert.match(dispatcher, /eq\('product_group_id', product\.product_group_id\)/, 'dispatcher must fetch sibling products by product_group_id');
 assert.match(dispatcher, /groupProducts,\s+shopId/s, 'dispatcher must pass grouped products into adapters');
-assert.match(dispatcher, /\['qoo10', 'joom', 'ebay'\]\.includes\(platform\)/, 'dispatcher must absorb grouped option mappings for non-Shopee marketplaces');
+assert.match(dispatcher, /\['qoo10', 'joom', 'ebay', 'shopify'\]\.includes\(platform\)/, 'dispatcher must absorb grouped option mappings for non-Shopee marketplaces');
 
 assert.match(shopee, /publishableGroupRows\(master/, 'Shopee adapter must detect grouped master products');
 assert.match(shopee, /bridgeParentSku/, 'Shopee adapter must use a parent SKU for grouped Global Product registration');
@@ -87,5 +88,10 @@ assert.match(ebay, /variationAxis: 'Version'/, 'eBay adapter must use a Version 
 assert.match(ebay, /function variationImagesFrom/, 'eBay adapter must keep variation images separate from group default photos');
 assert.match(ebay, /option_products/, 'eBay adapter must return option mapping hints after grouped create');
 assert.match(ebay, /inferKpopArtistName/, 'eBay adapter must infer artist aspects instead of using No Brand');
+
+assert.match(shopify, /publishableGroupRows\(ctx\.masterProduct/, 'Shopify adapter must detect grouped master products');
+assert.match(shopify, /buildVariationItems\(groupRows, 'Option'\)/, 'Shopify adapter must build option payloads from grouped products');
+assert.match(shopify, /productOptionsFrom\(variationBundle, master\)/, 'Shopify adapter must declare Shopify product options for grouped variants');
+assert.match(shopify, /option_products/, 'Shopify adapter must return option mapping hints after grouped create');
 
 console.log('platform-publish grouped registration checks passed');

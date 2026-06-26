@@ -25706,8 +25706,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const blocked = [];
     const skipped = [];
 
-    // Stability/perf: avoid N×region sequential get_model_list calls during Shopee bulk price edits.
-    // Fresh mapped listings are trusted; stale or incomplete mappings are fetched once and reused.
+    // Stability/perf: avoid duplicate get_model_list calls for the same item/region.
+    // Item-level rows can trust fresh mappings, but variant rows must verify model_sku
+    // because shop_model_id mappings can drift between options.
     const PREFLIGHT_TRUST_TTL_MS = 6 * 60 * 60 * 1000;
     const now = Date.now();
     function isTrustedListing(listing) {
@@ -25729,11 +25730,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!Number.isFinite(itemId) || itemId <= 0) continue;
       const key = p.region + ':' + itemId;
       if (!allKeys.has(key)) allKeys.set(key, { region: p.region, itemId: itemId });
-      const trustedModelId = Number(p.modelId || p.listing?.shop_model_id);
-      const mappedModelReady = isMappedListing(p.listing) && p.needsModel && Number.isFinite(trustedModelId) && trustedModelId > 0;
-      if (!mappedModelReady && !isTrustedListing(p.listing)) {
+      if (p.needsModel) {
         mixedKeys.add(key);
-      } else if (p.needsModel && (!Number.isFinite(trustedModelId) || trustedModelId <= 0)) {
+      } else if (!isTrustedListing(p.listing)) {
         mixedKeys.add(key);
       }
     }
@@ -25746,10 +25745,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const key = p.region + ':' + itemId;
       if (mixedKeys.has(key)) continue;
       const modelId = p.listing && p.listing.shop_model_id ? Number(p.listing.shop_model_id) : null;
-      if (isMappedListing(p.listing) && p.needsModel && p.modelId) {
-        if (!trustedModelIds.has(key)) trustedModelIds.set(key, new Set());
-        trustedModelIds.get(key).add(Number(p.modelId));
-      } else if (modelId && !p.needsModel) {
+      if (modelId && !p.needsModel) {
         if (!trustedModelIds.has(key)) trustedModelIds.set(key, new Set());
         trustedModelIds.get(key).add(modelId);
       } else if (!p.needsModel) {
@@ -25811,11 +25807,25 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         blocked.push(Object.assign({}, p, { reason: 'variant mapping requires shop_model_id' }));
         continue;
       }
-      if (p.needsModel && p.modelId && !info._trusted) {
-        const matchedModel = (info.models || []).find(function(m) { return Number(m && m.model_id) === Number(p.modelId); });
+      if (p.needsModel && p.modelId) {
+        const models = info.models || [];
+        let matchedModel = models.find(function(m) { return Number(m && m.model_id) === Number(p.modelId); });
         if (!catShopeeModelMatchesPayloadSku(matchedModel, p)) {
-          blocked.push(Object.assign({}, p, { reason: 'model_id ' + p.modelId + ' does not match SKU ' + (p.sku || '') }));
-          continue;
+          const correctedModel = models.find(function(m) { return catShopeeModelMatchesPayloadSku(m, p); });
+          const correctedModelId = Number(correctedModel && correctedModel.model_id);
+          if (Number.isFinite(correctedModelId) && correctedModelId > 0) {
+            p.modelId = correctedModelId;
+            if (p.listing) p.listing.shop_model_id = correctedModelId;
+            p.payload.price_list = [catBuildShopeePriceEntry({
+              needsModel: true,
+              modelId: correctedModelId,
+              originalPrice: p.price,
+            })];
+            matchedModel = correctedModel;
+          } else {
+            blocked.push(Object.assign({}, p, { reason: 'model_id ' + p.modelId + ' does not match SKU ' + (p.sku || '') }));
+            continue;
+          }
         }
       }
       if (info.hasModel && !p.modelId) {

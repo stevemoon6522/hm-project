@@ -80,8 +80,8 @@ assert.match(priceSync, /function catShopeeRemoteListingMissingMessage\(/, 'Shop
 assert.match(preflight, /PREFLIGHT_PARALLELISM\s*=\s*5/, 'Shopee bulk price preflight must limit parallel Shopee model lookups to 5');
 assert.match(preflight, /needsFetch\.slice\(i,\s*i \+ PREFLIGHT_PARALLELISM\)/, 'Shopee preflight must process model lookup chunks');
 assert.match(preflight, /Promise\.all\(chunk\.map\(async/, 'Shopee preflight must fetch model indexes concurrently within each chunk');
-assert.match(preflight, /PREFLIGHT_TRUST_TTL_MS\s*=\s*6 \* 60 \* 60 \* 1000/, 'Shopee preflight must only trust fresh mapped listings');
-assert.match(preflight, /listing\.last_synced_at \|\| listing\.published_at/, 'Shopee preflight must use last sync/published freshness for mapped listing trust');
+assert.match(preflight, /PREFLIGHT_TRUST_TTL_MS\s*=\s*6 \* 60 \* 60 \* 1000/, 'Shopee preflight may trust fresh mapped item-level listings');
+assert.match(preflight, /listing\.last_synced_at \|\| listing\.published_at/, 'Shopee preflight must use last sync/published freshness for item-level mapped listing trust');
 assert.match(preflight, /status !== 'mapped'/, 'Shopee preflight must only skip API validation for mapped listings');
 assert.match(preflight, /mixedKeys/, 'Shopee preflight must fetch when any target for an item is untrusted');
 assert.match(preflight, /_trusted:\s*true/, 'Shopee preflight must mark synthetic cache entries for trusted mappings');
@@ -89,9 +89,11 @@ assert.match(preflight, /else if \(!p\.needsModel\)/, 'Shopee preflight must not
 assert.match(preflight, /p\.needsModel && !p\.modelId/, 'Shopee preflight must block variant rows without shop_model_id before update_price');
 assert.match(preflight, /if \(!info\.hasModel\)[\s\S]*p\.needsModel = false[\s\S]*catBuildShopeePriceEntry/, 'Shopee preflight must downgrade false variant mappings when the remote item has no models');
 assert.match(preflight, /skipped\.push/, 'Shopee preflight must skip stale remote item ids without failing valid region price updates');
-assert.doesNotMatch(preflight, /!isTrustedListing\(p\.listing\) \|\| p\.needsModel/, 'Fresh mapped Shopee variant rows must not force remote model preflight');
-assert.match(preflight, /listing\.status === 'mapped'[\s\S]*p\.needsModel[\s\S]*p\.modelId[\s\S]*trustedModelIds/, 'Mapped Shopee variant rows with shop_model_id must use local mapping as the fast path');
+assert.match(preflight, /if \(p\.needsModel\)[\s\S]*mixedKeys\.add\(key\)/, 'Shopee variant rows must fetch remote model lists even when local mappings look fresh');
+assert.doesNotMatch(preflight, /isMappedListing\(p\.listing\) && p\.needsModel[\s\S]*trustedModelIds/, 'Shopee variant rows must not trust local shop_model_id without SKU verification');
 assert.match(preflight, /catShopeeModelMatchesPayloadSku\(matchedModel, p\)/, 'Shopee preflight must verify model_id belongs to the selected SKU before update_price');
+assert.match(preflight, /catShopeeModelMatchesPayloadSku\(m,\s*p\)/, 'Shopee preflight must find the correct remote model by selected SKU when local shop_model_id is stale');
+assert.match(preflight, /p\.payload\.price_list = \[catBuildShopeePriceEntry\(/, 'Shopee preflight must rewrite update_price payloads after correcting stale shop_model_id mappings');
 assert.match(ensureListings, /const globalModelId = catProductGlobalModelId\(product, byRegion\)/, 'Shopee live sync must carry global_model_id into listing hydration');
 assert.match(ensureListings, /account_key:\s*SHOPEE_DEFAULT_ACCOUNT_KEY,[\s\S]*global_item_id:\s*String\(globalItemId\)/, 'Shopee live sync must scope published_list hydration to the active account and global item');
 assert.match(ensureListings, /global_model_id:\s*globalModelId \|\|/, 'Shopee live sync must persist global_model_id while hydrating shop ids');
@@ -1187,6 +1189,83 @@ async function runTrustedVariantPreflightHarness() {
   return JSON.parse(JSON.stringify(context.result));
 }
 
+async function runStaleVariantMappingCorrectionHarness() {
+  const context = {
+    Date,
+    JSON,
+    Map,
+    Math,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+
+  const harness = `
+  ${extractFunction(v2, 'catBuildShopeePriceEntry')}
+  ${extractFunction(v2, 'catNormalizeSkuText')}
+  ${extractFunction(v2, 'catShopeeTierIndexValues')}
+  ${extractFunction(v2, 'catShopeeTierIndexMatches')}
+  ${extractFunction(v2, 'catShopeeRemoteListingMissingMessage')}
+  ${extractFunction(v2, 'catShopeeModelMatchesPayloadSku')}
+  let fetchCalls = 0;
+  async function catFetchShopeeModelIndex() {
+    fetchCalls += 1;
+    return {
+      ok: true,
+      hasModel: true,
+      modelIds: new Set([346113183677, 346113183681]),
+      models: [
+        { model_id: 346113183677, model_sku: 'D2-BOY-HOME-SWE-SUNGHO', model_name: 'SUNGHO', tier_index: [2] },
+        { model_id: 346113183681, model_sku: 'D2-BOY-HOME-SWE-RANDOM', model_name: 'RANDOM', tier_index: [6] },
+      ],
+    };
+  }
+  ${preflight}
+  (async function() {
+    const payloads = [{
+      productId: 'random',
+      sku: 'D2-BOY-HOME-SWE-RANDOM',
+      globalModelSku: 'D2-BOY-HOME-SWE-RANDOM',
+      optionName: 'RANDOM',
+      variationTierIndex: [6],
+      region: 'SG',
+      itemId: 41232027442,
+      modelId: 346113183677,
+      needsModel: true,
+      price: 18.26,
+      listing: {
+        status: 'mapped',
+        shop_item_id: 41232027442,
+        shop_model_id: 346113183677,
+        last_synced_at: '2026-06-26T15:51:53.644Z',
+      },
+      payload: {
+        region: 'SG',
+        item_id: 41232027442,
+        price_list: [{ model_id: 346113183677, original_price: 18.26 }],
+      },
+    }];
+    const result = await catPreflightShopeePayloads(payloads);
+    globalThis.result = {
+      fetchCalls,
+      valid: result.valid.map(function(p) {
+        return { sku: p.sku, region: p.region, modelId: p.modelId, priceList: p.payload.price_list };
+      }),
+      blocked: result.blocked.map(function(p) { return { sku: p.sku, region: p.region, reason: p.reason }; }),
+      skipped: result.skipped.map(function(p) { return { sku: p.sku, region: p.region, reason: p.reason }; }),
+    };
+  })();
+  `;
+
+  await new vm.Script(harness, { filename: 'v2-shopee-stale-variant-mapping-correction-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify(context.result));
+}
+
 function runCortisModelMatchHarness() {
   const context = {
     Array,
@@ -1630,12 +1709,28 @@ assert.deepEqual(
 assert.deepEqual(
   await runTrustedVariantPreflightHarness(),
   {
-    fetchCalls: 0,
+    fetchCalls: 1,
     valid: [{ sku: 'T4-TEA-WEONF-SOL-EJ', region: 'SG', modelId: 9001, needsModel: true }],
     blocked: [],
     skipped: [],
   },
-  'Mapped Shopee variant rows with shop_model_id must skip remote model preflight even when older than the freshness TTL',
+  'Mapped Shopee variant rows with shop_model_id must verify the remote model before update_price',
+);
+
+assert.deepEqual(
+  await runStaleVariantMappingCorrectionHarness(),
+  {
+    fetchCalls: 1,
+    valid: [{
+      sku: 'D2-BOY-HOME-SWE-RANDOM',
+      region: 'SG',
+      modelId: 346113183681,
+      priceList: [{ model_id: 346113183681, original_price: 18.26 }],
+    }],
+    blocked: [],
+    skipped: [],
+  },
+  'Fresh but stale Shopee variant mappings must be corrected to the remote model_sku match before update_price',
 );
 
 assert.deepEqual(

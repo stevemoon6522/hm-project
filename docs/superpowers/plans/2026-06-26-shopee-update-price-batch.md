@@ -1034,6 +1034,17 @@ Success criteria:
 - No browser console app errors appear.
 - If update time remains high, the bottleneck is Shopee API response time rather than browser fan-out overhead; keep the route because it centralizes logging and makes later bridge-level retries possible.
 
+- [x] **Step 8a: Live RANDOM option model-id correction discovered during smoke**
+
+Production smoke for `[READY STOCK] BOYNEXTDOOR 1st Studio Album [HOME] (SWEET HOME ver.)` / `RANDOM` showed the batch route returned success and local DB prices changed, but Shopee `shop_model_list` still showed stale remote prices for SG/TH/BR. Root cause: `product_shopee_listings.shop_model_id` was stale for those regions, and the new preflight trust TTL skipped remote `get_model_list` validation for fresh mapped variant rows.
+
+Additional fix:
+
+- Variant price payloads now always fetch/verify the remote shop model list per item/region.
+- If local `shop_model_id` does not match the selected SKU/option/tier, preflight rewrites `model_id` and `price_list` to the matching remote model before `/update_price_batch`.
+- Item-level no-model rows can still use the fresh-mapping trust path.
+- Regression test added for fresh but stale `RANDOM` model mapping correction.
+
 - [ ] **Step 9: Final commit if verification fixes were needed**
 
 If verification required extra fixes after the Task 4 commit, run:

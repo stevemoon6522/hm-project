@@ -23,6 +23,9 @@ test('Shopee bridge exposes a SKU lookup route backed by official item_sku/model
     assert.match(source, /\/api\/v2\/global_product\/get_global_item_info/, `${label} bridge should hydrate Global Product names/SKUs before model lookup`);
     assert.match(source, /\/api\/v2\/global_product\/get_global_model_list/, `${label} bridge should verify Global Product model SKUs`);
     assert.match(source, /shopeeSkuEquals\(model\?\.global_model_sku, sku\)/, `${label} bridge should require an exact global_model_sku match`);
+    assert.match(source, /\/api\/v2\/global_product\/get_published_list/, `${label} bridge should resolve Global Product publications after a Global SKU match`);
+    assert.match(source, /global_published_model_list/, `${label} bridge should label Global Product published shop-model lookup hits`);
+    assert.match(source, /shopeeSkuHitFromItemIds\([\s\S]*'global_published_model_list'/, `${label} bridge should verify published shop item models via get_model_list before price sync uses them`);
     assert.match(source, /global_region_hits/, `${label} bridge should return Global Product hits separately from shop listing hits`);
     assert.match(source, /const SHOPEE_SKU_LOOKUP_STATUSES = \['NORMAL', 'UNLIST'\]/, `${label} bridge should only map active or unlisted shop items`);
     assert.match(source, /listItemsForRegion\(r, status, maxScanItems, accountKey\)/, `${label} bridge should scan shop listings as a model_sku fallback`);
@@ -30,6 +33,6 @@ test('Shopee bridge exposes a SKU lookup route backed by official item_sku/model
     assert.match(source, /url\.searchParams\.getAll\('item_name'\)/, `${label} GET lookup-sku should accept frontend-provided product-name search terms`);
     assert.match(source, /lookupSource\.startsWith\('scan_'\) \? 'remote_list_items' : \(lookupSource \|\| \(allowRemoteScan \? 'remote_list_items' : 'remote_search_item'\)\)/, `${label} GET lookup-sku should distinguish fast search from explicit full scan`);
     assert.match(source, /not_found: region_hits\.length === 0 && global_region_hits\.length === 0 && region_results\.every/, `${label} GET lookup-sku should return a conclusive not_found state only after shop and Global Product misses`);
-    assert.match(source, /source_docs:[\s\S]*v2\.product\.search_item\.json:item_sku[\s\S]*v2\.product\.search_item\.json:item_name[\s\S]*v2\.product\.get_model_list\.json:model_sku[\s\S]*v2\.global_product\.get_global_item_list\.json:global_item_id[\s\S]*v2\.global_product\.get_global_item_info\.json:global_item_sku[\s\S]*v2\.global_product\.get_global_model_list\.json:global_model_sku/, `${label} bridge response should cite the local Shopee API docs used`);
+    assert.match(source, /source_docs:[\s\S]*v2\.product\.search_item\.json:item_sku[\s\S]*v2\.product\.search_item\.json:item_name[\s\S]*v2\.product\.get_model_list\.json:model_sku[\s\S]*v2\.global_product\.get_global_item_list\.json:global_item_id[\s\S]*v2\.global_product\.get_global_item_info\.json:global_item_sku[\s\S]*v2\.global_product\.get_global_model_list\.json:global_model_sku[\s\S]*v2\.global_product\.get_published_list\.json:item_id/, `${label} bridge response should cite the local Shopee API docs used`);
   }
 });

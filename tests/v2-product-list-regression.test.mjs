@@ -464,7 +464,7 @@ test('platform SKU sync includes Shopee lookup-sku and absorbs matched region id
   assert.match(coverageLookup, /coverageLookupShopeePublishedBySku/, 'Shopee lookup should use the shared platform lookup entrypoint');
   assert.match(coverageLookup, /coverageNormalizeShopeeSkuLookupHit/, 'Shopee lookup-sku response should be normalized before absorb');
   assert.match(coverageLookup, /SHOPEE_BRIDGE\}\/lookup-sku\?\$\{qs\.toString\(\)\}/, 'Shopee sync should call the bridge SKU lookup route');
-  assert.match(coverageLookup, /qs\.append\('item_name', productName\)/, 'Shopee sync should pass the selected master product name for remote item-name lookup');
+  assert.match(coverageLookup, /pushTerm\(productName\)[\s\S]*terms\.forEach\(\(term\) => qs\.append\('item_name', term\)\)/, 'Shopee sync should pass the selected master product name for remote item-name lookup');
   assert.match(coverageLookup, /regions: SHOPEE_PLATFORM_ACTIVE_REGIONS\.join\(','\)/, 'Shopee lookup should check every active marketplace region');
   assert.match(coverageLookup, /coverageAbsorbShopeePublishedHit/, 'Shopee hit should be absorbed into product_shopee_listings');
   assert.match(coverageLookup, /coverageClearShopeePublishedMappings/, 'Shopee not-found should mark product_shopee_listings as not_listed');
@@ -478,7 +478,7 @@ test('platform SKU sync includes Shopee lookup-sku and absorbs matched region id
   assert.doesNotMatch(coverageLookup, /if \(localHit\) return coverageNormalizeShopeePublishedHit/, 'Shopee sync must not trust cached local rows before remote verification');
   assert.doesNotMatch(coverageLookup, /row\?\.shopee_item_id \|\| row\?\.platform_item_id/, 'products.shopee_item_id is a global id and must not be treated as shop_item_id');
   assert.match(coverageLookup, /global_region_hits/, 'Shopee sync should consume Global Product SKU hits separately from shop listing hits');
-  assert.match(coverageLookup, /global_model_id: entry\.global_model_id \|\| entry\.model_id \|\| entry\.globalModelId \|\| null/, 'Shopee global lookup hits should preserve global_model_id');
+  assert.match(coverageLookup, /global_model_id: entry\.global_model_id \|\| entry\.globalModelId \|\| null/, 'Shopee global lookup hits should preserve global_model_id');
   assert.match(coverageLookup, /entry\.region && \(entry\.shop_item_id \|\| entry\.global_item_id\)/, 'Shopee global lookup hits without shop_item_id must not be filtered out');
   assert.match(coverageLookup, /global_item_id: row\.global_item_id \|\| null/, 'absorbed listing should preserve global_item_id for later price/sync operations');
   assert.match(coverageLookup, /global_model_id: row\.global_model_id \|\| null/, 'absorbed listing should preserve global_model_id for later Global Product operations');

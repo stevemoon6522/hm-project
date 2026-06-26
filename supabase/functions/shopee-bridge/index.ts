@@ -3440,6 +3440,73 @@ function shopeeGlobalSkuLookupHit(sku: string, item: any, model: any, source: st
   };
 }
 
+function shopeePublishedItems(raw: any): any[] {
+  const response = raw?.response || raw?.result?.response || raw || {};
+  const list = response.published_item || response.published_list || raw?.published_item || raw?.published_list || [];
+  return Array.isArray(list) ? list : [];
+}
+
+function shopeePublishedListedStatus(status: unknown): boolean {
+  const text = String(status ?? '').toUpperCase();
+  if (!text) return true;
+  if (text === 'NORMAL' || text === 'ITEM_NORMAL' || text === 'UNLIST' || text === 'ITEM_UNLIST') return true;
+  const numeric = Number(status);
+  return Number.isFinite(numeric) && (numeric === 1 || numeric === 8);
+}
+
+async function lookupShopeePublishedGlobalSkuAcrossRegions(
+  regions: string[],
+  sku: string,
+  globalHit: any,
+  accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY,
+) {
+  const globalItemId = Number(globalHit?.global_item_id || 0);
+  const globalModelId = Number(globalHit?.global_model_id || 0);
+  const regionHits: any[] = [];
+  const errors: string[] = [];
+  if (!Number.isFinite(globalItemId) || globalItemId <= 0) {
+    return { region_hits: regionHits, errors: ['global_item_id missing'] };
+  }
+
+  const published = await merchantApiCall('SG', '/api/v2/global_product/get_published_list', {
+    query: { global_item_id: globalItemId },
+    account_key: accountKey,
+  });
+  if (published.error) {
+    errors.push(shopeeLookupError('get_published_list', published));
+    return { region_hits: regionHits, errors };
+  }
+
+  const publishedItems = shopeePublishedItems(published);
+  const wantedRegions = new Set(regions.map((r) => String(r || '').toUpperCase()).filter(Boolean));
+  for (const r of wantedRegions) {
+    const candidates = publishedItems.filter((entry: any) => {
+      const entryRegion = String(entry?.shop_region || entry?.region || entry?.country || '').toUpperCase();
+      const itemId = Number(entry?.item_id || entry?.shop_item_id || entry?.shopItemId || 0);
+      return entryRegion === r && Number.isFinite(itemId) && itemId > 0 && shopeePublishedListedStatus(entry?.item_status ?? entry?.status);
+    });
+    for (const entry of candidates) {
+      const itemId = Number(entry?.item_id || entry?.shop_item_id || entry?.shopItemId || 0);
+      const shopId = Number(entry?.shop_id || entry?.shopId || 0);
+      const found = await shopeeSkuHitFromItemIds(r, sku, [itemId], 'global_published_model_list', Number.isFinite(shopId) && shopId > 0 ? shopId : null, accountKey);
+      errors.push(...found.errors);
+      if (found.hit) {
+        regionHits.push({
+          ...found.hit,
+          source: 'global_published_model_list',
+          lookup_source: 'global_published_model_list',
+          global_item_id: globalItemId,
+          global_model_id: globalModelId || null,
+          global_model_sku: globalHit?.global_model_sku || globalHit?.model_sku || null,
+        });
+        break;
+      }
+    }
+  }
+
+  return { region_hits: regionHits, errors };
+}
+
 async function fetchShopeeGlobalItemInfo(region: string, globalItemIds: number[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   const items: any[] = [];
   const errors: string[] = [];
@@ -5651,6 +5718,11 @@ Deno.serve(async (req) => {
             region: r,
           });
         }
+        const publishedLookup = await lookupShopeePublishedGlobalSkuAcrossRegions(requestedRegions, sku, global_lookup.hit, accountKey);
+        for (const hit of publishedLookup.region_hits || []) region_hits.push(hit);
+        if (Array.isArray(publishedLookup.errors) && publishedLookup.errors.length) {
+          global_lookup.published_errors = publishedLookup.errors;
+        }
       }
 
       const hitRegions = new Set(region_hits.map((hit: any) => String(hit?.region || '').toUpperCase()).filter(Boolean));
@@ -5707,6 +5779,7 @@ Deno.serve(async (req) => {
           'docs_ai/apis/global_product/v2.global_product.get_global_item_list.json:global_item_id',
           'docs_ai/apis/global_product/v2.global_product.get_global_item_info.json:global_item_sku',
           'docs_ai/apis/global_product/v2.global_product.get_global_model_list.json:global_model_sku',
+          'docs_ai/apis/global_product/v2.global_product.get_published_list.json:item_id',
         ],
       });
     }

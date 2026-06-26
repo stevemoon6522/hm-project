@@ -91,7 +91,7 @@ Implementation note: the working tree may contain unrelated user changes. Read t
 - Modify: `tests/shopee-sku-lookup-regression.test.mjs`
 - Create or modify: `tests/v2-shopee-sku-mapping-regression.test.mjs`
 
-- [ ] **Step 1: Bridge static regression**
+- [x] **Step 1: Bridge static regression**
 
 Extend `tests/shopee-sku-lookup-regression.test.mjs` for both bridge copies:
 
@@ -103,7 +103,7 @@ Extend `tests/shopee-sku-lookup-regression.test.mjs` for both bridge copies:
   - `docs_ai/apis/global_product/v2.global_product.get_published_list.json`
   - `docs_ai/apis/product/v2.product.get_model_list.json:model_sku`
 
-- [ ] **Step 2: Frontend context regression**
+- [x] **Step 2: Frontend context regression**
 
 Add a focused test that extracts or mirrors the new helper behavior from `v2/index.html`:
 
@@ -114,7 +114,7 @@ Add a focused test that extracts or mirrors the new helper behavior from `v2/ind
   - one or more `global_item_id` values from the selected row and siblings
   - product name / group name search terms as fallback hints
 
-- [ ] **Step 3: Frontend merge regression**
+- [x] **Step 3: Frontend merge regression**
 
 Add a test for `coverageNormalizeShopeeSkuLookupHit()`:
 
@@ -128,7 +128,7 @@ Add a test for `coverageNormalizeShopeeSkuLookupHit()`:
 
 **File:** `v2/index.html`
 
-- [ ] **Step 1: Update product select**
+- [x] **Step 1: Update product select**
 
 Update the main `loadData()` products select around `v2/index.html:6958` to include existing Shopee Global columns:
 
@@ -140,7 +140,7 @@ Update the main `loadData()` products select around `v2/index.html:6958` to incl
 
 These columns already exist in migration `supabase/migrations/202605290002_shopee_global_import_master.sql`.
 
-- [ ] **Step 2: Keep lightweight fallback selectors aligned**
+- [x] **Step 2: Keep lightweight fallback selectors aligned**
 
 Check V2 REST fallback selectors around `v2/index.html:23687` and `v2/index.html:23703`. They already include `global_model_id` and `shopee_global_model_sku`; only add missing raw/SKU fields if the helper needs them and the query remains stable.
 
@@ -150,7 +150,7 @@ Check V2 REST fallback selectors around `v2/index.html:23687` and `v2/index.html
 
 **File:** `v2/index.html`
 
-- [ ] **Step 1: Add helper**
+- [x] **Step 1: Add helper**
 
 Add a helper near the coverage lookup functions, for example:
 
@@ -168,11 +168,11 @@ The helper should collect:
 - sibling `product_shopee_listings.global_item_id`
 - useful item-name terms from `product_name`, `option_name`, and sibling group rows
 
-- [ ] **Step 2: De-duplicate and constrain**
+- [x] **Step 2: De-duplicate and constrain**
 
 Deduplicate ids and terms. Only include finite positive numeric `global_item_id` values. Keep name terms bounded to a small list so the bridge does not fan out into unnecessary Shopee API calls.
 
-- [ ] **Step 3: Use active Shopee regions**
+- [x] **Step 3: Use active Shopee regions**
 
 Use `SHOPEE_PLATFORM_ACTIVE_REGIONS` as the default region list. Do not introduce hardcoded out-of-scope regions.
 
@@ -182,7 +182,7 @@ Use `SHOPEE_PLATFORM_ACTIVE_REGIONS` as the default region list. Do not introduc
 
 **File:** `v2/index.html`
 
-- [ ] **Step 1: Append Global ids**
+- [x] **Step 1: Append Global ids**
 
 In `coverageLookupShopeePublishedBySku()`, append every context `global_item_id` to the main `/lookup-sku` query before fetching:
 
@@ -190,11 +190,11 @@ In `coverageLookupShopeePublishedBySku()`, append every context `global_item_id`
 for (const id of context.globalItemIds) qs.append('global_item_id', String(id));
 ```
 
-- [ ] **Step 2: Append fallback item names**
+- [x] **Step 2: Append fallback item names**
 
 Append context item-name terms with repeated `item_name` query params. Keep the current selected product terms, but add sibling/group terms when present.
 
-- [ ] **Step 3: Keep `published_list` fallback**
+- [x] **Step 3: Keep `published_list` fallback**
 
 Keep the existing `/published_list` fallback, but treat it as a weaker fallback because it does not include `shop_model_id`. The main `lookup-sku` bridge path should become the preferred deterministic path.
 
@@ -206,15 +206,15 @@ Keep the existing `/published_list` fallback, but treat it as a weaker fallback 
 - `supabase/functions/shopee-bridge/index.ts`
 - `edge-functions/shopee-bridge/index.ts`
 
-- [ ] **Step 1: Resolve Global model by SKU**
+- [x] **Step 1: Resolve Global model by SKU**
 
 In GET `lookup-sku`, after `global_lookup` finds a matching `global_item_id/global_model_id/global_model_sku`, call `global_product.get_published_list` for that `global_item_id`.
 
-- [ ] **Step 2: Filter published shop items**
+- [x] **Step 2: Filter published shop items**
 
 Use only published rows whose `shop_region` is in `requestedRegions` and whose `item_status` is normal/listed enough for mapping. Preserve existing operating-region and account-key constraints.
 
-- [ ] **Step 3: Verify shop model SKU**
+- [x] **Step 3: Verify shop model SKU**
 
 For each published row, call `product.get_model_list` in the row's `shop_region` with the published `item_id`, then find `response.model[]` where `model_sku` exactly equals the requested SKU.
 
@@ -230,7 +230,7 @@ When found, push a normal `region_hits` row containing:
 - `global_model_sku`
 - `lookup_source: 'global_published_model_list'`
 
-- [ ] **Step 4: Keep fallback behavior**
+- [x] **Step 4: Keep fallback behavior**
 
 If this deterministic path fails for a region, keep the current fallback order:
 
@@ -239,7 +239,7 @@ If this deterministic path fails for a region, keep the current fallback order:
 3. `product.search_item` by `item_name`
 4. explicit scan fallback only when requested
 
-- [ ] **Step 5: Add source docs**
+- [x] **Step 5: Add source docs**
 
 Add `docs_ai/apis/global_product/v2.global_product.get_published_list.json:item_id` to `source_docs`, alongside existing `search_item`, `get_model_list`, `get_global_item_info`, and `get_global_model_list` citations.
 
@@ -249,7 +249,7 @@ Add `docs_ai/apis/global_product/v2.global_product.get_published_list.json:item_
 
 **File:** `v2/index.html`
 
-- [ ] **Step 1: Replace global-over-shop selection**
+- [x] **Step 1: Replace global-over-shop selection**
 
 Change `coverageNormalizeShopeeSkuLookupHit()` so it does not choose one array:
 
@@ -259,7 +259,7 @@ const rows = globalRows.length ? globalRows : shopRows;
 
 Instead, normalize both arrays and merge them by region.
 
-- [ ] **Step 2: Prefer shop ids**
+- [x] **Step 2: Prefer shop ids**
 
 For each region:
 
@@ -267,7 +267,7 @@ For each region:
 - attach `global_item_id` and `global_model_id` from the matching `global_region_hits`
 - keep a Global-only row only when no shop hit exists for that region
 
-- [ ] **Step 3: Preserve status filtering**
+- [x] **Step 3: Preserve status filtering**
 
 Keep status filtering for active/unlisted Shopee rows. Avoid accepting deleted, banned, or invalid remote rows as mapped.
 
@@ -277,14 +277,14 @@ Keep status filtering for active/unlisted Shopee rows. Avoid accepting deleted, 
 
 **File:** `v2/index.html`
 
-- [ ] **Step 1: Persist complete ids**
+- [x] **Step 1: Persist complete ids**
 
 Keep `coverageAbsorbShopeePublishedHit()` upserting `product_shopee_listings`, but ensure rows from the normalized hit can carry both:
 
 - `global_item_id`, `global_model_id`
 - `shop_id`, `shop_item_id`, `shop_model_id`
 
-- [ ] **Step 2: Mark partial Global-only rows clearly**
+- [x] **Step 2: Mark partial Global-only rows clearly**
 
 If a row has only Global ids and no shop item/model ids, do not fake shop ids. Use the existing status conventions carefully:
 
@@ -308,7 +308,7 @@ Current price sync risk points:
 - `catShopeeSkuLookupHitsFromResponse()` only reads `region_hits` and `region_results[].hit`; it ignores `global_region_hits`.
 - `catEnsureSelectedShopeeListings()` therefore may fail to create a complete `product_shopee_listings` row before `catBuildPriceSyncPayloads()` builds `/update_price` payloads.
 
-- [ ] **Step 1: Reuse group context for price sync**
+- [x] **Step 1: Reuse group context for price sync**
 
 Make the group-context helper usable from both:
 
@@ -317,21 +317,21 @@ Make the group-context helper usable from both:
 
 For a selected option row such as `RANDOM`, context must include sibling `global_item_id` values from the same `product_group_id`.
 
-- [ ] **Step 2: Pass Global ids into price sync lookup**
+- [x] **Step 2: Pass Global ids into price sync lookup**
 
 Change `catFetchShopeeSkuLookupHits(sku, targetRegions, product)` so it appends context `global_item_id` query params to `/lookup-sku`.
 
-- [ ] **Step 3: Read Global hits in price sync lookup parsing**
+- [x] **Step 3: Read Global hits in price sync lookup parsing**
 
 Change `catShopeeSkuLookupHitsFromResponse()` so it reads `global_region_hits` as well as `region_hits` and `region_results[].hit`.
 
 Do not treat Global-only hits as sufficient for an `/update_price` payload. They are useful as fallback context, but the price sync payload still requires `shop_item_id`, and model products require `shop_model_id`.
 
-- [ ] **Step 4: Prefer complete shop hits**
+- [x] **Step 4: Prefer complete shop hits**
 
 When both shop and Global hits exist, use the shop hit for `shop_item_id/shop_model_id` and attach `global_item_id/global_model_id` when available. This keeps price sync from sending item-level price updates to a variant item.
 
-- [ ] **Step 5: Regression case**
+- [x] **Step 5: Regression case**
 
 Add a regression test where:
 
@@ -380,19 +380,38 @@ Before production deployment, run the local V2 app and verify the Shopee tab map
 
 ### Task 10: Commit and Deploy Only After Steve Requests the Fix
 
-- [ ] Validate tests and rendered V2 behavior.
-- [ ] Commit scoped changes only.
-- [ ] Push `main`.
-- [ ] Deploy with:
+- [x] Validate tests and rendered V2 behavior.
+- [x] Commit scoped changes only.
+- [x] Push `main`.
+- [x] Deploy with:
 
 ```powershell
 vercel deploy --prod --yes
 ```
 
-- [ ] Smoke-check `https://shopee-dashboard-kohl.vercel.app/v2/`.
+- [x] Smoke-check `https://shopee-dashboard-kohl.vercel.app/v2/`.
 
 Suggested commit message:
 
 ```text
 fix: map Shopee sibling option SKUs with global context
 ```
+
+---
+
+## Execution Result
+
+Implemented on `2026-06-26` in commit `46f9073`.
+
+Verification completed:
+
+- `node --test tests\shopee-sku-lookup-regression.test.mjs tests\v2-shopee-sku-mapping-regression.test.mjs tests\v2-product-list-regression.test.mjs` passed: 33 tests, 33 pass.
+- `npm run verify:v2-deploy-source` passed.
+- `git diff --check` passed before commit.
+- `supabase functions deploy shopee-bridge --project-ref mgqlwgnmwegzsjelbrih` deployed version `159` of `shopee-bridge`.
+- Live bridge smoke returned `found=True`, `region_hits=12`, `global_hits=6`, with shop item/model ids and Global ids for `O1-ATE-4GOLD-PHO-A&global_item_id=54504712282`.
+- `vercel deploy --prod --yes --scope moon-jeonghos-projects` deployed the V2 app to the existing `multi-platform-dashboard` project.
+- `https://shopee-dashboard-kohl.vercel.app/v2/` returned HTTP 200 and included `shopeeLookupContextForProduct` and `global_region_hits`.
+- Playwright live smoke loaded title `shopee-dashboard v2 - KRSC` with 0 console errors.
+
+Note: the BOYNEXTDOOR `RANDOM` production row was represented by a regression fixture because the exact operating SKU/global id is not available in repo files or public anonymous Supabase access. The covered failure mode is the relevant one: a selected option without local Global Product context now sends sibling `global_item_id` and item-name context into price-sync lookup before payload generation.

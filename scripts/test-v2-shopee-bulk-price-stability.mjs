@@ -155,7 +155,11 @@ const bridgeSource = fs.readFileSync(new URL('../supabase/functions/shopee-bridg
 assert.match(bridgeSource, /async function executeShopUpdatePriceMutation\(/, 'Shopee update_price bridge logic must be shared by single and batch routes');
 assert.match(bridgeSource, /if \(action === 'update_price' && req\.method === 'POST'\)[\s\S]*executeShopUpdatePriceMutation\(/, 'Shopee single update_price route must call the shared mutation helper');
 assert.match(bridgeSource, /if \(action === 'update_price_batch' && req\.method === 'POST'\)[\s\S]*mapWithConcurrency\(/, 'Shopee update_price_batch route must fan out with bounded bridge-side concurrency');
-assert.match(bridgeSource, /shop_update_price_idempotent_skip/, 'Shopee update_price bridge route must idempotently skip already-logged ok payloads');
+assert.doesNotMatch(
+  bridgeSource,
+  /shop_update_price_idempotent_skip/,
+  'Shopee update_price bridge route must not skip a live price call based only on historical payload_hash matches',
+);
 assert.match(bridgeSource, /shop_update_price_batch_complete/, 'Shopee update_price_batch route must audit aggregate batch completion');
 assert.match(bridgeSource, /UPDATE_PRICE_BATCH_PARALLELISM = 6/, 'Shopee update_price_batch route should keep the six active regions in one bounded bridge-side wave');
 
@@ -1294,6 +1298,10 @@ function runCortisModelMatchHarness() {
       { model_sku: '', model_name: '', tier_index: [2] },
       { sku: 'LOCAL-SKU-WITHOUT-REMOTE-SKU', globalModelSku: null, optionName: null, variationTierIndex: [0, 1] }
     ),
+    explicitIdentityMismatchBeatsStaleTier: catShopeeModelMatchesPayloadSku(
+      { model_sku: 'D2-BOY-HOME-SWE-SUNGHO', model_name: 'SUNGHO', tier_index: [2] },
+      { sku: 'D2-BOY-HOME-SWE-RANDOM', globalModelSku: 'D2-BOY-HOME-SWE-RANDOM', optionName: 'RANDOM', variationTierIndex: [2] }
+    ),
   };
   `;
 
@@ -1735,7 +1743,7 @@ assert.deepEqual(
 
 assert.deepEqual(
   runCortisModelMatchHarness(),
-  { sku: true, tierOnly: true, wrongTier: false },
+  { sku: true, tierOnly: true, wrongTier: false, explicitIdentityMismatchBeatsStaleTier: false },
   'CORTIS-style option rows must match by SKU first and by phantom-first-tier fallback when SKU is unavailable',
 );
 

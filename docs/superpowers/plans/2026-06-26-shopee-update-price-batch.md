@@ -86,7 +86,7 @@ Replace the two existing bridge assertions:
 
 ```js
 assert.match(bridgeSource, /if \(action === 'update_price' && req\.method === 'POST'\)[\s\S]*insertMutationLog\({[\s\S]*action: 'update_price'/, 'Shopee update_price bridge route must log via service-role Edge function');
-assert.match(bridgeSource, /shop_update_price_idempotent_skip/, 'Shopee update_price bridge route must idempotently skip already-logged ok payloads');
+assert.match(bridgeSource, /shop_update_price_batch_complete/, 'Shopee update_price_batch route must audit aggregate batch completion');
 ```
 
 with:
@@ -95,7 +95,11 @@ with:
 assert.match(bridgeSource, /async function executeShopUpdatePriceMutation\(/, 'Shopee update_price bridge logic must be shared by single and batch routes');
 assert.match(bridgeSource, /if \(action === 'update_price' && req\.method === 'POST'\)[\s\S]*executeShopUpdatePriceMutation\(/, 'Shopee single update_price route must call the shared mutation helper');
 assert.match(bridgeSource, /if \(action === 'update_price_batch' && req\.method === 'POST'\)[\s\S]*mapWithConcurrency\(/, 'Shopee update_price_batch route must fan out with bounded bridge-side concurrency');
-assert.match(bridgeSource, /shop_update_price_idempotent_skip/, 'Shopee update_price bridge route must idempotently skip already-logged ok payloads');
+assert.doesNotMatch(
+  bridgeSource,
+  /shop_update_price_idempotent_skip/,
+  'Shopee update_price bridge route must not skip a live price call based only on historical payload_hash matches',
+);
 assert.match(bridgeSource, /shop_update_price_batch_complete/, 'Shopee update_price_batch route must audit aggregate batch completion');
 assert.match(bridgeSource, /UPDATE_PRICE_BATCH_PARALLELISM = 6/, 'Shopee update_price_batch route should keep the six active regions in one bounded bridge-side wave');
 ```
@@ -274,30 +278,6 @@ async function executeShopUpdatePriceMutation(params: {
     region: params.region,
     request_payload: requestPayload,
   });
-  const previous = await findOkMutation(payloadHash);
-  if (previous) {
-    audit('shop_update_price_idempotent_skip', {
-      account_key: params.accountKey,
-      region: params.region,
-      item_id: params.itemId,
-      payload_hash: payloadHash,
-      previous_log_id: previous.id,
-      client_ref: params.clientRef || null,
-    });
-    return {
-      ok: true,
-      skipped: true,
-      previous_log_id: previous.id,
-      account_key: params.accountKey,
-      region: params.region,
-      item_id: params.itemId,
-      client_ref: params.clientRef || null,
-      sent_price_list: params.priceList,
-      failure_list: [],
-      payload_hash: payloadHash,
-      rollback_policy: V2_ROLLBACK_POLICY,
-    };
-  }
 
   const started = Date.now();
   const result = await shopApiCall(params.region, '/api/v2/product/update_price', {
@@ -1044,6 +1024,14 @@ Additional fix:
 - If local `shop_model_id` does not match the selected SKU/option/tier, preflight rewrites `model_id` and `price_list` to the matching remote model before `/update_price_batch`.
 - Item-level no-model rows can still use the fresh-mapping trust path.
 - Regression test added for fresh but stale `RANDOM` model mapping correction.
+
+- [x] **Step 8b: Live restore exposed payload-hash skip and stale tier fallback**
+
+Second production smoke after Step 8a showed two more issues:
+
+- Bridge `executeShopUpdatePriceMutation()` skipped a live Shopee API call when the same `payload_hash` had a historical `ok` mutation log. That is unsafe for price sync because external Shopee state can change after the previous success. The bridge now always calls `v2.product.update_price`; `payload_hash` remains log correlation only.
+- `catShopeeModelMatchesProduct()` and `catShopeeModelMatchesPayloadSku()` accepted a stale local `variation_tier_index` match even when remote `model_sku`/`model_name` explicitly disagreed with the selected SKU/option. The matcher now refuses tier fallback when explicit SKU/option identity is available on both sides and does not match.
+- Regression tests cover no pre-call idempotent skip, duplicate-log `previous_log_id` propagation, and RANDOM-vs-SUNGHO explicit identity mismatch beating stale tier data.
 
 - [ ] **Step 9: Final commit if verification fixes were needed**
 

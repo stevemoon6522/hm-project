@@ -127,6 +127,21 @@ const updatePriceHelperBlock = sliceBetween(
 );
 assert.ok(updatePriceBatchBlock.includes('executeShopUpdatePriceMutation'), 'update_price_batch must fan out through the shared shop-level update_price helper');
 assert.ok(updatePriceHelperBlock.includes("'/api/v2/product/update_price'"), 'shared update_price helper must call shop-level v2.product.update_price');
+const helperApiCallIndex = updatePriceHelperBlock.indexOf("'/api/v2/product/update_price'");
+const helperPreCallSkipIndex = updatePriceHelperBlock.indexOf('findOkMutation(payloadHash)');
+assert.ok(helperApiCallIndex >= 0, 'shared update_price helper must contain the Shopee update_price API call');
+assert.ok(
+  helperPreCallSkipIndex === -1 || helperPreCallSkipIndex > helperApiCallIndex,
+  'shared update_price helper must not skip the Shopee API call solely because the same price payload succeeded before',
+);
+assert.ok(
+  !updatePriceHelperBlock.includes('shop_update_price_idempotent_skip'),
+  'shared update_price helper must not report a historical payload_hash hit as a fresh price update',
+);
+assert.ok(
+  updatePriceHelperBlock.includes('previous_log_id: log.previous_log_id || null'),
+  'shared update_price helper must return previous_log_id after a real API call hits a duplicate ok mutation log',
+);
 assert.ok(!updatePriceBatchBlock.includes("'/api/v2/product/batch_update_outlet_price'"), 'update_price_batch must not use the Outlet/Mart-only Shopee batch_update_outlet_price endpoint');
 assert.ok(v2.includes("SHOPEE_BRIDGE + '/update_price_batch'"), 'V2 normal price sync should use the bridge-side update_price_batch wrapper');
 assert.ok(!v2.includes("SHOPEE_BRIDGE + '/batch_update_outlet_price'"), 'V2 normal price sync must not call the Outlet/Mart-only bridge route');

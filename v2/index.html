@@ -26505,6 +26505,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const modelName = catNormalizeSkuText(model && model.model_name);
     if (modelSku && (modelSku === sku || modelSku === globalSku)) return true;
     if (modelName && optionName && modelName === optionName) return true;
+    if ((sku || globalSku || optionName) && (modelSku || modelName)) return false;
     if (catShopeeTierIndexMatches(product && product.variation_tier_index, model && model.tier_index)) return true;
     return false;
   }
@@ -26517,6 +26518,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const modelName = catNormalizeSkuText(model && model.model_name);
     if (modelSku && (modelSku === sku || modelSku === globalSku)) return true;
     if (modelName && optionName && modelName === optionName) return true;
+    if ((sku || globalSku || optionName) && (modelSku || modelName)) return false;
     if (catShopeeTierIndexMatches(payload && payload.variationTierIndex, model && model.tier_index)) return true;
     return false;
   }

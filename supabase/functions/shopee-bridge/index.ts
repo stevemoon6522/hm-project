@@ -1621,30 +1621,6 @@ async function executeShopUpdatePriceMutation(params: {
     region: params.region,
     request_payload: requestPayload,
   });
-  const previous = await findOkMutation(payloadHash);
-  if (previous) {
-    audit('shop_update_price_idempotent_skip', {
-      account_key: params.accountKey,
-      region: params.region,
-      item_id: params.itemId,
-      payload_hash: payloadHash,
-      previous_log_id: previous.id,
-      client_ref: params.clientRef || null,
-    });
-    return {
-      ok: true,
-      skipped: true,
-      previous_log_id: previous.id,
-      account_key: params.accountKey,
-      region: params.region,
-      item_id: params.itemId,
-      client_ref: params.clientRef || null,
-      sent_price_list: params.priceList,
-      failure_list: [],
-      payload_hash: payloadHash,
-      rollback_policy: V2_ROLLBACK_POLICY,
-    };
-  }
 
   const started = Date.now();
   const result = await shopApiCall(params.region, '/api/v2/product/update_price', {
@@ -1691,6 +1667,7 @@ async function executeShopUpdatePriceMutation(params: {
     result,
     payload_hash: payloadHash,
     log_id: log.id || null,
+    previous_log_id: log.previous_log_id || null,
     rollback_policy: V2_ROLLBACK_POLICY,
   };
 }

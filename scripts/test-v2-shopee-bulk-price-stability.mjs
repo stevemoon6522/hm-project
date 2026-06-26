@@ -100,9 +100,17 @@ assert.match(ensureListings, /matchedModel = modelInfo\.models\.find\(function\(
 assert.match(ensureListings, /catMarkShopeeListingNotListed/, 'Shopee listing hydration must clear stale region mappings before payload build');
 assert.match(priceSync, /function catBridgePriceFailureList\(json\)/, 'Shopee live bulk sync must normalize bridge/Shopee failure_list responses');
 assert.match(priceSync, /catBridgePriceOk\(json\)/, 'Shopee live bulk sync must treat bridge failure_list as an update failure');
-assert.match(liveSync, /catInsertShopeePriceLog\(p, ok \? 'ok' : 'error'/, 'Shopee live bulk sync must audit both successful and failed update_price calls');
+assert.match(priceSync, /catInsertShopeePriceLog\(p, ok \? 'ok' : 'error'/, 'Shopee live bulk sync must audit both successful and failed update_price calls');
 assert.match(liveSync, /preflight\.skipped/, 'Shopee live bulk sync must report skipped stale regions separately from errors');
-assert.match(priceSync, /const SHOPEE_PRICE_UPDATE_PARALLELISM = 4/, 'Shopee live price sync must cap region update concurrency');
+assert.match(priceSync, /const SHOPEE_PRICE_UPDATE_PARALLELISM = 6/, 'Shopee live price sync should run the six active Shopee regions in one bounded wave');
+assert.match(priceSync, /async function catPersistShopeeSyncResults\(updateResults,\s*now\)/, 'Shopee live sync must batch post-update DB persistence after update_price returns');
+assert.match(liveSync, /const persistResult = await catPersistShopeeSyncResults\(updateResults,\s*now\)/, 'Shopee live sync must delegate logs, listing upserts, and cost persistence to the batched helper');
+assert.doesNotMatch(liveSync, /for \(const result of updateResults\)[\s\S]*await db\.from\('product_shopee_listings'\)\.upsert/, 'Shopee live sync must not upsert listing rows sequentially per region after update_price');
+assert.match(priceSync, /function catSyncTimingStart\(/, 'Shopee live sync must expose lightweight timing instrumentation');
+assert.match(liveSync, /catSyncTimingMark\(timing,\s*'mapping'\)/, 'Shopee live sync timing must measure mapping hydration');
+assert.match(liveSync, /catSyncTimingMark\(timing,\s*'preflight'\)/, 'Shopee live sync timing must measure preflight');
+assert.match(liveSync, /catSyncTimingMark\(timing,\s*'update'\)/, 'Shopee live sync timing must measure update_price calls');
+assert.match(liveSync, /catSyncTimingMark\(timing,\s*'persist'\)/, 'Shopee live sync timing must measure DB persistence');
 assert.match(updateBatching, /price_list:\s*\[\]/, 'Shopee update batching must build a multi-entry price_list envelope');
 assert.match(updateBatching, /batch\.payload\.price_list\.push\(entry\)/, 'Shopee update batching must append selected model price entries into one item update');
 assert.match(priceSync, /Promise\.all\(chunk\.map\(function\(batch\)/, 'Shopee live price sync must run region/item batches concurrently within the cap');
@@ -422,6 +430,116 @@ function runBatchFailureHarness() {
 
   new vm.Script(harness, { filename: 'v2-shopee-batch-failure-harness.mjs' }).runInContext(context);
   return JSON.parse(JSON.stringify(context.result));
+}
+
+async function runPersistResultsHarness() {
+  const context = {
+    Date,
+    JSON,
+    Map,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    console,
+    globalThis: null,
+    SHOPEE_DEFAULT_ACCOUNT_KEY: 'starphotocard',
+    SHOPEE_LISTING_CONFLICT: 'product_id,account_key,region',
+    dbCalls: [],
+    cacheRows: [],
+  };
+  context.globalThis = context;
+  context.pendingCostEdits = { random: 14281 };
+  context.pendingSourcingEdits = {};
+  context._catCache = {
+    listings: context.cacheRows,
+    products: [
+      { id: 'random', sku: 'D2-BOY-HOME-SWE-RANDOM', cost_krw: 13281 },
+    ],
+  };
+  context.db = {
+    from(table) {
+      return {
+        insert(row) {
+          context.dbCalls.push({ table, method: 'insert', row });
+          return Promise.resolve({ error: null });
+        },
+        upsert(rows, options) {
+          context.dbCalls.push({ table, method: 'upsert', rows, options });
+          return Promise.resolve({ error: null });
+        },
+        update(fields) {
+          return {
+            eq(column, value) {
+              context.dbCalls.push({ table, method: 'update', fields, eq: { column, value } });
+              return Promise.resolve({ error: null });
+            },
+          };
+        },
+      };
+    },
+  };
+  vm.createContext(context);
+
+  const harness = `
+  ${extractFunction(v2, 'catApplyShopeeListingCache')}
+  ${extractFunction(v2, 'catShopeeListingUpsertRowFromPayload')}
+  ${extractFunction(v2, 'catInsertShopeePriceLog')}
+  ${extractFunction(v2, 'catPersistProductCost')}
+  ${extractFunction(v2, 'catPersistShopeeSyncResults')}
+  (async function() {
+    const updateResults = [
+      {
+        ok: true,
+        json: { ok: true, log_id: 'edge-log-sg' },
+        errorMsg: null,
+        p: {
+          productId: 'random',
+          sku: 'D2-BOY-HOME-SWE-RANDOM',
+          region: 'SG',
+          itemId: 41232027442,
+          modelId: 346113183677,
+          globalItemId: 54504712282,
+          globalModelId: 346113183677,
+          newCost: 14281,
+          price: 18.26,
+          payloadHash: 'dry:abc',
+          payload: { region: 'SG', item_id: 41232027442, price_list: [{ model_id: 346113183677, original_price: 18.26 }] },
+          listing: { status: 'mapped' },
+        },
+      },
+      {
+        ok: true,
+        json: { ok: true, log_id: 'edge-log-tw' },
+        errorMsg: null,
+        p: {
+          productId: 'random',
+          sku: 'D2-BOY-HOME-SWE-RANDOM',
+          region: 'TW',
+          itemId: 53062837241,
+          modelId: 366113187448,
+          globalItemId: 54504712282,
+          globalModelId: 366113187448,
+          newCost: 14281,
+          price: 418,
+          payloadHash: 'dry:def',
+          payload: { region: 'TW', item_id: 53062837241, price_list: [{ model_id: 366113187448, original_price: 418 }] },
+          listing: { status: 'mapped' },
+        },
+      },
+    ];
+    globalThis.result = await catPersistShopeeSyncResults(updateResults, '2026-06-26T00:00:00.000Z');
+  })();
+  `;
+
+  await new vm.Script(harness, { filename: 'v2-shopee-persist-results-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify({
+    result: context.result,
+    dbCalls: context.dbCalls,
+    cacheRows: context.cacheRows,
+    products: context._catCache.products,
+  }));
 }
 
 async function runNoModelPreflightHarness() {
@@ -920,6 +1038,22 @@ assert.deepEqual(
   { success: null, failed: 'price exceeds limit for model' },
   'Batched Shopee update_price failures must be attributed back to the matching model_id only',
 );
+
+const persistHarness = await runPersistResultsHarness();
+assert.equal(persistHarness.result.okCount, 2, 'batched persistence should count successful Shopee region updates');
+assert.deepEqual(persistHarness.result.errors, [], 'batched persistence should not report errors for successful rows');
+assert.equal(
+  persistHarness.dbCalls.filter((call) => call.table === 'product_shopee_listings' && call.method === 'upsert').length,
+  1,
+  'listing rows should be persisted with one bulk upsert instead of one upsert per region',
+);
+assert.equal(
+  persistHarness.dbCalls.filter((call) => call.table === 'products' && call.method === 'update').length,
+  1,
+  'product cost should be persisted once per product even when multiple regions succeed',
+);
+assert.equal(persistHarness.cacheRows.length, 2, 'local listing cache should be updated for each successful region');
+assert.equal(persistHarness.products[0].cost_krw, 14281, 'local product cache should reflect the synced product cost');
 
 const noModelPreflight = await runNoModelPreflightHarness();
 assert.equal(noModelPreflight.blocked.length, 0, 'Remote no-model Shopee items must not be blocked as missing shop_model_id');

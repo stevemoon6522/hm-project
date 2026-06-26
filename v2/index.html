@@ -25852,6 +25852,21 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     });
   }
 
+  function catShopeeListingUpsertRowFromPayload(p, nowIso) {
+    return {
+      product_id: p.productId,
+      account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
+      region: p.region,
+      global_item_id: p.globalItemId || p.listing?.global_item_id || null,
+      global_model_id: p.globalModelId || p.listing?.global_model_id || null,
+      shop_item_id: p.itemId,
+      shop_model_id: p.modelId || null,
+      last_synced_price: p.price,
+      last_synced_at: nowIso,
+      status: p.listing?.status || 'mapped',
+    };
+  }
+
   async function catInsertShopeePriceLog(payload, status, responseJson, errorMsg) {
     if (responseJson && (responseJson.log_id || responseJson.previous_log_id)) return;
     try {
@@ -25874,6 +25889,93 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     } catch (e) {
       console.warn('[CAT live] mutation_log unavailable:', e.message || e);
     }
+  }
+
+  async function catPersistShopeeSyncResults(updateResults, now) {
+    const errors = [];
+    const okPayloads = [];
+    const logTasks = [];
+    const costByProduct = new Map();
+
+    for (const result of (updateResults || [])) {
+      const p = result.p;
+      const json = result.json || null;
+      const ok = result.ok === true;
+      const errorMsg = result.errorMsg || null;
+
+      if (result.preRetry) {
+        logTasks.push(catInsertShopeePriceLog(p, 'error', result.preRetry.json, result.preRetry.errorMsg));
+      }
+      logTasks.push(catInsertShopeePriceLog(p, ok ? 'ok' : 'error', json, errorMsg));
+
+      if (!ok) {
+        errors.push(p.sku + ' ' + p.region + ': ' + errorMsg);
+        continue;
+      }
+
+      okPayloads.push(p);
+      const productKey = String(p.productId);
+      if (!costByProduct.has(productKey)) {
+        costByProduct.set(productKey, { productId: p.productId, sku: p.sku, newCost: p.newCost });
+      }
+    }
+
+    await Promise.all(logTasks);
+
+    if (okPayloads.length) {
+      const listingRows = okPayloads.map(function(p) {
+        return catShopeeListingUpsertRowFromPayload(p, now);
+      });
+      const { error: upsertErr } = await db.from('product_shopee_listings')
+        .upsert(listingRows, { onConflict: SHOPEE_LISTING_CONFLICT });
+      if (upsertErr) {
+        for (const p of okPayloads) {
+          errors.push(p.sku + ' ' + p.region + ': DB listing update ' + upsertErr.message);
+        }
+      } else {
+        okPayloads.forEach(function(p) {
+          catApplyShopeeListingCache(p, now);
+        });
+      }
+    }
+
+    const costResults = await Promise.all(Array.from(costByProduct.values()).map(async function(row) {
+      const persisted = await catPersistProductCost(row.productId, row.newCost, now);
+      return { row: row, persisted: persisted };
+    }));
+    for (const result of costResults) {
+      if (!result.persisted.ok) {
+        errors.push(result.row.sku + ': cost update ' + result.persisted.error);
+      }
+    }
+
+    return {
+      okCount: okPayloads.length,
+      errors: errors,
+    };
+  }
+
+  function catSyncTimingStart() {
+    return {
+      startedAt: (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now(),
+      steps: [],
+    };
+  }
+
+  function catSyncTimingMark(timing, label) {
+    if (!timing) return;
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+    timing.steps.push({
+      label: label,
+      elapsedMs: Math.round(now - timing.startedAt),
+    });
+  }
+
+  function catSyncTimingSummary(timing) {
+    if (!timing || !timing.steps.length) return '';
+    return timing.steps.map(function(step) {
+      return step.label + '=' + step.elapsedMs + 'ms';
+    }).join(' ');
   }
 
   function catShopeePriceErrorNeedsLogisticsRepair(errorMsg) {
@@ -25992,7 +26094,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     };
   }
 
-  const SHOPEE_PRICE_UPDATE_PARALLELISM = 4;
+  const SHOPEE_PRICE_UPDATE_PARALLELISM = 6;
 
   function catShopeePriceEntryModelKey(entry) {
     const modelId = Number(entry && entry.model_id);
@@ -26761,6 +26863,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   async function catExecuteShopeeLive() {
+    const timing = catSyncTimingStart();
     const earlySyncBtn = document.getElementById('cat-sync-btn');
     if (earlySyncBtn && !earlySyncBtn.dataset.catSyncOldText) {
       earlySyncBtn.dataset.catSyncOldText = earlySyncBtn.textContent || '';
@@ -26769,8 +26872,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     showToast('Shopee 가격 동기화 준비 중...', '');
     catSuppressNextWeightBlurSave = false;
     await catFlushSelectedInlineEdits({ persistWeight: false });
+    catSyncTimingMark(timing, 'inline');
     if (earlySyncBtn) earlySyncBtn.textContent = 'Shopee 매핑 확인 중...';
     await catEnsureSelectedShopeeListings();
+    catSyncTimingMark(timing, 'mapping');
     const { payloads } = catBuildPriceSyncPayloads();
     if (!payloads.length) {
       showToast('Shopee 가격 동기화 대상이 없습니다. 선택 상품의 region shop item/model 매핑을 확인하세요.', 'err');
@@ -26787,10 +26892,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let okCount = 0;
     let skippedCount = 0;
     const errors = [];
-    const costPersisted = new Set();
 
     try {
       const preflight = await catPreflightShopeePayloads(payloads);
+      catSyncTimingMark(timing, 'preflight');
       skippedCount = (preflight.skipped || []).length;
       for (const skipped of (preflight.skipped || [])) {
         console.warn('[CAT live] skipped price target:', skipped.sku, skipped.region, skipped.reason);
@@ -26800,52 +26905,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
 
       const updateResults = await catRunShopeePriceUpdates(preflight.valid);
-      for (const result of updateResults) {
-        const p = result.p;
-        const json = result.json || null;
-        const ok = result.ok === true;
-        const errorMsg = result.errorMsg || null;
-
-        if (result.preRetry) {
-          await catInsertShopeePriceLog(p, 'error', result.preRetry.json, result.preRetry.errorMsg);
-        }
-
-        await catInsertShopeePriceLog(p, ok ? 'ok' : 'error', json, errorMsg);
-
-        if (!ok) {
-          errors.push(p.sku + ' ' + p.region + ': ' + errorMsg);
-          continue;
-        }
-
-        const { error: upsertErr } = await db.from('product_shopee_listings').upsert({
-          product_id: p.productId,
-          account_key: SHOPEE_DEFAULT_ACCOUNT_KEY,
-          region: p.region,
-          global_item_id: p.globalItemId || p.listing?.global_item_id || null,
-          global_model_id: p.globalModelId || p.listing?.global_model_id || null,
-          shop_item_id: p.itemId,
-          shop_model_id: p.modelId || null,
-          last_synced_price: p.price,
-          last_synced_at: now,
-          status: p.listing?.status || 'mapped',
-        }, { onConflict: SHOPEE_LISTING_CONFLICT });
-        if (upsertErr) {
-          errors.push(p.sku + ' ' + p.region + ': DB listing update ' + upsertErr.message);
-          continue;
-        }
-
-        if (!costPersisted.has(String(p.productId))) {
-          const persisted = await catPersistProductCost(p.productId, p.newCost, now);
-          if (!persisted.ok) {
-            errors.push(p.sku + ': cost update ' + persisted.error);
-          } else {
-            costPersisted.add(String(p.productId));
-          }
-        }
-
-        catApplyShopeeListingCache(p, now);
-        okCount++;
-      }
+      catSyncTimingMark(timing, 'update');
+      showToast('Shopee price applied, saving DB records...', '');
+      const persistResult = await catPersistShopeeSyncResults(updateResults, now);
+      catSyncTimingMark(timing, 'persist');
+      console.info('[CAT live] Shopee price sync timing:', catSyncTimingSummary(timing));
+      okCount = persistResult.okCount;
+      errors.push.apply(errors, persistResult.errors);
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = oldText; delete btn.dataset.catSyncOldText; }
     }

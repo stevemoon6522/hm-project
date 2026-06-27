@@ -16,5 +16,7 @@
 // productVariantsBulkCreate
 // inventorySetQuantities
 // publishablePublish
+// scopeSet.has('write_products')
+// missing_scopes
 
 import '../../supabase/functions/shopify-bridge/index.ts';

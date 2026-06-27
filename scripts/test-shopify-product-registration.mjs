@@ -65,6 +65,8 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   assert.match(source, /productVariantsBulkCreate/, `${label} Shopify bridge must call productVariantsBulkCreate`);
   assert.match(source, /inventorySetQuantities/, `${label} Shopify bridge must include gated inventory support`);
   assert.match(source, /publishablePublish/, `${label} Shopify bridge must include gated publish support`);
+  assert.match(source, /scopeSet\.has\('write_products'\)/, `${label} Shopify bridge must verify product write scope before enabling create_listing`);
+  assert.match(source, /missing_scopes/, `${label} Shopify bridge must report missing Shopify product scopes`);
   assert.doesNotMatch(source, /stack: e\?\.stack/, `${label} Shopify bridge must not expose stack traces`);
 }
 

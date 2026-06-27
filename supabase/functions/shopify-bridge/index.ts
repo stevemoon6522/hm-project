@@ -285,6 +285,10 @@ async function handleOAuthCallback(req: Request): Promise<Response> {
   }
 
   const scopes = uniq(norm(exchanged.raw.scope).split(','));
+  const scopeSet = new Set(scopes);
+  const canCreateProducts = scopeSet.has('write_products');
+  const canSyncProducts = scopeSet.has('read_products') || canCreateProducts;
+  const productAuthVerified = canCreateProducts && canSyncProducts;
   const tempShop = { shop_domain: shopDomain, access_token: exchanged.raw.access_token };
   const defaults = await readShopDefaults(tempShop);
   await supabase.from('shopify_shops').upsert({
@@ -296,15 +300,20 @@ async function handleOAuthCallback(req: Request): Promise<Response> {
     default_publication_gid: defaults.default_publication_gid,
     currency: defaults.currency,
     status: 'active',
-    auth_verified: true,
+    auth_verified: productAuthVerified,
     last_verified_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   }, { onConflict: 'shop_domain' });
   await supabase
     .from('platform_capabilities')
-    .update({ auth_verified: true, updated_at: new Date().toISOString() })
+    .update({ auth_verified: canCreateProducts, updated_at: new Date().toISOString() })
     .eq('platform', 'shopify')
-    .in('capability', ['create_listing', 'sync']);
+    .eq('capability', 'create_listing');
+  await supabase
+    .from('platform_capabilities')
+    .update({ auth_verified: canSyncProducts, updated_at: new Date().toISOString() })
+    .eq('platform', 'shopify')
+    .eq('capability', 'sync');
   await supabase.from('shopify_oauth_states').update({ used_at: new Date().toISOString() }).eq('state', state);
 
   return jsonResp({
@@ -315,6 +324,8 @@ async function handleOAuthCallback(req: Request): Promise<Response> {
     currency: defaults.currency,
     default_location_gid: defaults.default_location_gid,
     default_publication_gid: defaults.default_publication_gid,
+    product_auth_verified: productAuthVerified,
+    missing_scopes: ['write_products', 'read_products'].filter((scope) => !scopeSet.has(scope)),
   });
 }
 

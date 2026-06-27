@@ -21,6 +21,8 @@ const publishRef = readApiRef('publishable-publish.graphql.md');
 assert.match(docsReadme, /product-create\.graphql\.md/, 'Shopify README must index productCreate local docs');
 assert.match(docsReadme, /product-variants-bulk-create\.graphql\.md/, 'Shopify README must index variant bulk create local docs');
 assert.match(productCreateRef, /write_products/, 'productCreate doc must record write_products scope');
+assert.match(productCreateRef, /status:\s*ACTIVE/, 'productCreate doc must record the current active-first Shopify policy');
+assert.match(productCreateRef, /USD/, 'productCreate doc must record Shopify USD pricing policy');
 assert.match(variantsBulkRef, /REMOVE_STANDALONE_VARIANT/, 'variant doc must record standalone variant removal strategy');
 assert.match(inventoryRef, /write_inventory/, 'inventory doc must record write_inventory scope');
 assert.match(publishRef, /write_publications/, 'publish doc must record write_publications scope');
@@ -52,7 +54,10 @@ assert.match(shopifyAdapter, /bridgeGet\('lookup-sku'/, 'Shopify adapter must sy
 assert.match(shopifyAdapter, /publishableGroupRows\(ctx\.masterProduct/, 'Shopify adapter must support grouped master variants');
 assert.match(shopifyAdapter, /productVariantsBulkCreate/, 'Shopify adapter dry-run payload must expose variant bulk intent');
 assert.match(shopifyAdapter, /option_products/, 'Shopify adapter must return option mapping hints for grouped creates');
-assert.match(shopifyAdapter, /listingStatus: ctx\.dryRun \? 'draft' : 'draft'/, 'Shopify create must remain draft-first in MVP');
+assert.match(shopifyAdapter, /SHOPIFY_USD_PRICE_POLICY[\s\S]*currency:\s*'USD'[\s\S]*krwPerUsd:\s*1460[\s\S]*targetMarginPct:\s*30[\s\S]*paymentFeePct:\s*1[\s\S]*transactionFeePct:\s*10[\s\S]*includeShippingInPrice:\s*false[\s\S]*defaultStatus:\s*'ACTIVE'[\s\S]*setInventory:\s*false/, 'Shopify adapter must encode the approved USD active-first price policy');
+assert.match(shopifyAdapter, /function shopifyPriceFromCostKrw[\s\S]*feePct = policy\.targetMarginPct \+ policy\.paymentFeePct \+ policy\.transactionFeePct \+ policy\.fixedOperationFeePct[\s\S]*denominator = 1 - feePct \/ 100[\s\S]*costKrw \/ policy\.krwPerUsd \/ denominator/, 'Shopify adapter must calculate USD price by backing out margin and percentage fees');
+assert.match(shopifyAdapter, /status:\s*shopifyProductStatus\(shopify\)/, 'Shopify adapter must create products with the approved ACTIVE default status');
+assert.match(shopifyAdapter, /set_inventory:\s*shopify\.set_inventory === true && SHOPIFY_USD_PRICE_POLICY\.setInventory === true/, 'Shopify adapter must keep Shopify inventory push disabled by policy');
 assert.match(shopifyAdapter, /import \{ shopeeSellerCenterDescription \} from '\.\.\/_shared\/shopee-description\.ts'/, 'Shopify adapter must reuse the Shopee Seller Center description template');
 assert.match(shopifyAdapter, /shopeeSellerCenterDescription\(/, 'Shopify adapter must build default descriptionHtml from the Shopee template');
 assert.match(shopifyAdapter, /raw\.split\(\/\\n\{2,\}\//, 'Shopify adapter must preserve Shopee template paragraph breaks when converting to HTML');
@@ -68,11 +73,14 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   assert.match(source, /action === 'create-product'/, `${label} Shopify bridge must expose product creation`);
   assert.match(source, /action === 'lookup-sku'/, `${label} Shopify bridge must expose SKU lookup`);
   assert.match(source, /productCreate/, `${label} Shopify bridge must call productCreate`);
+  assert.match(source, /function shopifyProductStatus/, `${label} Shopify bridge must sanitize requested Shopify product status`);
+  assert.match(source, /status:\s*shopifyProductStatus\(product\.status\)/, `${label} Shopify productCreate must honor the adapter status`);
   const createProductBlock = source.slice(source.indexOf('async function createProduct'), source.indexOf('async function createVariants'));
   assert.doesNotMatch(createProductBlock, /userErrors\s*\{\s*field\s+message\s+code\s*\}/, `${label} Shopify productCreate must not request unsupported UserError.code`);
   assert.match(source, /productVariantsBulkCreate/, `${label} Shopify bridge must call productVariantsBulkCreate`);
   assert.match(source, /inventorySetQuantities/, `${label} Shopify bridge must include gated inventory support`);
   assert.match(source, /publishablePublish/, `${label} Shopify bridge must include gated publish support`);
+  assert.match(source, /listing_status:\s*mapShopifyListingStatus\(product\)/, `${label} Shopify bridge must report ACTIVE products as listed even without inventory push`);
   assert.match(source, /scopeSet\.has\('write_products'\)/, `${label} Shopify bridge must verify product write scope before enabling create_listing`);
   assert.match(source, /missing_scopes/, `${label} Shopify bridge must report missing Shopify product scopes`);
   assert.doesNotMatch(source, /stack: e\?\.stack/, `${label} Shopify bridge must not expose stack traces`);
@@ -103,7 +111,8 @@ for (const token of [
   'id="platform-shopify-root"',
   "const PLATFORM_TABS = Object.freeze(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba', 'shopify'])",
   'shopify: {',
-  'Shopify Draft',
+  'Shopify Active',
+  "body.shopify = { status: 'ACTIVE' }",
   "platform === 'shopify' ? 'create_listing' :",
   "coverageBridgeUrl('shopify')",
   "coverageLookupViaPlatformPublish('shopify', sku, productId)",

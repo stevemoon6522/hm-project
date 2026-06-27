@@ -10,6 +10,18 @@ const SUPABASE_URL = (Deno as any).env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = (Deno as any).env.get('SUPABASE_ANON_KEY') || '';
 const PLATFORM_BRIDGE_INTERNAL_TOKEN = (Deno as any).env.get('PLATFORM_BRIDGE_INTERNAL_TOKEN') || '';
 
+const SHOPIFY_USD_PRICE_POLICY = Object.freeze({
+  currency: 'USD',
+  krwPerUsd: 1460,
+  targetMarginPct: 30,
+  paymentFeePct: 1,
+  transactionFeePct: 10,
+  fixedOperationFeePct: 0,
+  includeShippingInPrice: false,
+  defaultStatus: 'ACTIVE',
+  setInventory: false,
+});
+
 type BridgeContext = AdapterContext & { userAuthToken?: string; shopify?: Record<string, any> };
 
 function s(value: unknown, fallback = ''): string {
@@ -103,11 +115,19 @@ function imagesFrom(master: Record<string, unknown>, groupRows: Record<string, u
   return unique.slice(0, 10).map((url, index) => ({ originalSource: url, alt: `${cleanText(master.product_name || master.sku) || 'Product'} ${index + 1}` }));
 }
 
+function shopifyPriceFromCostKrw(costKrw: number, policy = SHOPIFY_USD_PRICE_POLICY): string {
+  if (!(costKrw > 0)) return '';
+  const feePct = policy.targetMarginPct + policy.paymentFeePct + policy.transactionFeePct + policy.fixedOperationFeePct;
+  const denominator = 1 - feePct / 100;
+  if (!(policy.krwPerUsd > 0) || !(denominator > 0)) return '';
+  const raw = costKrw / policy.krwPerUsd / denominator;
+  return (Math.ceil(raw * 100) / 100).toFixed(2);
+}
+
 function priceFrom(row: Record<string, unknown>, shopify: Record<string, any>): string {
   const explicit = n(row.shopify_price || shopify.price || shopify.price_amount, 0);
   if (explicit > 0) return explicit.toFixed(2);
-  const fallback = n(row.cost_krw, 0);
-  return fallback > 0 ? String(Math.round(fallback)) : '';
+  return shopifyPriceFromCostKrw(n(row.cost_krw, 0));
 }
 
 function stockFrom(row: Record<string, unknown>): number {
@@ -126,6 +146,20 @@ function productOptionsFrom(variationBundle: any, master: Record<string, unknown
     name: cleanText(axis.name || 'Option').slice(0, 255) || 'Option',
     values: (axis.values || []).map((value: string) => ({ name: cleanText(value).slice(0, 255) })).filter((value: any) => value.name),
   })).filter((axis: any) => axis.values.length);
+}
+
+function shopifyProductStatus(shopify: Record<string, any>): string {
+  const status = cleanText(shopify.status || shopify.product_status).toUpperCase();
+  if (['ACTIVE', 'DRAFT', 'ARCHIVED'].includes(status)) return status;
+  return SHOPIFY_USD_PRICE_POLICY.defaultStatus;
+}
+
+function listingStatusFromProductStatus(status: unknown): AdapterResult['listingStatus'] {
+  const value = cleanText(status).toUpperCase();
+  if (value === 'ACTIVE') return 'listed';
+  if (value === 'ARCHIVED') return 'paused';
+  if (value === 'DRAFT') return 'draft';
+  return 'draft';
 }
 
 function variantOptionValues(item: any, variationBundle: any, master: Record<string, unknown>) {
@@ -167,17 +201,18 @@ function buildShopifyPayload(ctx: BridgeContext) {
       vendor: vendorFrom(master, shopify),
       productType: productTypeFrom(master, shopify),
       tags: tagsFrom(master, shopify),
-      status: 'DRAFT',
+      status: shopifyProductStatus(shopify),
       productOptions: productOptionsFrom(variationBundle, master),
       parentSku: parent,
     },
     media: imagesFrom(master, groupRows),
     variants,
     publish: shopify.publish === true,
-    set_inventory: shopify.set_inventory === true,
+    set_inventory: shopify.set_inventory === true && SHOPIFY_USD_PRICE_POLICY.setInventory === true,
     default_location_gid: cleanText(shopify.default_location_gid),
     default_publication_gid: cleanText(shopify.default_publication_gid),
     dry_run: ctx.dryRun,
+    pricing_policy: SHOPIFY_USD_PRICE_POLICY,
     shopify_mutations: ['productCreate', 'productVariantsBulkCreate'],
   };
 }
@@ -189,6 +224,14 @@ function validatePayload(payload: any): AdapterResult | null {
       listingStatus: 'not_listed',
       errorCode: 'PLATFORM_VALIDATION_ERROR',
       errorMsg: 'Shopify create_listing requires product title and at least one SKU-bearing variant',
+    };
+  }
+  if ((payload.variants || []).some((variant: any) => !variant.price)) {
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'PLATFORM_VALIDATION_ERROR',
+      errorMsg: 'Shopify create_listing requires a USD price for every SKU-bearing variant',
     };
   }
   if (!payload.media?.length) {
@@ -265,7 +308,7 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   if (ctx.dryRun) {
     return {
       ok: true,
-      listingStatus: 'draft',
+      listingStatus: listingStatusFromProductStatus(payload.product?.status),
       rawResponse: {
         dry_run: true,
         payload,
@@ -279,7 +322,7 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
     return {
       ok: true,
       platformItemId: cleanText(raw.product_id || raw.platform_item_id),
-      listingStatus: ctx.dryRun ? 'draft' : 'draft',
+      listingStatus: (cleanText(raw.listing_status) || listingStatusFromProductStatus(payload.product?.status)) as AdapterResult['listingStatus'],
       rawResponse: {
         ...raw,
         platform_item_id: raw.product_id || raw.platform_item_id || null,

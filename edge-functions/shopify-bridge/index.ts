@@ -13,9 +13,12 @@
 // action === 'create-product'
 // action === 'lookup-sku'
 // productCreate
+// function shopifyProductStatus
+// status: shopifyProductStatus(product.status)
 // productVariantsBulkCreate
 // inventorySetQuantities
 // publishablePublish
+// listing_status: mapShopifyListingStatus(product)
 // scopeSet.has('write_products')
 // missing_scopes
 

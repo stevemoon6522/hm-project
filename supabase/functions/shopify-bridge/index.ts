@@ -144,6 +144,12 @@ function mapShopifyListingStatus(product: any): string {
   return product?.id ? 'draft' : 'not_listed';
 }
 
+function shopifyProductStatus(value: unknown): string {
+  const status = norm(value).toUpperCase();
+  if (['ACTIVE', 'DRAFT', 'ARCHIVED'].includes(status)) return status;
+  return 'ACTIVE';
+}
+
 async function configuredShop(shopDomain = '') {
   let q = supabase
     .from('shopify_shops')
@@ -355,7 +361,7 @@ async function createProduct(shop: any, body: any) {
   if (!title) return { ok: false, status: 400, raw: { error: 'title required' } };
   const productInput: Record<string, unknown> = {
     title,
-    status: 'DRAFT',
+    status: shopifyProductStatus(product.status),
   };
   if (norm(product.descriptionHtml)) productInput.descriptionHtml = norm(product.descriptionHtml);
   if (norm(product.vendor)) productInput.vendor = norm(product.vendor);
@@ -456,7 +462,7 @@ async function handleCreateProduct(req: Request): Promise<Response> {
     productCreate: {
       product: {
         ...(body.product || {}),
-        status: 'DRAFT',
+        status: shopifyProductStatus(body.product?.status),
         productOptions: productOptionsFrom(body),
       },
       media: mediaFrom(body),
@@ -517,7 +523,7 @@ async function handleCreateProduct(req: Request): Promise<Response> {
     shop_domain: shop.shop_domain,
     product_id: created.product.id,
     platform_item_id: created.product.id,
-    listing_status: publishResult ? mapShopifyListingStatus(product) : 'draft',
+    listing_status: mapShopifyListingStatus(product),
     product,
     variants: variantResult.variants,
     variant_id: variantResult.variants?.[0]?.id || null,

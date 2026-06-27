@@ -5886,13 +5886,13 @@ LEGACY END -->
       summaryLabel: 'B2B 기준',
     }),
     shopify: {
-      description: 'Shopify Draft products, variant SKU mappings, and sync status. Publication and inventory push stay gated until shop defaults are verified.',
-      primaryAction: 'Shopify Draft',
-      registerLabel: 'Shopify Draft',
+      description: 'Shopify Active products, variant SKU mappings, and sync status. Inventory push stays disabled; shipping is handled outside product price.',
+      primaryAction: 'Shopify Active',
+      registerLabel: 'Shopify Active',
       editLabel: '',
       deleteLabel: '',
       syncLabel: 'SKU sync',
-      summaryLabel: 'Draft queue',
+      summaryLabel: 'Active queue',
     },
   });
   const SHOPEE_PLATFORM_ACTIVE_REGIONS = Object.freeze(['SG', 'TW', 'TH', 'MY', 'PH', 'BR']);
@@ -10738,7 +10738,7 @@ LEGACY END -->
     } else if (platform === 'qoo10') {
       body.country = 'JP';
     } else if (platform === 'shopify') {
-      body.shopify = { status: 'DRAFT' };
+      body.shopify = { status: 'ACTIVE' };
     }
     const resp = await fetch(PLATFORM_PUBLISH, {
       method: 'POST',

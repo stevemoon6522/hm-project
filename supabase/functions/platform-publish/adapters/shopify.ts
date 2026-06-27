@@ -4,6 +4,7 @@
 
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
 import { buildVariationItems, inferKpopBrandName, parentSku, publishableGroupRows } from '../_shared/grouping.ts';
+import { shopeeSellerCenterDescription } from '../_shared/shopee-description.ts';
 
 const SUPABASE_URL = (Deno as any).env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = (Deno as any).env.get('SUPABASE_ANON_KEY') || '';
@@ -45,7 +46,14 @@ function titleFrom(master: Record<string, unknown>, shopify: Record<string, any>
 }
 
 function descriptionHtmlFrom(master: Record<string, unknown>, shopify: Record<string, any>): string {
-  const raw = cleanText(shopify.description_html || shopify.description || master.description || master.components_extracted_en || '');
+  const override = shopify.description_html || shopify.description;
+  const raw = override
+    ? s(override).trim()
+    : shopeeSellerCenterDescription(
+      stripLifecycleTags(master.product_name) || cleanText(master.sku),
+      lifecycleOf(master),
+      master.components_extracted_en,
+    ) || s(master.description || master.components_extracted_en).trim();
   if (!raw) return '';
   if (/<[a-z][\s\S]*>/i.test(raw)) return raw;
   return raw.split(/\n{2,}/).map((para) => `<p>${para.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))}</p>`).join('');

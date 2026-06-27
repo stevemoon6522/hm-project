@@ -27,6 +27,7 @@ assert.match(publishRef, /write_publications/, 'publish doc must record write_pu
 
 const dispatcher = read('supabase', 'functions', 'platform-publish', 'index.ts');
 const shopifyAdapter = read('supabase', 'functions', 'platform-publish', 'adapters', 'shopify.ts');
+const shopeeDescription = read('supabase', 'functions', 'platform-publish', '_shared', 'shopee-description.ts');
 const shopifyBridge = read('supabase', 'functions', 'shopify-bridge', 'index.ts');
 const edgeShopifyBridge = read('edge-functions', 'shopify-bridge', 'index.ts');
 const shopifyOAuthCallback = read('api', 'shopify-oauth-callback.js');
@@ -52,6 +53,11 @@ assert.match(shopifyAdapter, /publishableGroupRows\(ctx\.masterProduct/, 'Shopif
 assert.match(shopifyAdapter, /productVariantsBulkCreate/, 'Shopify adapter dry-run payload must expose variant bulk intent');
 assert.match(shopifyAdapter, /option_products/, 'Shopify adapter must return option mapping hints for grouped creates');
 assert.match(shopifyAdapter, /listingStatus: ctx\.dryRun \? 'draft' : 'draft'/, 'Shopify create must remain draft-first in MVP');
+assert.match(shopifyAdapter, /import \{ shopeeSellerCenterDescription \} from '\.\.\/_shared\/shopee-description\.ts'/, 'Shopify adapter must reuse the Shopee Seller Center description template');
+assert.match(shopifyAdapter, /shopeeSellerCenterDescription\(/, 'Shopify adapter must build default descriptionHtml from the Shopee template');
+assert.match(shopifyAdapter, /raw\.split\(\/\\n\{2,\}\//, 'Shopify adapter must preserve Shopee template paragraph breaks when converting to HTML');
+assert.match(shopeeDescription, /\[Official & Authentic K-POP Album\]/, 'Shared Shopee description template must keep the Seller Center section layout');
+assert.match(shopeeDescription, /\[COD Policy\]/, 'Shared Shopee description template must keep the Seller Center COD section');
 
 for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edgeShopifyBridge]]) {
   assert.match(source, /SHOPIFY_API_VERSION/, `${label} Shopify bridge must pin an Admin API version`);

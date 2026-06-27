@@ -16,6 +16,7 @@
 - `C:\dev\api-refs\marketplaces\shopify\product-variants-bulk-create.graphql.md`
 - `C:\dev\api-refs\marketplaces\shopify\inventory-set-quantities.graphql.md`
 - `C:\dev\api-refs\marketplaces\shopify\publishable-publish.graphql.md`
+- `C:\dev\shopee-dashboard\.climpire-worktrees\codex-shopify-product-registration\supabase\functions\platform-publish\_shared\shopee-description.ts`
 - `C:\dev\shopee-dashboard\.climpire-worktrees\codex-shopify-product-registration\supabase\functions\platform-publish\adapters\shopify.ts`
 - `C:\dev\shopee-dashboard\.climpire-worktrees\codex-shopify-product-registration\supabase\functions\shopify-bridge\index.ts`
 
@@ -116,6 +117,7 @@ Expected:
 - `ok=true`
 - `listing_status="draft"`
 - `rawResponse.payload.product.status="DRAFT"`
+- `rawResponse.payload.product.descriptionHtml` uses the Shopee Seller Center description template, preserving sections such as `[Official & Authentic K-POP Album]`, `[Contents]`, `[Important Notice]`, and `[COD Policy]`.
 - `rawResponse.payload.product.productOptions` contains exactly one option named `Title`
 - `rawResponse.productVariantsBulkCreate` has exactly one SKU-bearing variant
 - No Shopify product is created during dry run
@@ -186,6 +188,7 @@ Expected:
 
 - `ok=true`
 - `listing_status="draft"`
+- `rawResponse.payload.product.descriptionHtml` uses the same Shopee Seller Center template as the no-option test.
 - `rawResponse.payload.product.productOptions` represents the group options.
 - `rawResponse.productVariantsBulkCreate.length` equals the selected group variant count.
 - `rawResponse.option_products` maps each local `product_id` to its SKU and expected option value.
@@ -302,6 +305,7 @@ Supabase should contain Shopify mappings in `platform_listings` for every tested
 | `productVariantsBulkCreate userErrors` | Duplicate SKU, duplicate option values, invalid option payload | Inspect dry-run payload and group rows | Add grouped-option sanitizer or duplicate guard |
 | Product created but variants failed | Partial Shopify mutation success | Record product GID and manually archive/delete Draft if needed | Add rollback/cleanup path in `shopify-bridge` |
 | DB mapping missing after success | `option_products` absorption mismatch | Query `platform_listing_snapshots` and `platform_publish_requests` | Fix `absorb_platform_sku_lookup` or option mapping payload |
+| Description format differs from Shopee | Shopify adapter used a free-form description fallback or collapsed line breaks | Stop live registration and inspect dry-run `descriptionHtml` | Keep Shopify default description sourced from shared Shopee Seller Center template and add a regression assertion |
 | Price blank or wrong currency | `cost_krw` fallback is not true Shopify store currency pricing | Use explicit `shopify.price` for test | Add Shopify price field/formula before production rollout |
 | Browser shows blocked callback page | Chrome extension/client blocks Vercel callback render | Read callback URL from tab URL and call Supabase callback directly | Keep Vercel relay, but add UI reconnect endpoint later |
 | Duplicate test product created | Retried live create after partial success | Stop, record created GID, inspect Shopify Admin | Add idempotency key or duplicate SKU pre-check before create |

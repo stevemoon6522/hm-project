@@ -186,8 +186,8 @@ assert(/await catFlushSelectedInlineEdits\(\{\s*persistWeight:\s*false\s*\}\);[\
 assert(v2.includes('catSuppressNextWeightBlurSave') && v2.includes("syncBtn.addEventListener('pointerdown', suppressWeightBlurSaveForSyncClick)"), 'Shopee sync button must suppress blur-triggered weight saves');
 assert(/const targetRegions = CAT_REGIONS\.filter\(function\(r\) \{ return _catRegionVisible\.has\(r\); \}\)/.test(v2), 'Shopee price payload builder must honor active region chips for region-scoped 10-20 row batches');
 assert(v2.includes('placeholder="아티스트 / SKU / 상품명 / 옵션 검색"'), 'Price sync search placeholder must make artist keyword search explicit');
-assert(v2.includes('id="login-github"'), 'V2 auth panel must expose GitHub OAuth login for Supabase GitHub accounts');
-assert(v2.includes("provider: 'github'"), 'V2 GitHub login must call Supabase signInWithOAuth');
+assert(!v2.includes('id="login-github"'), 'V2 auth panel must not expose GitHub OAuth while the Supabase provider is disabled');
+assert(!v2.includes("provider: 'github'"), 'V2 must not call Supabase GitHub OAuth while the provider is disabled');
 assert(v2.includes('function catEnsureSelectedShopeeListings'), 'Shopee price sync must auto-resolve GLOBAL published_list mappings into shop listings before payload build');
 assert(v2.includes("SHOPEE_BRIDGE + '/published_list?'"), 'Shopee price sync auto-resolution must use published_list from the global item id');
 assert(v2.includes("SHOPEE_BRIDGE + '/lookup-sku?'"), 'Shopee price sync auto-resolution must fall back to SKU lookup when global_item_id is absent');

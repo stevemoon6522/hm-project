@@ -2810,7 +2810,6 @@
       <div id="login-error" class="error-text"></div>
       <div class="actions">
         <button id="login-submit" type="submit" class="primary">Sign in</button>
-        <button id="login-github" type="button">Sign in with GitHub</button>
       </div>
     </form>
   </div>
@@ -5649,7 +5648,6 @@ LEGACY END -->
     loginEmail: document.getElementById('login-email'),
     loginPassword: document.getElementById('login-password'),
     loginSubmit: document.getElementById('login-submit'),
-    loginGithub: document.getElementById('login-github'),
     loginError: document.getElementById('login-error'),
     logout: document.getElementById('logout'),
     productBody: document.getElementById('product-body'),
@@ -7067,21 +7065,6 @@ LEGACY END -->
       els.loginError.textContent = e.message || String(e);
     } finally {
       els.loginSubmit.disabled = false;
-    }
-  }
-
-  async function signInWithGithub() {
-    els.loginError.textContent = '';
-    if (els.loginGithub) els.loginGithub.disabled = true;
-    try {
-      const { error } = await db.auth.signInWithOAuth({
-        provider: 'github',
-        options: { redirectTo: window.location.href },
-      });
-      if (error) throw error;
-    } catch (e) {
-      els.loginError.textContent = e.message || String(e);
-      if (els.loginGithub) els.loginGithub.disabled = false;
     }
   }
 
@@ -15285,9 +15268,6 @@ LEGACY END -->
   } else if (els.loginSubmit) {
     els.loginSubmit.addEventListener('click', signIn);
   }
-  if (els.loginGithub) {
-    els.loginGithub.addEventListener('click', signInWithGithub);
-  }
   if (!els.loginForm && els.loginPassword) {
     // Fallback for legacy markup without a form element.
     els.loginPassword.addEventListener('keydown', (e) => {
@@ -15334,18 +15314,41 @@ LEGACY END -->
   // rejects anon role for any mutating route, so this is NOT a security
   // bypass — mutating routes still 401 (auth_anon_rejected) until a real
   // session JWT is installed.
+  function parseJwtPayload(token) {
+    try {
+      const [, payload] = String(token || '').split('.');
+      if (!payload) return null;
+      const normalized = payload.replace(/-/g, '+').replace(/_/g, '/');
+      const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), '=');
+      return JSON.parse(atob(padded));
+    } catch (_err) {
+      return null;
+    }
+  }
+
+  function isAuthenticatedSession(session) {
+    const token = String(session?.access_token || '').trim();
+    if (!token || token === SUPABASE_ANON) return false;
+    const claims = parseJwtPayload(token);
+    if (!claims || claims.role !== 'authenticated') return false;
+    const exp = Number(claims.exp || 0);
+    return !exp || (exp * 1000) > Date.now();
+  }
+
   function applySession(session) {
-    const token = session?.access_token || SUPABASE_ANON;
+    const authenticated = isAuthenticatedSession(session);
+    const token = authenticated ? session.access_token : SUPABASE_ANON;
     AUTH_HEADERS.Authorization = `Bearer ${token}`;
+    return authenticated;
   }
 
   // Filter onAuthStateChange events: only SIGNED_IN / SIGNED_OUT / INITIAL_SESSION
   // should re-bootstrap the app. TOKEN_REFRESHED fires every hour while the user
   // is active — we just update the bearer token, no full reload needed.
   db.auth.onAuthStateChange((event, session) => {
-    applySession(session);
+    const authenticated = applySession(session);
     if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-      if (session) {
+      if (authenticated) {
         showApp();
         loadData().catch((e) => console.warn('[v2] loadData (auth change) failed:', e));
       } else {
@@ -15360,12 +15363,11 @@ LEGACY END -->
 
   (async () => {
     const { data } = await db.auth.getSession();
-    if (data?.session) {
-      applySession(data.session);
+    const authenticated = applySession(data?.session);
+    if (authenticated) {
       showApp();
       loadData().catch((e) => console.warn('[v2] initial loadData failed:', e));
     } else {
-      applySession(null);
       showAuth('Please sign in to continue.');
     }
   })().catch((e) => {

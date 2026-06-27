@@ -380,6 +380,9 @@ deno_version = 2
 # [edge_runtime.secrets]
 # secret_key = "env(SECRET_VALUE)"
 
+[functions.shopify-bridge]
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

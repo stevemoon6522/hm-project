@@ -55,7 +55,7 @@ Expected:
 Run:
 
 ```powershell
-supabase db query --linked "with group_counts as (select product_group_id, count(*) as cnt from public.products group by product_group_id) select p.id, p.product_group_id, p.sku, p.product_name, p.main_image, p.cost_krw, p.inventory from public.products p join group_counts g on g.product_group_id = p.product_group_id where g.cnt = 1 and p.sku is not null and p.product_name is not null and not exists (select 1 from public.platform_listings pl where pl.platform='shopify' and pl.matched_product_id=p.id) limit 10;"
+supabase db query --linked "with group_counts as (select product_group_id, count(*) as cnt from public.products group by product_group_id) select p.id, p.product_group_id, p.sku, p.product_name, p.main_image, p.cost_krw, p.inventory from public.products p join group_counts g on g.product_group_id = p.product_group_id where g.cnt = 1 and p.sku is not null and p.product_name is not null and not exists (select 1 from public.platform_listings pl where pl.platform='shopify' and pl.master_product_id=p.id and pl.deleted_at is null) limit 10;"
 ```
 
 Expected:
@@ -68,7 +68,7 @@ Expected:
 Run:
 
 ```powershell
-supabase db query --linked "with group_counts as (select product_group_id, count(*) as cnt from public.products group by product_group_id having count(*) > 1) select p.id, p.product_group_id, p.sku, p.product_name, p.option_name, p.main_image, p.shopee_option_image_url, p.cost_krw, p.inventory from public.products p join group_counts g on g.product_group_id = p.product_group_id where not exists (select 1 from public.platform_listings pl where pl.platform='shopify' and pl.matched_product_id=p.id) order by g.cnt desc, p.product_group_id, p.sku limit 30;"
+supabase db query --linked "with group_counts as (select product_group_id, count(*) as cnt from public.products group by product_group_id having count(*) > 1) select p.id, p.product_group_id, p.sku, p.product_name, p.option_name, p.main_image, p.shopee_option_image_url, p.cost_krw, p.inventory from public.products p join group_counts g on g.product_group_id = p.product_group_id where not exists (select 1 from public.platform_listings pl where pl.platform='shopify' and pl.master_product_id=p.id and pl.deleted_at is null) order by g.cnt desc, p.product_group_id, p.sku limit 30;"
 ```
 
 Expected:
@@ -103,7 +103,7 @@ Request body:
   "capability": "create_listing",
   "dry_run": true,
   "shop_id": "jsupyn-fa.myshopify.com",
-  "product_id": "<NO_OPTION_PRODUCT_ID>",
+  "master_product_id": "<NO_OPTION_PRODUCT_ID>",
   "shopify": {
     "shop_domain": "jsupyn-fa.myshopify.com",
     "title": "[TEST Shopify Draft] <original product name>",
@@ -147,13 +147,13 @@ Expected:
 Run:
 
 ```powershell
-supabase db query --linked "select platform, external_product_id, external_variant_id, sku, listing_status, matched_product_id from public.platform_listings where platform='shopify' and matched_product_id='<NO_OPTION_PRODUCT_ID>' order by updated_at desc limit 5;"
+supabase db query --linked "select platform, platform_item_id, external_variant_id, external_sku, listing_status, master_product_id from public.platform_listings where platform='shopify' and master_product_id='<NO_OPTION_PRODUCT_ID>' and deleted_at is null order by updated_at desc limit 5;"
 ```
 
 Expected:
 
 - One row for the product.
-- `external_product_id` is the Shopify Product GID.
+- `platform_item_id` is the Shopify Product GID.
 - `external_variant_id` is the Shopify Variant GID.
 - `listing_status='draft'`.
 
@@ -175,7 +175,7 @@ Request body:
   "capability": "create_listing",
   "dry_run": true,
   "shop_id": "jsupyn-fa.myshopify.com",
-  "product_id": "<ANY_PRODUCT_ID_IN_GROUP>",
+  "master_product_id": "<ANY_PRODUCT_ID_IN_GROUP>",
   "shopify": {
     "shop_domain": "jsupyn-fa.myshopify.com",
     "title": "[TEST Shopify Options] <group product name>",
@@ -229,13 +229,13 @@ Expected:
 Run:
 
 ```powershell
-supabase db query --linked "select platform, external_product_id, external_variant_id, sku, listing_status, matched_product_id from public.platform_listings where platform='shopify' and matched_product_id in (select id from public.products where product_group_id='<OPTION_PRODUCT_GROUP_ID>') order by sku;"
+supabase db query --linked "select p.sku, pl.platform, pl.platform_item_id, pl.external_variant_id, pl.external_sku, pl.listing_status, pl.master_product_id from public.platform_listings pl join public.products p on p.id=pl.master_product_id where pl.platform='shopify' and pl.master_product_id in (select id from public.products where product_group_id='<OPTION_PRODUCT_GROUP_ID>') and pl.deleted_at is null order by p.sku;"
 ```
 
 Expected:
 
 - Row count equals option group variant count.
-- All rows share the same `external_product_id`.
+- All rows share the same `platform_item_id`.
 - Every row has a non-empty `external_variant_id`.
 - Every row has `listing_status='draft'`.
 

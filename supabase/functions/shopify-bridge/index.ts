@@ -369,7 +369,7 @@ async function createProduct(shop: any, body: any) {
     mutation ShopifyBridgeProductCreate($product: ProductCreateInput!, $media: [CreateMediaInput!]) {
       productCreate(product: $product, media: $media) {
         product { id title status handle publishedAt }
-        userErrors { field message code }
+        userErrors { field message }
       }
     }
   `;

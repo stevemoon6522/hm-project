@@ -68,6 +68,8 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   assert.match(source, /action === 'create-product'/, `${label} Shopify bridge must expose product creation`);
   assert.match(source, /action === 'lookup-sku'/, `${label} Shopify bridge must expose SKU lookup`);
   assert.match(source, /productCreate/, `${label} Shopify bridge must call productCreate`);
+  const createProductBlock = source.slice(source.indexOf('async function createProduct'), source.indexOf('async function createVariants'));
+  assert.doesNotMatch(createProductBlock, /userErrors\s*\{\s*field\s+message\s+code\s*\}/, `${label} Shopify productCreate must not request unsupported UserError.code`);
   assert.match(source, /productVariantsBulkCreate/, `${label} Shopify bridge must call productVariantsBulkCreate`);
   assert.match(source, /inventorySetQuantities/, `${label} Shopify bridge must include gated inventory support`);
   assert.match(source, /publishablePublish/, `${label} Shopify bridge must include gated publish support`);

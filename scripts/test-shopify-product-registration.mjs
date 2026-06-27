@@ -29,7 +29,9 @@ const dispatcher = read('supabase', 'functions', 'platform-publish', 'index.ts')
 const shopifyAdapter = read('supabase', 'functions', 'platform-publish', 'adapters', 'shopify.ts');
 const shopifyBridge = read('supabase', 'functions', 'shopify-bridge', 'index.ts');
 const edgeShopifyBridge = read('edge-functions', 'shopify-bridge', 'index.ts');
+const shopifyOAuthCallback = read('api', 'shopify-oauth-callback.js');
 const html = read('v2', 'index.html');
+const supabaseConfig = read('supabase', 'config.toml');
 const migration = read('supabase', 'migrations', '202606270001_shopify_product_registration.sql');
 
 for (const token of [
@@ -65,6 +67,11 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   assert.match(source, /publishablePublish/, `${label} Shopify bridge must include gated publish support`);
   assert.doesNotMatch(source, /stack: e\?\.stack/, `${label} Shopify bridge must not expose stack traces`);
 }
+
+assert.match(supabaseConfig, /\[functions\.shopify-bridge\]\s+verify_jwt = false/s, 'Shopify OAuth callback must be allowed through Supabase gateway');
+assert.match(shopifyOAuthCallback, /SHOPIFY_BRIDGE_CALLBACK/, 'Vercel OAuth callback relay must target shopify-bridge');
+assert.match(shopifyOAuthCallback, /target\.search = incoming\.search/, 'Vercel OAuth callback relay must preserve Shopify query parameters');
+assert.match(shopifyOAuthCallback, /shopee-dashboard-kohl\.vercel\.app/, 'Vercel OAuth callback relay must keep the app host aligned with Shopify Application URL');
 
 for (const token of [
   "('shopify')",

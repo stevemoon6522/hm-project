@@ -295,8 +295,7 @@ async function fetchQoo10OptionMappings(itemCode: string, sellerCode = "") {
 function findQoo10OptionMatch(option: any, remoteOptions: any[]) {
   const sku = norm(option?.sku);
   const value = norm(option?.optionValue || option?.option_value || option?.value);
-  return remoteOptions.find((row) => sameSku(row.optionCode, sku))
-    || remoteOptions.find((row) => sameSku(row.itemTypeCode, sku))
+  return remoteOptions.find((row) => sameSku(row.itemTypeCode, sku))
     || remoteOptions.find((row) => value && sameSku(row.value1, value))
     || (remoteOptions.length === 1 ? remoteOptions[0] : null);
 }
@@ -311,12 +310,12 @@ async function hydrateQoo10RegistrationMappings(itemCode: string, sellerCode: st
 
   const options = (requestedOptions || []).map((option) => {
     const match = findQoo10OptionMatch(option, remoteOptions);
-    const optionCode = firstNonEmpty(match?.optionCode, match?.itemTypeCode);
+    const optionCode = firstNonEmpty(match?.itemTypeCode);
     const requestedSku = norm(option?.sku);
     const singleItemVariant = requestedOptions.length <= 1 ? firstNonEmpty(sellerCode, requestedSku) : "";
     const variantId = optionCode || singleItemVariant || requestedSku;
     const variantSource = optionCode
-      ? (sameSku(optionCode, requestedSku) ? "seller_option_code" : "option_code")
+      ? "seller_option_code"
       : (singleItemVariant ? "seller_product_code" : "requested_seller_option_code");
     const verified = Boolean(match || singleItemVariant);
     return {
@@ -400,9 +399,9 @@ async function persistQoo10RegistrationMappings(itemCode: string, listingStatus:
 async function lookupByKnownItemCode(sku: string, itemCode: string) {
   const inventory = await fetchQoo10OptionMappings(itemCode);
   if (!inventory.ok) return null;
-  const match = inventory.rows.find((row: any) => sameSku(row.optionCode, sku) || sameSku(row.itemTypeCode, sku));
+  const match = inventory.rows.find((row: any) => sameSku(row.itemTypeCode, sku));
   if (!match) return null;
-  const optionCode = firstNonEmpty(match.optionCode, match.itemTypeCode, sku);
+  const optionCode = firstNonEmpty(match.itemTypeCode, sku);
   return {
     goods_no: itemCode,
     seller_code: sku,

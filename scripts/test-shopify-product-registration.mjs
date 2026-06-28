@@ -14,18 +14,52 @@ function readApiRef(file) {
 
 const docsReadme = readApiRef('README.md');
 const productCreateRef = readApiRef('product-create.graphql.md');
+const productCreateInputRef = readApiRef('product-create-input.graphql.md');
 const variantsBulkRef = readApiRef('product-variants-bulk-create.graphql.md');
 const inventoryRef = readApiRef('inventory-set-quantities.graphql.md');
 const publishRef = readApiRef('publishable-publish.graphql.md');
+const collectionRef = readApiRef('collection.graphql.md');
+const tagsAddRef = readApiRef('tags-add.graphql.md');
 
 assert.match(docsReadme, /product-create\.graphql\.md/, 'Shopify README must index productCreate local docs');
 assert.match(docsReadme, /product-variants-bulk-create\.graphql\.md/, 'Shopify README must index variant bulk create local docs');
 assert.match(productCreateRef, /write_products/, 'productCreate doc must record write_products scope');
 assert.match(productCreateRef, /status:\s*ACTIVE/, 'productCreate doc must record the current active-first Shopify policy');
 assert.match(productCreateRef, /USD/, 'productCreate doc must record Shopify USD pricing policy');
+assert.match(productCreateInputRef, /tags/, 'ProductCreateInput doc must cover initial product tags');
+assert.match(productCreateInputRef, /collectionsToJoin/, 'ProductCreateInput doc must record optional collection joins');
 assert.match(variantsBulkRef, /REMOVE_STANDALONE_VARIANT/, 'variant doc must record standalone variant removal strategy');
 assert.match(inventoryRef, /write_inventory/, 'inventory doc must record write_inventory scope');
 assert.match(publishRef, /write_publications/, 'publish doc must record write_publications scope');
+assert.match(collectionRef, /smart collection/i, 'Collection doc must record current smart collection behavior');
+assert.match(tagsAddRef, /additive/i, 'tagsAdd doc must record additive tag behavior for existing products');
+
+function extractFunction(source, name) {
+  const start = source.indexOf(`function ${name}`);
+  assert(start >= 0, `missing function ${name}`);
+  const braceStart = source.indexOf('{', start);
+  assert(braceStart > start, `missing body for function ${name}`);
+  let depth = 0;
+  for (let i = braceStart; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '{') depth += 1;
+    if (char === '}') depth -= 1;
+    if (depth === 0) return source.slice(start, i + 1);
+  }
+  throw new Error(`unterminated function ${name}`);
+}
+
+function stripTinyTs(block) {
+  return block
+    .replace(/export\s+/g, '')
+    .replace(/\)\s*:\s*[A-Za-z0-9_<>\[\]\s|]+\s*\{/g, ') {')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*Record<[^>]+>/g, '$1')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*unknown/g, '$1')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string/g, '$1')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*any/g, '$1')
+    .replace(/const ([A-Za-z_$][\w$]*)\s*:\s*string\[\]\s*=/g, 'const $1 =')
+    .replace(/new Set<string>\(\)/g, 'new Set()');
+}
 
 const dispatcher = read('supabase', 'functions', 'platform-publish', 'index.ts');
 const shopifyAdapter = read('supabase', 'functions', 'platform-publish', 'adapters', 'shopify.ts');
@@ -66,8 +100,37 @@ assert.match(shopifyAdapter, /set_inventory:\s*shopify\.set_inventory === true &
 assert.match(shopifyAdapter, /import \{ shopeeSellerCenterDescription \} from '\.\.\/_shared\/shopee-description\.ts'/, 'Shopify adapter must reuse the Shopee Seller Center description template');
 assert.match(shopifyAdapter, /shopeeSellerCenterDescription\(/, 'Shopify adapter must build default descriptionHtml from the Shopee template');
 assert.match(shopifyAdapter, /raw\.split\(\/\\n\{2,\}\//, 'Shopify adapter must preserve Shopee template paragraph breaks when converting to HTML');
+assert.match(shopifyAdapter, /deriveKpopFromTitle/, 'Shopify adapter must reuse the shared K-pop parser for artist/album tags');
+assert.match(shopifyAdapter, /function shopifyArtistAlbumTagsFrom/, 'Shopify adapter must isolate artist/album tag derivation');
+assert.doesNotMatch(shopifyAdapter, /collectionsToJoin|collectionAddProducts|collectionUpdate/, 'Shopify adapter must not manage collection membership for smart collections');
 assert.match(shopeeDescription, /\[Official & Authentic K-POP Album\]/, 'Shared Shopee description template must keep the Seller Center section layout');
 assert.match(shopeeDescription, /\[COD Policy\]/, 'Shared Shopee description template must keep the Seller Center COD section');
+
+const shopifyTagHelpers = [
+  'cleanText',
+  'lifecycleOf',
+  'lifecycleTag',
+  'isGoodsMaster',
+  'isMeaningfulShopifyTagSource',
+  'shopifyArtistAlbumTagsFrom',
+  'tagsFrom',
+].map((name) => stripTinyTs(extractFunction(shopifyAdapter, name))).join('\n');
+const tagsFrom = new Function(
+  `function s(value, fallback = '') { return value == null ? fallback : String(value); }\n`
+  + `function deriveKpopFromTitle() { return { artist: 'CORTIS', album: 'GREENGREEN', version: 'WEVERSE' }; }\n`
+  + `${shopifyTagHelpers}\nreturn tagsFrom;`,
+)();
+const cortisTags = tagsFrom({
+  product_name: '[READY STOCK] CORTIS - [ GREENGREEN ] 2ND EP (WEVERSE Ver.)',
+  product_kind: 'album',
+  lifecycle_state: 'ready_stock',
+  brand: 'HYBE',
+}, {});
+assert(cortisTags.includes('CORTIS'), 'Shopify tags must include derived artist tag');
+assert(cortisTags.includes('GREENGREEN'), 'Shopify tags must include derived album tag');
+assert(!cortisTags.includes('WEVERSE'), 'Shopify tags must not include derived version tag');
+assert(!cortisTags.includes('HYBE'), 'Shopify tags must prefer parsed artist over label-like brand fallback');
+assert(cortisTags.includes('Album'), 'Shopify tags must keep the smart-collection product-kind tag');
 
 for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edgeShopifyBridge]]) {
   assert.match(source, /SHOPIFY_API_VERSION/, `${label} Shopify bridge must pin an Admin API version`);

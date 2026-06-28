@@ -3,7 +3,7 @@
 // Routes Draft product creation and SKU sync through shopify-bridge.
 
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
-import { buildVariationItems, inferKpopBrandName, parentSku, publishableGroupRows } from '../_shared/grouping.ts';
+import { buildVariationItems, deriveKpopFromTitle, inferKpopBrandName, parentSku, publishableGroupRows } from '../_shared/grouping.ts';
 import { shopeeSellerCenterDescription } from '../_shared/shopee-description.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
@@ -144,10 +144,35 @@ function productTypeFrom(master: Record<string, unknown>, shopify: Record<string
   return cleanText(shopify.product_type || master.shopify_product_type || (isGoodsMaster(master) ? 'K-pop Goods' : 'K-pop Album')).slice(0, 255);
 }
 
+function isMeaningfulShopifyTagSource(value: unknown): boolean {
+  const text = cleanText(value);
+  return !!text && !/^no\s*brand$/i.test(text);
+}
+
+function shopifyArtistAlbumTagsFrom(master: Record<string, unknown>, shopify: Record<string, any>): string[] {
+  const derived = deriveKpopFromTitle(shopify.title || master.product_name || master.sku);
+  const artist = [
+    shopify.artist,
+    master.artist,
+    derived.artist,
+    master.brand,
+    master.shopee_brand_name,
+    master.qoo10_brand_name,
+  ].find(isMeaningfulShopifyTagSource);
+  const album = [
+    shopify.album,
+    master.album,
+    master.release_title,
+    derived.album,
+  ].find(isMeaningfulShopifyTagSource);
+  return [artist, album].map((value) => cleanText(value)).filter(Boolean);
+}
+
 function tagsFrom(master: Record<string, unknown>, shopify: Record<string, any>): string[] {
   const rawTags = [
     ...(Array.isArray(master.shopify_tags) ? master.shopify_tags : []),
     ...(Array.isArray(shopify.tags) ? shopify.tags : cleanText(shopify.tags).split(',')),
+    ...shopifyArtistAlbumTagsFrom(master, shopify),
     lifecycleTag(lifecycleOf(master)),
     isGoodsMaster(master) ? 'Goods' : 'Album',
     'starphotocard',

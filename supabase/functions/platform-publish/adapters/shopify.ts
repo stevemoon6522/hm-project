@@ -4,7 +4,6 @@
 
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
 import { buildVariationItems, deriveKpopFromTitle, inferKpopBrandName, parentSku, publishableGroupRows } from '../_shared/grouping.ts';
-import { shopeeSellerCenterDescription } from '../_shared/shopee-description.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const SUPABASE_URL = (Deno as any).env.get('SUPABASE_URL') || '';
@@ -122,16 +121,163 @@ function titleFrom(master: Record<string, unknown>, shopify: Record<string, any>
   return cleanText(shopify.title || master.shopify_title || stripLifecycleTags(master.product_name) || master.sku).slice(0, 255);
 }
 
+function shopifyHtmlEscape(value: unknown): string {
+  return s(value).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch] || ch));
+}
+
+function shopifySplitTopLevelComponents(value: string): string[] {
+  const out: string[] = [];
+  let current = '';
+  let depth = 0;
+  for (const ch of s(value)) {
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    if ((ch === ')' || ch === ']' || ch === '}') && depth > 0) depth -= 1;
+    if ((ch === ',' || ch === ';') && depth === 0) {
+      if (current.trim()) out.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) out.push(current.trim());
+  return out;
+}
+
+function shopifyComponentLines(components: unknown): string[] {
+  const normalized = s(components)
+    .replace(/\r\n?/g, '\n')
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\/\s*(div|p|li|tr|h[1-6])\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/[•●○◦▪▫·]+/g, '\n')
+    .replace(/\s+\|\s+/g, '\n');
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const segment of normalized.split(/\n+/)) {
+    for (const piece of shopifySplitTopLevelComponents(segment)) {
+      const value = piece
+        .replace(/^[\s\-*•●○◦▪▫·]+/, '')
+        .replace(/^\d+[.)]\s*/, '')
+        .trim();
+      const key = value.toLowerCase();
+      if (!value || seen.has(key)) continue;
+      seen.add(key);
+      out.push(value.slice(0, 260));
+    }
+  }
+  return out.slice(0, 12);
+}
+
+function shopifyDescriptionCard(title: string, bodyHtml: string, bgColor = '#fff7fb'): string {
+  return `<table width="100%" bgcolor="${bgColor}"><tr><td><b>${shopifyHtmlEscape(title)}</b><br>${bodyHtml}</td></tr></table>`;
+}
+
+function shopifyDescriptionList(items: string[]): string {
+  const html = items
+    .map((value) => cleanText(value))
+    .filter(Boolean)
+    .map((value) => `<li>${shopifyHtmlEscape(value.slice(0, 260))}</li>`)
+    .join('');
+  return html ? `<ul>${html}</ul>` : '';
+}
+
+function shopifyDescriptionTable(headers: string[], rows: string[][]): string {
+  const head = `<tr>${(headers || [])
+    .map((value) => `<td><b>${shopifyHtmlEscape(s(value).slice(0, 80))}</b></td>`)
+    .join('')}</tr>`;
+  const body = (rows || [])
+    .map((row) => `<tr>${(row || [])
+      .map((value) => `<td>${shopifyHtmlEscape(s(value).slice(0, 220))}</td>`)
+      .join('')}</tr>`)
+    .join('');
+  return `<table width="100%" border="1">${head}${body}</table>`;
+}
+
+function shopifyEbayDescriptionHtmlFrom(master: Record<string, unknown>, title: string, lifecycleState: string): string {
+  const componentLines = shopifyComponentLines(master.components_extracted_en);
+  const stockLine = lifecycleState === 'ready_stock'
+    ? 'Ready stock ships in about 1 business day, excluding weekends and Korean holidays.'
+    : 'Pre-order ships after official release and warehouse arrival; distributor delays may change the schedule.';
+  const shippingTable = shopifyDescriptionTable(
+    ['Service', 'Destination area', 'Estimated transit after dispatch'],
+    [
+      ['Economy / Standard', 'US, CA, AU, JP, SG, HK, Asia', 'Usually 5-20 business days; delayed parcels may take 20-30.'],
+      ['Economy / Standard', 'UK, DE, FR, ES, most Europe', 'Usually 10-30 business days; customs or local backlog may add days.'],
+      ['Economy / Standard', 'Brazil, Italy, South America, Africa, remote regions', 'Usually 20-50 business days; slower customs is common.'],
+      ['Expedited', 'US/CA/MX 2-5 days; Asia/AU 3-7; UK/EU 4-8; South America/Africa/remote 5-10+', 'Used when selected, upgraded, or required for a destination.'],
+    ],
+  );
+  const productTitle = title || cleanText(master.sku) || 'K-pop item';
+  const cards = [
+    shopifyDescriptionCard(
+      'Album product information',
+      `Hello, K-pop collector. Official K-pop goods from Korea, packed carefully.<br><br><strong>${shopifyHtmlEscape(productTitle)}</strong>`,
+      '#fff7fb',
+    ),
+    shopifyDescriptionCard(
+      'What is included / Handling before shipment',
+      shopifyDescriptionList((componentLines.length ? componentLines : ['Each option includes 1 album. Random inclusions follow the official manufacturer policy.']).concat([
+        stockLine,
+        "Ships only to the buyer's Shopify checkout address. Confirm name, address, and phone before payment.",
+        'Tracking uploads after dispatch; the first scan may take 24-48 hours.',
+      ])),
+      '#f8fbff',
+    ),
+    shopifyDescriptionCard(
+      'International shipping time guide',
+      `Estimates exclude handling, weekends, holidays, customs, and local delays.<br>${shippingTable}`,
+      '#fffaf0',
+    ),
+    shopifyDescriptionCard(
+      'Customs, Duties & Taxes',
+      `<strong>For buyers in the United States (DDP Service)</strong>${
+        shopifyDescriptionList([
+          'Guaranteed Landed Cost: For standard US DDP orders, applicable import duties and customs taxes are handled in advance through our logistics solution. Checkout price is final for covered orders.',
+          'Zero Hidden Fees: Customs costs are prepaid, so the courier should not request extra brokerage or delivery customs fees on arrival.',
+          'Optimization Promise: Specialized logistics consolidation helps keep customs clearance compliant and administrative costs low.',
+        ])
+      }<strong>For international buyers (Europe, Asia, Australia, Canada & More)</strong>${
+        shopifyDescriptionList([
+          'Transparent Pricing: Listing prices generally do not include destination import duties or VAT unless Shopify collects them at checkout.',
+          'Payment of Taxes: Local duties, VAT, GST, brokerage, or handling charges are government taxes, not shipping fees, and may be collected by the carrier before delivery.',
+          'Our Promise: We prepare customs documents carefully. If documents are needed, contact us and we will respond quickly.',
+          'Delivery Cooperation: Please check local customs rules. If returned because customs charges are unpaid, return shipping costs may be deducted from the refund.',
+        ])
+      }`,
+      '#f8fafc',
+    ),
+    shopifyDescriptionCard(
+      'Important notice and friendly support',
+      shopifyDescriptionList([
+        'Outer packaging may have small marks from production or shipping. Random inclusions cannot be selected unless the option title says so.',
+        'Please contact us first. Returns follow store policy; items must be unused, unopened, and complete. Address errors, refusal, or unpaid fees may reduce the refund.',
+      ]),
+      '#fff7fb',
+    ),
+  ];
+  return cards.join('<br>\n').slice(0, 4000);
+}
+
 function descriptionHtmlFrom(master: Record<string, unknown>, shopify: Record<string, any>): string {
   const override = shopify.description_html || shopify.description;
-  const raw = override
-    ? s(override).trim()
-    : shopeeSellerCenterDescription(
+  const raw = s(override).trim();
+  if (!raw) {
+    return shopifyEbayDescriptionHtmlFrom(
+      master,
       stripLifecycleTags(master.product_name) || cleanText(master.sku),
       lifecycleOf(master),
-      master.components_extracted_en,
-    ) || s(master.description || master.components_extracted_en).trim();
-  if (!raw) return '';
+    );
+  }
   if (/<[a-z][\s\S]*>/i.test(raw)) return raw;
   return raw.split(/\n{2,}/).map((para) => `<p>${para.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))}</p>`).join('');
 }

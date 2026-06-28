@@ -20,6 +20,56 @@ const edgeMirror = readFileSync(edgeMirrorPath, 'utf8');
 const migration = readFileSync(migrationPath, 'utf8');
 const plan = readFileSync(planPath, 'utf8');
 
+function extractFunction(source, name) {
+  const start = source.indexOf(`function ${name}`);
+  assert(start >= 0, `missing function ${name}`);
+  const braceStart = source.indexOf('{', start);
+  assert(braceStart > start, `missing body for function ${name}`);
+  let depth = 0;
+  for (let i = braceStart; i < source.length; i += 1) {
+    const char = source[i];
+    if (char === '{') depth += 1;
+    if (char === '}') depth -= 1;
+    if (depth === 0) return source.slice(start, i + 1);
+  }
+  throw new Error(`unterminated function ${name}`);
+}
+
+function stripTinyTs(block) {
+  return block
+    .replace(/export\s+/g, '')
+    .replace(/\)\s*:\s*[A-Za-z0-9_<>\[\]\s|]+\s*\{/g, ') {')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*unknown/g, '$1')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string\[\]/g, '$1')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string/g, '$1')
+    .replace(/const ([A-Za-z_$][\w$]*)\s*:\s*string\[\]\s*=/g, 'const $1 =')
+    .replace(/new Set<string>\(\)/g, 'new Set()');
+}
+
+const componentSample = 'Photobook (random 1 of 3), CD; Sticker';
+const expectedComponentLines = ['Photobook (random 1 of 3)', 'CD', 'Sticker'];
+const bridgeComponentHelpers = [
+  's',
+  'ebaySplitTopLevelComponents',
+  'ebayComponentLines',
+].map((name) => stripTinyTs(extractFunction(edge, name))).join('\n');
+const ebayComponentLines = new Function(`${bridgeComponentHelpers}\nreturn ebayComponentLines;`)();
+assert.deepEqual(
+  ebayComponentLines(componentSample),
+  expectedComponentLines,
+  'eBay bridge component splitter must split top-level commas and semicolons without breaking parentheses',
+);
+const v2ComponentHelpers = [
+  'mrEbaySplitTopLevelComponents',
+  'mrEbayComponentLines',
+].map((name) => extractFunction(html, name)).join('\n');
+const mrEbayComponentLines = new Function(`${v2ComponentHelpers}\nreturn mrEbayComponentLines;`)();
+assert.deepEqual(
+  mrEbayComponentLines(componentSample),
+  expectedComponentLines,
+  'V2 eBay preview component splitter must match bridge splitting behavior',
+);
+
 const parserStart = html.indexOf('    function mrStripNonAscii');
 const parserEnd = html.indexOf('    function mrUpdateStage1Summary', parserStart);
 assert(parserStart >= 0 && parserEnd > parserStart, 'title parser block must be extractable');

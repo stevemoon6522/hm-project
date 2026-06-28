@@ -913,11 +913,51 @@ function ebayDescriptionTable(headers: string[], rows: string[][]): string {
   return `<table width="100%" border="1">${head}${body}</table>`;
 }
 
+function ebaySplitTopLevelComponents(value: string): string[] {
+  const out: string[] = [];
+  let current = "";
+  let depth = 0;
+  for (const ch of s(value)) {
+    if (ch === "(" || ch === "[" || ch === "{") depth += 1;
+    if ((ch === ")" || ch === "]" || ch === "}") && depth > 0) depth -= 1;
+    if ((ch === "," || ch === ";") && depth === 0) {
+      if (current.trim()) out.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) out.push(current.trim());
+  return out;
+}
+
 function ebayComponentLines(components: string): string[] {
-  return s(components)
-    .split(/\n+/)
-    .map((value) => value.replace(/^[\s*-]+/, "").trim())
-    .filter(Boolean)
+  const normalized = s(components)
+    .replace(/\r\n?/g, "\n")
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\/\s*(div|p|li|tr|h[1-6])\s*>/gi, "\n")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/[•●○◦▪▫·]+/g, "\n")
+    .replace(/\s+\|\s+/g, "\n");
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const segment of normalized.split(/\n+/)) {
+    for (const piece of ebaySplitTopLevelComponents(segment)) {
+      const value = piece
+        .replace(/^[\s\-*•●○◦▪▫·]+/, "")
+        .replace(/^\d+[.)]\s*/, "")
+        .trim();
+      const key = value.toLowerCase();
+      if (!value || seen.has(key)) continue;
+      seen.add(key);
+      out.push(value.slice(0, 260));
+    }
+  }
+  return out
     .slice(0, 12);
 }
 

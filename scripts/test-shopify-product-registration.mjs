@@ -55,6 +55,8 @@ function stripTinyTs(block) {
     .replace(/\)\s*:\s*[A-Za-z0-9_<>\[\]\s|]+\s*\{/g, ') {')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*Record<[^>]+>/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*unknown/g, '$1')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string\[\]\[\]/g, '$1')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string\[\]/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*any/g, '$1')
     .replace(/const ([A-Za-z_$][\w$]*)\s*:\s*string\[\]\s*=/g, 'const $1 =')
@@ -63,7 +65,6 @@ function stripTinyTs(block) {
 
 const dispatcher = read('supabase', 'functions', 'platform-publish', 'index.ts');
 const shopifyAdapter = read('supabase', 'functions', 'platform-publish', 'adapters', 'shopify.ts');
-const shopeeDescription = read('supabase', 'functions', 'platform-publish', '_shared', 'shopee-description.ts');
 const shopifyBridge = read('supabase', 'functions', 'shopify-bridge', 'index.ts');
 const edgeShopifyBridge = read('edge-functions', 'shopify-bridge', 'index.ts');
 const shopifyOAuthCallback = read('api', 'shopify-oauth-callback.js');
@@ -97,14 +98,41 @@ assert.match(shopifyAdapter, /async function loadShopifyPricePolicy[\s\S]*\.from
 assert.match(shopifyAdapter, /function shopifyPriceFromCostKrw[\s\S]*feePct = policy\.targetMarginPct \+ policy\.paymentFeePct \+ policy\.transactionFeePct \+ policy\.fixedOperationFeePct[\s\S]*denominator = 1 - feePct \/ 100[\s\S]*costKrw \/ policy\.krwPerUsd \/ denominator/, 'Shopify adapter must calculate USD price by backing out margin and percentage fees');
 assert.match(shopifyAdapter, /status:\s*shopifyProductStatus\(shopify, policy\)/, 'Shopify adapter must create products with the DB-backed default status');
 assert.match(shopifyAdapter, /set_inventory:\s*shopify\.set_inventory === true && policy\.setInventory === true/, 'Shopify adapter must keep Shopify inventory push disabled unless the DB policy enables it');
-assert.match(shopifyAdapter, /import \{ shopeeSellerCenterDescription \} from '\.\.\/_shared\/shopee-description\.ts'/, 'Shopify adapter must reuse the Shopee Seller Center description template');
-assert.match(shopifyAdapter, /shopeeSellerCenterDescription\(/, 'Shopify adapter must build default descriptionHtml from the Shopee template');
-assert.match(shopifyAdapter, /raw\.split\(\/\\n\{2,\}\//, 'Shopify adapter must preserve Shopee template paragraph breaks when converting to HTML');
+assert.doesNotMatch(shopifyAdapter, /shopeeSellerCenterDescription/, 'Shopify adapter must not use the Shopee description template');
+assert.match(shopifyAdapter, /function shopifyEbayDescriptionHtmlFrom/, 'Shopify adapter must build the default eBay-style Shopify description');
 assert.match(shopifyAdapter, /deriveKpopFromTitle/, 'Shopify adapter must reuse the shared K-pop parser for artist/album tags');
 assert.match(shopifyAdapter, /function shopifyArtistAlbumTagsFrom/, 'Shopify adapter must isolate artist/album tag derivation');
 assert.doesNotMatch(shopifyAdapter, /collectionsToJoin|collectionAddProducts|collectionUpdate/, 'Shopify adapter must not manage collection membership for smart collections');
-assert.match(shopeeDescription, /\[Official & Authentic K-POP Album\]/, 'Shared Shopee description template must keep the Seller Center section layout');
-assert.match(shopeeDescription, /\[COD Policy\]/, 'Shared Shopee description template must keep the Seller Center COD section');
+
+const shopifyDescriptionHelpers = [
+  'cleanText',
+  'stripLifecycleTags',
+  'lifecycleOf',
+  'shopifyHtmlEscape',
+  'shopifySplitTopLevelComponents',
+  'shopifyComponentLines',
+  'shopifyDescriptionCard',
+  'shopifyDescriptionList',
+  'shopifyDescriptionTable',
+  'shopifyEbayDescriptionHtmlFrom',
+  'descriptionHtmlFrom',
+].map((name) => stripTinyTs(extractFunction(shopifyAdapter, name))).join('\n');
+const descriptionHtmlFrom = new Function(
+  `function s(value, fallback = '') { return value == null ? fallback : String(value); }\n`
+  + `${shopifyDescriptionHelpers}\nreturn descriptionHtmlFrom;`,
+)();
+const shopifyDescription = descriptionHtmlFrom({
+  product_name: '[READY STOCK] CORTIS - [ GREENGREEN ] 2ND EP (WEVERSE Ver.)',
+  sku: 'RS-CORTIS-GREENGREEN',
+  lifecycle_state: 'ready_stock',
+  components_extracted_en: 'Photobook, CD, Photocard',
+}, {});
+assert(shopifyDescription.includes('Album product information'), 'Shopify description must include eBay-style album card');
+assert(shopifyDescription.includes('<li>Photobook</li>'), 'Shopify description must split Photobook into its own Contents item');
+assert(shopifyDescription.includes('<li>CD</li>'), 'Shopify description must split CD into its own Contents item');
+assert(shopifyDescription.includes('<li>Photocard</li>'), 'Shopify description must split Photocard into its own Contents item');
+assert(!shopifyDescription.includes('100% Official & Authentic K-POP item'), 'Shopify description must remove the official/authentic album bullet');
+assert(!shopifyDescription.includes('Eligible albums may support Hanteo'), 'Shopify description must remove the chart-count album bullet');
 
 const shopifyTagHelpers = [
   'cleanText',

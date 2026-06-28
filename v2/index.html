@@ -37144,12 +37144,51 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return '<table width="100%" border="1">' + head + body + '</table>';
     }
 
+    function mrEbaySplitTopLevelComponents(value) {
+      const out = [];
+      let current = '';
+      let depth = 0;
+      for (const ch of String(value || '')) {
+        if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+        if ((ch === ')' || ch === ']' || ch === '}') && depth > 0) depth -= 1;
+        if ((ch === ',' || ch === ';') && depth === 0) {
+          if (current.trim()) out.push(current.trim());
+          current = '';
+          continue;
+        }
+        current += ch;
+      }
+      if (current.trim()) out.push(current.trim());
+      return out;
+    }
+
     function mrEbayComponentLines(components) {
-      return String(components || '')
-        .split(/\n+/)
-        .map(v => v.replace(/^[\s*-]+/, '').trim())
-        .filter(Boolean)
-        .slice(0, 12);
+      const normalized = String(components || '')
+        .replace(/\r\n?/g, '\n')
+        .replace(/<\s*br\s*\/?>/gi, '\n')
+        .replace(/<\/\s*(div|p|li|tr|h[1-6])\s*>/gi, '\n')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/gi, ' ')
+        .replace(/&amp;/gi, '&')
+        .replace(/&lt;/gi, '<')
+        .replace(/&gt;/gi, '>')
+        .replace(/[•●○◦▪▫·]+/g, '\n')
+        .replace(/\s+\|\s+/g, '\n');
+      const out = [];
+      const seen = new Set();
+      normalized.split(/\n+/).forEach((segment) => {
+        mrEbaySplitTopLevelComponents(segment).forEach((piece) => {
+          const value = String(piece || '')
+            .replace(/^[\s\-*•●○◦▪▫·]+/, '')
+            .replace(/^\d+[.)]\s*/, '')
+            .trim();
+          const key = value.toLowerCase();
+          if (!value || seen.has(key)) return;
+          seen.add(key);
+          out.push(value.slice(0, 260));
+        });
+      });
+      return out.slice(0, 12);
     }
 
     function mrEbayBuildDescription(group, row, lifecycleState = '') {

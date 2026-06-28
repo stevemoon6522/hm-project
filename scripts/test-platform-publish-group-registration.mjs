@@ -12,7 +12,6 @@ const joom = read('supabase', 'functions', 'platform-publish', 'adapters', 'joom
 const qoo10 = read('supabase', 'functions', 'platform-publish', 'adapters', 'qoo10.ts');
 const ebay = read('supabase', 'functions', 'platform-publish', 'adapters', 'ebay.ts');
 const shopify = read('supabase', 'functions', 'platform-publish', 'adapters', 'shopify.ts');
-const shopeeDescription = read('supabase', 'functions', 'platform-publish', '_shared', 'shopee-description.ts');
 
 assert.match(grouping, /function publishableGroupRows/, 'shared grouping helper must expose publishable group row selection');
 assert.match(grouping, /rowHasPublishableStock/, 'group helper must avoid ready-stock zero-inventory options when alternatives exist');
@@ -94,7 +93,6 @@ assert.match(shopify, /publishableGroupRows\(ctx\.masterProduct/, 'Shopify adapt
 assert.match(shopify, /buildVariationItems\(groupRows, 'Option'\)/, 'Shopify adapter must build option payloads from grouped products');
 assert.match(shopify, /productOptionsFrom\(variationBundle, master\)/, 'Shopify adapter must declare Shopify product options for grouped variants');
 assert.match(shopify, /option_products/, 'Shopify adapter must return option mapping hints after grouped create');
-assert.match(shopify, /shopeeSellerCenterDescription\(/, 'Shopify adapter must reuse the Shopee description template for grouped creates');
-assert.match(shopeeDescription, /export function shopeeSellerCenterDescription/, 'shared Shopee description helper must expose the Seller Center template');
+assert.match(shopify, /shopifyEbayDescriptionHtmlFrom/, 'Shopify adapter must use the eBay-style description template for grouped creates');
 
 console.log('platform-publish grouped registration checks passed');

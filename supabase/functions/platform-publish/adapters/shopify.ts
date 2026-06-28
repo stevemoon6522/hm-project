@@ -5,12 +5,14 @@
 import type { AdapterContext, AdapterResult, AdapterErrorCode, PlatformAdapter } from '../_shared/contract.ts';
 import { buildVariationItems, inferKpopBrandName, parentSku, publishableGroupRows } from '../_shared/grouping.ts';
 import { shopeeSellerCenterDescription } from '../_shared/shopee-description.ts';
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.4';
 
 const SUPABASE_URL = (Deno as any).env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = (Deno as any).env.get('SUPABASE_ANON_KEY') || '';
+const SUPABASE_SERVICE_ROLE_KEY = (Deno as any).env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
 const PLATFORM_BRIDGE_INTERNAL_TOKEN = (Deno as any).env.get('PLATFORM_BRIDGE_INTERNAL_TOKEN') || '';
 
-const SHOPIFY_USD_PRICE_POLICY = Object.freeze({
+const SHOPIFY_DEFAULT_PRICE_POLICY = Object.freeze({
   currency: 'USD',
   krwPerUsd: 1460,
   targetMarginPct: 30,
@@ -23,6 +25,10 @@ const SHOPIFY_USD_PRICE_POLICY = Object.freeze({
 });
 
 type BridgeContext = AdapterContext & { userAuthToken?: string; shopify?: Record<string, any> };
+type ShopifyPricePolicy = typeof SHOPIFY_DEFAULT_PRICE_POLICY;
+let shopifyPricePolicyPromise: Promise<ShopifyPricePolicy> | null = null;
+let shopifyPricePolicyLoadedAt = 0;
+const SHOPIFY_PRICE_POLICY_CACHE_MS = 30_000;
 
 function s(value: unknown, fallback = ''): string {
   return value == null ? fallback : String(value);
@@ -35,6 +41,65 @@ function n(value: unknown, fallback = 0): number {
 
 function cleanText(value: unknown): string {
   return s(value).replace(/\s+/g, ' ').trim();
+}
+
+function b(value: unknown, fallback = false): boolean {
+  if (value === true || value === 'true' || value === 1 || value === '1') return true;
+  if (value === false || value === 'false' || value === 0 || value === '0') return false;
+  return fallback;
+}
+
+function shopifyStatusValue(value: unknown, fallback = SHOPIFY_DEFAULT_PRICE_POLICY.defaultStatus): string {
+  const status = cleanText(value).toUpperCase();
+  if (['ACTIVE', 'DRAFT', 'ARCHIVED'].includes(status)) return status;
+  return fallback;
+}
+
+function normalizeShopifyPricePolicy(row: Record<string, unknown> | null | undefined): ShopifyPricePolicy {
+  const fallback = SHOPIFY_DEFAULT_PRICE_POLICY;
+  if (!row) return fallback;
+  const nf = (key: string, fallbackValue: number) => {
+    const value = row[key];
+    if (value === null || value === undefined || value === '') return fallbackValue;
+    return n(value, fallbackValue);
+  };
+  const krwPerUsd = nf('krw_per_usd', fallback.krwPerUsd);
+  const targetMarginPct = nf('target_margin_pct', fallback.targetMarginPct);
+  const paymentFeePct = nf('payment_fee_pct', fallback.paymentFeePct);
+  const transactionFeePct = nf('transaction_fee_pct', fallback.transactionFeePct);
+  const fixedOperationFeePct = nf('fixed_operation_fee_pct', fallback.fixedOperationFeePct);
+  return Object.freeze({
+    currency: cleanText(row.currency || fallback.currency).toUpperCase() || fallback.currency,
+    krwPerUsd: krwPerUsd > 0 ? krwPerUsd : fallback.krwPerUsd,
+    targetMarginPct: targetMarginPct >= 0 && targetMarginPct < 100 ? targetMarginPct : fallback.targetMarginPct,
+    paymentFeePct: paymentFeePct >= 0 ? paymentFeePct : fallback.paymentFeePct,
+    transactionFeePct: transactionFeePct >= 0 ? transactionFeePct : fallback.transactionFeePct,
+    fixedOperationFeePct: fixedOperationFeePct >= 0 ? fixedOperationFeePct : fallback.fixedOperationFeePct,
+    includeShippingInPrice: b(row.include_shipping_in_price, fallback.includeShippingInPrice),
+    defaultStatus: shopifyStatusValue(row.default_status, fallback.defaultStatus),
+    setInventory: b(row.set_inventory, fallback.setInventory),
+  });
+}
+
+async function loadShopifyPricePolicy(): Promise<ShopifyPricePolicy> {
+  if (shopifyPricePolicyPromise && Date.now() - shopifyPricePolicyLoadedAt < SHOPIFY_PRICE_POLICY_CACHE_MS) return shopifyPricePolicyPromise;
+  shopifyPricePolicyLoadedAt = Date.now();
+  shopifyPricePolicyPromise = (async () => {
+    try {
+      if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) return SHOPIFY_DEFAULT_PRICE_POLICY;
+      const svc = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+      const { data, error } = await svc
+        .from('shopify_price_policy')
+        .select('currency,krw_per_usd,target_margin_pct,payment_fee_pct,transaction_fee_pct,fixed_operation_fee_pct,include_shipping_in_price,default_status,set_inventory')
+        .eq('id', 'default')
+        .maybeSingle();
+      if (error || !data) return SHOPIFY_DEFAULT_PRICE_POLICY;
+      return normalizeShopifyPricePolicy(data);
+    } catch {
+      return SHOPIFY_DEFAULT_PRICE_POLICY;
+    }
+  })();
+  return shopifyPricePolicyPromise;
 }
 
 function stripLifecycleTags(value: unknown): string {
@@ -115,7 +180,7 @@ function imagesFrom(master: Record<string, unknown>, groupRows: Record<string, u
   return unique.slice(0, 10).map((url, index) => ({ originalSource: url, alt: `${cleanText(master.product_name || master.sku) || 'Product'} ${index + 1}` }));
 }
 
-function shopifyPriceFromCostKrw(costKrw: number, policy = SHOPIFY_USD_PRICE_POLICY): string {
+function shopifyPriceFromCostKrw(costKrw: number, policy: ShopifyPricePolicy = SHOPIFY_DEFAULT_PRICE_POLICY): string {
   if (!(costKrw > 0)) return '';
   const feePct = policy.targetMarginPct + policy.paymentFeePct + policy.transactionFeePct + policy.fixedOperationFeePct;
   const denominator = 1 - feePct / 100;
@@ -124,10 +189,10 @@ function shopifyPriceFromCostKrw(costKrw: number, policy = SHOPIFY_USD_PRICE_POL
   return (Math.ceil(raw * 100) / 100).toFixed(2);
 }
 
-function priceFrom(row: Record<string, unknown>, shopify: Record<string, any>): string {
+function priceFrom(row: Record<string, unknown>, shopify: Record<string, any>, policy: ShopifyPricePolicy): string {
   const explicit = n(row.shopify_price || shopify.price || shopify.price_amount, 0);
   if (explicit > 0) return explicit.toFixed(2);
-  return shopifyPriceFromCostKrw(n(row.cost_krw, 0));
+  return shopifyPriceFromCostKrw(n(row.cost_krw, 0), policy);
 }
 
 function stockFrom(row: Record<string, unknown>): number {
@@ -148,10 +213,10 @@ function productOptionsFrom(variationBundle: any, master: Record<string, unknown
   })).filter((axis: any) => axis.values.length);
 }
 
-function shopifyProductStatus(shopify: Record<string, any>): string {
+function shopifyProductStatus(shopify: Record<string, any>, policy: ShopifyPricePolicy): string {
   const status = cleanText(shopify.status || shopify.product_status).toUpperCase();
   if (['ACTIVE', 'DRAFT', 'ARCHIVED'].includes(status)) return status;
-  return SHOPIFY_USD_PRICE_POLICY.defaultStatus;
+  return policy.defaultStatus;
 }
 
 function listingStatusFromProductStatus(status: unknown): AdapterResult['listingStatus'] {
@@ -170,7 +235,8 @@ function variantOptionValues(item: any, variationBundle: any, master: Record<str
   }));
 }
 
-function buildShopifyPayload(ctx: BridgeContext) {
+async function buildShopifyPayload(ctx: BridgeContext) {
+  const policy = await loadShopifyPricePolicy();
   const master = ctx.masterProduct as Record<string, unknown>;
   const shopify = ((ctx as any).shopify || {}) as Record<string, any>;
   const groupRows = publishableGroupRows(ctx.masterProduct || {}, (ctx as any).groupProducts || []);
@@ -180,7 +246,7 @@ function buildShopifyPayload(ctx: BridgeContext) {
   const variants = rows.map((item: any) => {
     const row = item.row || {};
     const sku = cleanText(row.shopify_sku || row.sku);
-    const price = priceFrom(row, shopify);
+    const price = priceFrom(row, shopify, policy);
     const variant: Record<string, any> = {
       product_id: row.id || null,
       sku,
@@ -201,18 +267,18 @@ function buildShopifyPayload(ctx: BridgeContext) {
       vendor: vendorFrom(master, shopify),
       productType: productTypeFrom(master, shopify),
       tags: tagsFrom(master, shopify),
-      status: shopifyProductStatus(shopify),
+      status: shopifyProductStatus(shopify, policy),
       productOptions: productOptionsFrom(variationBundle, master),
       parentSku: parent,
     },
     media: imagesFrom(master, groupRows),
     variants,
     publish: shopify.publish === true,
-    set_inventory: shopify.set_inventory === true && SHOPIFY_USD_PRICE_POLICY.setInventory === true,
+    set_inventory: shopify.set_inventory === true && policy.setInventory === true,
     default_location_gid: cleanText(shopify.default_location_gid),
     default_publication_gid: cleanText(shopify.default_publication_gid),
     dry_run: ctx.dryRun,
-    pricing_policy: SHOPIFY_USD_PRICE_POLICY,
+    pricing_policy: policy,
     shopify_mutations: ['productCreate', 'productVariantsBulkCreate'],
   };
 }
@@ -302,7 +368,7 @@ function optionProductsFrom(raw: any, payload: any) {
 async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   const userToken = cleanText(ctx.userAuthToken);
   if (!userToken) return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_AUTH_FAILED', errorMsg: 'Authenticated user token is required for Shopify create' };
-  const payload = buildShopifyPayload(ctx);
+  const payload = await buildShopifyPayload(ctx);
   const validation = validatePayload(payload);
   if (validation) return validation;
   if (ctx.dryRun) {

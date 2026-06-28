@@ -57,10 +57,12 @@ Result: see `C:\dev\shopee-dashboard\.climpire-worktrees\codex-shopify-product-r
 - Modify `supabase/functions/platform-publish/adapters/shopify.ts`.
 - Test: `scripts/test-shopify-product-registration.mjs`.
 
-- [ ] Write failing tests that adapter no longer hardcodes 1460/30/1/10 when DB settings exist.
-- [ ] Add DB-backed Shopify policy settings.
-- [ ] Add V2 UI controls for exchange rate and fee/margin fields.
-- [ ] Verify dry-run reflects updated settings.
+- [x] Write failing tests that adapter no longer hardcodes 1460/30/1/10 when DB settings exist.
+- [x] Add DB-backed Shopify policy settings.
+- [x] Add V2 UI controls for exchange rate and fee/margin fields.
+- [x] Verify DB/UI/adapter integration with tests, remote DB row/policy checks, Edge deploy, and local render DOM inspection.
+
+Result: see `C:\dev\shopee-dashboard\.climpire-worktrees\codex-shopify-product-registration\docs\superpowers\plans\2026-06-28-shopify-price-policy-db-ui-results.md`. A final authenticated `platform-publish` dry-run remains queued until a signed-in V2 browser JWT is available.
 
 ### Task 4: Add Active Registration Safety
 

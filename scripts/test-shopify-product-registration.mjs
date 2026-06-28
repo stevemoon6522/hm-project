@@ -54,10 +54,11 @@ assert.match(shopifyAdapter, /bridgeGet\('lookup-sku'/, 'Shopify adapter must sy
 assert.match(shopifyAdapter, /publishableGroupRows\(ctx\.masterProduct/, 'Shopify adapter must support grouped master variants');
 assert.match(shopifyAdapter, /productVariantsBulkCreate/, 'Shopify adapter dry-run payload must expose variant bulk intent');
 assert.match(shopifyAdapter, /option_products/, 'Shopify adapter must return option mapping hints for grouped creates');
-assert.match(shopifyAdapter, /SHOPIFY_USD_PRICE_POLICY[\s\S]*currency:\s*'USD'[\s\S]*krwPerUsd:\s*1460[\s\S]*targetMarginPct:\s*30[\s\S]*paymentFeePct:\s*1[\s\S]*transactionFeePct:\s*10[\s\S]*includeShippingInPrice:\s*false[\s\S]*defaultStatus:\s*'ACTIVE'[\s\S]*setInventory:\s*false/, 'Shopify adapter must encode the approved USD active-first price policy');
+assert.match(shopifyAdapter, /SHOPIFY_DEFAULT_PRICE_POLICY[\s\S]*currency:\s*'USD'[\s\S]*krwPerUsd:\s*1460[\s\S]*targetMarginPct:\s*30[\s\S]*paymentFeePct:\s*1[\s\S]*transactionFeePct:\s*10[\s\S]*includeShippingInPrice:\s*false[\s\S]*defaultStatus:\s*'ACTIVE'[\s\S]*setInventory:\s*false/, 'Shopify adapter must keep the approved USD active-first price policy as the fallback');
+assert.match(shopifyAdapter, /async function loadShopifyPricePolicy[\s\S]*\.from\('shopify_price_policy'\)/, 'Shopify adapter must load the approved price policy from DB before creation');
 assert.match(shopifyAdapter, /function shopifyPriceFromCostKrw[\s\S]*feePct = policy\.targetMarginPct \+ policy\.paymentFeePct \+ policy\.transactionFeePct \+ policy\.fixedOperationFeePct[\s\S]*denominator = 1 - feePct \/ 100[\s\S]*costKrw \/ policy\.krwPerUsd \/ denominator/, 'Shopify adapter must calculate USD price by backing out margin and percentage fees');
-assert.match(shopifyAdapter, /status:\s*shopifyProductStatus\(shopify\)/, 'Shopify adapter must create products with the approved ACTIVE default status');
-assert.match(shopifyAdapter, /set_inventory:\s*shopify\.set_inventory === true && SHOPIFY_USD_PRICE_POLICY\.setInventory === true/, 'Shopify adapter must keep Shopify inventory push disabled by policy');
+assert.match(shopifyAdapter, /status:\s*shopifyProductStatus\(shopify, policy\)/, 'Shopify adapter must create products with the DB-backed default status');
+assert.match(shopifyAdapter, /set_inventory:\s*shopify\.set_inventory === true && policy\.setInventory === true/, 'Shopify adapter must keep Shopify inventory push disabled unless the DB policy enables it');
 assert.match(shopifyAdapter, /import \{ shopeeSellerCenterDescription \} from '\.\.\/_shared\/shopee-description\.ts'/, 'Shopify adapter must reuse the Shopee Seller Center description template');
 assert.match(shopifyAdapter, /shopeeSellerCenterDescription\(/, 'Shopify adapter must build default descriptionHtml from the Shopee template');
 assert.match(shopifyAdapter, /raw\.split\(\/\\n\{2,\}\//, 'Shopify adapter must preserve Shopee template paragraph breaks when converting to HTML');

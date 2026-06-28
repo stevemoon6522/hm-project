@@ -279,6 +279,7 @@ async function buildShopifyPayload(ctx: BridgeContext) {
     default_publication_gid: cleanText(shopify.default_publication_gid),
     dry_run: ctx.dryRun,
     pricing_policy: policy,
+    duplicate_sku_preflight: true,
     shopify_mutations: ['productCreate', 'productVariantsBulkCreate'],
   };
 }
@@ -365,6 +366,38 @@ function optionProductsFrom(raw: any, payload: any) {
   });
 }
 
+async function preflightShopifyDuplicateSkus(payload: any, userToken: string): Promise<AdapterResult | null> {
+  const shopDomain = cleanText(payload.shop_domain);
+  const checked = new Set<string>();
+  for (const variant of payload.variants || []) {
+    const sku = cleanText(variant.sku);
+    if (!sku || checked.has(sku)) continue;
+    checked.add(sku);
+    const params: Record<string, string> = { sku };
+    if (shopDomain) params.shop_domain = shopDomain;
+    const { status, raw } = await bridgeGet('lookup-sku', params, userToken);
+    if (status >= 200 && status < 300 && raw?.ok) {
+      return {
+        ok: false,
+        listingStatus: 'not_listed',
+        errorCode: 'PLATFORM_VALIDATION_ERROR',
+        errorMsg: `SHOPIFY_DUPLICATE_SKU: ${sku} already exists on Shopify`,
+        rawResponse: { ...raw, code: 'SHOPIFY_DUPLICATE_SKU', duplicate_sku: sku },
+      };
+    }
+    const notFound = status === 404 || /product_not_found|not_found|not found/i.test(cleanText(raw?.error || raw?.message || raw?.error_msg));
+    if (notFound) continue;
+    return {
+      ok: false,
+      listingStatus: 'error',
+      errorCode: mapBridgeError(status, raw),
+      errorMsg: `Shopify duplicate SKU preflight failed (${status})`,
+      rawResponse: raw,
+    };
+  }
+  return null;
+}
+
 async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
   const userToken = cleanText(ctx.userAuthToken);
   if (!userToken) return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_AUTH_FAILED', errorMsg: 'Authenticated user token is required for Shopify create' };
@@ -383,6 +416,8 @@ async function createListing(ctx: BridgeContext): Promise<AdapterResult> {
       },
     };
   }
+  const duplicateSku = await preflightShopifyDuplicateSkus(payload, userToken);
+  if (duplicateSku) return duplicateSku;
   const { status, raw } = await bridgePost('create-product', payload, userToken);
   if (status >= 200 && status < 300 && raw?.ok !== false) {
     return {

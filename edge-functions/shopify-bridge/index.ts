@@ -11,8 +11,16 @@
 // action === 'oauth-url'
 // action === 'oauth-callback'
 // action === 'create-product'
+// action === 'archive-product'
 // action === 'lookup-sku'
+// function shopifySearchString
+// const queryText = `sku:"${escapedSku}"`
 // productCreate
+// productUpdate
+// async function archiveProduct
+// status: 'ARCHIVED'
+// cleanup_on_variant_failure !== false
+// cleanup_action: 'archive_product'
 // function shopifyProductStatus
 // status: shopifyProductStatus(product.status)
 // productVariantsBulkCreate

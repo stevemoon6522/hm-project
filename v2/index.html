@@ -10144,6 +10144,21 @@ LEGACY END -->
     return platform === 'shopify' && action === 'register';
   }
 
+  function platformConfirmShopifyActiveRegistration(groups) {
+    const skus = (groups || [])
+      .map((group) => platformGroupSku(group))
+      .filter(Boolean)
+      .slice(0, 8);
+    const more = (groups || []).length > skus.length ? `\n...and ${(groups || []).length - skus.length} more group(s)` : '';
+    return confirm(
+      'Shopify ACTIVE registration will create a live product immediately.\n\n'
+      + `Target groups: ${(groups || []).length}\n`
+      + `SKUs: ${skus.join(', ') || '-'}${more}\n\n`
+      + 'Duplicate SKU preflight and failure cleanup are enabled, but this is still a real Shopify create action.\n'
+      + 'Continue?'
+    );
+  }
+
   async function platformExecutePreview() {
     const preview = state.platformPreview;
     if (!preview || preview.running) return;
@@ -10165,6 +10180,7 @@ LEGACY END -->
       const label = PLATFORM_LABELS[platform] || platform;
       if (!confirm(`${label}에 선택한 마스터 상품의 설명/이미지 변경을 적용합니다.\n\n대상 상품: ${groups.length}개\n계속할까요?`)) return;
     }
+    if (platform === 'shopify' && action === 'register' && !platformConfirmShopifyActiveRegistration(groups)) return;
     preview.running = true;
     renderPlatformWorkbench(platform);
     const results = [];

@@ -151,6 +151,10 @@ function shopifyProductStatus(value: unknown): string {
   return 'ACTIVE';
 }
 
+function shopifySearchString(value: unknown): string {
+  return norm(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 function shopScopeSet(shop: any): Set<string> {
   const scopes = Array.isArray(shop?.scopes) ? shop.scopes : norm(shop?.scopes).split(',');
   return new Set(scopes.map((scope: unknown) => norm(scope)).filter(Boolean));
@@ -520,6 +524,54 @@ async function publishablePublish(shop: any, productId: string, publicationId: s
   return shopifyGraphql(shop, query, { id: productId, input: [{ publicationId }] });
 }
 
+async function archiveProduct(shop: any, productId: string) {
+  const id = norm(productId);
+  if (!id) return { ok: false, status: 400, raw: { error: 'product_id required' }, error: 'product_id required' };
+  const query = `
+    mutation ShopifyBridgeProductArchive($product: ProductUpdateInput!) {
+      productUpdate(product: $product) {
+        product { id title status handle publishedAt }
+        userErrors { field message }
+      }
+    }
+  `;
+  const { status, raw } = await shopifyGraphql(shop, query, { product: { id, status: 'ARCHIVED' } });
+  if (status < 200 || status >= 300 || raw?.errors?.length || graphUserErrors(raw, 'productUpdate').length) {
+    return { ok: false, status, raw, error: graphErrorMessage(raw, 'productUpdate') };
+  }
+  return { ok: true, status, raw, product: raw?.data?.productUpdate?.product || null };
+}
+
+async function handleArchiveProduct(req: Request): Promise<Response> {
+  const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+  if (denied) return denied;
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== 'object') return jsonResp({ ok: false, error: 'JSON body required' }, 400);
+  const shopDomain = normalizeShopDomain(body.shop_domain);
+  const shop = await configuredShop(shopDomain);
+  const productId = norm(body.product_id || body.productId || body.platform_item_id);
+  if (!productId) return jsonResp({ ok: false, error: 'product_id required' }, 400);
+  if (body.dry_run === true) {
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      shop_domain: shop.shop_domain,
+      cleanup_action: 'archive_product',
+      payload: { productUpdate: { product: { id: productId, status: 'ARCHIVED' } } },
+    });
+  }
+  const archived = await archiveProduct(shop, productId);
+  if (!archived.ok) return jsonResp({ ok: false, error: archived.error || 'productUpdate archive failed', raw: archived.raw }, archived.status || 502);
+  return jsonResp({
+    ok: true,
+    shop_domain: shop.shop_domain,
+    cleanup_action: 'archive_product',
+    product_id: productId,
+    product: archived.product,
+    raw: archived.raw,
+  });
+}
+
 async function handleCreateProduct(req: Request): Promise<Response> {
   const denied = await requireBridgeTokenOrAuthenticatedUser(req);
   if (denied) return denied;
@@ -562,10 +614,23 @@ async function handleCreateProduct(req: Request): Promise<Response> {
 
   const variantResult = await createVariants(shop, created.product.id, body);
   if (!variantResult.ok) {
+    let cleanup = { attempted: false, archived: false, product: null, error: null, raw: null };
+    if (body.cleanup_on_variant_failure !== false) {
+      const archived = await archiveProduct(shop, created.product.id);
+      cleanup = {
+        attempted: true,
+        archived: archived.ok === true,
+        product: archived.product || null,
+        error: archived.ok ? null : (archived.error || 'productUpdate archive failed'),
+        raw: archived.raw || null,
+      };
+    }
     return jsonResp({
       ok: false,
       error: variantResult.error || 'productVariantsBulkCreate failed',
       product_id: created.product.id,
+      cleanup_action: 'archive_product',
+      cleanup,
       raw: variantResult.raw,
     }, variantResult.status || 502);
   }
@@ -614,7 +679,8 @@ async function handleLookupSku(req: Request): Promise<Response> {
   if (!sku) return jsonResp({ ok: false, error: 'sku query param required' }, 400);
   const shopDomain = normalizeShopDomain(url.searchParams.get('shop') || url.searchParams.get('shop_domain'));
   const shop = await configuredShop(shopDomain);
-  const queryText = `sku:${sku.replace(/"/g, '')}`;
+  const escapedSku = shopifySearchString(sku);
+  const queryText = `sku:"${escapedSku}"`;
   const query = `
     query ShopifyBridgeProductVariantBySku($query: String!) {
       productVariants(first: 10, query: $query) {
@@ -669,6 +735,7 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === 'shop' && req.method === 'GET') return await handleShop(req);
     if ((action === 'carrier-service' || action === 'shipping-carrier-service') && req.method === 'POST') return await handleCarrierService(req);
     if (action === 'create-product' && req.method === 'POST') return await handleCreateProduct(req);
+    if (action === 'archive-product' && req.method === 'POST') return await handleArchiveProduct(req);
     if (action === 'lookup-sku' && req.method === 'GET') return await handleLookupSku(req);
     if (action === 'internal-check' && req.method === 'GET') {
       const denied = requireInternalBridge(req);

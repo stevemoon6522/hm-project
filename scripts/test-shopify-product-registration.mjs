@@ -51,6 +51,10 @@ for (const token of [
 assert.match(shopifyAdapter, /supports: new Set\(\['create_listing', 'sync'\]\)/, 'Shopify adapter must expose MVP create_listing and sync only');
 assert.match(shopifyAdapter, /bridgePost\('create-product'/, 'Shopify adapter must route creates through shopify-bridge create-product');
 assert.match(shopifyAdapter, /bridgeGet\('lookup-sku'/, 'Shopify adapter must sync by SKU through shopify-bridge');
+assert.match(shopifyAdapter, /async function preflightShopifyDuplicateSkus/, 'Shopify adapter must preflight duplicate SKUs before live creates');
+assert.match(shopifyAdapter, /duplicate_sku_preflight:\s*true/, 'Shopify dry-run payload must declare duplicate SKU preflight coverage');
+assert.match(shopifyAdapter, /preflightShopifyDuplicateSkus\(payload, userToken\)/, 'Shopify live create must run duplicate SKU preflight before mutation');
+assert.match(shopifyAdapter, /SHOPIFY_DUPLICATE_SKU/, 'Shopify duplicate SKU preflight must return a clear machine-readable marker');
 assert.match(shopifyAdapter, /publishableGroupRows\(ctx\.masterProduct/, 'Shopify adapter must support grouped master variants');
 assert.match(shopifyAdapter, /productVariantsBulkCreate/, 'Shopify adapter dry-run payload must expose variant bulk intent');
 assert.match(shopifyAdapter, /option_products/, 'Shopify adapter must return option mapping hints for grouped creates');
@@ -73,12 +77,20 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   assert.match(source, /action === 'oauth-callback'/, `${label} Shopify bridge must expose OAuth callback exchange`);
   assert.match(source, /action === 'create-product'/, `${label} Shopify bridge must expose product creation`);
   assert.match(source, /action === 'lookup-sku'/, `${label} Shopify bridge must expose SKU lookup`);
+  assert.match(source, /function shopifySearchString/, `${label} Shopify lookup must escape search query values`);
+  assert.match(source, /const queryText = `sku:"\$\{escapedSku\}"`/, `${label} Shopify lookup must quote SKU searches so hyphenated SKUs are exact`);
   assert.match(source, /productCreate/, `${label} Shopify bridge must call productCreate`);
   assert.match(source, /function shopifyProductStatus/, `${label} Shopify bridge must sanitize requested Shopify product status`);
   assert.match(source, /status:\s*shopifyProductStatus\(product\.status\)/, `${label} Shopify productCreate must honor the adapter status`);
   const createProductBlock = source.slice(source.indexOf('async function createProduct'), source.indexOf('async function createVariants'));
   assert.doesNotMatch(createProductBlock, /userErrors\s*\{\s*field\s+message\s+code\s*\}/, `${label} Shopify productCreate must not request unsupported UserError.code`);
   assert.match(source, /productVariantsBulkCreate/, `${label} Shopify bridge must call productVariantsBulkCreate`);
+  assert.match(source, /async function archiveProduct/, `${label} Shopify bridge must include a product archive cleanup helper`);
+  assert.match(source, /productUpdate/, `${label} Shopify bridge must archive failed creates with productUpdate`);
+  assert.match(source, /status:\s*'ARCHIVED'/, `${label} Shopify cleanup must set product status to ARCHIVED`);
+  assert.match(source, /cleanup_on_variant_failure !== false/, `${label} Shopify bridge must archive created products after variant failure by default`);
+  assert.match(source, /cleanup_action:\s*'archive_product'/, `${label} Shopify variant failure response must report archive cleanup`);
+  assert.match(source, /action === 'archive-product'/, `${label} Shopify bridge must expose archive-product for manual cleanup`);
   assert.match(source, /inventorySetQuantities/, `${label} Shopify bridge must include gated inventory support`);
   assert.match(source, /publishablePublish/, `${label} Shopify bridge must include gated publish support`);
   assert.match(source, /listing_status:\s*mapShopifyListingStatus\(product\)/, `${label} Shopify bridge must report ACTIVE products as listed even without inventory push`);
@@ -113,6 +125,9 @@ for (const token of [
   "const PLATFORM_TABS = Object.freeze(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba', 'shopify'])",
   'shopify: {',
   'Shopify Active',
+  'function platformConfirmShopifyActiveRegistration',
+  'Shopify ACTIVE registration will create a live product',
+  'platformConfirmShopifyActiveRegistration(groups)',
   "body.shopify = { status: 'ACTIVE' }",
   "platform === 'shopify' ? 'create_listing' :",
   "coverageBridgeUrl('shopify')",

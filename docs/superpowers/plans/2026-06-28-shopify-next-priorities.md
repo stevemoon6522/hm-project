@@ -72,8 +72,10 @@ Result: see `C:\dev\shopee-dashboard\.climpire-worktrees\codex-shopify-product-r
 - Modify `v2/index.html`.
 - Test: `scripts/test-shopify-product-registration.mjs`.
 
-- [ ] Write failing tests for duplicate SKU preflight and partial-create cleanup behavior.
-- [ ] Add duplicate SKU lookup before live create.
-- [ ] Add cleanup/archive path for product-created-but-variants-failed cases.
-- [ ] Add final confirmation for Active Shopify registration.
-- [ ] Verify live/dry-run behavior with safe generated SKUs.
+- [x] Write failing tests for duplicate SKU preflight and partial-create cleanup behavior.
+- [x] Add duplicate SKU lookup before live create.
+- [x] Add cleanup/archive path for product-created-but-variants-failed cases.
+- [x] Add final confirmation for Active Shopify registration.
+- [x] Verify deployed behavior with static regression tests, local render, Edge deploy smoke, live duplicate SKU search evidence, and no additional Shopify duplicate creation.
+
+Result: see `C:\dev\shopee-dashboard\.climpire-worktrees\codex-shopify-product-registration\docs\superpowers\plans\2026-06-28-shopify-active-registration-safety-results.md`.

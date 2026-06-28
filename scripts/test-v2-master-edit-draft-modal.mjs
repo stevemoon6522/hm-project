@@ -185,10 +185,10 @@ assert(
   'master edit option draft must expose both purchase and settlement prices',
 );
 assert(
-  renderOptionsCode.includes('type="hidden" value="${text(optionImageUrl)}"')
+  renderOptionsCode.includes('data-field="shopee_option_image_url" type="hidden"')
     && !renderOptionsCode.includes('type="url" value="${text(optionImageUrl)}"')
-    && !renderOptionsCode.includes('data-clear-option-image'),
-  'master edit option images must use file upload only, without a visible URL input or remove button',
+    && renderOptionsCode.includes('data-clear-option-image'),
+  'master edit option images must use file upload with a hidden URL field and a remove button',
 );
 assert(
   editCode.includes('const hasDraftDetailImages = plMasterEditDetailImageUrls(rows).length > 0')

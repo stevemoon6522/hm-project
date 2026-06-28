@@ -1127,6 +1127,18 @@
     .pl-master-edit-text-card { grid-column: 1 / 3; }
     .pl-master-edit-options-card { grid-column: 1 / 3; }
     .pl-master-edit-field-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 10px; }
+    .pl-master-edit-options-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .pl-master-edit-options-toolbar button {
+      font-size: 12px;
+      padding: 6px 10px;
+      white-space: nowrap;
+    }
     .pl-master-edit-options-scroll { overflow-x: auto; }
     .pl-master-edit-options-table {
       width: 100%;
@@ -1151,6 +1163,23 @@
       padding: 8px 9px;
       border-bottom: 1px solid var(--border);
       vertical-align: middle;
+    }
+    .pl-master-edit-options-table tr.is-deleted td {
+      background: #f8fafc;
+      color: var(--muted);
+      opacity: .72;
+    }
+    .pl-master-edit-options-table tr.is-new td {
+      background: #f0fdf4;
+    }
+    .pl-master-edit-option-status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 18px;
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 10px;
+      line-height: 1.2;
     }
     .pl-master-edit-options-table input[data-field] {
       width: 100%;
@@ -7361,11 +7390,13 @@ LEGACY END -->
 
   function plMasterEditNormalizeOptionPatches(rows, optionPatches) {
     const patches = optionPatches || [];
-    const patchById = new Map(patches.map((item) => [String(item.id), item.patch || {}]));
+    const keyFor = (item = {}) => String(item.id || item._clientId || item.client_id || '').trim();
+    const activePatches = patches.filter((item) => String(item.action || 'update') !== 'delete');
+    const patchById = new Map(activePatches.map((item) => [keyFor(item), item.patch || {}]));
     const draftRows = (rows || []).map((row) => ({
       ...row,
-      ...(patchById.get(String(row.id)) || {}),
-    }));
+      ...(patchById.get(keyFor(row)) || {}),
+    })).filter((row) => String(row._draftAction || 'update') !== 'delete');
     const hasAnyOptions = draftRows.some((row) => {
       const names = Array.isArray(row?.variation_option_names) ? row.variation_option_names : [];
       return names.some((v) => String(v || '').trim()) || !!String(row?.option_name || '').trim();
@@ -7411,7 +7442,7 @@ LEGACY END -->
 
     const effectiveTierNames = effectiveAxes.map((axis) => axis.name || 'Version');
     draftRows.forEach((row, rowIndex) => {
-      const patch = patchById.get(String(row.id));
+      const patch = patchById.get(keyFor(row));
       if (!patch) return;
       const tierIndex = effectiveAxes.map((axis) => {
         const value = plMasterEditAxisValue(row, axis.sourceAxis).toLowerCase();
@@ -12313,9 +12344,22 @@ LEGACY END -->
     return autoMasterSkuForRow(row, { lifecycleState, productName, optionName });
   }
 
+  let _plMasterEditClientSeq = 0;
+
+  function plMasterEditNextClientId() {
+    _plMasterEditClientSeq += 1;
+    return `new-option-${Date.now()}-${_plMasterEditClientSeq}`;
+  }
+
+  function plMasterEditRowKey(row = {}) {
+    return String(row.id || row._clientId || row.client_id || '').trim();
+  }
+
   function plMasterEditRowForSkuInput(tr) {
     const productId = String(tr?.dataset?.productId || '');
-    return plMasterEditCurrentRows().find((row) => String(row.id) === productId) || {};
+    const clientId = String(tr?.dataset?.clientId || '');
+    return plMasterEditRowsFromModal(plMasterEditCurrentRows())
+      .find((row) => String(row.id || '') === productId || String(row._clientId || '') === clientId) || {};
   }
 
   function plMasterEditRefreshSkuInput(tr, force = false) {
@@ -12333,7 +12377,7 @@ LEGACY END -->
   }
 
   function plMasterEditRefreshAutoSkus(force = false) {
-    document.querySelectorAll('#pl-master-edit-options tr[data-product-id]').forEach((tr) => {
+    document.querySelectorAll('#pl-master-edit-options tr[data-option-row]').forEach((tr) => {
       plMasterEditRefreshSkuInput(tr, force);
     });
   }
@@ -12423,20 +12467,55 @@ LEGACY END -->
     `;
   }
 
+  function plMasterEditOptionRowPayload(row, optionSpec, idx) {
+    const isDeleted = row?._draftAction === 'delete';
+    const isNew = !String(row?.id || '').trim();
+    const clientId = String(row?._clientId || row?.client_id || '').trim() || (isNew ? plMasterEditNextClientId() : '');
+    if (clientId && !row._clientId) row._clientId = clientId;
+    const optionImageUrl = plMasterEditOptionImageUrl(row);
+    const optionDisplay = plEffectiveOptionDisplay(row, optionSpec, idx, plOptionDisplay(row) || row.option_name || '');
+    const autoSku = plMasterEditAutoSku(row, optionDisplay);
+    const currentSku = String(row.sku || '').trim();
+    const skuValue = currentSku || autoSku;
+    const skuMode = currentSku ? 'manual' : 'auto';
+    return {
+      id: String(row.id || '').trim(),
+      clientId,
+      optionImageUrl,
+      optionDisplay,
+      autoSku,
+      skuValue,
+      skuMode,
+      sourcingValue: String(Number(row.sourcing_price || row._sourcing_price || 0) || ''),
+      costValue: String(Number(row.cost_krw || 0) || ''),
+      weightValue: String(Number(row.weight_g || 0) || ''),
+      isDeleted,
+      isNew,
+      statusText: isDeleted ? '삭제 예정' : (isNew ? '신규 옵션' : '저장됨'),
+    };
+  }
+
   function plMasterEditRenderOptions(rows) {
     const optionsEl = document.getElementById('pl-master-edit-options');
     if (!optionsEl) return;
-    const optionSpec = plEffectiveVariationSpec(rows, 'Version');
+    const renderRows = (rows || []).length ? rows : [];
+    const activeRows = renderRows.filter((row) => row?._draftAction !== 'delete');
+    const optionSpec = plEffectiveVariationSpec(activeRows.length ? activeRows : renderRows, 'Version');
     optionsEl.innerHTML = `
+      <div class="pl-master-edit-options-toolbar">
+        <span class="muted" style="font-size:11px;">활성 옵션 ${activeRows.length}개 · 저장 전까지 추가/삭제는 초안 상태입니다.</span>
+        <button type="button" data-master-option-add="1">+ 옵션 추가</button>
+      </div>
       <div class="pl-master-edit-options-scroll">
         <table class="pl-master-edit-options-table">
           <colgroup>
-            <col style="width:16%;">
-            <col style="width:28%;">
-            <col style="width:10%;">
-            <col style="width:10%;">
+            <col style="width:14%;">
+            <col style="width:25%;">
             <col style="width:9%;">
-            <col style="width:27%;">
+            <col style="width:9%;">
+            <col style="width:8%;">
+            <col style="width:26%;">
+            <col style="width:9%;">
           </colgroup>
           <thead>
             <tr>
@@ -12446,53 +12525,53 @@ LEGACY END -->
               <th class="num">정산가</th>
               <th class="num">무게(g)</th>
               <th>옵션 이미지</th>
+              <th>작업</th>
             </tr>
           </thead>
           <tbody>
-            ${rows.map((row, idx) => {
-              const optionImageUrl = plMasterEditOptionImageUrl(row);
-              const optionDisplay = plEffectiveOptionDisplay(row, optionSpec, idx, plOptionDisplay(row) || row.option_name || '');
-              const autoSku = plMasterEditAutoSku(row, optionDisplay);
-              const currentSku = String(row.sku || '').trim();
-              const skuValue = currentSku || autoSku;
-              const skuMode = currentSku ? 'manual' : 'auto';
-              const sourcingValue = String(Number(row.sourcing_price || row._sourcing_price || 0) || '');
-              const costValue = String(Number(row.cost_krw || 0) || '');
-              const weightValue = String(Number(row.weight_g || 0) || '');
+            ${renderRows.map((row, idx) => {
+              const payload = plMasterEditOptionRowPayload(row, optionSpec, idx);
+              const { autoSku, skuMode, skuValue } = payload;
+              const disabled = payload.isDeleted ? 'disabled' : '';
+              const actionButton = payload.isDeleted
+                ? `<button type="button" data-master-option-restore="1" class="ghost-btn tiny">복원</button>`
+                : `<button type="button" data-master-option-delete="1" class="ghost-btn tiny">삭제</button>`;
               return `
-                <tr data-product-id="${text(row.id)}">
+                <tr data-option-row="1" data-product-id="${text(payload.id)}" data-client-id="${text(payload.clientId)}" data-option-action="${payload.isDeleted ? 'delete' : (payload.isNew ? 'insert' : 'update')}" data-option-row-status="${text(payload.statusText)}" class="${payload.isDeleted ? 'is-deleted' : ''}${payload.isNew ? ' is-new' : ''}">
                   <td>
-                    <input data-field="option_name" type="text" value="${text(optionDisplay)}">
+                    <input data-field="option_name" type="text" value="${text(payload.optionDisplay)}" ${disabled}>
+                    <span class="pl-master-edit-option-status">${text(payload.statusText)}</span>
                   </td>
                   <td>
                     <div class="pl-master-edit-option-sku">
-                      <input data-field="sku" data-sku-mode="${text(skuMode)}" data-auto-sku="${text(autoSku)}" type="text" value="${text(skuValue)}">
-                      <button type="button" data-auto-sku-apply="1" title="Regenerate SKU from current fields">Auto</button>
+                      <input data-field="sku" data-sku-mode="${text(skuMode)}" data-auto-sku="${text(autoSku)}" type="text" value="${text(skuValue)}" ${disabled}>
+                      <button type="button" data-auto-sku-apply="1" title="Regenerate SKU from current fields" ${disabled}>Auto</button>
                     </div>
                   </td>
                   <td class="num">
-                    <input data-field="sourcing_price" type="number" min="0" step="1" value="${text(sourcingValue)}">
+                    <input data-field="sourcing_price" type="number" min="0" step="1" value="${text(payload.sourcingValue)}" ${disabled}>
                   </td>
                   <td class="num">
-                    <input data-field="cost_krw" type="number" min="0" step="1" value="${text(costValue)}">
+                    <input data-field="cost_krw" type="number" min="0" step="1" value="${text(payload.costValue)}" ${disabled}>
                   </td>
                   <td class="num">
-                    <input data-field="weight_g" type="number" min="1" step="1" value="${text(weightValue)}">
+                    <input data-field="weight_g" type="number" min="1" step="1" value="${text(payload.weightValue)}" ${disabled}>
                   </td>
                   <td>
                     <div class="pl-master-edit-option-image-cell">
-                      <div data-option-image-preview="1">${plMasterEditRenderOptionImagePreview(optionImageUrl)}</div>
+                      <div data-option-image-preview="1">${plMasterEditRenderOptionImagePreview(payload.optionImageUrl)}</div>
                       <div style="min-width:0;">
                         <label class="pl-master-edit-option-upload">
                           마스터 옵션 이미지 추가
-                          <input data-master-option-image-file type="file" accept="image/*">
+                          <input data-master-option-image-file type="file" accept="image/*" ${disabled}>
                         </label>
-                        <input data-field="shopee_option_image_url" type="hidden" value="${text(optionImageUrl)}">
-                        <button type="button" data-clear-option-image="1" class="ghost-btn tiny" ${optionImageUrl ? '' : 'disabled'}>Remove</button>
-                        <div data-option-image-file-name="1" class="pl-master-edit-option-file-name">${optionImageUrl ? '업로드 이미지 사용 중' : '선택된 파일 없음'}</div>
+                        <input data-field="shopee_option_image_url" type="hidden" value="${text(payload.optionImageUrl)}">
+                        <button type="button" data-clear-option-image="1" class="ghost-btn tiny" ${payload.optionImageUrl && !payload.isDeleted ? '' : 'disabled'}>Remove</button>
+                        <div data-option-image-file-name="1" class="pl-master-edit-option-file-name">${payload.optionImageUrl ? '업로드 이미지 사용 중' : '선택된 파일 없음'}</div>
                       </div>
                     </div>
                   </td>
+                  <td>${actionButton}</td>
                 </tr>
               `;
             }).join('')}
@@ -12504,20 +12583,38 @@ LEGACY END -->
 
 
 
-  function plMasterEditRowsFromModal(fallbackRows = []) {
+  function plMasterEditAllRowsFromModal(fallbackRows = []) {
     const byId = new Map((fallbackRows || []).map((row) => [String(row.id), row]));
     const representativeUrl = plMasterEditRepresentativeImage(fallbackRows);
-    return Array.from(document.querySelectorAll('#pl-master-edit-options tr[data-product-id]')).map((tr) => {
+    return Array.from(document.querySelectorAll('#pl-master-edit-options tr[data-option-row]')).map((tr) => {
       const id = String(tr.dataset.productId || '');
+      const clientId = String(tr.dataset.clientId || '').trim();
       const existing = byId.get(id) || {};
+      const action = String(tr.dataset.optionAction || (id ? 'update' : 'insert')).trim();
+      const fieldValue = (name, fallback = '') => {
+        const input = tr.querySelector(`[data-field="${name}"]`);
+        return input ? String(input.value || '').trim() : String(fallback || '').trim();
+      };
       return {
         ...existing,
         id,
+        _clientId: clientId,
+        _draftAction: action,
+        option_name: fieldValue('option_name', existing.option_name),
+        sku: fieldValue('sku', existing.sku),
+        sourcing_price: Number(fieldValue('sourcing_price', existing.sourcing_price || existing._sourcing_price || 0) || 0),
+        cost_krw: Number(fieldValue('cost_krw', existing.cost_krw || 0) || 0),
+        weight_g: Number(fieldValue('weight_g', existing.weight_g || 0) || 0),
         main_image: representativeUrl || String(existing.main_image || '').trim(),
-        shopee_option_image_url: String(tr.querySelector('[data-field="shopee_option_image_url"]')?.value || '').trim(),
+        shopee_option_image_url: fieldValue('shopee_option_image_url', existing.shopee_option_image_url),
         _optionImageInputActive: true,
       };
     });
+  }
+
+  function plMasterEditRowsFromModal(fallbackRows = []) {
+    return plMasterEditAllRowsFromModal(fallbackRows)
+      .filter((row) => row._draftAction !== 'delete');
   }
 
   function plMasterEditRefreshOptionImagePreview(tr) {
@@ -12688,8 +12785,71 @@ LEGACY END -->
     });
   }
 
+  function plMasterEditAddDraftOption() {
+    const rows = plMasterEditAllRowsFromModal(plMasterEditCurrentRows());
+    const activeRows = rows.filter((row) => row._draftAction !== 'delete');
+    const template = activeRows[activeRows.length - 1] || rows[rows.length - 1] || plMasterEditCurrentRows()[0] || {};
+    const optionIndex = activeRows.length + 1;
+    const optionName = `Option ${optionIndex}`;
+    const newRow = {
+      ...template,
+      id: '',
+      _clientId: plMasterEditNextClientId(),
+      _draftAction: 'insert',
+      sku: '',
+      option_name: optionName,
+      variation_tier_names: ['Version'],
+      variation_option_names: [optionName],
+      variation_tier_index: [activeRows.length],
+      shopee_option_image_url: '',
+      sourcing_price: Number(template.sourcing_price || template._sourcing_price || 0) || 0,
+      cost_krw: Number(template.cost_krw || 0) || 0,
+      weight_g: Number(template.weight_g || 0) || 1,
+    };
+    newRow.sku = plMasterEditAutoSku(newRow, optionName);
+    plMasterEditRenderOptions([...rows, newRow]);
+    plMasterEditBindOptionImageControls();
+    plMasterEditRenderImageSummary(plMasterEditRowsFromModal(plMasterEditCurrentRows()));
+  }
+
+  function plMasterEditToggleDraftOptionDelete(tr, shouldDelete) {
+    if (!tr) return;
+    const rows = plMasterEditAllRowsFromModal(plMasterEditCurrentRows());
+    const productId = String(tr.dataset.productId || '').trim();
+    const clientId = String(tr.dataset.clientId || '').trim();
+    const activeCount = rows.filter((row) => row._draftAction !== 'delete').length;
+    if (shouldDelete && activeCount <= 1) {
+      showToast('마스터 상품은 최소 1개 옵션이 필요합니다.', 'err');
+      return;
+    }
+    const nextRows = rows.map((row) => {
+      const matches = productId
+        ? String(row.id || '') === productId
+        : String(row._clientId || row.client_id || '') === clientId;
+      if (!matches) return row;
+      if (shouldDelete && !String(row.id || '').trim()) return null;
+      return { ...row, _draftAction: shouldDelete ? 'delete' : (String(row.id || '').trim() ? 'update' : 'insert') };
+    }).filter(Boolean);
+    plMasterEditRenderOptions(nextRows);
+    plMasterEditBindOptionImageControls();
+    plMasterEditRenderImageSummary(plMasterEditRowsFromModal(plMasterEditCurrentRows()));
+  }
+
+  function plMasterEditBindOptionMutationControls() {
+    const root = document.getElementById('pl-master-edit-options');
+    if (!root) return;
+    root.querySelector('[data-master-option-add]')?.addEventListener('click', plMasterEditAddDraftOption);
+    root.querySelectorAll('[data-master-option-delete]').forEach((btn) => {
+      btn.addEventListener('click', () => plMasterEditToggleDraftOptionDelete(btn.closest('tr'), true));
+    });
+    root.querySelectorAll('[data-master-option-restore]').forEach((btn) => {
+      btn.addEventListener('click', () => plMasterEditToggleDraftOptionDelete(btn.closest('tr'), false));
+    });
+  }
+
   function plMasterEditBindOptionImageControls() {
-    document.querySelectorAll('#pl-master-edit-options tr[data-product-id]').forEach((tr) => {
+    plMasterEditBindOptionMutationControls();
+    document.querySelectorAll('#pl-master-edit-options tr[data-option-row]').forEach((tr) => {
       const input = tr.querySelector('[data-field="shopee_option_image_url"]');
       const fileInput = tr.querySelector('[data-master-option-image-file]');
       const clearBtn = tr.querySelector('[data-clear-option-image="1"]');
@@ -12828,12 +12988,21 @@ LEGACY END -->
   }
 
   function plMasterEditReadOptionPatches(rows) {
+    const modalRows = (typeof plMasterEditAllRowsFromModal === 'function')
+      ? plMasterEditAllRowsFromModal(rows)
+      : rows;
     const byId = new Map(rows.map((row) => [String(row.id), row]));
     const seenSkus = new Set();
-    const patches = Array.from(document.querySelectorAll('#pl-master-edit-options tr[data-product-id]')).map((tr) => {
+    const patches = Array.from(document.querySelectorAll('#pl-master-edit-options tr[data-option-row]')).map((tr) => {
       const id = String(tr.dataset.productId || '');
+      const client_id = String(tr.dataset.clientId || '').trim() || null;
+      const action = String(tr.dataset.optionAction || (id ? 'update' : 'insert')).trim();
       const existing = byId.get(id) || {};
       const field = (name) => tr.querySelector(`[data-field="${name}"]`);
+      if (action === 'delete') {
+        if (!id) return null;
+        return { id, client_id, action: 'delete', patch: {} };
+      }
       const sku = stripNonMarketplaceText(field('sku')?.value || '').trim();
       if (!sku) throw new Error('옵션 SKU는 비울 수 없습니다.');
       if (hasNonMarketplaceText(sku)) throw new Error(`SKU는 영문/숫자만 허용됩니다: ${sku}`);
@@ -12851,6 +13020,8 @@ LEGACY END -->
       if (!(weight > 0)) throw new Error(`${sku} 무게는 1g 이상이어야 합니다.`);
       return {
         id,
+        client_id,
+        action: id ? 'update' : 'insert',
         patch: {
           sku,
           option_name: optionName || null,
@@ -12861,8 +13032,11 @@ LEGACY END -->
           shopee_option_image_url: String(field('shopee_option_image_url')?.value || '').trim() || null,
         },
       };
-    });
-    return plMasterEditNormalizeOptionPatches(rows, patches);
+    }).filter(Boolean);
+    const deletedOptionIds = patches.filter((item) => item.action === 'delete').map((item) => item.id).filter(Boolean);
+    const activeCount = patches.filter((item) => item.action !== 'delete').length;
+    if (activeCount < 1) throw new Error('마스터 상품은 최소 1개 옵션이 필요합니다.');
+    return plMasterEditNormalizeOptionPatches(modalRows, patches).map((item) => ({ ...item, deletedOptionIds }));
   }
 
   async function saveProductMasterEditModal() {
@@ -12888,6 +13062,10 @@ LEGACY END -->
     if (err) { err.textContent = ''; err.style.display = 'none'; }
     try {
       const optionPatches = plMasterEditReadOptionPatches(rows);
+      const deletedOptionIds = optionPatches
+        .filter((item) => item.action === 'delete')
+        .map((item) => item.id)
+        .filter(Boolean);
       const renderedRows = plMasterEditRowsFromModal(rows);
       const representativeImageUrl = plMasterEditRepresentativeImage(renderedRows);
       const detailImages = plMasterEditDetailImageUrls(renderedRows);
@@ -12926,14 +13104,20 @@ LEGACY END -->
       if (!Array.isArray(data) || data.length === 0) {
         throw new Error('업데이트 권한 없음 또는 대상 행 없음');
       }
-      const ids = new Set(rows.map((p) => String(p.id)));
-      state.products.forEach((p) => {
-        if (ids.has(String(p.id))) Object.assign(p, patch);
-      });
-      optionPatches.forEach((item) => {
-        const p = state.products.find((row) => String(row.id) === item.id);
-        if (p) Object.assign(p, item.patch);
-      });
+      const returnedIds = (Array.isArray(data) ? data : [])
+        .map((item) => String(item?.product_id || ''))
+        .filter(Boolean);
+      const originalIds = new Set(rows.map((p) => String(p.id)));
+      deletedOptionIds.forEach((id) => originalIds.add(String(id)));
+      returnedIds.forEach((id) => originalIds.add(String(id)));
+      let refreshed = await db.from('products').select(RSH_PRODUCT_SELECT).eq('product_group_id', groupId);
+      if (refreshed.error) throw refreshed.error;
+      if ((!Array.isArray(refreshed.data) || refreshed.data.length === 0) && returnedIds.length) {
+        refreshed = await db.from('products').select(RSH_PRODUCT_SELECT).in('id', returnedIds);
+        if (refreshed.error) throw refreshed.error;
+      }
+      state.products = (state.products || []).filter((p) => !originalIds.has(String(p.id)));
+      rshSortedProducts(refreshed.data || []).forEach((row) => state.products.push(row));
       closeProductMasterEditModal();
       renderProducts();
       showToast('마스터 상품 수정 완료', 'ok');

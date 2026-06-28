@@ -5,7 +5,33 @@ import { join } from 'node:path';
 
 const bridge = readFileSync(join(process.cwd(), 'supabase/functions/qoo10-bridge/index.ts'), 'utf8');
 const adapter = readFileSync(join(process.cwd(), 'supabase/functions/platform-publish/adapters/qoo10.ts'), 'utf8');
+const priceEngine = readFileSync(join(process.cwd(), 'v2/price-engine.js'), 'utf8');
 const html = readFileSync(join(process.cwd(), 'v2/index.html'), 'utf8');
+
+function extractQoo10ShippingTable(source, label) {
+  const match = source.match(/const QOO10_SHIPPING_FEE_TABLE_JPY = Object\.freeze\(\[\s*([\s\S]*?)\s*\]\);/);
+  assert.ok(match, `${label} must define QOO10_SHIPPING_FEE_TABLE_JPY`);
+  const rows = [...match[1].matchAll(/\{\s*maxWeightG:\s*(\d+),\s*feeJpy:\s*(\d+)\s*\}/g)]
+    .map((row) => ({ maxWeightG: Number(row[1]), feeJpy: Number(row[2]) }));
+  assert.ok(rows.length > 0, `${label} Qoo10 shipping table must have rows`);
+  return rows;
+}
+
+function extractFunctionBody(source, functionName, label) {
+  const start = source.search(new RegExp(`(?:export\\s+)?function\\s+${functionName}\\s*\\(`));
+  assert.ok(start >= 0, `${label} must define ${functionName}`);
+  const open = source.indexOf('{', start);
+  assert.ok(open >= 0, `${label} ${functionName} must have a body`);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    if (source[i] === '{') depth += 1;
+    if (source[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open + 1, i).replace(/\s+/g, '');
+    }
+  }
+  assert.fail(`${label} ${functionName} body must close`);
+}
 
 test('Qoo10 option lookup only trusts seller option code fields, not internal OptionCode', () => {
   assert.doesNotMatch(
@@ -150,4 +176,24 @@ test('Qoo10 registration prices are normalized to 90-ending JPY values', () => {
   assert.match(html, /price_jpy:\s*mrQoo10ClampOptionPriceForBase\(mrQoo10ReadNumber\(`mr-qoo10-price-\$\{idx\}`,\s*basePrice\),\s*basePrice\)/, 'Qoo10 modal option prices should normalize and clamp manual input to platform-safe values');
   assert.match(adapter, /function normalizeQoo10PriceEnding90/, 'platform-publish should defensively normalize Qoo10 prices');
   assert.match(bridge, /function normalizeQoo10PriceEnding90/, 'qoo10-bridge should defensively normalize Qoo10 prices');
+});
+
+test('Qoo10 duplicated pricing policy stays aligned with the shared price engine', () => {
+  assert.deepEqual(
+    extractQoo10ShippingTable(adapter, 'platform-publish adapter'),
+    extractQoo10ShippingTable(priceEngine, 'V2 price engine'),
+    'platform-publish must keep the Qoo10 JPY shipping brackets aligned with v2/price-engine.js'
+  );
+
+  const priceEngineRounding = extractFunctionBody(priceEngine, 'normalizeQoo10PriceEnding90', 'V2 price engine');
+  assert.equal(
+    extractFunctionBody(adapter, 'normalizeQoo10PriceEnding90', 'platform-publish adapter'),
+    priceEngineRounding,
+    'platform-publish must keep Qoo10 90-ending rounding aligned with v2/price-engine.js'
+  );
+  assert.equal(
+    extractFunctionBody(bridge, 'normalizeQoo10PriceEnding90', 'qoo10-bridge'),
+    priceEngineRounding,
+    'qoo10-bridge must keep Qoo10 90-ending rounding aligned with v2/price-engine.js'
+  );
 });

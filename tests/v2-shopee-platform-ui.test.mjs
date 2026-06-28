@@ -116,6 +116,15 @@ test('non-Shopee platform tabs use platform-specific operational queue columns',
   assert.match(platformRows, /platformQueueOptionRows\(group, platform, key\)/, 'expanded option products should render child rows in the same queue shape');
 });
 
+test('all platform table headers expose a visible-row select-all checkbox', () => {
+  assert.match(tableHead, /platformVisibleSelectionState\(platform\)/, 'table header should derive select-all state from visible platform rows');
+  assert.match(tableHead, /data-platform-check-all/, 'platform table headers should include the select-all checkbox');
+  assert.match(tableHead, /data-platform-indeterminate/, 'select-all checkbox should carry mixed-state metadata');
+  assert.match(tableHead, /aria-checked="\$\{selectAllState\.ariaChecked\}"/, 'select-all checkbox should expose mixed state to assistive tech');
+  assert.match(platformBinding, /data-platform-check-all[\s\S]*checkAll\.indeterminate = checkAll\.dataset\.platformIndeterminate === '1'/, 'binding should apply the DOM-only indeterminate state');
+  assert.match(platformBinding, /data-platform-check-all[\s\S]*platformVisibleGroups\(platform\)\.forEach\(\(group\) => \{[\s\S]*if \(checkAll\.checked\) sel\.add\(key\);[\s\S]*else sel\.delete\(key\);/, 'select-all should select or clear the currently visible platform rows');
+});
+
 test('platform-specific copy removes unnecessary marketplace setup details from tab surface', () => {
   assert.match(html, /const PLATFORM_QUEUE_COPY = Object\.freeze/, 'platform queue copy should be centralized');
   assert.match(html, /Qoo10은 JPY 가격, 재고, 등록\/보정 상태만 표시합니다\./, 'Qoo10 tab should focus on registration and price management');

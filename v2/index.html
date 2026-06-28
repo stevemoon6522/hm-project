@@ -795,6 +795,15 @@
     .platform-table td {
       overflow-wrap: anywhere;
     }
+    .platform-select-all {
+      width: auto;
+      margin: 0;
+      cursor: pointer;
+    }
+    .platform-select-all:disabled {
+      cursor: not-allowed;
+      opacity: 0.45;
+    }
     .platform-table-shopee {
       min-width: 1374px;
     }
@@ -8871,12 +8880,31 @@ LEGACY END -->
     }).join('');
   }
 
+  function platformVisibleSelectionState(platform) {
+    const selected = platformSelection(platform);
+    const visibleKeys = platformVisibleGroups(platform).map(platformGroupKey).filter(Boolean);
+    const selectedVisibleCount = visibleKeys.reduce((count, key) => count + (selected.has(key) ? 1 : 0), 0);
+    const allChecked = visibleKeys.length > 0 && selectedVisibleCount === visibleKeys.length;
+    const indeterminate = selectedVisibleCount > 0 && selectedVisibleCount < visibleKeys.length;
+    return {
+      visibleCount: visibleKeys.length,
+      selectedVisibleCount,
+      checkedAttr: allChecked ? ' checked' : '',
+      disabledAttr: visibleKeys.length ? '' : ' disabled',
+      indeterminateAttr: indeterminate ? '1' : '0',
+      ariaChecked: indeterminate ? 'mixed' : (allChecked ? 'true' : 'false'),
+    };
+  }
+
   function platformTableHeadHtml(platform) {
+    const selectAllState = platformVisibleSelectionState(platform);
+    const selectAllLabel = `${PLATFORM_LABELS[platform] || platform} visible rows`;
+    const selectAll = `<input type="checkbox" class="platform-select-all" data-platform-check-all data-platform-indeterminate="${selectAllState.indeterminateAttr}" aria-label="${text(selectAllLabel)} select all" aria-checked="${selectAllState.ariaChecked}" title="${text(selectAllLabel)} select all"${selectAllState.checkedAttr}${selectAllState.disabledAttr}>`;
     if (platform === 'shopee') {
       return `
         <thead>
           <tr>
-            <th style="width:34px;"></th>
+            <th style="width:34px;">${selectAll}</th>
             <th style="width:470px;">Product</th>
             <th style="width:150px;">Shopee Status</th>
             <th style="width:300px;">Regions</th>
@@ -8889,7 +8917,7 @@ LEGACY END -->
     return `
       <thead>
         <tr>
-          <th style="width:34px;"></th>
+          <th style="width:34px;">${selectAll}</th>
           <th style="width:410px;">Product</th>
           <th style="width:140px;">등록 상태</th>
           <th style="width:170px;">가격/재고</th>
@@ -9064,6 +9092,21 @@ LEGACY END -->
         renderPlatformWorkbench(platform);
       });
     });
+    const checkAll = root.querySelector('[data-platform-check-all]');
+    if (checkAll) {
+      checkAll.indeterminate = checkAll.dataset.platformIndeterminate === '1';
+      checkAll.addEventListener('change', () => {
+        const sel = platformSelection(platform);
+        platformMarkSelectionManual(platform);
+        platformVisibleGroups(platform).forEach((group) => {
+          const key = platformGroupKey(group);
+          if (checkAll.checked) sel.add(key);
+          else sel.delete(key);
+        });
+        if (!sel.size && state.platformPreview?.platform === platform) state.platformPreview = null;
+        renderPlatformWorkbench(platform);
+      });
+    }
     root.querySelector('[data-platform-select-visible]')?.addEventListener('click', () => {
       const sel = platformSelection(platform);
       platformMarkSelectionManual(platform);

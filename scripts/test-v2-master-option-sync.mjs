@@ -286,6 +286,7 @@ const renderProductGroup = new Function(
   'plNumberRange',
   'plIsGroupedVariant',
   'plOptionDisplay',
+  'plGroupRowsById',
   'stripNonMarketplaceText',
   `${optionHelpers}\n${productListRenderBlock}\nreturn renderProductGroup;`,
 )(
@@ -297,6 +298,7 @@ const renderProductGroup = new Function(
   (rows, field) => rows.map((row) => Number(row[field] || 0)).join('-'),
   (row) => !!row.product_group_id,
   (row) => (Array.isArray(row.variation_option_names) && row.variation_option_names.length ? row.variation_option_names.join(' / ') : String(row.option_name || '').trim()),
+  () => [],
   (value) => String(value || '').replace(/[^\x20-\x7E]/g, '').trim(),
 );
 const productListHtml = renderProductGroup({

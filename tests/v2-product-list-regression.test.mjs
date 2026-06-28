@@ -81,7 +81,7 @@ test('platform tab buttons keep selection and route registration through the pro
   assert.match(html, /data-platform-sync[\s\S]*>\$\{text\(label\)\} SKU 매핑<\/button>/, 'platform tabs should label remote SKU matching as platform-specific SKU mapping');
   assert.match(platformBinding, /data-platform-preview[\s\S]*platformOpenAction\(platform, btn\.dataset\.platformPreview \|\| 'register'\)/, 'bulk preview buttons must route through the platform action handler');
   assert.match(platformBinding, /platform-master-check[\s\S]*sel\.add\(key\)[\s\S]*renderPlatformWorkbench\(platform\)/, 'row selection must enable preview actions after rerender');
-  assert.match(platformPreviewExecution, /return false;/, 'platform tabs must not bypass registration modals through direct dispatcher execution');
+  assert.match(platformPreviewExecution, /return platform === 'shopify' && action === 'register';/, 'only Shopify active registration should bypass existing registration modals through direct dispatcher execution');
   assert.match(platformPreviewExecution, /platformOpenExistingModal\(platform, group\)/, 'preview execution must open the existing platform registration modal');
   assert.match(html, /const registerActionLabel = actionTargetCount === 1 \? '등록' : '선택 등록 확인'/, 'single platform registration should be labeled as direct registration, not preview');
   assert.doesNotMatch(html, /data-platform-(?:quick|preview)="retry"/, 'platform tabs should not expose a duplicate retry button that opens the same registration flow');
@@ -103,7 +103,9 @@ test('single selected platform register uses direct modal while multi-selected s
     'PLATFORM_LABELS',
     'showToast',
     'renderPlatformWorkbench',
-    `${extractFunctionBlock(html, 'platformOpenAction')}; return platformOpenAction;`,
+    `${extractFunctionBlock(html, 'platformCanUseDispatcher')}
+     ${extractFunctionBlock(html, 'platformOpenAction')};
+     return platformOpenAction;`,
   );
   const labels = { shopee: 'Shopee', joom: 'Joom', qoo10: 'Qoo10', ebay: 'eBay' };
 

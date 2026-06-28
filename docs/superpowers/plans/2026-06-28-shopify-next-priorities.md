@@ -41,11 +41,13 @@ node scripts\test-v2-qa-stabilization.mjs
   - `C:\dev\api-refs\marketplaces\shopify\carrier-service-query.graphql.html`
 - Modify/create Edge and API files after Task 1 passes.
 
-- [ ] Check shop eligibility for CarrierService / carrier-calculated shipping before coding.
-- [ ] Write failing tests for callback request parsing and rate response shape.
-- [ ] Implement a Shopify rate callback that calculates shipping from item grams.
-- [ ] Register or document the CarrierService setup path.
-- [ ] Verify with dry-run callback payloads and Shopify health checks.
+- [x] Check shop eligibility for CarrierService / carrier-calculated shipping before coding.
+- [x] Write failing tests for callback request parsing and rate response shape.
+- [x] Implement a Shopify rate callback that calculates shipping from item grams.
+- [x] Register or document the CarrierService setup path.
+- [x] Verify with dry-run callback payloads and Shopify health checks.
+
+Result: see `C:\dev\shopee-dashboard\.climpire-worktrees\codex-shopify-product-registration\docs\superpowers\plans\2026-06-28-shopify-shipping-rates-results.md`. Actual `carrierServiceCreate` is intentionally blocked until the shop reauthorizes with `write_shipping`; the deployed endpoint returns `shopify_write_shipping_scope_missing` for the current `write_products`-only token.
 
 ### Task 3: Move Shopify Price Policy to DB/UI
 

@@ -21,5 +21,9 @@
 // listing_status: mapShopifyListingStatus(product)
 // scopeSet.has('write_products')
 // missing_scopes
+// write_shipping
+// SHOPIFY_CARRIER_CALLBACK_URL
+// carrierServiceCreate
+// shopify_write_shipping_scope_missing
 
 import '../../supabase/functions/shopify-bridge/index.ts';

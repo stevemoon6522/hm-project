@@ -17,7 +17,8 @@ const SHOPIFY_API_VERSION = (Deno as any).env.get('SHOPIFY_API_VERSION') || '202
 const SHOPIFY_CLIENT_ID = (Deno as any).env.get('SHOPIFY_CLIENT_ID') || '';
 const SHOPIFY_CLIENT_SECRET = (Deno as any).env.get('SHOPIFY_CLIENT_SECRET') || '';
 const SHOPIFY_REDIRECT_URI = (Deno as any).env.get('SHOPIFY_REDIRECT_URI') || '';
-const SHOPIFY_SCOPES = ((Deno as any).env.get('SHOPIFY_SCOPES') || 'read_products,write_products').split(',').map((s: string) => s.trim()).filter(Boolean).join(',');
+const SHOPIFY_SCOPES = ((Deno as any).env.get('SHOPIFY_SCOPES') || 'read_products,write_products,write_shipping').split(',').map((s: string) => s.trim()).filter(Boolean).join(',');
+const SHOPIFY_CARRIER_CALLBACK_URL = (Deno as any).env.get('SHOPIFY_CARRIER_CALLBACK_URL') || 'https://shopee-dashboard-kohl.vercel.app/api/shopify-shipping-rates';
 const PLATFORM_BRIDGE_INTERNAL_TOKEN = (Deno as any).env.get('PLATFORM_BRIDGE_INTERNAL_TOKEN') || '';
 
 const SUPABASE_URL = (Deno as any).env.get('SUPABASE_URL') || '';
@@ -148,6 +149,11 @@ function shopifyProductStatus(value: unknown): string {
   const status = norm(value).toUpperCase();
   if (['ACTIVE', 'DRAFT', 'ARCHIVED'].includes(status)) return status;
   return 'ACTIVE';
+}
+
+function shopScopeSet(shop: any): Set<string> {
+  const scopes = Array.isArray(shop?.scopes) ? shop.scopes : norm(shop?.scopes).split(',');
+  return new Set(scopes.map((scope: unknown) => norm(scope)).filter(Boolean));
 }
 
 async function configuredShop(shopDomain = '') {
@@ -331,7 +337,7 @@ async function handleOAuthCallback(req: Request): Promise<Response> {
     default_location_gid: defaults.default_location_gid,
     default_publication_gid: defaults.default_publication_gid,
     product_auth_verified: productAuthVerified,
-    missing_scopes: ['write_products', 'read_products'].filter((scope) => !scopeSet.has(scope)),
+    missing_scopes: ['write_products', 'read_products', 'write_shipping'].filter((scope) => !scopeSet.has(scope)),
   });
 }
 
@@ -351,7 +357,74 @@ async function handleShop(req: Request): Promise<Response> {
       currency: shop.currency,
       status: shop.status,
       auth_verified: shop.auth_verified,
+      shipping_auth_verified: shopScopeSet(shop).has('write_shipping'),
+      carrier_callback_url: SHOPIFY_CARRIER_CALLBACK_URL,
     },
+  });
+}
+
+async function handleCarrierService(req: Request): Promise<Response> {
+  const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+  if (denied) return denied;
+  const body = await req.json().catch(() => ({}));
+  const shopDomain = normalizeShopDomain(body?.shop_domain);
+  const shop = await configuredShop(shopDomain);
+  const scopes = shopScopeSet(shop);
+  if (!scopes.has('write_shipping')) {
+    return jsonResp({
+      ok: false,
+      error: 'shopify_write_shipping_scope_missing',
+      missing_scopes: ['write_shipping'],
+      current_scopes: [...scopes],
+      reauth_required: true,
+    }, 409);
+  }
+
+  const callbackUrl = norm(body?.callbackUrl || body?.callback_url || SHOPIFY_CARRIER_CALLBACK_URL);
+  if (!/^https:\/\//i.test(callbackUrl)) {
+    return jsonResp({ ok: false, error: 'shopify_carrier_callback_url_required' }, 400);
+  }
+
+  const input = {
+    name: norm(body?.name || 'starphotocard weight-based shipping'),
+    callbackUrl,
+    supportsServiceDiscovery: body?.supportsServiceDiscovery !== false && body?.supports_service_discovery !== false,
+    active: body?.active !== false,
+  };
+
+  if (body?.dry_run !== false) {
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      shop_domain: shop.shop_domain,
+      required_scopes: ['write_shipping'],
+      input,
+    });
+  }
+
+  const query = `
+    mutation ShopifyBridgeCarrierServiceCreate($input: DeliveryCarrierServiceCreateInput!) {
+      carrierServiceCreate(input: $input) {
+        carrierService {
+          id
+          name
+          callbackUrl
+          active
+          supportsServiceDiscovery
+        }
+        userErrors { field message }
+      }
+    }
+  `;
+  const { status, raw } = await shopifyGraphql(shop, query, { input });
+  if (status < 200 || status >= 300 || raw?.errors?.length || graphUserErrors(raw, 'carrierServiceCreate').length) {
+    return jsonResp({ ok: false, error: graphErrorMessage(raw, 'carrierServiceCreate'), raw }, status || 502);
+  }
+  return jsonResp({
+    ok: true,
+    shop_domain: shop.shop_domain,
+    carrier_service: raw?.data?.carrierServiceCreate?.carrierService || null,
+    raw,
   });
 }
 
@@ -594,6 +667,7 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === 'oauth-url' && req.method === 'GET') return await handleOAuthUrl(req);
     if (action === 'oauth-callback' && (req.method === 'GET' || req.method === 'POST')) return await handleOAuthCallback(req);
     if (action === 'shop' && req.method === 'GET') return await handleShop(req);
+    if ((action === 'carrier-service' || action === 'shipping-carrier-service') && req.method === 'POST') return await handleCarrierService(req);
     if (action === 'create-product' && req.method === 'POST') return await handleCreateProduct(req);
     if (action === 'lookup-sku' && req.method === 'GET') return await handleLookupSku(req);
     if (action === 'internal-check' && req.method === 'GET') {

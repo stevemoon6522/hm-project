@@ -19525,6 +19525,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   function mrQoo10BasePriceFromRows(rows) {
     const settings = mrQoo10CountrySettings();
     const prices = (rows || []).map((row) => calculateQoo10Price({
+      sourcingKrw: Number(row.sourcing_price || 0),
       costKrw: Number(row.cost_krw || 0),
       weightG: Number(row.weight_g || 0),
       countrySettings: settings,
@@ -19923,6 +19924,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const settings = mrQoo10CountrySettings();
     return (rows || []).map((row, idx) => {
       const calc = calculateQoo10Price({
+        sourcingKrw: Number(row.sourcing_price || 0),
         costKrw: Number(row.cost_krw || 0),
         weightG: Number(row.weight_g || 0),
         countrySettings: settings,
@@ -23832,8 +23834,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   /** Compute the Qoo10 JPY base price using the Q10 country_settings row. */
-  function catComputeQoo10Price(costKrw, weightG) {
+  function catComputeQoo10Price(product, costKrw, weightG) {
     const calc = calculateQoo10Price({
+      sourcingKrw: catEffectiveSourcing(product),
       costKrw,
       weightG,
       countrySettings: catCountrySettings('Q10'),
@@ -23864,6 +23867,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const pid = String(product.id);
     if (pid in pendingCostEdits) return pendingCostEdits[pid];
     return Number(product.cost_krw || 0);
+  }
+
+  /** Effective sourcing price for Qoo10 margin: pending edits override or DB value */
+  function catEffectiveSourcing(product) {
+    if (!product) return 0;
+    const pid = String(product.id);
+    if (pid in pendingSourcingEdits) return pendingSourcingEdits[pid];
+    return Number(product.sourcing_price || 0);
   }
 
   /** Effective weight for a product row: pendingWeightEdits override or DB value */
@@ -24312,7 +24323,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
     if (key === 'qoo10') {
       const currentPrice = product && product.qoo10_last_synced_price != null ? Number(product.qoo10_last_synced_price) : null;
-      const newPrice = catComputeQoo10Price(cost, weight);
+      const newPrice = catComputeQoo10Price(product, cost, weight);
       const status = product && product.qoo10_last_synced_at
         ? 'synced'
         : (product && product.qoo10_category_id ? 'lookup' : '미매핑');
@@ -24702,7 +24713,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   function catBuildQoo10Cells(product, effectiveCost) {
     const currentPrice = product && product.qoo10_last_synced_price != null
       ? Number(product.qoo10_last_synced_price) : null;
-    const newPrice = catComputeQoo10Price(effectiveCost, catEffectiveWeight(product));
+    const newPrice = catComputeQoo10Price(product, effectiveCost, catEffectiveWeight(product));
     let maxDeltaPct = 0;
     let deltaClass = 'cat-price-same';
     let deltaLabel = '';
@@ -25067,7 +25078,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let maxDeltaPct = 0;
     rows.forEach(function(p) {
       const current = p.qoo10_last_synced_price != null ? Number(p.qoo10_last_synced_price) : null;
-      const next = catComputeQoo10Price(catEffectiveCost(p), catEffectiveWeight(p));
+      const next = catComputeQoo10Price(p, catEffectiveCost(p), catEffectiveWeight(p));
       if (current != null && Number.isFinite(current)) currentPrices.push(current);
       if (next != null && Number.isFinite(next)) newPrices.push(next);
       if (current != null && current > 0 && next != null) {
@@ -27667,6 +27678,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
         const newCost = catEffectiveCost(product);
         const calc = calculateQoo10Price({
+          sourcingKrw: catEffectiveSourcing(product),
           costKrw: newCost,
           weightG: catEffectiveWeight(product),
           countrySettings: qoo10Settings,

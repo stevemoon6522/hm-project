@@ -117,18 +117,28 @@ const qoo10 = calculateQoo10Price({
   costKrw: 10000,
   countrySettings: DEFAULT_COUNTRY_SETTINGS.Q10,
 });
-assert(qoo10.ok && qoo10.qoo10Price === 1290, 'Qoo10 price must use exchange 9.1, total fee 14%, and end in 90');
+assert(qoo10.ok && qoo10.qoo10Price === 1490, 'Qoo10 price must use exchange 9.1, total fee 14%, target 10% sales-margin, and end in 90');
 assertNear(qoo10.totalFeePct, 14, 0.000001, 'Qoo10 total fee must combine category, preorder, and Megawari fees');
+assertNear(qoo10.targetMarginPct, 10, 0.000001, 'Qoo10 target margin must default to 10% of sale price');
 assert(normalizeQoo10PriceEnding90(2288) === 2290, 'Qoo10 price 2288 must normalize to 2290');
 assert(normalizeQoo10PriceEnding90(2290) === 2290, 'Qoo10 price already ending in 90 must stay unchanged');
 assert(normalizeQoo10PriceEnding90(2291) === 2390, 'Qoo10 price above a 90 ending must move to the next 90 ending');
+
+const qoo10NotMyNameAverage = calculateQoo10Price({
+  costKrw: 20695,
+  sourcingKrw: 15919,
+  weightG: 380,
+  countrySettings: DEFAULT_COUNTRY_SETTINGS.Q10,
+});
+assert(qoo10NotMyNameAverage.ok && qoo10NotMyNameAverage.qoo10Price === 3090, 'Qoo10 price must use sourcing_price first so NOT MY NAME aligns to the 3,090 JPY peer average');
+assertNear(qoo10NotMyNameAverage.shippingFeeJpy, 590, 0.000001, 'Qoo10 NOT MY NAME 380g shipping fee must use the 500g bracket');
 
 const qoo10WithShipping = calculateQoo10Price({
   costKrw: 10000,
   weightG: 100,
   countrySettings: DEFAULT_COUNTRY_SETTINGS.Q10,
 });
-assert(qoo10WithShipping.ok && qoo10WithShipping.qoo10Price === 1890, 'Qoo10 price must include the inclusive 100g shipping fee and end in 90');
+assert(qoo10WithShipping.ok && qoo10WithShipping.qoo10Price === 2090, 'Qoo10 price must include shipping, 10% sales-margin, and end in 90');
 assertNear(qoo10WithShipping.shippingFeeJpy, 450, 0.000001, 'Qoo10 100g shipping fee must be 450 JPY');
 assertNear(getQoo10ShippingFeeJpy(100), 450, 0.000001, 'Qoo10 shipping 0-100g must be 450 JPY');
 assertNear(getQoo10ShippingFeeJpy(101), 525, 0.000001, 'Qoo10 shipping over 100g must move to 250g bracket');
@@ -147,8 +157,9 @@ assert(!v2.includes("bridgeUrl: SHOPEE_BRIDGE + '/update_global_price'"), 'V2 pr
 assert(v2.includes('shop_item_id,shop_model_id,global_item_id,global_model_id,status,published_at,last_synced_price'), 'V2 listings fetch must carry Global Product ids so price sync can hydrate shop mappings');
 assert(v2.includes("countrySettings: catCountrySettings('JM')"), 'V2 Joom price preview must use JM country_settings fee row');
 assert(v2.includes("countrySettings: catCountrySettings('Q10')"), 'V2 Qoo10 price preview must use Q10 country_settings fee row');
+assert(v2.includes('sourcingKrw: Number(row.sourcing_price || 0)'), 'V2 Qoo10 modal prices must pass product sourcing_price into the Qoo10 margin model');
 assert(v2.includes('weightG: Number(row.weight_g || 0)'), 'V2 Qoo10 modal prices must pass product weight into the Qoo10 shipping table');
-assert(v2.includes('const newPrice = catComputeQoo10Price(effectiveCost, catEffectiveWeight(product));'), 'V2 Qoo10 price preview must honor inline product weight edits');
+assert(v2.includes('const newPrice = catComputeQoo10Price(product, effectiveCost, catEffectiveWeight(product));'), 'V2 Qoo10 price preview must honor inline sourcing/cost/weight edits');
 assert(v2.includes("const joomSettings = catCountrySettings('JM')"), 'V2 Joom bulk sync must load JM country_settings fee row');
 assert(v2.includes("JOOM_BRIDGE + '/lookup-sku?sku='"), 'V2 Joom sync must resolve SKU before update-price');
 assert(v2.includes("JOOM_BRIDGE + '/update-price'"), 'V2 Joom sync must call update-price');

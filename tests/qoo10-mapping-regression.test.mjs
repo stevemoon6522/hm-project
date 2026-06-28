@@ -164,7 +164,7 @@ test('Qoo10 V2 modal defaults match lifecycle-aware listing policy', () => {
   assert.match(html, /mrQoo10LoadExistingItemCode/, 'Qoo10 modal should detect existing item codes before deciding create vs repair');
   assert.match(html, /mrQoo10RepairExistingListing/, 'Qoo10 modal should repair existing items instead of duplicate-registering them');
   assert.match(html, /mrQoo10LoadCountrySettings/, 'Qoo10 modal should load the Q10 fee settings row before rendering prices');
-  assert.match(html, /calculateQoo10Price\(\{\s*costKrw: Number\(row\.cost_krw \|\| 0\),\s*weightG: Number\(row\.weight_g \|\| 0\),\s*countrySettings: settings,\s*\}\)/, 'Qoo10 modal option prices should use the shared Qoo10 price engine with shipping weight');
+  assert.match(html, /calculateQoo10Price\(\{\s*sourcingKrw: Number\(row\.sourcing_price \|\| 0\),\s*costKrw: Number\(row\.cost_krw \|\| 0\),\s*weightG: Number\(row\.weight_g \|\| 0\),\s*countrySettings: settings,\s*\}\)/, 'Qoo10 modal option prices should use sourcing_price and the shared Qoo10 price engine with shipping weight');
   assert.doesNotMatch(html, /Math\.round\(Number\(row\.cost_krw \|\| 0\) \/ 10\)/, 'Qoo10 modal must not fall back to the old cost/10 pricing stub');
   assert.match(html, /\/update-goods/, 'Qoo10 existing repair should update BrandNo, origin, and release-date fields');
   assert.match(html, /\/edit-contents/, 'Qoo10 existing repair should update detail contents');
@@ -179,6 +179,10 @@ test('Qoo10 registration prices are normalized to 90-ending JPY values', () => {
 });
 
 test('Qoo10 duplicated pricing policy stays aligned with the shared price engine', () => {
+  assert.match(priceEngine, /QOO10_TARGET_MARGIN_PCT = 10/, 'V2 price engine must target 10% Qoo10 margin on sale price');
+  assert.match(adapter, /QOO10_TARGET_MARGIN_PCT = 10/, 'platform-publish must target the same 10% Qoo10 sale-price margin');
+  assert.match(adapter, /row\.sourcing_price \|\| row\.cost_krw/, 'platform-publish Qoo10 pricing must prefer sourcing_price before cost_krw');
+
   assert.deepEqual(
     extractQoo10ShippingTable(adapter, 'platform-publish adapter'),
     extractQoo10ShippingTable(priceEngine, 'V2 price engine'),

@@ -13,6 +13,7 @@ const QOO10_BRIDGE_URL = (Deno as any).env.get('QOO10_BRIDGE_URL') || (SUPABASE_
 const QOO10_GOODS_CATEGORY_ID = '300002855';
 const QOO10_DEFAULT_SHIPPING_NO = '715009';
 const QOO10_SHOP_LAYER_VERSION = 'qoo10-shop-layer-v1';
+const QOO10_TARGET_MARGIN_PCT = 10;
 const QOO10_SHIPPING_FEE_TABLE_JPY = Object.freeze([
   { maxWeightG: 100, feeJpy: 450 },
   { maxWeightG: 250, feeJpy: 525 },
@@ -82,7 +83,7 @@ async function qoo10CountrySettings(): Promise<Record<string, any>> {
 }
 
 function qoo10PriceFromCost(row: Record<string, any>, settings: Record<string, any>): number {
-  const cost = Number(row.cost_krw || 0);
+  const cost = Number(row.sourcing_price || row.cost_krw || 0);
   const exchangeRate = Number(settings.exchange_rate || 9.1);
   if (!cost || cost <= 0 || !exchangeRate || exchangeRate <= 0) return 0;
   const totalFeePct = Number(settings.pg_fee || 0)
@@ -90,7 +91,7 @@ function qoo10PriceFromCost(row: Record<string, any>, settings: Record<string, a
     + Number(settings.fsp_fee || 0)
     + Number(settings.other_fee || 0)
     + Number(settings.fsp_ccb || 0);
-  const denom = 1 - (totalFeePct / 100);
+  const denom = 1 - ((totalFeePct + QOO10_TARGET_MARGIN_PCT) / 100);
   if (denom <= 0) return 0;
   const effectiveCost = cost * (1 - (Number(settings.purchase_vat || 0) / 100));
   const raw = ((effectiveCost / exchangeRate) + qoo10ShippingFeeJpy(row.weight_g) + Number(settings.fixed_service_fee || 0)) / denom;

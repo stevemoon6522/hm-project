@@ -37,6 +37,8 @@ export const QOO10_SHIPPING_FEE_TABLE_JPY = Object.freeze([
   { maxWeightG: 2000, feeJpy: 910 },
 ]);
 
+export const QOO10_TARGET_MARGIN_PCT = 10;
+
 export function getQoo10ShippingFeeJpy(weightG) {
   const grams = Number(weightG || 0);
   if (!Number.isFinite(grams) || grams <= 0) return 0;
@@ -285,24 +287,28 @@ export function calculateEbayPrice({ costKrw, weightG, countrySettings } = {}) {
 
 /**
  * Compute Qoo10 JP item base price in JPY.
- * Qoo10 fees are modeled as category 11% + PRE ORDER 2% + Megawari 1%.
+ * Qoo10 fees are modeled as category 11% + PRE ORDER 2% + Megawari 1%,
+ * plus a target 10% margin on sale price.
  */
-export function calculateQoo10Price({ costKrw, weightG, countrySettings } = {}) {
-  const cost = Number(costKrw || 0);
+export function calculateQoo10Price({ costKrw, sourcingKrw, weightG, countrySettings } = {}) {
+  const sourcingCost = Number(sourcingKrw || 0);
+  const settlementCost = Number(costKrw || 0);
+  const cost = sourcingCost > 0 ? sourcingCost : settlementCost;
   const c = normalizeCountrySettings(countrySettings || DEFAULT_COUNTRY_SETTINGS.Q10, 'Q10');
   const totalFeePct = (c.pgFee || 0) + (c.salesFee || 0) + (c.fspFee || 0) + (c.otherFee || 0) + (c.fspCcb || 0);
+  const targetMarginPct = QOO10_TARGET_MARGIN_PCT;
   const shippingFeeJpy = getQoo10ShippingFeeJpy(weightG);
   if (!cost || cost <= 0 || !c.exchangeRate || c.exchangeRate <= 0) {
-    return { ok: false, qoo10Price: 2990, totalFeePct, shippingFeeJpy };
+    return { ok: false, qoo10Price: 2990, totalFeePct, targetMarginPct, shippingFeeJpy };
   }
-  const denom = 1 - (totalFeePct / 100);
+  const denom = 1 - ((totalFeePct + targetMarginPct) / 100);
   if (denom <= 0) {
-    return { ok: false, qoo10Price: 2990, totalFeePct, shippingFeeJpy };
+    return { ok: false, qoo10Price: 2990, totalFeePct, targetMarginPct, shippingFeeJpy };
   }
   const effectiveCost = cost * (1 - (c.purchaseVat || 0) / 100);
   const raw = ((effectiveCost / c.exchangeRate) + shippingFeeJpy + (c.fixedServiceFee || 0)) / denom;
   const qoo10Price = normalizeQoo10PriceEnding90(raw);
-  return { ok: Number.isFinite(qoo10Price) && qoo10Price > 0, qoo10Price, totalFeePct, shippingFeeJpy };
+  return { ok: Number.isFinite(qoo10Price) && qoo10Price > 0, qoo10Price, totalFeePct, targetMarginPct, shippingFeeJpy };
 }
 
 export function formatPriceForRegion(region, value) {

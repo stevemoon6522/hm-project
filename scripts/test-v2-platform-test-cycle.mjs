@@ -88,6 +88,12 @@ for (const token of [
 for (const token of [
   'ensure-product',
   'async function ensureProduct',
+  'DIAGNOSIS_PACKS',
+  'shopee-registration',
+  'price-sync',
+  'joom-registration',
+  'local_api_docs',
+  'regression_commands',
   'ebay-register',
   'function uniqueEbayTestSku',
   'function ebayCycle',
@@ -158,6 +164,14 @@ for (const token of ['qoo10-cycle --live', '10009-SetNewGoods.md', '10013-EditGo
 
 for (const token of ['shopee-cycle --live', 'v2.global_product.add_global_item.json', 'v2.global_product.create_publish_task.json', 'v2.global_product.get_publish_task_result.json']) {
   assert(docs.includes(token), `test cycle docs must describe Shopee disposable cycle token: ${token}`);
+}
+
+for (const token of [
+  'inspect --pack shopee-registration',
+  'inspect --pack price-sync',
+  'inspect --pack joom-registration',
+]) {
+  assert(docs.includes(token), `test cycle docs must describe diagnosis pack token: ${token}`);
 }
 
 console.log('v2 platform test cycle static checks passed');

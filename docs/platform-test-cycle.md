@@ -12,6 +12,9 @@ The CLI defaults to read-only inspection or dry-run behavior.
 ```powershell
 node scripts/platform-test-cycle.mjs ensure-product
 node scripts/platform-test-cycle.mjs inspect
+node scripts/platform-test-cycle.mjs inspect --pack shopee-registration
+node scripts/platform-test-cycle.mjs inspect --pack price-sync
+node scripts/platform-test-cycle.mjs inspect --pack joom-registration
 node scripts/platform-test-cycle.mjs ebay-policy
 node scripts/platform-test-cycle.mjs dry-run-all
 node scripts/platform-test-cycle.mjs ebay-register
@@ -23,6 +26,12 @@ node scripts/platform-test-cycle.mjs qoo10-cycle
 node scripts/platform-test-cycle.mjs shopee-register
 node scripts/platform-test-cycle.mjs shopee-cycle
 ```
+
+`inspect --pack <name>` adds an operational diagnosis checklist to the normal read-only product/mapping inspection. Current packs:
+
+- `shopee-registration`: compare registration payloads, SKU/model mapping, publish region, images, brand/category/attributes, price, stock, DTS, and bridge stage logs.
+- `price-sync`: compare dry-run diff, target model/listing IDs, last known good local price, live marketplace result, and rollback data.
+- `joom-registration`: compare brand/category, detail images, SKU, price, stock, weight, request payload, and response body.
 
 Live cleanup or policy repair calls require `PLATFORM_BRIDGE_INTERNAL_TOKEN` in the environment.
 

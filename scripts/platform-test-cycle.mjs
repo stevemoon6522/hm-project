@@ -19,6 +19,69 @@ const CONFIRM = {
 const DEFAULT_TEST_IMAGE = 'https://staronemall2.wisacdn.com/_data/product/c24/m9980/5f89fa5684d4141047298b2acfe4aac6.png';
 const DEFAULT_TEST_DETAIL_IMAGE = 'https://staronemall2.wisacdn.com/_data/attach/c24/m19/dae3838cec72eb5fa6ebcb933edc951a.jpg';
 
+const DIAGNOSIS_PACKS = {
+  'shopee-registration': {
+    purpose: 'Diagnose Shopee Global Product registration and regional publish failures.',
+    compare_order: [
+      'failed/success payload',
+      'variant SKU to Shopee model mapping',
+      'publish region and publishable shop state',
+      'product image IDs and region image IDs',
+      'brand, category, mandatory attributes, stock, price, and DTS',
+      'shopee-bridge or platform-publish stage log',
+    ],
+    local_api_docs: [
+      'C:\\dev\\api-refs\\marketplaces\\shopee\\docs_ai\\apis\\global_product\\v2.global_product.add_global_item.json',
+      'C:\\dev\\api-refs\\marketplaces\\shopee\\docs_ai\\apis\\global_product\\v2.global_product.add_global_model.json',
+      'C:\\dev\\api-refs\\marketplaces\\shopee\\docs_ai\\apis\\global_product\\v2.global_product.create_publish_task.json',
+      'C:\\dev\\api-refs\\marketplaces\\shopee\\docs_ai\\apis\\global_product\\v2.global_product.get_publish_task_result.json',
+    ],
+    regression_commands: [
+      'node scripts/test-v2-shopee-registration-hardening.mjs',
+      'node scripts/test-v2-shopee-registration-platform-mapping.mjs',
+      'node scripts/test-v2-platform-test-cycle.mjs',
+    ],
+  },
+  'price-sync': {
+    purpose: 'Diagnose partial marketplace price sync failures.',
+    compare_order: [
+      'dry-run diff',
+      'target platform listing and model IDs',
+      'last known good local price snapshot',
+      'live marketplace result when a write was intended',
+      'rollback payload or prior marketplace value',
+    ],
+    local_api_docs: [
+      'C:\\dev\\api-refs\\marketplaces\\shopee\\docs_ai\\apis\\global_product\\v2.global_product.get_global_item_info.json',
+      'C:\\dev\\api-refs\\marketplaces\\joom\\openapi.yaml',
+      'C:\\dev\\api-refs\\marketplaces\\ebay\\sell\\inventory.yaml',
+    ],
+    regression_commands: [
+      'node scripts/test-v2-price-snapshot-dry-run-ui.mjs',
+      'node scripts/test-v2-price-sync-v1-parity.mjs',
+      'node scripts/test-v2-shopee-bulk-price-stability.mjs',
+    ],
+  },
+  'joom-registration': {
+    purpose: 'Diagnose Joom product registration failures.',
+    compare_order: [
+      'brand and category',
+      'detail image URLs and upload result',
+      'variant SKU, price, stock, and weight',
+      'Joom bridge request payload',
+      'Joom response body',
+    ],
+    local_api_docs: [
+      'C:\\dev\\api-refs\\marketplaces\\joom\\openapi.yaml',
+    ],
+    regression_commands: [
+      'node scripts/test-v2-joom-register-images-sku.mjs',
+      'node scripts/test-v2-joom-registration-platform-mapping.mjs',
+      'node scripts/test-joom-detail-resource-limit-regression.mjs',
+    ],
+  },
+};
+
 function readJson(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
@@ -274,10 +337,19 @@ async function inspect(env, target, args, serviceKey) {
     loadShopeeRows(env, product.id),
     loadPlatformListings(env, product.id, serviceKey),
   ]);
+  const packName = args.pack ? String(args.pack) : '';
+  if (packName && !DIAGNOSIS_PACKS[packName]) {
+    throw new Error(`Unknown diagnosis pack '${packName}'. Use ${Object.keys(DIAGNOSIS_PACKS).join(', ')}.`);
+  }
   return {
     ok: true,
     target,
     product,
+    diagnosis_pack: packName ? {
+      name: packName,
+      ...DIAGNOSIS_PACKS[packName],
+    } : undefined,
+    available_diagnosis_packs: Object.keys(DIAGNOSIS_PACKS),
     mappings: {
       ebay: {
         sku: product.ebay_sku || product.sku,
@@ -853,7 +925,7 @@ async function run() {
   };
 
   if (!commands[command]) {
-    throw new Error(`Unknown command '${command}'. Use inspect, ensure-product, dry-run-all, ebay-register, ebay-register-dry-run, ebay-cycle, ebay-withdraw-sku, ebay-policy, ebay-withdraw, joom-register, joom-cycle, joom-delete, qoo10-register, qoo10-cycle, qoo10-delete, shopee-register, shopee-cycle, shopee-delete, cleanup-all.`);
+    throw new Error(`Unknown command '${command}'. Use inspect, inspect --pack shopee-registration, inspect --pack price-sync, inspect --pack joom-registration, ensure-product, dry-run-all, ebay-register, ebay-register-dry-run, ebay-cycle, ebay-withdraw-sku, ebay-policy, ebay-withdraw, joom-register, joom-cycle, joom-delete, qoo10-register, qoo10-cycle, qoo10-delete, shopee-register, shopee-cycle, shopee-delete, cleanup-all.`);
   }
 
   const result = await commands[command]();

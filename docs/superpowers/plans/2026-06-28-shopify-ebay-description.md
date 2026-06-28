@@ -142,7 +142,7 @@ git diff --check
 
 Start a local static server for `/v2/`, open it in the browser, and verify the app renders without a blank screen.
 
-- [ ] **Step 4: Commit, push, deploy**
+- [x] **Step 4: Commit, push, deploy**
 
 Commit and push to `origin/main`, deploy:
 
@@ -152,7 +152,7 @@ supabase functions deploy ebay-bridge --project-ref mgqlwgnmwegzsjelbrih
 vercel deploy --prod --yes
 ```
 
-- [ ] **Step 5: Live smoke**
+- [x] **Step 5: Live smoke**
 
 Verify:
 

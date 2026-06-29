@@ -37620,6 +37620,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             enabled: true,
             weight: weightG,
             image: r._main_image || '',
+            product_id: r.id || r.product_id || r.source_product_id || '',
           };
         });
       } catch (e) {
@@ -37651,6 +37652,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         album: firstRow.album || '',
         contents: mrGroupComponents(group),
         brand: firstRow._joomBrand || firstRow.artist || '',
+        fast: true,
+        verify: false,
       };
 
       group.joomStatus = 'publishing';
@@ -37668,19 +37671,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         const json = await resp.json();
 
         if (json.ok && json.joom_product_id) {
-          // P0 #2: lookup-sku partial recovery verification
-          try {
-            const lookupResp = await fetch(JOOM_BRIDGE + '/lookup-sku?id=' + encodeURIComponent(json.joom_product_id), { headers: AUTH_HEADERS });
-            const lookupJson = await lookupResp.json();
-            const expectedSkus = new Set(group.rows.map(r => r._sku).filter(Boolean));
-            const returnedSkus = new Set((lookupJson.variant_skus || []).filter(Boolean));
-            const allMatched = expectedSkus.size > 0 && [...expectedSkus].every(s => returnedSkus.has(s));
-            if (!lookupJson.ok || lookupJson.joom_product_id !== json.joom_product_id || !allMatched) {
-              showToast('발행 응답과 lookup-sku 불일치, 운영자 확인 필요', 'err');
-            }
-          } catch (lookupErr) {
-            console.warn('[mrPromoteJoom] lookup-sku check failed:', lookupErr);
-          }
+          group.joomRemoteVerification = {
+            status: 'not_checked',
+            message: 'Joom 원격 상태 재확인은 등록 완료 후 별도 검증에서 수행합니다.',
+            product_id: json.joom_product_id,
+          };
 
           // DB UPDATE per row
           for (const row of group.rows) {

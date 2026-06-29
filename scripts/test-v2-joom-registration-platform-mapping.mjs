@@ -54,9 +54,41 @@ for (const token of [
   'p_country: "GLOBAL"',
   'p_external_variant_id: joomVariantId',
   'mapping_results',
+  'function hasCompleteJoomPublishMapping',
+  'async function persistJoomRegistrationMappingsFast',
+  'mapping_persist_mode',
+  'mapping_hydration_skipped',
 ]) {
   assert(bridge.includes(token), `joom-bridge missing registration mapping token: ${token}`);
 }
+
+const fastPersistHelper = extractFunction(bridge, 'persistJoomRegistrationMappingsFast');
+const completeMappingHelper = extractFunction(bridge, 'hasCompleteJoomPublishMapping');
+assert.match(
+  completeMappingHelper,
+  /expectedSkus\.every\(\(sku\) => present\.has/,
+  'Fast Joom publish must only skip hydrate when every expected SKU is present in the publish response',
+);
+assert.match(
+  fastPersistHelper,
+  /Promise\.all\(\[/,
+  'Fast Joom persist should perform product and platform mapping writes in parallel',
+);
+assert.match(
+  bridge,
+  /const shouldHydrate = verifyPublish \|\| !completePublishMapping/,
+  'Verified mode must force post-publish hydrate while fast complete responses may skip it',
+);
+assert.match(
+  html,
+  /fast:\s*true,[\s\S]*verify:\s*false/,
+  'V2 Joom publish UI should request fast mode by default and leave remote verification as a follow-up action',
+);
+assert.match(
+  html,
+  /joomRemoteVerification[\s\S]*not_checked/,
+  'V2 Joom publish UI should mark remote verification as not checked instead of blocking publish on lookup-sku',
+);
 
 assert.match(
   variantMapper,
@@ -97,5 +129,6 @@ for (const token of [
 assert(!html.includes('joom_variant_id: matched.sku'), 'V2 Joom publish UI must not store SKU as joom_variant_id');
 assert(html.includes('joom_variant_id: matched.id'), 'V2 Joom publish UI must store the Joom-assigned variant id');
 assert(html.includes("joom_currency: matched.currency || 'USD'"), 'V2 Joom publish UI must preserve returned Joom currency');
+assert(html.includes('product_id: r.id || r.product_id || r.source_product_id'), 'V2 Joom publish UI must pass product_id so fast persist can avoid fallback for real product rows');
 
 console.log('v2 Joom registration platform mapping checks passed');

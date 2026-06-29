@@ -198,9 +198,11 @@ function uniqueLiveSku(product) {
   return `${base}-JOOM${stamp}`.slice(0, 64);
 }
 
-async function publishLive(product) {
+async function publishLive(product, mode = 'fast') {
   const sku = uniqueLiveSku(product);
   const body = buildDryRunPayload({ ...product, sku });
+  body.fast = mode !== 'verified';
+  body.verify = mode === 'verified';
   const result = await fetchJson(`${SUPABASE_URL}/functions/v1/joom-bridge/publish`, {
     method: 'POST',
     headers: bridgeHeaders,
@@ -227,7 +229,9 @@ async function main() {
   const product = await pickProduct();
   const group = buildGroup(product);
   const iterations = Number(process.argv.find(arg => arg.startsWith('--runs='))?.split('=')[1] || 5);
-  const liveCycle = process.argv.includes('--live-cycle');
+  const liveArg = process.argv.find(arg => arg === '--live-cycle' || arg.startsWith('--live-cycle='));
+  const liveCycle = !!liveArg;
+  const liveCycleMode = liveArg?.includes('=') ? liveArg.split('=')[1] : 'fast';
 
   const oldTimes = [];
   const newTimes = [];
@@ -263,7 +267,7 @@ async function main() {
   const savedPct = oldStats.avg_ms ? Math.round((savedAvg / oldStats.avg_ms) * 1000) / 10 : 0;
 
   if (liveCycle) {
-    const publish = await timed('live_register', () => publishLive(product));
+    const publish = await timed(`live_${liveCycleMode}_register`, () => publishLive(product, liveCycleMode));
     const productId = publish.value?.result?.joom_product_id;
     const remove = productId
       ? await timed('live_delete', () => deleteLive(productId, publish.value.sku))
@@ -281,6 +285,9 @@ async function main() {
       register_ok: publish.value?.result?.ok === true,
       delete_ok: remove.value?.ok === true,
       cleanup_state: lookup.value?.listing_status || lookup.value?.state || null,
+      mode: liveCycleMode,
+      mapping_persist_mode: publish.value?.result?.mapping_persist_mode || null,
+      mapping_hydration_skipped: publish.value?.result?.mapping_hydration_skipped ?? null,
       register_timing: publish.value?.result?.timing || null,
       delete_result: remove.value,
       lookup_result: lookup.value,
@@ -307,7 +314,8 @@ async function main() {
     joom_bridge_dryrun_ms: stat(dryTimes),
     live_publish_performed: liveCycle,
     live_cycle: liveResult,
-    live_publish_note: liveCycle ? 'Created one live Joom listing, deleted it, then verified post-delete state.' : 'Measured live modal dependencies and Joom dry-run only; no marketplace listing was created.',
+    live_cycle_mode: liveCycle ? liveCycleMode : null,
+    live_publish_note: liveCycle ? `Created one live Joom listing in ${liveCycleMode} mode, deleted it, then verified post-delete state.` : 'Measured live modal dependencies and Joom dry-run only; no marketplace listing was created.',
     sample_results: {
       old: lastOld,
       new: lastNew,

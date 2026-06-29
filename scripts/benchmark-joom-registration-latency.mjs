@@ -192,10 +192,42 @@ async function dryRun(product) {
   });
 }
 
+function uniqueLiveSku(product) {
+  const stamp = new Date().toISOString().replace(/\D/g, '').slice(2, 14);
+  const base = String(product.sku || 'SDV2-JOOM').toUpperCase().replace(/[^A-Z0-9_-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 42) || 'SDV2-JOOM';
+  return `${base}-JOOM${stamp}`.slice(0, 64);
+}
+
+async function publishLive(product) {
+  const sku = uniqueLiveSku(product);
+  const body = buildDryRunPayload({ ...product, sku });
+  const result = await fetchJson(`${SUPABASE_URL}/functions/v1/joom-bridge/publish`, {
+    method: 'POST',
+    headers: bridgeHeaders,
+    body: JSON.stringify(body),
+  });
+  return { sku, result };
+}
+
+async function deleteLive(productId, sku) {
+  return fetchJson(`${SUPABASE_URL}/functions/v1/joom-bridge/delete`, {
+    method: 'POST',
+    headers: bridgeHeaders,
+    body: JSON.stringify({ productId, dry_run: false, confirm: 'DELETE_JOOM_PRODUCT', product_ids: [] }),
+  }).catch((error) => ({ ok: false, error: error.message || String(error), sku }));
+}
+
+async function lookupById(productId) {
+  return fetchJson(`${SUPABASE_URL}/functions/v1/joom-bridge/lookup-sku?id=${encodeURIComponent(productId)}`, {
+    headers: bridgeHeaders,
+  });
+}
+
 async function main() {
   const product = await pickProduct();
   const group = buildGroup(product);
   const iterations = Number(process.argv.find(arg => arg.startsWith('--runs='))?.split('=')[1] || 5);
+  const liveCycle = process.argv.includes('--live-cycle');
 
   const oldTimes = [];
   const newTimes = [];
@@ -203,6 +235,7 @@ async function main() {
   let lastOld;
   let lastNew;
   let lastDry;
+  let liveResult = null;
 
   // Warm up DNS/TLS once, then measure alternating old/new to reduce network-order bias.
   await Promise.all([loadBrandOptions(), loadJoomCountry()]);
@@ -229,12 +262,38 @@ async function main() {
   const savedAvg = oldStats.avg_ms - newStats.avg_ms;
   const savedPct = oldStats.avg_ms ? Math.round((savedAvg / oldStats.avg_ms) * 1000) / 10 : 0;
 
+  if (liveCycle) {
+    const publish = await timed('live_register', () => publishLive(product));
+    const productId = publish.value?.result?.joom_product_id;
+    const remove = productId
+      ? await timed('live_delete', () => deleteLive(productId, publish.value.sku))
+      : { ms: 0, value: { skipped: true, reason: 'publish returned no product id' } };
+    const lookup = productId
+      ? await timed('post_delete_lookup', () => lookupById(productId))
+      : { ms: 0, value: { skipped: true, reason: 'publish returned no product id' } };
+    liveResult = {
+      sku: publish.value?.sku || null,
+      joom_product_id: productId || null,
+      live_register_ms: Math.round(publish.ms),
+      live_delete_ms: Math.round(remove.ms),
+      post_delete_lookup_ms: Math.round(lookup.ms),
+      live_total_ms: Math.round(publish.ms + remove.ms + lookup.ms),
+      register_ok: publish.value?.result?.ok === true,
+      delete_ok: remove.value?.ok === true,
+      cleanup_state: lookup.value?.listing_status || lookup.value?.state || null,
+      register_timing: publish.value?.result?.timing || null,
+      delete_result: remove.value,
+      lookup_result: lookup.value,
+    };
+  }
+
   console.log(JSON.stringify({
     ok: true,
     product: {
       id: product.id,
       sku: product.sku,
       product_name: product.product_name,
+      source: product._source || 'unknown',
       has_main_image: !!product.main_image,
       extra_image_count: Array.isArray(product.extra_images) ? product.extra_images.length : 0,
       joom_category_id: product.joom_category_id || 'music_albums',
@@ -246,13 +305,15 @@ async function main() {
     avg_saved_ms: savedAvg,
     avg_saved_pct: savedPct,
     joom_bridge_dryrun_ms: stat(dryTimes),
-    live_publish_performed: false,
-    live_publish_note: 'Measured live modal dependencies and Joom dry-run only; no marketplace listing was created.',
+    live_publish_performed: liveCycle,
+    live_cycle: liveResult,
+    live_publish_note: liveCycle ? 'Created one live Joom listing, deleted it, then verified post-delete state.' : 'Measured live modal dependencies and Joom dry-run only; no marketplace listing was created.',
     sample_results: {
       old: lastOld,
       new: lastNew,
       dryrun_ok: lastDry?.ok === true,
       dryrun_variant_count: lastDry?.payload?.variants?.length || lastDry?.variants?.length || null,
+      dryrun_timing: lastDry?.timing || null,
     },
   }, null, 2));
 }

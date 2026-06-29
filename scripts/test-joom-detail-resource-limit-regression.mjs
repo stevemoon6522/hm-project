@@ -10,10 +10,10 @@ for (const [label, source] of [['supabase', bridge], ['edge mirror', edgeBridge]
   assert.match(source, /const JOOM_CLOUDINARY_TILE_CONTENT_CHECK_LIMIT = 3/, `${label} must bound Cloudinary tile content checks`);
   assert.match(source, /function isTrustedStoredProductImageUrl/, `${label} must recognize already-stored product image URLs`);
   assert.match(source, /skipContentCheck/, `${label} must skip expensive tile decode checks for trusted stored product images`);
-  assert.match(source, /async function processDetailImage\(imageUrl: string, maxTiles = JOOM_MAX_EXTRA_IMAGES\)/, `${label} processDetailImage must accept remaining tile budget`);
+  assert.match(source, /async function processDetailImage\([\s\S]*imageUrl: string,[\s\S]*maxTiles = JOOM_MAX_EXTRA_IMAGES/, `${label} processDetailImage must accept remaining tile budget`);
   assert.match(source, /const remainingTiles = Math\.max\(0, Math\.min\(JOOM_MAX_EXTRA_IMAGES, Math\.floor\(Number\(maxTiles\)/, `${label} must clamp remaining tile budget`);
-  assert.match(source, /buildCloudinaryFetchTiles\(imageUrl, dims\)\)\.slice\(0, remainingTiles\)/, `${label} must not generate more Cloudinary tile URLs than the remaining Joom slots`);
-  assert.match(source, /buildCloudinaryUnknownSquare\(imageUrl\)\)\.slice\(0, remainingTiles\)/, `${label} unknown-dimension fallback must also respect remaining slots`);
+  assert.match(source, /buildCloudinaryFetchTiles\(imageUrl, dims\)[\s\S]*\.slice\(0, remainingTiles\)/, `${label} must not generate more Cloudinary tile URLs than the remaining Joom slots`);
+  assert.match(source, /buildCloudinaryUnknownSquare\(imageUrl\)[\s\S]*\.slice\(0, remainingTiles\)/, `${label} unknown-dimension fallback must also respect remaining slots`);
   assert.match(source, /`bytes=0-\$\{JOOM_IMAGE_DIMENSION_PROBE_BYTES - 1\}`/, `${label} dimension reader must use the shared large probe limit`);
   assert.match(source, /c_pad,b_white,w_1500,h_1500\/f_jpg,q_90/, `${label} unknown-dimension fallback must emit a valid Cloudinary fetch transformation chain`);
   assert.doesNotMatch(source, /c_pad,b_white,w_1500,h_1500,f_jpg,q_90/, `${label} unknown-dimension fallback must not merge resize and format transforms into one invalid component`);
@@ -24,14 +24,14 @@ for (const [label, source] of [['supabase', bridge], ['edge mirror', edgeBridge]
   assert.match(source, /Math\.min\(Math\.ceil\(img\.height \/ tileSize\), 9, remainingTiles\)/, `${label} local tall-image fallback must respect remaining slots`);
   assert.match(source, /Math\.min\(Math\.ceil\(img\.width \/ tileSize\), 9, remainingTiles\)/, `${label} local wide-image fallback must respect remaining slots`);
 
-  const calls = [...source.matchAll(/processDetailImage\(imageUrl(?:, JOOM_MAX_EXTRA_IMAGES - processedExtras\.length)?\)/g)]
+  const calls = [...source.matchAll(/processDetailImage\((?:url|imageUrl), JOOM_MAX_EXTRA_IMAGES - processedExtras\.length/g)]
     .map((match) => match[0]);
   assert.equal(
-    calls.filter((call) => call.includes('JOOM_MAX_EXTRA_IMAGES - processedExtras.length')).length,
-    2,
+    calls.length,
+    3,
     `${label} recovery/update loops must pass the remaining extraImages budget`,
   );
-  assert.match(source, /processDetailImage\(url, JOOM_MAX_EXTRA_IMAGES - processedExtras\.length\)/, `${label} publish/dryrun loop must pass the remaining extraImages budget`);
+  assert.match(source, /processDetailImage\(url, JOOM_MAX_EXTRA_IMAGES - processedExtras\.length, \{ timing, skipCloudinaryContentCheck \}\)/, `${label} publish/dryrun loop must pass the remaining extraImages budget`);
 }
 
 console.log('Joom detail image resource-limit regression checks passed');

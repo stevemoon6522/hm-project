@@ -44,6 +44,27 @@ const CORS: Record<string, string> = {
 // @ts-ignore
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
 
+
+type JoomTiming = Record<string, number>;
+
+function nowMs(): number {
+  return performance.now();
+}
+
+function addTiming(timing: JoomTiming | undefined, key: string, ms: number) {
+  if (!timing) return;
+  timing[key] = Math.round((Number(timing[key] || 0) + ms) * 100) / 100;
+}
+
+async function timedStep<T>(timing: JoomTiming | undefined, key: string, fn: () => Promise<T>): Promise<T> {
+  const started = nowMs();
+  try {
+    return await fn();
+  } finally {
+    addTiming(timing, key, nowMs() - started);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Token management
 // ---------------------------------------------------------------------------
@@ -769,29 +790,37 @@ function decodeBase64Image(value: string): Uint8Array {
   return bytes;
 }
 
-async function processDetailImage(imageUrl: string, maxTiles = JOOM_MAX_EXTRA_IMAGES): Promise<string[]> {
+async function processDetailImage(
+  imageUrl: string,
+  maxTiles = JOOM_MAX_EXTRA_IMAGES,
+  opts: { timing?: JoomTiming; skipCloudinaryContentCheck?: boolean } = {},
+): Promise<string[]> {
   try {
     const remainingTiles = Math.max(0, Math.min(JOOM_MAX_EXTRA_IMAGES, Math.floor(Number(maxTiles) || JOOM_MAX_EXTRA_IMAGES)));
     if (remainingTiles <= 0) return [];
     let skippedBlankTile = false;
     let dims: ImageDimensions | null = null;
-    const skipCloudinaryContentCheck = isTrustedStoredProductImageUrl(imageUrl);
+    const skipCloudinaryContentCheck = !!opts.skipCloudinaryContentCheck || isTrustedStoredProductImageUrl(imageUrl);
     try {
-      dims = await readImageDimensions(imageUrl);
+      dims = await timedStep(opts.timing, "image_dimension_ms", () => readImageDimensions(imageUrl));
     } catch (dimensionError) {
       console.warn("[joom-bridge] readImageDimensions failed, trying Cloudinary unknown-square fallback:", imageUrl, dimensionError);
     }
     if (dims) {
-      const cloudinaryTiles = (await buildCloudinaryFetchTiles(imageUrl, dims)).slice(0, remainingTiles);
+      const cloudinaryTiles = await timedStep(opts.timing, "cloudinary_tile_url_ms", async () => (
+        await buildCloudinaryFetchTiles(imageUrl, dims)
+      ).slice(0, remainingTiles));
       if (cloudinaryTiles.length) {
-        const filteredTiles = await filterLikelyBlankCloudinaryTiles(cloudinaryTiles, { skipContentCheck: skipCloudinaryContentCheck });
+        const filteredTiles = await timedStep(opts.timing, "cloudinary_tile_check_ms", () => filterLikelyBlankCloudinaryTiles(cloudinaryTiles, { skipContentCheck: skipCloudinaryContentCheck }));
         if (filteredTiles.length) return filteredTiles;
         console.warn("[joom-bridge] all Cloudinary tiles were mostly blank; skipping source image:", imageUrl);
       }
     } else {
-      const cloudinarySquare = (await buildCloudinaryUnknownSquare(imageUrl)).slice(0, remainingTiles);
+      const cloudinarySquare = await timedStep(opts.timing, "cloudinary_tile_url_ms", async () => (
+        await buildCloudinaryUnknownSquare(imageUrl)
+      ).slice(0, remainingTiles));
       if (cloudinarySquare.length) {
-        const filteredTiles = await filterLikelyBlankCloudinaryTiles(cloudinarySquare, { skipContentCheck: skipCloudinaryContentCheck });
+        const filteredTiles = await timedStep(opts.timing, "cloudinary_tile_check_ms", () => filterLikelyBlankCloudinaryTiles(cloudinarySquare, { skipContentCheck: skipCloudinaryContentCheck }));
         if (filteredTiles.length) return filteredTiles;
         console.warn("[joom-bridge] Cloudinary unknown-square tile was mostly blank; skipping source image:", imageUrl);
       }
@@ -895,6 +924,8 @@ async function processDetailImage(imageUrl: string, maxTiles = JOOM_MAX_EXTRA_IM
 
 async function buildPayload(opts: any): Promise<any> {
   const { row, scrapedAssets, variantsConfig, categoryId, enabled, namePrefix, artist, album, contents, brand } = opts;
+  const timing: JoomTiming | undefined = opts.timing;
+  const skipCloudinaryContentCheck = opts.skipCloudinaryContentCheck !== false;
   if (!scrapedAssets?.mainImage) throw new Error("scrapedAssets.mainImage 가 비어있음");
   const brandName = String(brand || "").trim();
   if (!brandName) throw new Error("brand required");
@@ -944,7 +975,7 @@ async function buildPayload(opts: any): Promise<any> {
   const processedExtras: string[] = [];
   for (const url of rawExtras) {
     if (processedExtras.length >= JOOM_MAX_EXTRA_IMAGES) break;
-    const tiles = await processDetailImage(url, JOOM_MAX_EXTRA_IMAGES - processedExtras.length);
+    const tiles = await processDetailImage(url, JOOM_MAX_EXTRA_IMAGES - processedExtras.length, { timing, skipCloudinaryContentCheck });
     for (const t of tiles) {
       if (processedExtras.length < JOOM_MAX_EXTRA_IMAGES) processedExtras.push(t);
     }
@@ -1029,6 +1060,8 @@ async function handleRequest(req: Request): Promise<Response> {
     if ((action === "publish" || action === "dryrun") && req.method === "POST") {
       const denied = await requireBridgeTokenOrAuthenticatedUser(req);
       if (denied) return denied;
+      const requestStarted = nowMs();
+      const timing: JoomTiming = {};
       const body = await req.json();
       const row = body.row || {};
       const scraped = body.scrapedAssets || {};
@@ -1048,32 +1081,37 @@ async function handleRequest(req: Request): Promise<Response> {
       if (!scraped.mainImage) return jsonResp({ ok: false, error: "scrapedAssets.mainImage 필요" }, 400);
       if (!categoryId) return jsonResp({ ok: false, error: "categoryId 필요" }, 400);
 
-      const payload = await buildPayload({
+      const payload = await timedStep(timing, "build_payload_total_ms", () => buildPayload({
         row, scrapedAssets: scraped, variantsConfig, categoryId, enabled,
         namePrefix, artist, album, contents, brand,
-      });
+        timing,
+        skipCloudinaryContentCheck: body.skipCloudinaryContentCheck !== false,
+      }));
       const computed_listing_usd = calcListingUSD(row.cost);
 
       if (action === "dryrun") {
+        addTiming(timing, "total_ms", nowMs() - requestStarted);
         return jsonResp({
           ok: true, dry_run: true, payload, computed_listing_usd,
           weight_kg: gramsToKg(row.weight),
           formula: `${row.cost} / ${EXCHANGE_RATE} / (1 - ${SALES_FEE})`,
+          timing,
         });
       }
 
-      const created = await createOrUpdateJoomProduct(payload);
+      const created = await timedStep(timing, "joom_api_ms", () => createOrUpdateJoomProduct(payload));
       let data = created.data;
       let mappingHydrationError: string | null = null;
       try {
-        data = await hydrateJoomProductForMapping(created.data, payload.sku);
+        data = await timedStep(timing, "post_publish_hydrate_ms", () => hydrateJoomProductForMapping(created.data, payload.sku));
       } catch (e) {
         mappingHydrationError = e instanceof Error ? e.message : String(e);
         console.warn("[joom-bridge] publish mapping hydrate failed:", mappingHydrationError);
       }
       const joomCategoryId = String(data.categoryId || data.category?.id || data.categoryByJoom?.id || "");
       const listingStatus = joomProductListingStatus(data);
-      const mappingResults = await persistJoomRegistrationMappings(body, data, listingStatus);
+      const mappingResults = await timedStep(timing, "mapping_persist_ms", () => persistJoomRegistrationMappings(body, data, listingStatus));
+      addTiming(timing, "total_ms", nowMs() - requestStarted);
       return jsonResp({
         ok: true,
         operation: created.operation,
@@ -1097,6 +1135,7 @@ async function handleRequest(req: Request): Promise<Response> {
           where: i.where, isPermanent: i.isPermanent, regions: i.regions,
         })),
         computed_listing_usd,
+        timing,
       });
     }
 

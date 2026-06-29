@@ -59,6 +59,8 @@ assert(productView.includes('<table class="pl-table">'), 'product list table mus
 assert(productView.includes('Official Barcode'), 'master table must expose official barcode after the product name');
 assert(productView.includes('Vars'), 'master table must expose variation count');
 assert(productView.includes('WMS'), 'master table must expose WMS match status');
+assert(productView.includes('pl-platform-column'), 'master table must expose a platform LED status column');
+assert(productView.includes('colspan="10"'), 'master table loading row must span the added platform column');
 assert(!productView.includes('data-master-register-open="custom"'), 'custom registration must live inside the new master registration panel');
 assert(!productView.includes('data-master-register-open="url"'), 'URL bulk registration must live inside the new master registration panel');
 assert(html.includes("requestedViewId === 'view-register' ? 'view-products' : requestedViewId"), 'legacy register view routing must activate the master product page');
@@ -95,6 +97,8 @@ for (const token of [
   'function plSortProductGroupsNewestFirst(groups)',
   'function renderProductGroup(group)',
   'function renderProductOptionRow(p, groupKey, isGroupChild)',
+  'const PRODUCT_LIST_PLATFORM_LEDS = Object.freeze',
+  'function plPlatformLedStrip(rows)',
   'function plParentSku(rows)',
   'function plGroupMainImage(rows)',
   'function plProductName(product)',
@@ -114,6 +118,17 @@ for (const token of [
 ]) {
   assert(productList.includes(token), `grouped product list must include ${token}`);
 }
+
+for (const platform of ['shopee', 'joom', 'qoo10', 'ebay', 'alibaba', 'shopify']) {
+  assert(productList.includes(`'${platform}'`), `master platform LED strip must include ${platform}`);
+}
+assert(
+  productList.includes('${plPlatformLedStrip(rows)}')
+    && productList.includes('${plPlatformLedStrip([p])}')
+    && productList.includes('class="pl-led pl-group-led"')
+    && productList.includes('data-platform="${platform}"'),
+  'grouped and single master rows must render clickable platform LEDs backed by the existing popover',
+);
 
 assert(
   productList.includes('group.isGrouped ? renderProductGroup(group) : renderProductOptionRow'),

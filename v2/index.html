@@ -371,9 +371,48 @@
       font-size: 15px;
       line-height: 1;
     }
+    .pl-led.pl-group-led {
+      min-height: 30px;
+      padding: 3px 2px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      cursor: pointer;
+      box-shadow: none;
+      flex-direction: column;
+    }
+    .pl-led.pl-group-led:hover {
+      background: #f1f5f9;
+    }
+    .pl-led.pl-group-led:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .pl-led-symbol {
+      font-size: 14px;
+      line-height: 1;
+    }
+    .pl-led-label {
+      display: block;
+      color: var(--muted);
+      font-size: 9px;
+      font-weight: 700;
+      line-height: 1;
+    }
+    .pl-platform-column {
+      text-align: center;
+    }
     .pl-platform-cell {
       text-align: center;
       white-space: nowrap;
+      min-width: 198px;
+    }
+    .pl-platform-led-strip {
+      display: grid;
+      grid-template-columns: repeat(6, 30px);
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
     }
     .pl-shopee-cell {
       display: flex;
@@ -3820,6 +3859,7 @@
               <th style="width:170px;">Official Barcode</th>
               <th style="width:70px;text-align:center;">Vars</th>
               <th style="width:108px;">WMS</th>
+              <th class="pl-platform-column" style="width:210px;">플랫폼</th>
               <th style="width:112px;">Lifecycle</th>
               <th style="width:110px;">Cost</th>
               <th style="width:90px;">Weight</th>
@@ -3827,7 +3867,7 @@
             </tr>
           </thead>
           <tbody id="product-body">
-            <tr><td colspan="9" class="empty">Loading products...</td></tr>
+            <tr><td colspan="10" class="empty">Loading products...</td></tr>
           </tbody>
         </table>
       </div>
@@ -8000,7 +8040,25 @@ LEGACY END -->
     return `${values[0].toLocaleString()}-${values[values.length - 1].toLocaleString()}`;
   }
 
-  function plGroupPlatformCell(rows, platform) {
+  const PRODUCT_LIST_PLATFORM_LEDS = Object.freeze(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba', 'shopify']);
+  const PRODUCT_LIST_PLATFORM_SHORT_LABELS = Object.freeze({
+    shopee: 'SP',
+    joom: 'JM',
+    qoo10: 'Q10',
+    ebay: 'EB',
+    alibaba: 'AB',
+    shopify: 'SF',
+  });
+
+  function plPlatformShortLabel(platform) {
+    return PRODUCT_LIST_PLATFORM_SHORT_LABELS[platform] || String(platform || '').slice(0, 3).toUpperCase();
+  }
+
+  function plPlatformLedStrip(rows) {
+    return `<div class="pl-platform-led-strip" aria-label="플랫폼 등록 상태">${PRODUCT_LIST_PLATFORM_LEDS.map((platform) => plGroupPlatformCell(rows, platform)).join('')}</div>`;
+  }
+
+  function plGroupPlatformCellLegacy(rows, platform) {
     let totalTargets = 0;
     let listedTargets = 0;
     let pendingTargets = 0;
@@ -8047,6 +8105,61 @@ LEGACY END -->
     return `<span class="pl-group-led" title="${text(label)}" style="color:${color};">${glyph}<span style="font-size:10px;color:var(--muted);">${activeOptions}/${rows.length}</span></span>`;
   }
 
+  function plGroupPlatformCell(rows, platform) {
+    const safeRows = Array.isArray(rows) ? rows.filter(Boolean) : [];
+    const rowCount = safeRows.length || 0;
+    const productId = String(safeRows[0]?.id || '').trim();
+    let totalTargets = 0;
+    let listedTargets = 0;
+    let pendingTargets = 0;
+    let errorTargets = 0;
+    let activeOptions = 0;
+    let listedOptions = 0;
+    safeRows.forEach((row) => {
+      const rollup = rollupFor(row.id, platform);
+      const total = Number(rollup?.total_count || 0);
+      const listed = rollupListedCountForLed(rollup, platform);
+      const pending = Number(rollup?.pending_count || 0);
+      const errored = Number(rollup?.error_count || 0);
+      totalTargets += total;
+      listedTargets += listed;
+      pendingTargets += pending;
+      errorTargets += errored;
+      if (total > 0) activeOptions += 1;
+      if (total > 0 && listed >= total && errored === 0) listedOptions += 1;
+    });
+
+    let glyph = '○';
+    let color = '#94a3b8';
+    let label = `미등록 · 옵션 ${activeOptions}/${rowCount}`;
+    if (errorTargets > 0) {
+      glyph = '■';
+      color = '#dc2626';
+      label = `오류 ${errorTargets}건 · 옵션 ${activeOptions}/${rowCount}`;
+    } else if (totalTargets > 0 && listedTargets >= totalTargets) {
+      glyph = '●';
+      color = '#16a34a';
+      label = `전체 등록 (${listedTargets}/${totalTargets}) · 옵션 ${listedOptions}/${rowCount}`;
+    } else if (listedTargets > 0) {
+      glyph = '◐';
+      color = '#f59e0b';
+      label = `부분 등록 (${listedTargets}/${totalTargets}) · 옵션 ${activeOptions}/${rowCount}`;
+    } else if (pendingTargets > 0) {
+      glyph = '▲';
+      color = '#f59e0b';
+      label = `진행 중 ${pendingTargets}건 · 옵션 ${activeOptions}/${rowCount}`;
+    } else if (totalTargets > 0) {
+      glyph = '○';
+      color = '#64748b';
+      label = `비활성 ${totalTargets}건 · 옵션 ${activeOptions}/${rowCount}`;
+    }
+
+    const platformLabel = PLATFORM_LABELS[platform] || platform;
+    const title = `${platformLabel} ${label}`;
+    const disabled = productId ? '' : ' disabled';
+    return `<button type="button" class="pl-led pl-group-led" data-product-id="${text(productId)}" data-platform="${platform}" title="${text(title)}"${disabled} style="color:${color};"><span class="pl-led-symbol">${glyph}</span><span class="pl-led-label">${text(plPlatformShortLabel(platform))}</span></button>`;
+  }
+
   function renderProductGroup(group) {
     const rows = group.rows;
     const first = rows[0] || {};
@@ -8081,6 +8194,7 @@ LEGACY END -->
         <td class="pl-barcode-cell">${plOfficialBarcodeCell(rows)}</td>
         <td class="pl-vars-cell"><span class="pl-count-badge">${text(rows.length)}</span></td>
         <td class="pl-wms-cell">${plWmsStatusCell(rows)}</td>
+        <td class="pl-platform-cell">${plPlatformLedStrip(rows)}</td>
         <td>${productLifecycleBadge(first)}</td>
         <td class="mono">${plGroupNumberRange(rows, 'cost_krw')}</td>
         <td class="mono">${plGroupNumberRange(rows, 'weight_g')}g</td>
@@ -8148,6 +8262,7 @@ LEGACY END -->
         <td class="pl-barcode-cell">${isGroupChild ? '<span class="pl-cell-label">SP Barcode</span>' + text(spBarcode || '-') : plOfficialBarcodeCell([p])}</td>
         <td class="pl-sku-cell"><span class="pl-cell-label">${isGroupChild ? 'SKU' : 'Vars'}</span>${isGroupChild ? text(p.sku || '-') : '<span class="pl-count-badge">1</span>'}</td>
         <td class="pl-wms-cell">${plWmsStatusCell([p])}</td>
+        <td class="pl-platform-cell">${plPlatformLedStrip([p])}</td>
         <td>${isGroupChild ? `<span class="pl-status-pill ${typeLabel === 'SET' ? 'info' : 'neutral'}">${text(typeLabel)}</span>` : productLifecycleBadge(p)}</td>
         <td class="mono pl-edit" data-field="cost_krw" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${plDisplayCostCell(p, groupRowsForDisplay)}</td>
         <td class="mono pl-edit" data-field="weight_g" data-id="${text(p.id)}" data-numeric="1" title="더블클릭하여 편집" style="cursor:text;">${plDisplayWeightCell(p, groupRowsForDisplay)}g</td>
@@ -14210,7 +14325,7 @@ LEGACY END -->
     return state.listings.filter((l) => String(l.product_id) === String(productId));
   }
 
-  // Step 1c (plan v2.2 §E.1): 5-platform LED + popover.
+  // Step 1c (plan v2.2 §E.1): 6-platform LED + popover.
   // Rollup row shape: { master_product_id, platform, listed_count,
   // pending_count, error_count, total_count, per_shop_detail }.
   function rollupFor(productId, platform) {

@@ -27,9 +27,17 @@ const INTERNAL_HEADERS = [
   'Raw Title',
   'Updated At',
 ];
-const PUBLIC_TABS = ['Catalog', 'Restock Watch', 'Inquiry Only'];
+const PUBLIC_TABS = ['Catalog'];
+const DEPRECATED_PUBLIC_TABS = ['Restock Watch', 'Inquiry Only'];
 const INTERNAL_TAB = 'Internal Coverage';
 const MANAGED_TABS = new Set([...PUBLIC_TABS, INTERNAL_TAB]);
+const SHEET_SYNC_DIRECTION = 'DB_TO_GOOGLE_SHEET';
+const SHEET_AUTH_MODE = 'GOOGLE_SERVICE_ACCOUNT_JSON';
+const COLUMN_MAPPING = {
+  public_tabs: PUBLIC_HEADERS,
+  internal_coverage: INTERNAL_HEADERS,
+  hidden_internal_columns: ['Master Status', 'WMS Status', 'Staronemall PNO', 'Staronemall URL', 'Raw Title', 'Updated At'],
+};
 
 function json(res, body, status = 200) {
   res.status(status).setHeader('Content-Type', 'application/json; charset=utf-8');
@@ -240,6 +248,23 @@ function quoteRange(sheetName, cell = 'A1') {
   return `'${safe}'!${cell}`;
 }
 
+function spreadsheetUrl(spreadsheetId) {
+  return `https://docs.google.com/spreadsheets/d/${encodeURIComponent(spreadsheetId)}/edit`;
+}
+
+function sheetSyncMetadata(spreadsheetId) {
+  return {
+    spreadsheet_id: spreadsheetId,
+    spreadsheet_url: spreadsheetUrl(spreadsheetId),
+    sync_direction: SHEET_SYNC_DIRECTION,
+    auth_mode: SHEET_AUTH_MODE,
+    visible_tabs: PUBLIC_TABS,
+    hidden_tabs: [INTERNAL_TAB],
+    ranges: Object.fromEntries([...PUBLIC_TABS, INTERNAL_TAB].map((tab) => [tab, quoteRange(tab, 'A1')])),
+    column_mapping: COLUMN_MAPPING,
+  };
+}
+
 async function ensureSheets(accessToken, spreadsheetId) {
   const meta = await googleRequest(accessToken, `${spreadsheetId}?fields=sheets.properties`);
   const existing = new Map((meta.sheets || []).map((sheet) => [sheet.properties.title, sheet.properties]));
@@ -254,7 +279,7 @@ async function ensureSheets(accessToken, spreadsheetId) {
     }
   }
   for (const [title, properties] of existing.entries()) {
-    if (!MANAGED_TABS.has(title) && properties.hidden !== true) {
+    if ((!MANAGED_TABS.has(title) || DEPRECATED_PUBLIC_TABS.includes(title)) && properties.hidden !== true) {
       requests.push({ updateSheetProperties: { properties: { sheetId: properties.sheetId, hidden: true }, fields: 'hidden' } });
     }
   }
@@ -279,11 +304,18 @@ async function replaceSheetValues(accessToken, spreadsheetId, sheetName, values)
 }
 
 module.exports = async function handler(req, res) {
-  if (req.method !== 'POST') return json(res, { ok: false, error: 'method_not_allowed' }, 405);
+  if (!['GET', 'POST'].includes(req.method)) return json(res, { ok: false, error: 'method_not_allowed' }, 405);
   try {
     const auth = await requireUser(req);
     const spreadsheetId = process.env.CATALOG_GOOGLE_SHEET_ID || process.env.SHEETS_SPREADSHEET_ID || '';
     if (!spreadsheetId) throw new Error('CATALOG_GOOGLE_SHEET_ID or SHEETS_SPREADSHEET_ID env var is not set.');
+    if (req.method === 'GET') {
+      return json(res, {
+        ok: true,
+        configured: true,
+        ...sheetSyncMetadata(spreadsheetId),
+      });
+    }
 
     const [catalogRows, productRows] = await Promise.all([
       supabaseFetch(
@@ -308,15 +340,7 @@ module.exports = async function handler(req, res) {
     const tabValues = {
       Catalog: [
         PUBLIC_HEADERS,
-        ...coverageRows.filter((row) => row.availability_status === 'Available').map(publicRow),
-      ],
-      'Restock Watch': [
-        PUBLIC_HEADERS,
-        ...coverageRows.filter((row) => row.availability_status === 'Restock Watch').map(publicRow),
-      ],
-      'Inquiry Only': [
-        PUBLIC_HEADERS,
-        ...coverageRows.filter((row) => row.availability_status === 'Inquiry Only').map(publicRow),
+        ...coverageRows.map(publicRow),
       ],
       [INTERNAL_TAB]: [
         INTERNAL_HEADERS,
@@ -347,14 +371,15 @@ module.exports = async function handler(req, res) {
 
     return json(res, {
       ok: true,
-      spreadsheet_id: spreadsheetId,
+      ...sheetSyncMetadata(spreadsheetId),
       rows: coverageRows.length,
       visible_tabs: PUBLIC_TABS,
       hidden_tabs: [INTERNAL_TAB],
       summary: {
-        available: tabValues.Catalog.length - 1,
-        restock_watch: tabValues['Restock Watch'].length - 1,
-        inquiry_only: tabValues['Inquiry Only'].length - 1,
+        catalog_rows: tabValues.Catalog.length - 1,
+        available: coverageRows.filter((row) => row.availability_status === 'Available').length,
+        restock_watch: coverageRows.filter((row) => row.availability_status === 'Restock Watch').length,
+        inquiry_only: coverageRows.filter((row) => row.availability_status === 'Inquiry Only').length,
         master_missing: coverageRows.filter((row) => row.master_status === 'Missing').length,
         wms_missing: coverageRows.filter((row) => row.wms_status === 'Missing').length,
         wms_review: coverageRows.filter((row) => row.wms_status === 'Review').length,

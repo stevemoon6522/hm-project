@@ -56,23 +56,40 @@ assert.match(
 
 for (const token of [
   "const PUBLIC_HEADERS = ['Image', 'Artist', 'Release Title', 'Edition', 'Category', 'Availability', 'Retail Price', 'Supply Note']",
-  "const PUBLIC_TABS = ['Catalog', 'Restock Watch', 'Inquiry Only']",
+  "const PUBLIC_TABS = ['Catalog']",
+  "const DEPRECATED_PUBLIC_TABS = ['Restock Watch', 'Inquiry Only']",
   "const INTERNAL_TAB = 'Internal Coverage'",
   'const MANAGED_TABS = new Set([...PUBLIC_TABS, INTERNAL_TAB])',
   'hidden: title === INTERNAL_TAB',
   'updateSheetProperties',
-  '!MANAGED_TABS.has(title) && properties.hidden !== true',
+  '(!MANAGED_TABS.has(title) || DEPRECATED_PUBLIC_TABS.includes(title)) && properties.hidden !== true',
   '=IMAGE("',
   'Staronemall PNO',
   'Staronemall URL',
   'requireUser(req)',
-  'Authorization: `Bearer ${userToken}`',
+  "const SHEET_SYNC_DIRECTION = 'DB_TO_GOOGLE_SHEET'",
+  "const SHEET_AUTH_MODE = 'GOOGLE_SERVICE_ACCOUNT_JSON'",
+  'function sheetSyncMetadata',
+  'spreadsheet_url: spreadsheetUrl(spreadsheetId)',
+  'column_mapping: COLUMN_MAPPING',
 ]) {
   assert(api.includes(token), `B2B sheet sync API missing token: ${token}`);
 }
 
 const publicHeadersLine = api.match(/const PUBLIC_HEADERS = \[[^\n]+\]/)?.[0] || '';
 assert(!publicHeadersLine.includes('Staronemall'), 'public buyer headers must not expose StarOneMall URL or pno');
+assert(
+  api.includes('Catalog: [\n        PUBLIC_HEADERS,\n        ...coverageRows.map(publicRow),'),
+  'Catalog tab must contain every B2B row and rely on the Availability column/filter instead of splitting public tabs',
+);
+assert(
+  !api.includes("coverageRows.filter((row) => row.availability_status === 'Available').map(publicRow)"),
+  'Catalog tab must not filter out Restock Watch or Inquiry Only rows',
+);
+assert(
+  api.includes('DEPRECATED_PUBLIC_TABS') && api.includes('MANAGED_TABS.has(title) || DEPRECATED_PUBLIC_TABS.includes(title)'),
+  'Deprecated public tabs should be hidden when syncing the fixed Sheet',
+);
 
 for (const token of [
   "showView('view-b2b-catalog')",
@@ -81,6 +98,8 @@ for (const token of [
   'id="b2b-crawl-staronemall"',
   'id="b2b-save-selected"',
   'id="b2b-sync-sheet"',
+  'id="b2b-open-sheet"',
+  'single Catalog sheet with Availability filter',
   'id="b2b-sync-selected-master"',
   'id="b2b-bulk-edit"',
   'id="b2b-bulk-delete"',
@@ -115,6 +134,15 @@ for (const token of [
 ]) {
   assert(html.includes(token), `V2 B2B catalog UI missing token: ${token}`);
 }
+
+assert(
+  html.includes("const tabs = Array.isArray(body.visible_tabs) ? body.visible_tabs.join(', ') : 'Catalog';"),
+  'B2B sync status fallback should name only the single public Catalog tab',
+);
+assert(
+  !html.includes("'Catalog, Restock Watch, Inquiry Only'"),
+  'B2B UI must not present deprecated Restock Watch / Inquiry Only tabs as public tabs',
+);
 
 assert(
   !/b2bEl\('b2b-catalog-edit-modal'\)\?\.addEventListener\('click'/.test(html),

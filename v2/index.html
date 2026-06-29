@@ -4698,9 +4698,10 @@
       <div class="b2b-head">
         <div>
           <h2 class="b2b-title">B2B Catalog</h2>
-          <div class="b2b-subtitle">DB source-of-truth, fixed Google Sheet mirror. StarOneMall URL/pno stay internal.</div>
+          <div class="b2b-subtitle">DB source-of-truth, single Catalog sheet with Availability filter. StarOneMall URL/pno stay internal.</div>
         </div>
         <button type="button" id="b2b-sync-sheet" class="primary">Sync to Google Sheet</button>
+        <a id="b2b-open-sheet" href="#" target="_blank" rel="noopener" style="display:none;font-size:12px;color:var(--link);">Open synced Sheet</a>
       </div>
 
       <div class="panel" style="padding:14px;margin-bottom:14px;">
@@ -29586,7 +29587,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       });
       const body = await resp.json().catch(function() { return null; });
       if (!resp.ok || !body?.ok) throw new Error(body?.error || 'Sheet sync failed');
-      b2bSetStatus('Google Sheet synced: ' + body.rows + ' rows.');
+      const sheetLink = b2bEl('b2b-open-sheet');
+      if (sheetLink && body.spreadsheet_url) {
+        sheetLink.href = body.spreadsheet_url;
+        sheetLink.style.display = 'inline-flex';
+      }
+      const tabs = Array.isArray(body.visible_tabs) ? body.visible_tabs.join(', ') : 'Catalog';
+      b2bSetStatus('Google Sheet synced: ' + body.rows + ' rows → ' + tabs + '.');
       showToast('B2B Google Sheet synced: ' + body.rows + ' rows', 'ok');
     } catch (e) {
       b2bSetStatus('Google Sheet sync failed: ' + (e.message || e), true);

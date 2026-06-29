@@ -5832,6 +5832,7 @@ LEGACY END -->
     platformExpandedGroups: new Set(),
     platformFilters: {},
     platformPreview: null,
+    platformBatchRegistration: null,
     platformMasterSyncDialog: null,
     platformLastResults: {},
     wmsInventoryBySku: new Map(),
@@ -9219,6 +9220,95 @@ LEGACY END -->
       if (visibleGroups.length === 1) groups = visibleGroups;
     }
     return groups;
+  }
+
+  function platformBatchSupportedPlatform(platform) {
+    return ['shopee', 'joom', 'qoo10', 'ebay'].includes(String(platform || '').toLowerCase());
+  }
+
+  function platformBatchSelectionMode(platform, action, groups = []) {
+    if (action !== 'register') return 'single';
+    if (!platformBatchSupportedPlatform(platform)) return 'single';
+    const count = Array.isArray(groups) ? groups.length : 0;
+    if (count <= 0) return 'none';
+    if (count === 1) return 'single';
+    if (count <= 3) return 'batch';
+    return 'too_many';
+  }
+
+  function platformBatchStatusFromValidation(validation = {}) {
+    return Array.isArray(validation.errors) && validation.errors.length ? 'preflight_failed' : 'ready';
+  }
+
+  function platformBatchIsoDate(value) {
+    const date = value ? new Date(value) : new Date();
+    return Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10);
+  }
+
+  function platformBatchMarkdownValue(value) {
+    const textValue = String(value == null || value === '' ? '-' : value);
+    return textValue.replace(/\r?\n/g, ' ').replace(/\s+/g, ' ').trim() || '-';
+  }
+
+  function platformBatchMarkdownArray(values) {
+    const arr = Array.isArray(values) ? values : [];
+    return arr.length ? arr.map(platformBatchMarkdownValue).join('; ') : '-';
+  }
+
+  function platformBatchFailureItems(batch = {}) {
+    return (Array.isArray(batch.items) ? batch.items : []).filter((item) => (
+      item && ['failed', 'preflight_failed'].includes(String(item.status || ''))
+    ));
+  }
+
+  function platformBatchFailureLogMarkdown(batch = {}) {
+    const items = Array.isArray(batch.items) ? batch.items : [];
+    const failed = platformBatchFailureItems(batch);
+    const succeeded = items.filter((item) => item?.status === 'succeeded').length;
+    const skipped = items.filter((item) => item?.status === 'skipped').length;
+    const date = platformBatchIsoDate(batch.finishedAt || batch.createdAt);
+    const lines = [
+      `# SD Platform Batch Registration Failures - ${date}`,
+      '',
+      `- Platform: ${platformBatchMarkdownValue(batch.platform)}`,
+      `- Batch ID: ${platformBatchMarkdownValue(batch.id)}`,
+      `- Operator: ${platformBatchMarkdownValue(batch.operator || 'dashboard-user')}`,
+      `- Started: ${platformBatchMarkdownValue(batch.createdAt)}`,
+      `- Finished: ${platformBatchMarkdownValue(batch.finishedAt)}`,
+      '',
+      '## Summary',
+      '',
+      `- Selected: ${items.length}`,
+      `- Succeeded: ${succeeded}`,
+      `- Failed: ${failed.length}`,
+      `- Skipped: ${skipped}`,
+      '',
+      '## Failed Items',
+      '',
+    ];
+    if (!failed.length) {
+      lines.push('- No failed items.');
+      return lines.join('\n');
+    }
+    failed.forEach((item) => {
+      lines.push(`### ${platformBatchMarkdownValue(item.sku)} / ${platformBatchMarkdownValue(item.title)}`);
+      lines.push('');
+      lines.push(`- master_product_id: ${platformBatchMarkdownArray(item.productIds)}`);
+      lines.push(`- product_group_id: ${platformBatchMarkdownValue(item.productGroupId)}`);
+      lines.push(`- platform: ${platformBatchMarkdownValue(batch.platform)}`);
+      lines.push('- action: register');
+      lines.push(`- stage: ${platformBatchMarkdownValue(item.stage || (item.status === 'preflight_failed' ? 'preflight' : 'unknown'))}`);
+      lines.push(`- error_code: ${platformBatchMarkdownValue(item.errorCode)}`);
+      lines.push(`- error_msg: ${platformBatchMarkdownValue(item.errorMsg)}`);
+      lines.push(`- preflight_errors: ${platformBatchMarkdownArray(item.preflightErrors)}`);
+      lines.push(`- preflight_warnings: ${platformBatchMarkdownArray(item.preflightWarnings)}`);
+      lines.push(`- platform_item_id: ${platformBatchMarkdownValue(item.platformItemId)}`);
+      lines.push(`- platform_listing_id: ${platformBatchMarkdownValue(item.platformListingId)}`);
+      lines.push(`- retry_status: ${item.retryable === false ? 'blocked' : 'pending'}`);
+      lines.push(`- follow_up_needed: ${item.status === 'succeeded' ? 'no' : 'yes'}`);
+      lines.push('');
+    });
+    return lines.join('\n').trimEnd();
   }
 
   function openShopeeNameSyncPanel() {

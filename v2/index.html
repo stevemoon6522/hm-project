@@ -9736,6 +9736,11 @@ LEGACY END -->
         platformStartBatchRegistration(platform, groups);
         return;
       }
+      if (groups.length > 1) {
+        platformOpenPreview(platform, action, explicitKeys);
+        showToast(`${PLATFORM_LABELS[platform] || platform} 등록 대상이 여러 개입니다. 선택 확인 후 1개씩 실행하세요.`, 'ok');
+        return;
+      }
       try {
         state.platformPreview = null;
         renderPlatformWorkbench(platform);

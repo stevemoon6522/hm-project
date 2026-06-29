@@ -112,6 +112,38 @@ assertIncludes(helperRun.stdout, [
   'v2.global_product.create_publish_task.json',
 ], 'SD incident helper output');
 
+const operationsRunbook = readRelative('docs/multi-platform-operations-runbook.md');
+assertIncludes(operationsRunbook, [
+  '# Multi Platform Dashboard Operations Runbook',
+  'Obsidian Canonical Note',
+  'C:\\Users\\STEVE\\Documents\\MVPICK\\30_Runbooks\\Multi Platform Dashboard 운영 패턴 Runbook.md',
+  'templates/sd-incident-intake.md',
+  'Verification Matrix',
+  'Platform Diagnosis Packs',
+  'Shopee',
+  'Joom',
+  'B2B Catalog Google Sheet sync',
+  'Vercel deployment smoke checks',
+  'node scripts/test-sd-operating-efficiency-docs.mjs',
+  'npm run verify:v2-deploy-source',
+], 'Multi Platform operations runbook');
+
+const incidentTemplate = readRelative('templates/sd-incident-intake.md');
+assertIncludes(incidentTemplate, [
+  '# SD Incident Intake',
+  '## Request Summary',
+  '상품 / 주문',
+  '플랫폼',
+  '실마켓 write 영향 여부',
+  '## Evidence To Collect',
+  '관련 Wiki / runbook',
+  '로컬 API 문서',
+  'payload / API response',
+  '## Recurrence Prevention',
+  '증상 signature',
+  '재발 방지 규칙',
+], 'SD incident intake template');
+
 const packageJson = readRelative('package.json');
 assertIncludes(packageJson, [
   '"verify:sd-operating-efficiency": "node scripts/test-sd-operating-efficiency-docs.mjs"',

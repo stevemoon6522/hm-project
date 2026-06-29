@@ -9311,6 +9311,71 @@ LEGACY END -->
     return lines.join('\n').trimEnd();
   }
 
+  function platformBatchBuildItem(platform, group) {
+    const validation = platformGroupValidation(platform, 'register', group);
+    const first = group?.rows?.[0] || {};
+    const key = platformGroupKey(group);
+    return {
+      key,
+      productIds: platformGroupProductIds(group),
+      productGroupId: first.product_group_id || (group?.isGrouped ? key : ''),
+      sku: platformGroupSku(group) || first.sku || key,
+      title: platformGroupTitle(group) || first.product_name || '',
+      status: platformBatchStatusFromValidation(validation),
+      preflightErrors: (validation.errors || []).slice(),
+      preflightWarnings: (validation.warnings || []).slice(),
+      startedAt: null,
+      finishedAt: null,
+      platformItemId: null,
+      platformListingId: null,
+      stage: validation.errors?.length ? 'preflight' : '',
+      errorCode: validation.errors?.length ? 'PREFLIGHT_FAILED' : null,
+      errorMsg: validation.errors?.[0] || null,
+      retryable: !validation.errors?.length,
+    };
+  }
+
+  function platformBatchGroups(batch) {
+    return batch ? platformGroupsByKeys(batch.keys || []) : [];
+  }
+
+  function platformBatchItem(batch, key) {
+    return (batch?.items || []).find((item) => String(item.key) === String(key)) || null;
+  }
+
+  function platformBatchCurrentItem(batch) {
+    if (!batch) return null;
+    if (batch.currentKey) return platformBatchItem(batch, batch.currentKey);
+    return (batch.items || []).find((item) => item.status === 'running')
+      || (batch.items || []).find((item) => item.status === 'ready')
+      || null;
+  }
+
+  function platformBatchNextReadyItem(batch) {
+    return (batch?.items || []).find((item) => item.status === 'ready') || null;
+  }
+
+  function platformStartBatchRegistration(platform, groups = []) {
+    const normalizedGroups = (groups || []).filter(Boolean).slice(0, 3);
+    const now = new Date().toISOString();
+    const batch = {
+      id: `batch-${now.replace(/[-:.TZ]/g, '').slice(0, 14)}-${Math.random().toString(36).slice(2, 7)}`,
+      platform,
+      keys: normalizedGroups.map(platformGroupKey),
+      createdAt: now,
+      finishedAt: null,
+      running: false,
+      currentKey: null,
+      operator: (window.SD_CURRENT_USER_EMAIL || '').trim() || 'dashboard-user',
+      items: normalizedGroups.map((group) => platformBatchBuildItem(platform, group)),
+    };
+    state.platformPreview = null;
+    state.platformMasterSyncDialog = null;
+    state.platformBatchRegistration = batch;
+    renderPlatformWorkbench(platform);
+    document.getElementById(`platform-${platform}-root`)?.querySelector('.platform-batch-panel')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }
+
   function openShopeeNameSyncPanel() {
     const groups = platformActionGroups('shopee');
     if (!groups.length) {
@@ -9662,9 +9727,13 @@ LEGACY END -->
         platformOpenPreview(platform, action, explicitKeys);
         return;
       }
-      if (groups.length > 1) {
-        platformOpenPreview(platform, action, explicitKeys);
-        showToast(`${PLATFORM_LABELS[platform] || platform} 등록 대상이 여러 개입니다. 선택 확인 후 1개씩 실행하세요.`, 'ok');
+      const batchMode = platformBatchSelectionMode(platform, action, groups);
+      if (batchMode === 'too_many') {
+        showToast('현재 일괄 등록은 최대 3개까지 지원합니다. 2~3개만 선택하세요.', 'err');
+        return;
+      }
+      if (batchMode === 'batch') {
+        platformStartBatchRegistration(platform, groups);
         return;
       }
       try {

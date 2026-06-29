@@ -12660,6 +12660,25 @@ LEGACY END -->
       .filter((row) => row._draftAction !== 'delete');
   }
 
+  function plMasterEditModalBody() {
+    return document.querySelector('#pl-master-edit-modal .modal-body');
+  }
+
+  function plMasterEditPreserveModalScroll(callback) {
+    const body = plMasterEditModalBody();
+    if (!body) return callback();
+    const scrollTop = body.scrollTop;
+    const scrollLeft = body.scrollLeft;
+    const result = callback();
+    body.scrollTop = scrollTop;
+    body.scrollLeft = scrollLeft;
+    requestAnimationFrame(() => {
+      body.scrollTop = scrollTop;
+      body.scrollLeft = scrollLeft;
+    });
+    return result;
+  }
+
   function plMasterEditRefreshOptionImagePreview(tr) {
     const input = tr?.querySelector('[data-field="shopee_option_image_url"]');
     const preview = tr?.querySelector('[data-option-image-preview]');
@@ -12672,7 +12691,7 @@ LEGACY END -->
     if (clearBtn) clearBtn.disabled = !url;
     const rows = plGroupRowsById(document.getElementById('pl-master-edit-modal')?.dataset.productGroupId || '');
     const renderedRows = plMasterEditRowsFromModal(rows);
-    if (renderedRows.length) plMasterEditRenderImageSummary(renderedRows);
+    if (renderedRows.length) plMasterEditPreserveModalScroll(() => plMasterEditRenderImageSummary(renderedRows));
   }
 
   async function plMasterEditUploadOptionImage(tr, file, inputEl = null) {
@@ -13024,7 +13043,13 @@ LEGACY END -->
     if (err) { err.textContent = ''; err.style.display = 'none'; }
     overlay.classList.add('show');
     overlay.setAttribute('aria-hidden', 'false');
-    if (nameInput) nameInput.focus();
+    if (nameInput) {
+      try {
+        nameInput.focus({ preventScroll: true });
+      } catch (_) {
+        nameInput.focus();
+      }
+    }
     if (first.staronemall_url) {
       void plMasterEditCrawlStaronemallImages(first.staronemall_url, { auto: true });
     }
@@ -18759,7 +18784,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   const RSH_PRODUCT_SELECT =
-    'id, sku, product_kind, product_name, option_name, sourcing_price, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_extra_attributes, shopee_days_to_ship, main_image, extra_images, components_extracted_en, components_extracted_at, components_approved, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, shopee_option_image_url, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, ebay_sku, ebay_offer_id, ebay_item_id, ebay_marketplace_id, ebay_status, ebay_category_id, ebay_inventory_group_key, ebay_listing_mode, ebay_variation_axis, ebay_variation_value, ebay_variation_image_url';
+    'id, sku, product_kind, product_name, option_name, description, sourcing_price, cost_krw, weight_g, lifecycle_state, inventory, staronemall_url, shopee_item_id, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_extra_attributes, shopee_days_to_ship, main_image, extra_images, components_extracted_en, components_extracted_at, components_approved, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, shopee_option_image_url, weight_measured_at, position, created_at, updated_at, global_model_id, shopee_global_raw_payload, shopee_global_model_raw_payload, shopee_global_item_sku, shopee_global_model_sku, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, ebay_sku, ebay_offer_id, ebay_item_id, ebay_marketplace_id, ebay_status, ebay_category_id, ebay_inventory_group_key, ebay_listing_mode, ebay_variation_axis, ebay_variation_value, ebay_variation_image_url';
 
   function rshSortedProducts(rows) {
     return (rows || []).slice().sort((a, b) => plTierSortKey(a).localeCompare(plTierSortKey(b)));

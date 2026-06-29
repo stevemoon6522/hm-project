@@ -9248,6 +9248,14 @@ LEGACY END -->
       renderPlatformWorkbench(platform);
     });
     root.querySelector('[data-platform-preview-execute]')?.addEventListener('click', () => platformExecutePreview());
+    root.querySelector('[data-platform-batch-start]')?.addEventListener('click', () => platformBatchBegin());
+    root.querySelector('[data-platform-batch-open-current]')?.addEventListener('click', () => platformBatchOpenCurrent());
+    root.querySelector('[data-platform-batch-confirm-success]')?.addEventListener('click', () => platformBatchConfirmCurrentSuccess());
+    root.querySelector('[data-platform-batch-record-failure]')?.addEventListener('click', () => platformBatchRecordCurrentFailure());
+    root.querySelector('[data-platform-batch-retry-failures]')?.addEventListener('click', () => platformBatchRetryFailures());
+    root.querySelector('[data-platform-batch-close]')?.addEventListener('click', () => platformBatchClose());
+    root.querySelector('[data-platform-batch-copy-log]')?.addEventListener('click', () => platformBatchCopyFailureLog());
+    root.querySelector('[data-platform-batch-download-log]')?.addEventListener('click', () => platformBatchDownloadFailureLog());
     root.querySelector('[data-platform-master-sync-dialog-close]')?.addEventListener('click', () => {
       platformCloseMasterSyncDialog(platform);
     });
@@ -10446,6 +10454,7 @@ LEGACY END -->
         if (msg) messages.push(msg);
       });
       if (item?.errorMsg && !messages.includes(item.errorMsg)) messages.push(item.errorMsg);
+      if (item?.resultMessage && !messages.includes(item.resultMessage)) messages.push(item.resultMessage);
       (Array.isArray(item?.preflightWarnings) ? item.preflightWarnings : []).forEach((msg) => {
         if (msg) messages.push(`주의: ${msg}`);
       });
@@ -10504,6 +10513,229 @@ LEGACY END -->
           ${failureLogHtml}
         </div>
       </div>`;
+  }
+
+  function platformBatchSetItem(batch, key, patch) {
+    const item = platformBatchItem(batch, key);
+    if (!item) return null;
+    Object.assign(item, patch || {});
+    return item;
+  }
+
+  function platformBatchMoveToNextReady(batch) {
+    if (!batch) return null;
+    const next = platformBatchNextReadyItem(batch);
+    if (next) {
+      batch.currentKey = next.key;
+      batch.running = true;
+      return next;
+    }
+    batch.currentKey = null;
+    batch.running = false;
+    batch.finishedAt = new Date().toISOString();
+    return null;
+  }
+
+  async function platformBatchOpenCurrent() {
+    const batch = state.platformBatchRegistration;
+    if (!batch) return;
+    const item = platformBatchCurrentItem(batch);
+    if (!item) {
+      batch.running = false;
+      batch.currentKey = null;
+      showToast('등록 가능한 대상이 없습니다. 실패 항목을 수정한 뒤 다시 시도하세요.', 'err');
+      renderPlatformWorkbench(batch.platform);
+      return;
+    }
+    const group = platformGroupsByKeys([item.key])[0];
+    if (!group) {
+      platformBatchSetItem(batch, item.key, {
+        status: 'failed',
+        stage: 'target_lookup',
+        finishedAt: new Date().toISOString(),
+        errorCode: 'TARGET_NOT_FOUND',
+        errorMsg: '선택한 마스터 상품을 현재 목록에서 찾지 못했습니다.',
+        resultMessage: '등록 확인 실패',
+        retryable: true,
+      });
+      batch.running = false;
+      batch.currentKey = null;
+      showToast('선택한 마스터 상품을 현재 목록에서 찾지 못했습니다.', 'err');
+      renderPlatformWorkbench(batch.platform);
+      return;
+    }
+    batch.running = true;
+    batch.currentKey = item.key;
+    platformBatchSetItem(batch, item.key, {
+      status: 'running',
+      stage: 'modal_open',
+      startedAt: item.startedAt || new Date().toISOString(),
+      finishedAt: null,
+      errorCode: null,
+      errorMsg: null,
+      resultMessage: '',
+      retryable: true,
+    });
+    renderPlatformWorkbench(batch.platform);
+    try {
+      await platformOpenExistingModal(batch.platform, group);
+    } catch (e) {
+      const message = e?.message || String(e);
+      platformBatchSetItem(batch, item.key, {
+        status: 'failed',
+        stage: 'modal_open',
+        finishedAt: new Date().toISOString(),
+        errorCode: 'MODAL_OPEN_FAILED',
+        errorMsg: message,
+        resultMessage: '등록 확인 실패',
+        retryable: true,
+      });
+      batch.running = false;
+      batch.currentKey = null;
+      showToast(message || '등록 모달을 열지 못했습니다.', 'err');
+      renderPlatformWorkbench(batch.platform);
+    }
+  }
+
+  async function platformBatchBegin() {
+    const batch = state.platformBatchRegistration;
+    if (!batch || batch.running) return;
+    const next = platformBatchNextReadyItem(batch);
+    if (!next) {
+      showToast('등록 가능한 대상이 없습니다. 실패 항목을 수정한 뒤 다시 시도하세요.', 'err');
+      renderPlatformWorkbench(batch.platform);
+      return;
+    }
+    batch.running = true;
+    batch.currentKey = next.key;
+    await platformBatchOpenCurrent();
+  }
+
+  function platformBatchStatusLooksPublished(status) {
+    const key = String(status?.key || status?.status || status || '').toLowerCase();
+    return ['listed', 'pending', 'partial', 'partial_published', 'published', 'draft'].includes(key);
+  }
+
+  async function platformBatchConfirmCurrentSuccess() {
+    const batch = state.platformBatchRegistration;
+    const item = platformBatchCurrentItem(batch);
+    if (!batch || !item) return;
+    const group = platformGroupsByKeys([item.key])[0];
+    if (!group) {
+      platformBatchSetItem(batch, item.key, {
+        status: 'failed',
+        stage: 'target_lookup',
+        finishedAt: new Date().toISOString(),
+        errorCode: 'TARGET_NOT_FOUND',
+        errorMsg: '선택한 마스터 상품을 현재 목록에서 찾지 못했습니다.',
+        resultMessage: '등록 확인 실패',
+        retryable: true,
+      });
+    } else {
+      try {
+        await refreshPlatformLedSources();
+        const nextStatus = platformStatusForGroup(group, batch.platform);
+        const statusKey = nextStatus?.key || nextStatus?.status || nextStatus;
+        const published = platformBatchStatusLooksPublished(statusKey);
+        platformBatchSetItem(batch, item.key, {
+          status: published ? 'succeeded' : 'failed',
+          stage: 'confirmation',
+          finishedAt: new Date().toISOString(),
+          errorCode: published ? null : 'PUBLISH_NOT_CONFIRMED',
+          errorMsg: published ? null : '등록 완료 후 플랫폼 매핑 상태가 아직 확인되지 않았습니다.',
+          resultMessage: published ? '일괄 등록 확인 완료' : '등록 확인 실패',
+          retryable: !published,
+        });
+      } catch (e) {
+        platformBatchSetItem(batch, item.key, {
+          status: 'failed',
+          stage: 'confirmation',
+          finishedAt: new Date().toISOString(),
+          errorCode: 'CONFIRMATION_FAILED',
+          errorMsg: e?.message || String(e),
+          resultMessage: '등록 확인 실패',
+          retryable: true,
+        });
+      }
+    }
+    const next = platformBatchMoveToNextReady(batch);
+    renderPlatformWorkbench(batch.platform);
+    if (next) await platformBatchOpenCurrent();
+  }
+
+  function platformBatchRecordCurrentFailure() {
+    const batch = state.platformBatchRegistration;
+    const item = platformBatchCurrentItem(batch);
+    if (!batch || !item) return;
+    const root = document.getElementById(`platform-${batch.platform}-root`);
+    const note = String(root?.querySelector('[data-platform-batch-failure-note]')?.value || '').trim();
+    platformBatchSetItem(batch, item.key, {
+      status: 'failed',
+      stage: 'operator_failure',
+      finishedAt: new Date().toISOString(),
+      errorCode: 'OPERATOR_RECORDED_FAILURE',
+      errorMsg: note || '운영자가 실패로 기록했습니다.',
+      resultMessage: '등록 확인 실패',
+      retryable: true,
+    });
+    const next = platformBatchMoveToNextReady(batch);
+    renderPlatformWorkbench(batch.platform);
+    if (next) platformBatchOpenCurrent();
+  }
+
+  function platformBatchRetryFailures() {
+    const batch = state.platformBatchRegistration;
+    if (!batch || batch.running) return;
+    (batch.items || []).forEach((item) => {
+      const status = String(item?.status || '');
+      if (!['failed', 'skipped', 'preflight_failed'].includes(status)) return;
+      if (item.retryable === false) return;
+      const group = platformGroupsByKeys([item.key])[0];
+      const validation = group ? platformGroupValidation(batch.platform, 'register', group) : { errors: [], warnings: [] };
+      const errors = validation.errors || [];
+      const warnings = validation.warnings || [];
+      if (errors.length) {
+        platformBatchSetItem(batch, item.key, {
+          status: 'preflight_failed',
+          stage: 'preflight',
+          preflightErrors: errors.slice(),
+          preflightWarnings: warnings.slice(),
+          errorCode: 'PREFLIGHT_FAILED',
+          errorMsg: errors[0] || null,
+          resultMessage: '',
+          retryable: false,
+        });
+        return;
+      }
+      platformBatchSetItem(batch, item.key, {
+        status: 'ready',
+        stage: '',
+        startedAt: null,
+        finishedAt: null,
+        preflightErrors: [],
+        preflightWarnings: warnings.slice(),
+        errorCode: null,
+        errorMsg: null,
+        resultMessage: '',
+        retryable: true,
+      });
+    });
+    batch.currentKey = null;
+    batch.running = false;
+    batch.finishedAt = null;
+    if (!platformBatchNextReadyItem(batch)) showToast('등록 가능한 대상이 없습니다. 실패 항목을 수정한 뒤 다시 시도하세요.', 'err');
+    renderPlatformWorkbench(batch.platform);
+  }
+
+  function platformBatchClose() {
+    const batch = state.platformBatchRegistration;
+    if (!batch) return;
+    if (batch.running) {
+      showToast('진행 중인 일괄 등록은 닫을 수 없습니다.', 'err');
+      return;
+    }
+    state.platformBatchRegistration = null;
+    renderPlatformWorkbench(batch.platform);
   }
 
   function platformPreviewHtml() {

@@ -675,6 +675,74 @@
       font-size: 12px;
       color: var(--muted);
     }
+    .platform-batch-panel {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #fff;
+      margin: 10px 0;
+      overflow: hidden;
+      box-shadow: 0 2px 8px rgba(102, 16, 212, .06);
+    }
+    .platform-batch-panel .platform-preview-head {
+      background: #fff9fd;
+    }
+    .platform-batch-panel table {
+      min-width: 820px;
+      table-layout: auto;
+    }
+    .platform-batch-panel th,
+    .platform-batch-panel td {
+      font-size: 12px;
+      vertical-align: top;
+    }
+    .platform-batch-current {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border: 1px solid #ead8e8;
+      border-radius: 8px;
+      background: #fffafd;
+    }
+    .platform-batch-current-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+    }
+    .platform-batch-current-actions input {
+      flex: 1 1 260px;
+      min-width: 220px;
+    }
+    .platform-batch-status {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 68px;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.35;
+      background: #f1f5f9;
+      color: #475569;
+      border: 1px solid #e2e8f0;
+      white-space: nowrap;
+    }
+    .platform-batch-status.ready { background: #dbeafe; color: #1d4ed8; border-color: #bfdbfe; }
+    .platform-batch-status.succeeded { background: #dcfce7; color: #166534; border-color: #bbf7d0; }
+    .platform-batch-status.running { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+    .platform-batch-status.failed,
+    .platform-batch-status.preflight_failed { background: #fee2e2; color: #991b1b; border-color: #fecaca; }
+    .platform-batch-status.pending,
+    .platform-batch-status.skipped { background: #f1f5f9; color: #475569; border-color: #e2e8f0; }
+    .platform-batch-log {
+      width: 100%;
+      min-height: 160px;
+      font-family: var(--mono);
+      font-size: 11px;
+      line-height: 1.45;
+      background: #fffdfd;
+    }
     .platform-master-sync-dialog .modal {
       width: min(1120px, 100%);
     }
@@ -8972,6 +9040,9 @@ LEGACY END -->
     const statusTabs = Object.keys(PLATFORM_STATUS_LABELS).map((key) => (
       `<button type="button" class="platform-status-tab${filter.status === key ? ' is-active' : ''}" data-platform-status="${key}" aria-pressed="${filter.status === key ? 'true' : 'false'}">${PLATFORM_STATUS_LABELS[key]} ${counts[key] || 0}</button>`
     )).join('');
+    const batchHtml = state.platformBatchRegistration?.platform === platform ? platformBatchRegistrationHtml() : '';
+    if (batchHtml) root.classList.add('has-platform-batch');
+    else root.classList.remove('has-platform-batch');
     const previewHtml = state.platformPreview?.platform === platform ? platformPreviewHtml() : '';
     const masterSyncDialogHtml = state.platformMasterSyncDialog?.platform === platform ? platformMasterSyncDialogHtml(platform) : '';
     const shopeeNameSyncHtml = platform === 'shopee' ? shopeeNameSyncPanelHtml() : '';
@@ -9048,6 +9119,7 @@ LEGACY END -->
       </div>
       ${isAlibaba ? '<div class="notice" style="margin-bottom:10px;">Alibaba(ICBU) 등록은 운영자 설정이 끝나야 실제 동작합니다: alibaba-bridge 시크릿(App Key/Secret/access_token) + ALIBABA_BRIDGE_ENABLED=true + auth_verified 플립. (1차: create_listing + sync, 카테고리/속성/운임은 선택)</div>' : ''}
       ${effectiveToolbarHtml}
+      ${batchHtml}
       ${previewHtml}
       ${masterSyncDialogHtml}
       ${shopeeNameSyncHtml}
@@ -10316,6 +10388,122 @@ LEGACY END -->
       warnings.push('가격 수정은 선택 상품만 가격 동기화 화면으로 연결합니다.');
     }
     return { errors, warnings };
+  }
+
+  function platformBatchCounts(batch) {
+    const items = Array.isArray(batch?.items) ? batch.items : [];
+    const counts = {
+      total: items.length,
+      pending: 0,
+      ready: 0,
+      running: 0,
+      succeeded: 0,
+      failed: 0,
+      skipped: 0,
+    };
+    items.forEach((item) => {
+      const status = String(item?.status || 'pending');
+      if (status === 'failed' || status === 'preflight_failed') {
+        counts.failed += 1;
+      } else if (Object.prototype.hasOwnProperty.call(counts, status)) {
+        counts[status] += 1;
+      } else {
+        counts.pending += 1;
+      }
+    });
+    return counts;
+  }
+
+  function platformBatchStatusLabel(status) {
+    const labels = {
+      pending: '대기',
+      ready: '준비됨',
+      preflight_failed: '사전검증 실패',
+      running: '진행 중',
+      succeeded: '성공',
+      failed: '실패',
+      skipped: '건너뜀',
+    };
+    return labels[String(status || 'pending')] || String(status || '대기');
+  }
+
+  function platformBatchRegistrationHtml() {
+    const batch = state.platformBatchRegistration;
+    if (!batch) return '';
+    const platform = batch.platform;
+    const label = PLATFORM_LABELS[platform] || platform;
+    const counts = platformBatchCounts(batch);
+    const items = Array.isArray(batch.items) ? batch.items : [];
+    const current = platformBatchCurrentItem(batch);
+    const nextReady = platformBatchNextReadyItem(batch);
+    const failedItems = platformBatchFailureItems(batch);
+    const hasFailures = failedItems.length > 0;
+    const rowHtml = items.map((item) => {
+      const status = String(item?.status || 'pending');
+      const statusClass = ['ready', 'succeeded', 'running', 'failed', 'preflight_failed', 'skipped'].includes(status) ? status : 'pending';
+      const messages = [];
+      (Array.isArray(item?.preflightErrors) ? item.preflightErrors : []).forEach((msg) => {
+        if (msg) messages.push(msg);
+      });
+      if (item?.errorMsg && !messages.includes(item.errorMsg)) messages.push(item.errorMsg);
+      (Array.isArray(item?.preflightWarnings) ? item.preflightWarnings : []).forEach((msg) => {
+        if (msg) messages.push(`주의: ${msg}`);
+      });
+      return `
+        <tr>
+          <td class="mono">${text(item?.sku || '-')}</td>
+          <td>${text(item?.title || '-')}</td>
+          <td><span class="platform-batch-status ${statusClass}">${text(platformBatchStatusLabel(status))}</span></td>
+          <td>${messages.length ? messages.map(text).join('<br>') : '<span class="muted">-</span>'}</td>
+        </tr>`;
+    }).join('');
+    const currentHtml = current ? `
+      <div class="platform-batch-current">
+        <div>
+          <strong>현재 대상</strong>
+          <div class="muted" style="font-size:12px;margin-top:3px;">${text(current.sku || '-')} · ${text(current.title || '-')}</div>
+        </div>
+        <div class="platform-batch-current-actions">
+          <button type="button" class="primary" data-platform-batch-open-current>현재 등록 모달 열기</button>
+          <button type="button" data-platform-batch-confirm-success>등록 완료 확인</button>
+          <input type="text" data-platform-batch-failure-note placeholder="실패 사유 또는 대상센터 확인 메모">
+          <button type="button" class="platform-danger-action" data-platform-batch-record-failure>실패로 기록</button>
+        </div>
+      </div>` : '';
+    const failureLogHtml = hasFailures ? `
+      <details open>
+        <summary><strong>Wiki 실패 로그</strong></summary>
+        <textarea class="platform-batch-log" readonly>${text(platformBatchFailureLogMarkdown(batch))}</textarea>
+        <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:8px;">
+          <button type="button" data-platform-batch-copy-log>Wiki 실패 로그 복사</button>
+          <button type="button" data-platform-batch-download-log>Wiki 실패 로그 다운로드</button>
+        </div>
+      </details>` : '';
+    return `
+      <div class="platform-batch-panel">
+        <div class="platform-preview-head">
+          <div>
+            <strong>${text(label)} 다중 선택 등록</strong>
+            <div class="muted" style="font-size:12px;margin-top:3px;">선택 ${text(counts.total)}개 · 성공 ${text(counts.succeeded)} · 실패 ${text(counts.failed)} · 준비 ${text(counts.ready)}</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <button type="button" data-platform-batch-close>닫기</button>
+            <button type="button" data-platform-batch-retry-failed ${hasFailures ? '' : 'disabled'}>실패만 다시 시도</button>
+            <button type="button" class="primary" data-platform-batch-start ${batch.running || !nextReady ? 'disabled' : ''}>시작</button>
+          </div>
+        </div>
+        <div class="platform-preview-body">
+          <div class="notice">기존 단일 등록 모달을 상품별로 순서대로 엽니다. 각 상품은 플랫폼에 독립 listing으로 등록됩니다.</div>
+          ${currentHtml}
+          <div class="panel table-scroll">
+            <table>
+              <thead><tr><th>SKU</th><th>상품명</th><th>상태</th><th>메시지</th></tr></thead>
+              <tbody>${rowHtml || '<tr><td colspan="4" class="empty">선택된 등록 대상이 없습니다.</td></tr>'}</tbody>
+            </table>
+          </div>
+          ${failureLogHtml}
+        </div>
+      </div>`;
   }
 
   function platformPreviewHtml() {

@@ -86,8 +86,8 @@ globalThis.editMode = platformBatchSelectionMode('shopee', 'edit', [{ key: 'A' }
 globalThis.shopifyMode = platformBatchSelectionMode('shopify', 'register', [{ key: 'A' }, { key: 'B' }]);
 `, context);
 
-assert.deepEqual(context.supported, [true, true, true, true], 'Shopee/Joom/Qoo10/eBay must support v1 guided batch registration');
-assert.deepEqual(context.unsupported, [false, false, false], 'Shopify/Alibaba/unknown must not use this v1 batch path');
+assert.deepEqual(Array.from(context.supported), [true, true, true, true], 'Shopee/Joom/Qoo10/eBay must support v1 guided batch registration');
+assert.deepEqual(Array.from(context.unsupported), [false, false, false], 'Shopify/Alibaba/unknown must not use this v1 batch path');
 assert.equal(context.noneMode, 'none');
 assert.equal(context.singleMode, 'single');
 assert.equal(context.batchMode, 'batch');
@@ -161,15 +161,15 @@ globalThis.batchFinishedAt = state.platformBatchRegistration.finishedAt;
 
 assert.equal(retryContext.fixedItem.status, 'ready', 'fixed preflight failures must become ready after retry revalidation');
 assert.equal(retryContext.fixedItem.retryable, true, 'fixed preflight retry should remain retryable');
-assert.deepEqual(retryContext.fixedItem.preflightErrors, [], 'fixed preflight retry must clear old errors');
+assert.deepEqual(Array.from(retryContext.fixedItem.preflightErrors), [], 'fixed preflight retry must clear old errors');
 assert.equal(retryContext.blockedItem.status, 'preflight_failed', 'still-invalid preflight failures must stay blocked');
 assert.equal(retryContext.blockedItem.retryable, true, 'preflight failures must remain recheckable after failed retry');
-assert.deepEqual(retryContext.blockedItem.preflightErrors, ['new missing weight'], 'preflight retry must refresh validation errors');
+assert.deepEqual(Array.from(retryContext.blockedItem.preflightErrors), ['new missing weight'], 'preflight retry must refresh validation errors');
 assert.equal(retryContext.batchFinishedAt, null, 'retry should reopen the batch for ready items');
 
 const logSource = sliceBetween(
   html,
-  'function platformBatchFailureLogMarkdown',
+  'function platformBatchIsoDate',
   'async function platformBatchCopyFailureLog',
 );
 

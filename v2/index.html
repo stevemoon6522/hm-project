@@ -10738,6 +10738,37 @@ LEGACY END -->
     renderPlatformWorkbench(batch.platform);
   }
 
+  async function platformBatchCopyFailureLog() {
+    const batch = state.platformBatchRegistration;
+    if (!batch) return;
+    const markdown = platformBatchFailureLogMarkdown(batch);
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('clipboard unavailable');
+      await navigator.clipboard.writeText(markdown);
+      showToast('Wiki 실패 로그를 클립보드에 복사했습니다.', 'ok');
+    } catch (e) {
+      console.warn('[platformBatchCopyFailureLog] clipboard failed:', e);
+      showToast('클립보드 복사에 실패했습니다. 텍스트 영역에서 직접 복사하세요.', 'warn');
+    }
+  }
+
+  function platformBatchDownloadFailureLog() {
+    const batch = state.platformBatchRegistration;
+    if (!batch) return;
+    const markdown = platformBatchFailureLogMarkdown(batch);
+    const date = platformBatchIsoDate(batch.finishedAt || batch.createdAt);
+    const filename = `SD Platform Batch Registration Failures - ${date}.md`;
+    const blob = new Blob([markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   function platformPreviewHtml() {
     const preview = state.platformPreview;
     if (!preview) return '';

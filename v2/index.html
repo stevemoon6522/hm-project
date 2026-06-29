@@ -10464,10 +10464,10 @@ LEGACY END -->
           <div class="muted" style="font-size:12px;margin-top:3px;">${text(current.sku || '-')} · ${text(current.title || '-')}</div>
         </div>
         <div class="platform-batch-current-actions">
-          <button type="button" class="primary" data-platform-batch-open-current>현재 등록 모달 열기</button>
-          <button type="button" data-platform-batch-confirm-success>등록 완료 확인</button>
+          <button type="button" class="primary" data-platform-batch-open-current ${batch.running ? '' : 'disabled'}>현재 등록 모달 열기</button>
+          <button type="button" data-platform-batch-confirm-success ${batch.running ? '' : 'disabled'}>등록 완료 확인</button>
           <input type="text" data-platform-batch-failure-note placeholder="실패 사유 또는 대상센터 확인 메모">
-          <button type="button" class="platform-danger-action" data-platform-batch-record-failure>실패로 기록</button>
+          <button type="button" class="platform-danger-action" data-platform-batch-record-failure ${batch.running ? '' : 'disabled'}>실패로 기록</button>
         </div>
       </div>` : '';
     const failureLogHtml = hasFailures ? `
@@ -10487,8 +10487,8 @@ LEGACY END -->
             <div class="muted" style="font-size:12px;margin-top:3px;">선택 ${text(counts.total)}개 · 성공 ${text(counts.succeeded)} · 실패 ${text(counts.failed)} · 준비 ${text(counts.ready)}</div>
           </div>
           <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-            <button type="button" data-platform-batch-close>닫기</button>
-            <button type="button" data-platform-batch-retry-failed ${hasFailures ? '' : 'disabled'}>실패만 다시 시도</button>
+            <button type="button" data-platform-batch-close ${batch.running ? 'disabled' : ''}>닫기</button>
+            <button type="button" data-platform-batch-retry-failures ${hasFailures && !batch.running ? '' : 'disabled'}>실패만 다시 시도</button>
             <button type="button" class="primary" data-platform-batch-start ${batch.running || !nextReady ? 'disabled' : ''}>시작</button>
           </div>
         </div>

@@ -9187,9 +9187,14 @@ LEGACY END -->
       renderPlatformWorkbench(platform);
     });
     root.querySelector('[data-platform-clear-selection]')?.addEventListener('click', () => {
+      if (state.platformBatchRegistration?.platform === platform && state.platformBatchRegistration.running) {
+        showToast('진행 중인 일괄 등록을 먼저 완료하세요.', 'err');
+        return;
+      }
       platformMarkSelectionManual(platform);
       platformSelection(platform).clear();
       if (state.platformPreview?.platform === platform) state.platformPreview = null;
+      if (state.platformBatchRegistration?.platform === platform) state.platformBatchRegistration = null;
       renderPlatformWorkbench(platform);
     });
     root.querySelectorAll('.platform-master-check').forEach((cb) => {
@@ -9302,6 +9307,8 @@ LEGACY END -->
     return groups;
   }
 
+  // V1 guided batch is limited to platforms whose registration still needs the
+  // proven operator confirmation modal. Shopify keeps its dispatcher path.
   function platformBatchSupportedPlatform(platform) {
     return ['shopee', 'joom', 'qoo10', 'ebay'].includes(String(platform || '').toLowerCase());
   }
@@ -9773,6 +9780,13 @@ LEGACY END -->
     if (!groups.length) {
       showToast('선택된 마스터 상품이 없습니다.', 'err');
       return;
+    }
+    if (action !== 'register' && state.platformBatchRegistration?.platform === platform) {
+      if (state.platformBatchRegistration.running) {
+        showToast('진행 중인 일괄 등록을 먼저 완료하세요.', 'err');
+        return;
+      }
+      state.platformBatchRegistration = null;
     }
     state.platformPreview = {
       platform,

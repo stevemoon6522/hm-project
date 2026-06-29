@@ -71,7 +71,14 @@ assert(masterRegister.includes('function mrJoomAccountBrandMatch'), 'Joom flow m
 assert(masterRegister.includes('function mrApplyPreferredJoomBrand'), 'Joom flow must auto-select a safer account-observed brand before rendering the draft');
 assert(masterRegister.includes("mrJoomBridgeUrl() + '/brand-options?limit=500'"), 'Joom flow must load brand candidates from the Joom account via the bridge');
 assert(masterRegister.includes('id="mr-joom-brand"') && masterRegister.includes('id="mr-joom-brand-custom"'), 'Joom publish modal must allow brand selection before dry-run/live registration');
-assert(masterRegister.includes('await mrLoadJoomBrandOptions(group);'), 'Joom modal must load account brand options before rendering the draft');
+assert(
+  masterRegister.includes('await mrLoadJoomBrandOptions(group);') || (
+    masterRegister.includes('const brandOptionsPromise = mrLoadJoomBrandOptions(group);')
+    && masterRegister.includes('await Promise.all([')
+    && masterRegister.indexOf('mrApplyPreferredJoomBrand(group);') > masterRegister.indexOf('await Promise.all([')
+  ),
+  'Joom modal must load account brand options before rendering the draft',
+);
 assert(masterRegister.includes('mrApplyPreferredJoomBrand(group);'), 'Joom modal must apply the best account-derived brand candidate before draft/dry-run');
 assert(masterRegister.includes('brand: draft.brand'), 'Joom dry-run signature must include the selected brand');
 assert(masterRegister.includes("if (!brand) errors.push('Joom brand is required.')"), 'Joom draft must block empty brand values');

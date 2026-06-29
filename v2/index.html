@@ -37039,10 +37039,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const draft = mrBuildJoomDraft(group, joomCountry);
       if (draft.errors.length) throw new Error(draft.errors.join('\n'));
 
-      let detailImages = Array.isArray(opts.detailImages) ? opts.detailImages : null;
-      if (!detailImages) {
-        detailImages = await mrJoomLoadDetailImages(group);
-      }
+      const detailImages = Array.isArray(opts.detailImages)
+        ? opts.detailImages
+        : draft.extraImages.slice();
 
       const payload = {
         row: { sku: draft.parentSku, cost: draft.productCostKrw, weight: draft.productWeightG },
@@ -37279,10 +37278,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (overlay) overlay.classList.add('show');
 
       try {
-        await mrEnsureJoomSourceImages(group);
-        await mrLoadJoomBrandOptions(group);
+        const sourceImagesPromise = mrEnsureJoomSourceImages(group);
+        const brandOptionsPromise = mrLoadJoomBrandOptions(group);
+        const countryPromise = _v2LoadJoomCountry();
+        const [, , joomCountry] = await Promise.all([
+          sourceImagesPromise,
+          brandOptionsPromise,
+          countryPromise,
+        ]);
         mrApplyPreferredJoomBrand(group);
-        const joomCountry = await _v2LoadJoomCountry();
         const draft = mrBuildJoomDraft(group, joomCountry);
         _mrPendingJoomDraftSignature = mrJoomDraftSignature(draft);
         mrRenderJoomDraftModal(draft, _mrPendingJoomDryRunResult);

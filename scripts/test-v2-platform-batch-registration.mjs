@@ -96,6 +96,77 @@ assert.equal(context.tooManyMode, 'too_many');
 assert.equal(context.editMode, 'single');
 assert.equal(context.shopifyMode, 'single');
 
+const controllerSource = sliceBetween(
+  html,
+  'function platformBatchSetItem',
+  'function platformPreviewHtml',
+);
+
+const retryContext = {
+  state: {
+    platformBatchRegistration: {
+      platform: 'shopee',
+      running: false,
+      currentKey: null,
+      finishedAt: '2026-06-29T01:05:00.000Z',
+      items: [
+        {
+          key: 'fixed-preflight',
+          sku: 'SKU-FIXED',
+          status: 'preflight_failed',
+          retryable: false,
+          preflightErrors: ['old missing cost'],
+          preflightWarnings: [],
+          errorCode: 'PREFLIGHT_FAILED',
+          errorMsg: 'old missing cost',
+        },
+        {
+          key: 'still-blocked',
+          sku: 'SKU-BLOCKED',
+          status: 'preflight_failed',
+          retryable: false,
+          preflightErrors: ['old missing weight'],
+          preflightWarnings: [],
+          errorCode: 'PREFLIGHT_FAILED',
+          errorMsg: 'old missing weight',
+        },
+      ],
+    },
+  },
+};
+vm.runInNewContext(`
+function platformBatchItem(batch, key) {
+  return (batch?.items || []).find((item) => String(item.key) === String(key)) || null;
+}
+function platformBatchNextReadyItem(batch) {
+  return (batch?.items || []).find((item) => item.status === 'ready') || null;
+}
+function platformGroupsByKeys(keys) {
+  return (keys || []).map((key) => ({ key, rows: [{ id: key }] }));
+}
+function platformGroupValidation(platform, action, group) {
+  if (group.key === 'still-blocked') {
+    return { errors: ['new missing weight'], warnings: ['still missing data'] };
+  }
+  return { errors: [], warnings: ['rechecked ok'] };
+}
+function renderPlatformWorkbench(platform) { globalThis.renderedPlatform = platform; }
+function showToast(message, kind) { globalThis.toast = { message, kind }; }
+${controllerSource}
+platformBatchRetryFailures();
+globalThis.fixedItem = state.platformBatchRegistration.items[0];
+globalThis.blockedItem = state.platformBatchRegistration.items[1];
+globalThis.batchFinishedAt = state.platformBatchRegistration.finishedAt;
+`, retryContext);
+
+assert.equal(retryContext.fixedItem.status, 'ready', 'fixed preflight failures must become ready after retry revalidation');
+assert.equal(retryContext.fixedItem.retryable, true, 'fixed preflight retry should remain retryable');
+assert.deepEqual(retryContext.fixedItem.preflightErrors, [], 'fixed preflight retry must clear old errors');
+assert.equal(retryContext.blockedItem.status, 'preflight_failed', 'still-invalid preflight failures must stay blocked');
+assert.equal(retryContext.blockedItem.retryable, true, 'preflight failures must remain recheckable after failed retry');
+assert.deepEqual(retryContext.blockedItem.preflightErrors, ['new missing weight'], 'preflight retry must refresh validation errors');
+assert.equal(retryContext.batchFinishedAt, null, 'retry should reopen the batch for ready items');
+
 const logSource = sliceBetween(
   html,
   'function platformBatchFailureLogMarkdown',

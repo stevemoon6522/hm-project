@@ -9411,7 +9411,7 @@ LEGACY END -->
       stage: validation.errors?.length ? 'preflight' : '',
       errorCode: validation.errors?.length ? 'PREFLIGHT_FAILED' : null,
       errorMsg: validation.errors?.[0] || null,
-      retryable: !validation.errors?.length,
+      retryable: true,
     };
   }
 
@@ -10689,7 +10689,7 @@ LEGACY END -->
     (batch.items || []).forEach((item) => {
       const status = String(item?.status || '');
       if (!['failed', 'skipped', 'preflight_failed'].includes(status)) return;
-      if (item.retryable === false) return;
+      if (item.retryable === false && status !== 'preflight_failed') return;
       const group = platformGroupsByKeys([item.key])[0];
       const validation = group ? platformGroupValidation(batch.platform, 'register', group) : { errors: [], warnings: [] };
       const errors = validation.errors || [];
@@ -10703,7 +10703,7 @@ LEGACY END -->
           errorCode: 'PREFLIGHT_FAILED',
           errorMsg: errors[0] || null,
           resultMessage: '',
-          retryable: false,
+          retryable: true,
         });
         return;
       }

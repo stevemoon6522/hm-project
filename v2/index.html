@@ -9771,6 +9771,16 @@ LEGACY END -->
     return platformGroupsByKeys(keys);
   }
 
+  function platformGuardBatchInterruption(platform) {
+    if (state.platformBatchRegistration?.platform !== platform) return false;
+    if (state.platformBatchRegistration.running) {
+      showToast('진행 중인 일괄 등록을 먼저 완료하세요.', 'err');
+      return true;
+    }
+    state.platformBatchRegistration = null;
+    return false;
+  }
+
   function platformOpenPreview(platform, action, explicitKeys = null) {
     let groups = platformSelectedGroups(platform, explicitKeys);
     if (!groups.length && !explicitKeys) {
@@ -9781,13 +9791,7 @@ LEGACY END -->
       showToast('선택된 마스터 상품이 없습니다.', 'err');
       return;
     }
-    if (action !== 'register' && state.platformBatchRegistration?.platform === platform) {
-      if (state.platformBatchRegistration.running) {
-        showToast('진행 중인 일괄 등록을 먼저 완료하세요.', 'err');
-        return;
-      }
-      state.platformBatchRegistration = null;
-    }
+    if (action !== 'register' && platformGuardBatchInterruption(platform)) return;
     state.platformPreview = {
       platform,
       action,
@@ -9801,6 +9805,7 @@ LEGACY END -->
   }
 
   async function platformOpenAction(platform, action, explicitKeys = null) {
+    if (action !== 'register' && platformGuardBatchInterruption(platform)) return;
     if (action === 'edit') {
       const groups = platformActionGroups(platform, explicitKeys);
       if (!groups.length) {
@@ -10048,6 +10053,7 @@ LEGACY END -->
 
   function platformOpenMasterSyncDialog(platform, explicitKeys = null) {
     if (platform === 'alibaba') return;
+    if (platformGuardBatchInterruption(platform)) return;
     const keys = (explicitKeys || platformNeedsUpdateKeys(platform)).filter(Boolean);
     if (!keys.length) {
       showToast('마스터 변경이 필요한 상품이 없습니다.', 'warn');

@@ -14,8 +14,28 @@ function sliceBetween(source, start, end) {
   return source.slice(s, e);
 }
 
+function extractFunctionBlock(source, functionName) {
+  let start = source.indexOf(`function ${functionName}(`);
+  assert.notEqual(start, -1, `${functionName} must exist`);
+  const asyncStart = start - 'async '.length;
+  if (asyncStart >= 0 && source.slice(asyncStart, start) === 'async ') start = asyncStart;
+  const open = source.indexOf('{', start);
+  assert.ok(open > start, `${functionName} must have a body`);
+  let depth = 0;
+  for (let i = open; i < source.length; i += 1) {
+    const ch = source[i];
+    if (ch === '{') depth += 1;
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(start, i + 1);
+    }
+  }
+  assert.fail(`${functionName} body must close`);
+}
+
 for (const token of [
   'platformBatchRegistration: null',
+  'function platformGuardBatchInterruption',
   'function platformBatchSupportedPlatform',
   'function platformBatchSelectionMode',
   'function platformStartBatchRegistration',
@@ -27,7 +47,6 @@ for (const token of [
   'function platformBatchCopyFailureLog',
   'function platformBatchDownloadFailureLog',
   'state.platformBatchRegistration = null',
-  "action !== 'register' && state.platformBatchRegistration?.platform === platform",
   'Shopify keeps its dispatcher path',
   'data-platform-batch-start',
   'data-platform-batch-open-current',
@@ -169,6 +188,96 @@ assert.equal(retryContext.blockedItem.status, 'preflight_failed', 'still-invalid
 assert.equal(retryContext.blockedItem.retryable, true, 'preflight failures must remain recheckable after failed retry');
 assert.deepEqual(Array.from(retryContext.blockedItem.preflightErrors), ['new missing weight'], 'preflight retry must refresh validation errors');
 assert.equal(retryContext.batchFinishedAt, null, 'retry should reopen the batch for ready items');
+
+const actionGuardSource = `
+${extractFunctionBlock(html, 'platformGuardBatchInterruption')}
+${extractFunctionBlock(html, 'platformOpenAction')}
+`;
+
+const runningEditContext = {
+  state: { platformBatchRegistration: { platform: 'shopee', running: true } },
+  editCalls: [],
+  toasts: [],
+};
+vm.runInNewContext(`
+function showToast(message, kind) { globalThis.toasts.push({ message, kind }); }
+function platformActionGroups() { return [{ rows: [{ id: 'p1' }] }]; }
+function platformGroupProductIds(group) { return (group.rows || []).map((row) => row.id); }
+async function platformOpenEditFlow(platform, productIds) { globalThis.editCalls.push({ platform, productIds }); }
+${actionGuardSource}
+globalThis.done = platformOpenAction('shopee', 'edit');
+`, runningEditContext);
+await runningEditContext.done;
+
+assert.equal(runningEditContext.editCalls.length, 0, 'running batch must block edit flow');
+assert.equal(runningEditContext.state.platformBatchRegistration.running, true, 'running batch must not be cleared by edit flow');
+assert.equal(runningEditContext.toasts[0]?.kind, 'err', 'running batch edit block must notify the operator');
+
+const idleEditContext = {
+  state: { platformBatchRegistration: { platform: 'shopee', running: false } },
+  editCalls: [],
+  toasts: [],
+};
+vm.runInNewContext(`
+function showToast(message, kind) { globalThis.toasts.push({ message, kind }); }
+function platformActionGroups() { return [{ rows: [{ id: 'p1' }, { id: 'p2' }] }]; }
+function platformGroupProductIds(group) { return (group.rows || []).map((row) => row.id); }
+async function platformOpenEditFlow(platform, productIds) { globalThis.editCalls.push({ platform, productIds }); }
+${actionGuardSource}
+globalThis.done = platformOpenAction('shopee', 'edit');
+`, idleEditContext);
+await idleEditContext.done;
+
+assert.equal(idleEditContext.state.platformBatchRegistration, null, 'idle batch must clear before edit flow');
+assert.equal(idleEditContext.editCalls.length, 1, 'idle batch must not block edit flow');
+assert.deepEqual(Array.from(idleEditContext.editCalls[0].productIds), ['p1', 'p2'], 'edit flow must keep selected product IDs');
+
+const masterSyncGuardSource = `
+${extractFunctionBlock(html, 'platformGuardBatchInterruption')}
+${extractFunctionBlock(html, 'platformOpenMasterSyncDialog')}
+`;
+
+const runningMasterSyncContext = {
+  state: {
+    platformBatchRegistration: { platform: 'joom', running: true },
+    platformPreview: null,
+    platformMasterSyncDialog: null,
+  },
+  toasts: [],
+  renders: [],
+};
+vm.runInNewContext(`
+function showToast(message, kind) { globalThis.toasts.push({ message, kind }); }
+function platformNeedsUpdateKeys() { return ['changed']; }
+function renderPlatformWorkbench(platform) { globalThis.renders.push(platform); }
+${masterSyncGuardSource}
+platformOpenMasterSyncDialog('joom', ['changed']);
+`, runningMasterSyncContext);
+
+assert.equal(runningMasterSyncContext.state.platformMasterSyncDialog, null, 'running batch must block direct master sync dialog');
+assert.equal(runningMasterSyncContext.state.platformBatchRegistration.running, true, 'running batch must survive direct master sync');
+assert.equal(runningMasterSyncContext.toasts[0]?.kind, 'err', 'running batch master sync block must notify the operator');
+
+const idleMasterSyncContext = {
+  state: {
+    platformBatchRegistration: { platform: 'joom', running: false },
+    platformPreview: { platform: 'joom' },
+    platformMasterSyncDialog: null,
+  },
+  toasts: [],
+  renders: [],
+};
+vm.runInNewContext(`
+function showToast(message, kind) { globalThis.toasts.push({ message, kind }); }
+function platformNeedsUpdateKeys() { return ['changed']; }
+function renderPlatformWorkbench(platform) { globalThis.renders.push(platform); }
+${masterSyncGuardSource}
+platformOpenMasterSyncDialog('joom', ['changed']);
+`, idleMasterSyncContext);
+
+assert.equal(idleMasterSyncContext.state.platformBatchRegistration, null, 'idle batch must clear before direct master sync dialog');
+assert.equal(idleMasterSyncContext.state.platformPreview, null, 'master sync dialog should clear stale preview');
+assert.deepEqual(Array.from(idleMasterSyncContext.state.platformMasterSyncDialog.keys), ['changed'], 'direct master sync dialog must still open after idle batch cleanup');
 
 const logSource = sliceBetween(
   html,

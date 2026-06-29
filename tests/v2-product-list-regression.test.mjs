@@ -100,24 +100,17 @@ test('platform register routes single, batch, and unsupported multi-select paths
     'platformVisibleGroups',
     'platformOpenPreview',
     'platformOpenExistingModal',
-    'platformBatchSelectionMode',
     'platformStartBatchRegistration',
     'PLATFORM_LABELS',
     'showToast',
     'renderPlatformWorkbench',
-    `${extractFunctionBlock(html, 'platformCanUseDispatcher')}
+    `${extractFunctionBlock(html, 'platformBatchSupportedPlatform')}
+     ${extractFunctionBlock(html, 'platformBatchSelectionMode')}
+     ${extractFunctionBlock(html, 'platformCanUseDispatcher')}
      ${extractFunctionBlock(html, 'platformOpenAction')};
      return platformOpenAction;`,
   );
   const labels = { shopee: 'Shopee', joom: 'Joom', qoo10: 'Qoo10', ebay: 'eBay' };
-  const batchSelectionMode = (platform, action, groups = []) => {
-    if (action !== 'register') return 'single';
-    if (!['shopee', 'joom', 'qoo10', 'ebay'].includes(platform)) return 'single';
-    if (!groups.length) return 'none';
-    if (groups.length === 1) return 'single';
-    if (groups.length <= 3) return 'batch';
-    return 'too_many';
-  };
 
   for (const platform of Object.keys(labels)) {
     const state = { platformPreview: { platform, action: 'register', keys: ['stale'] } };
@@ -129,7 +122,6 @@ test('platform register routes single, batch, and unsupported multi-select paths
       () => [],
       (...args) => calls.previews.push(args),
       async (targetPlatform, group) => calls.modals.push({ targetPlatform, group }),
-      batchSelectionMode,
       (targetPlatform, groups) => calls.batches.push({ targetPlatform, groups }),
       labels,
       (message, kind) => calls.toasts.push({ message, kind }),
@@ -147,34 +139,36 @@ test('platform register routes single, batch, and unsupported multi-select paths
     assert.equal(calls.toasts.length, 0, `${platform} single selected register must not show a confirmation toast`);
   }
 
-  {
-    const state = { platformPreview: null };
-    const calls = { modals: [], previews: [], batches: [], toasts: [] };
-    const openAction = platformOpenActionFactory(
-      state,
-      () => [
-        { key: 'single:one', rows: [{ id: 'one' }] },
-        { key: 'single:two', rows: [{ id: 'two' }] },
-      ],
-      () => [],
-      () => [],
-      (...args) => calls.previews.push(args),
-      async (targetPlatform, group) => calls.modals.push({ targetPlatform, group }),
-      batchSelectionMode,
-      (targetPlatform, groups) => calls.batches.push({ targetPlatform, groups }),
-      labels,
-      (message, kind) => calls.toasts.push({ message, kind }),
-      () => {},
-    );
+  for (const platform of Object.keys(labels)) {
+    for (const selectedCount of [2, 3]) {
+      const state = { platformPreview: null };
+      const calls = { modals: [], previews: [], batches: [], toasts: [] };
+      const selectedGroups = Array.from({ length: selectedCount }, (_, idx) => ({
+        key: `single:${platform}-${idx + 1}`,
+        rows: [{ id: `${platform}-${idx + 1}` }],
+      }));
+      const openAction = platformOpenActionFactory(
+        state,
+        () => selectedGroups,
+        () => [],
+        () => [],
+        (...args) => calls.previews.push(args),
+        async (targetPlatform, group) => calls.modals.push({ targetPlatform, group }),
+        (targetPlatform, groups) => calls.batches.push({ targetPlatform, groups }),
+        labels,
+        (message, kind) => calls.toasts.push({ message, kind }),
+        () => {},
+      );
 
-    await openAction('shopee', 'register');
+      await openAction(platform, 'register');
 
-    assert.equal(calls.modals.length, 0, 'supported multi-selected register must not open the first modal silently');
-    assert.equal(calls.previews.length, 0, 'supported multi-selected register must not use the old confirmation preview');
-    assert.equal(calls.batches.length, 1, 'supported multi-selected register must start batch registration');
-    assert.equal(calls.batches[0].targetPlatform, 'shopee', 'batch registration must keep the active platform');
-    assert.equal(calls.batches[0].groups.length, 2, 'batch registration must receive all selected groups');
-    assert.equal(calls.toasts.length, 0, 'supported batch registration must not show the old confirmation toast');
+      assert.equal(calls.modals.length, 0, `${platform} ${selectedCount}-selected register must not open the first modal silently`);
+      assert.equal(calls.previews.length, 0, `${platform} ${selectedCount}-selected register must not use the old confirmation preview`);
+      assert.equal(calls.batches.length, 1, `${platform} ${selectedCount}-selected register must start batch registration`);
+      assert.equal(calls.batches[0].targetPlatform, platform, `${platform} batch registration must keep the active platform`);
+      assert.equal(calls.batches[0].groups.length, selectedCount, `${platform} batch registration must receive all selected groups`);
+      assert.equal(calls.toasts.length, 0, `${platform} ${selectedCount}-selected batch registration must not show the old confirmation toast`);
+    }
   }
 
   {
@@ -190,7 +184,6 @@ test('platform register routes single, batch, and unsupported multi-select paths
       () => [],
       (...args) => calls.previews.push(args),
       async (targetPlatform, group) => calls.modals.push({ targetPlatform, group }),
-      batchSelectionMode,
       (targetPlatform, groups) => calls.batches.push({ targetPlatform, groups }),
       labels,
       (message, kind) => calls.toasts.push({ message, kind }),
@@ -221,7 +214,6 @@ test('platform register routes single, batch, and unsupported multi-select paths
       () => [],
       (...args) => calls.previews.push(args),
       async (targetPlatform, group) => calls.modals.push({ targetPlatform, group }),
-      batchSelectionMode,
       (targetPlatform, groups) => calls.batches.push({ targetPlatform, groups }),
       labels,
       (message, kind) => calls.toasts.push({ message, kind }),

@@ -14,6 +14,7 @@ const joomMirror = readFileSync(join(root, 'edge-functions', 'joom-bridge', 'ind
 const qoo10Bridge = readFileSync(join(root, 'supabase', 'functions', 'qoo10-bridge', 'index.ts'), 'utf8');
 const shopeeBridge = readFileSync(join(root, 'supabase', 'functions', 'shopee-bridge', 'index.ts'), 'utf8');
 const shopeeMirror = readFileSync(join(root, 'edge-functions', 'shopee-bridge', 'index.ts'), 'utf8');
+const sharedAuth = readFileSync(join(root, 'supabase', 'functions', '_shared', 'auth.ts'), 'utf8');
 const cycle = readFileSync(cyclePath, 'utf8');
 const docs = readFileSync(docsPath, 'utf8');
 const hash = (s) => createHash('sha256').update(s).digest('hex');
@@ -27,6 +28,81 @@ assert(target.marketplaces.includes('ebay') && target.marketplaces.includes('joo
 assert.equal(hash(ebayBridge), hash(ebayMirror), 'eBay bridge mirror must match supabase function source');
 assert.equal(hash(joomBridge), hash(joomMirror), 'Joom bridge mirror must match supabase function source');
 assert.equal(hash(shopeeBridge), hash(shopeeMirror), 'Shopee bridge mirror must match supabase function source');
+
+assert.match(
+  sharedAuth,
+  /SUPABASE_SERVICE_ROLE_KEY[\s\S]*payload\.role === ["']service_role["'][\s\S]*token === SUPABASE_SERVICE_ROLE_KEY/,
+  'Edge auth helper must allow exact service-role bearer tokens for server-side operator smoke tests',
+);
+assert.match(
+  sharedAuth,
+  /payload\.role === ["']service_role["'][\s\S]*allowGatewayVerifiedServiceRole/,
+  'Edge auth helper must expose an explicit opt-in for gateway-verified service-role JWTs',
+);
+assert.match(
+  cycle,
+  /function requireBridgeOperatorAuth[\s\S]*PLATFORM_BRIDGE_INTERNAL_TOKEN[\s\S]*SUPABASE_SERVICE_ROLE_KEY/,
+  'platform test cycle must allow live bridge calls with either internal token or service-role operator auth',
+);
+assert.match(
+  cycle,
+  /Authorization:\s*`Bearer \$\{serviceKey \|\| env\.anon\}`/,
+  'platform test cycle must forward service-role bearer tokens to authenticated bridge routes when internal token is absent',
+);
+assert.match(
+  cycle,
+  /apikey:\s*serviceKey \|\| env\.anon/,
+  'platform test cycle must use the service-role key as Supabase apikey for server-side bridge smoke tests when available',
+);
+assert.match(
+  cycle,
+  /async function loadShopeeRows\(env, productId, key = env\.anon\)[\s\S]*restGet\(env, 'product_shopee_listings', query, key\)/,
+  'platform test cycle must allow service-role reads for Shopee mapping preflight rows',
+);
+assert.match(
+  cycle,
+  /const shopeeRows = await loadShopeeRows\(env, product\.id, serviceKey \|\| env\.anon\)/,
+  'platform test cycle must read Shopee mapping preflight rows with service-role auth when available',
+);
+assert.match(
+  cycle,
+  /process\.env\.SUPABASE_URL[\s\S]*process\.env\.SUPABASE_ANON_KEY[\s\S]*process\.env\.SUPABASE_ANON/,
+  'platform test cycle must allow env overrides so smoke tests are not coupled to dirty local v2/index.html config',
+);
+assert.doesNotMatch(
+  cycle,
+  /const select = \[[\s\S]*'joom_category_id'[\s\S]*\]\.join\(','\);/,
+  'platform test cycle product SELECT must not request optional columns missing from the live products table',
+);
+assert.doesNotMatch(
+  cycle,
+  /const select = \[[\s\S]*'ebay_(?:sku|offer_id|item_id|status|marketplace_id)'[\s\S]*\]\.join\(','\);/,
+  'platform test cycle product SELECT must not request legacy eBay mapping columns missing from the live products table',
+);
+assert.doesNotMatch(
+  cycle,
+  /select=id,platform,shop_id,country,platform_item_id,listing_status,mapping_status,error_msg,deleted_at/,
+  'platform test cycle platform_listings preflight SELECT must not request mapping_status when the live table lacks it',
+);
+for (const token of [
+  "'shopee_category_id'",
+  "'shopee_brand_id'",
+  "'shopee_image_id'",
+  "'shopee_extra_attributes'",
+  "'shopee_description'",
+  "'shopee_days_to_ship'",
+  'function defaultShopeeAttributeList',
+  'function mergeShopeeAttributeLists',
+  'function resolveShopeeDaysToShip',
+  'body.attribute_list = attributeList',
+]) {
+  assert(cycle.includes(token), `Shopee cycle payload must mirror V2 registration field token: ${token}`);
+}
+assert.match(
+  cycle,
+  /function shopeeRegisterBody[\s\S]*const body = \{[\s\S]*product_id: product\.id/,
+  'Shopee cycle register_cbsc payload must include product_id so successful remote registration is mapped locally before returning',
+);
 
 for (const token of [
   'const EBAY_HEADLESS_CONFIRM_PHRASE = "PUBLISH_EBAY_LISTING"',
@@ -121,13 +197,13 @@ for (const token of [
   'shopee-register',
   'shopee-cycle',
   'detail?.global_item_id',
-  'reset_local: false',
+  'reset_local: true',
   'ebay-policy',
   "confirm: live ? CONFIRM.ebayPolicy : undefined",
   'dry-run-all',
   'joom_register: await joomRegister',
   'cleanup-all',
-  'PLATFORM_BRIDGE_INTERNAL_TOKEN is required',
+  'PLATFORM_BRIDGE_INTERNAL_TOKEN or SUPABASE_SERVICE_ROLE_KEY is required',
   "confirm: live ? CONFIRM.ebayWithdraw : undefined",
   "confirm: live ? CONFIRM.joomDelete : undefined",
   "confirm: live ? CONFIRM.qoo10Delete : undefined",

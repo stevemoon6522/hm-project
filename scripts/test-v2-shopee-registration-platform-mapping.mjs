@@ -140,5 +140,10 @@ assert.match(
   /mapping_results|mappingResults/,
   'platform-publish Shopee adapter must preserve bridge mapping diagnostics',
 );
+assert.match(
+  adapter,
+  /PLATFORM_BRIDGE_INTERNAL_TOKEN[\s\S]*x-platform-bridge-token/,
+  'platform-publish Shopee adapter must forward the internal bridge token for server-side bridge calls',
+);
 
 console.log('v2 Shopee registration platform mapping checks passed');

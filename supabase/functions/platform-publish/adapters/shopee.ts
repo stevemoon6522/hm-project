@@ -233,18 +233,21 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') || '';
 const SUPABASE_ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') || '';
+const PLATFORM_BRIDGE_INTERNAL_TOKEN = Deno.env.get('PLATFORM_BRIDGE_INTERNAL_TOKEN') || '';
 
 // POST to shopee-bridge/{action} with user JWT forwarded.
 // shopee-bridge reads action from url.pathname.split('/').pop() (bridge index.ts:1646).
 async function bridgePost(action: string, body: Record<string, unknown>, userToken: string): Promise<unknown> {
   const url = `${SUPABASE_URL}/functions/v1/shopee-bridge/${action}`;
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${userToken}`,
+    'apikey': SUPABASE_ANON_KEY,
+  };
+  if (PLATFORM_BRIDGE_INTERNAL_TOKEN) headers['x-platform-bridge-token'] = PLATFORM_BRIDGE_INTERNAL_TOKEN;
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${userToken}`,
-      'apikey': SUPABASE_ANON_KEY,
-    },
+    headers,
     body: JSON.stringify(body),
   });
   const text = await res.text();

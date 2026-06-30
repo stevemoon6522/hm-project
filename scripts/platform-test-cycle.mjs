@@ -88,9 +88,11 @@ function readJson(path) {
 
 function readV2Env() {
   const html = readFileSync(indexPath, 'utf8');
-  const url = html.match(/const SUPABASE_URL = '([^']+)'/)?.[1];
-  const anon = html.match(/const SUPABASE_ANON = '([^']+)'/)?.[1];
-  if (!url || !anon) throw new Error('SUPABASE_URL or SUPABASE_ANON not found in v2/index.html');
+  const url = process.env.SUPABASE_URL || html.match(/const SUPABASE_URL = '([^']+)'/)?.[1];
+  const anon = process.env.SUPABASE_ANON_KEY
+    || process.env.SUPABASE_ANON
+    || html.match(/const SUPABASE_ANON = '([^']+)'/)?.[1];
+  if (!url || !anon) throw new Error('SUPABASE_URL or SUPABASE_ANON not found in env or v2/index.html');
   return { url, anon };
 }
 
@@ -183,10 +185,13 @@ async function restPost(env, table, payload, key = env.anon, query = '') {
 }
 
 async function edgePost(env, functionName, action, body, internalToken) {
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SERVICE_ROLE_KEY || '';
   const h = {
-    ...headers(env.anon),
-    'x-platform-bridge-token': internalToken || '',
+    apikey: serviceKey || env.anon,
+    Authorization: `Bearer ${serviceKey || env.anon}`,
+    'Content-Type': 'application/json',
   };
+  if (internalToken) h['x-platform-bridge-token'] = internalToken;
   return fetchJson(`${env.url}/functions/v1/${functionName}/${action}`, {
     method: 'POST',
     headers: h,
@@ -221,17 +226,20 @@ async function loadProduct(env, target, args, key = env.anon, options = {}) {
     'main_image',
     'extra_images',
     'description',
-    'joom_category_id',
+    'shopee_category_id',
+    'shopee_brand_id',
     'shopee_brand_name',
+    'shopee_image_id',
+    'shopee_extra_image_ids',
+    'shopee_description',
+    'shopee_extra_attributes',
+    'shopee_days_to_ship',
+    'shopee_global_item_sku',
+    'shopee_global_model_sku',
     'joom_product_id',
     'joom_variant_id',
     'joom_status',
     'joom_mapping_status',
-    'ebay_sku',
-    'ebay_offer_id',
-    'ebay_item_id',
-    'ebay_status',
-    'ebay_marketplace_id',
     'qoo10_category_id',
   ].join(',');
   const queries = [];
@@ -285,19 +293,19 @@ async function ensureProduct(env, target, args, key = env.anon) {
   }
 }
 
-async function loadShopeeRows(env, productId) {
+async function loadShopeeRows(env, productId, key = env.anon) {
   const query = [
     'select=product_id,account_key,region,global_item_id,global_model_id,shop_id,shop_item_id,shop_model_id,status,last_error',
     `product_id=eq.${encodeURIComponent(productId)}`,
     'account_key=eq.starphotocard',
   ].join('&');
-  return restGet(env, 'product_shopee_listings', query);
+  return restGet(env, 'product_shopee_listings', query, key);
 }
 
 async function loadPlatformListings(env, productId, serviceKey) {
   if (!serviceKey) return { skipped: true, reason: 'SUPABASE_SERVICE_ROLE_KEY not set' };
   const query = [
-    'select=id,platform,shop_id,country,platform_item_id,listing_status,mapping_status,error_msg,deleted_at',
+    'select=id,platform,shop_id,country,platform_item_id,listing_status,error_msg,deleted_at',
     `master_product_id=eq.${encodeURIComponent(productId)}`,
     'deleted_at=is.null',
   ].join('&');
@@ -325,9 +333,12 @@ function pickShopeeGlobalItemId(args, shopeeRows) {
   return ids.length === 1 ? ids[0] : '';
 }
 
-function requireInternalToken() {
+function requireBridgeOperatorAuth() {
   const token = process.env.PLATFORM_BRIDGE_INTERNAL_TOKEN || '';
-  if (!token) throw new Error('PLATFORM_BRIDGE_INTERNAL_TOKEN is required for bridge cleanup/register calls');
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SERVICE_ROLE_KEY || '';
+  if (!token && !serviceKey) {
+    throw new Error('PLATFORM_BRIDGE_INTERNAL_TOKEN or SUPABASE_SERVICE_ROLE_KEY is required for bridge cleanup/register calls');
+  }
   return token;
 }
 
@@ -734,6 +745,47 @@ function uniqueShopeeTestSku(product, args) {
   return safeTestSku(product.sku || 'SDV2-SHOPEE', `SHP${stamp}`);
 }
 
+function defaultShopeeAttributeList(categoryId) {
+  const cat = Number(categoryId);
+  if (cat === 100740) {
+    return [
+      { attribute_id: 100037, attribute_value_list: [{ value_id: 48, original_value_name: 'Korea' }] },
+      { attribute_id: 100693, attribute_value_list: [{ value_id: 3574, original_value_name: 'Music & Concerts' }] },
+    ];
+  }
+  if (cat === 101390) {
+    return [
+      { attribute_id: 100037, attribute_value_list: [{ value_id: 48, original_value_name: 'Korea' }] },
+    ];
+  }
+  return [];
+}
+
+function mergeShopeeAttributeLists(...lists) {
+  const byId = new Map();
+  for (const list of lists) {
+    if (!Array.isArray(list)) continue;
+    for (const attr of list) {
+      const id = Number(attr?.attribute_id);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      byId.set(id, { ...attr, attribute_id: id });
+    }
+  }
+  return Array.from(byId.values());
+}
+
+function resolveShopeeDaysToShip(product, args, region) {
+  if (args.daysToShip) return Number(args.daysToShip);
+  const value = product?.shopee_days_to_ship;
+  if (value && typeof value === 'object') {
+    const lifecycle = product.lifecycle_state === 'pre_order' ? 'pre_order' : 'ready_stock';
+    const scoped = value[lifecycle]?.[region] ?? value[lifecycle]?.[String(region).toUpperCase()];
+    if (Number.isFinite(Number(scoped))) return Number(scoped);
+  }
+  if (Number.isFinite(Number(value))) return Number(value);
+  return 3;
+}
+
 function shopeeRegisterBody(product, args = {}) {
   const sku = uniqueShopeeTestSku(product, args);
   const region = String(args.region || 'SG').trim().toUpperCase();
@@ -746,8 +798,14 @@ function shopeeRegisterBody(product, args = {}) {
   const brandName = brandId > 0
     ? String(args.brand || product.shopee_brand_name || 'No Brand').trim()
     : 'No Brand';
-  const imageId = String(args.shopeeImageId || '').trim();
+  const imageId = String(args.shopeeImageId || product.shopee_image_id || '').trim();
+  const attributeList = mergeShopeeAttributeLists(
+    defaultShopeeAttributeList(categoryId),
+    product.shopee_extra_attributes,
+  );
+  const daysToShip = resolveShopeeDaysToShip(product, args, region);
   const body = {
+    product_id: product.id,
     account_key: args.accountKey || 'starphotocard',
     region,
     name,
@@ -758,17 +816,18 @@ function shopeeRegisterBody(product, args = {}) {
     weight_g: Number(args.weightG || product.weight_g || 150),
     price,
     stock,
-    description: String(args.description || product.description || 'API registration smoke-test product for starphotocard.').trim(),
+    description: String(args.description || product.shopee_description || product.description || 'API registration smoke-test product for starphotocard.').trim(),
     targets: [{
       region,
       price,
       stock,
-      days_to_ship: Number(args.daysToShip || 3),
+      days_to_ship: daysToShip,
       image_url: imageUrl,
     }],
     lifecycle_state: 'ready_stock',
     is_pre_order: false,
   };
+  if (attributeList.length) body.attribute_list = attributeList;
   if (imageId) {
     body.image_id = imageId;
     body.image_id_list = [imageId];
@@ -837,7 +896,7 @@ async function shopeeCycle(env, product, args, internalToken) {
       region: args.region || 'SG',
       global_item_id: globalItemId,
       dry_run: false,
-      reset_local: false,
+      reset_local: true,
       confirm: CONFIRM.shopeeDelete,
     }, internalToken);
   }
@@ -873,9 +932,9 @@ async function run() {
     return;
   }
 
-  const internalToken = requireInternalToken();
+  const internalToken = requireBridgeOperatorAuth();
   const product = await loadProduct(env, target, args, serviceKey || env.anon, { fallbackToTarget: true });
-  const shopeeRows = await loadShopeeRows(env, product.id);
+  const shopeeRows = await loadShopeeRows(env, product.id, serviceKey || env.anon);
   const platformListings = await loadPlatformListings(env, product.id, serviceKey);
 
   const commands = {

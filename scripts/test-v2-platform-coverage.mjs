@@ -37,6 +37,53 @@ const globalImportMigration = readFileSync(
   join(root, 'supabase', 'migrations', '202605290002_shopee_global_import_master.sql'),
   'utf8',
 );
+const platformProductSelect = platformPublish.match(/const PRODUCT_SELECT = '([^']+)'/)?.[1] || '';
+for (const missingLiveColumn of [
+  'product_kind',
+  'components_extracted_en',
+  'joom_category_id',
+  'ebay_sku',
+  'ebay_offer_id',
+  'ebay_item_id',
+  'ebay_status',
+  'ebay_marketplace_id',
+  'ebay_inventory_group_key',
+  'ebay_listing_mode',
+  'ebay_variation_axis',
+  'ebay_variation_value',
+  'ebay_variation_image_url',
+  'qoo10_brand_no',
+  'qoo10_brand_name',
+  'qoo10_shipping_no',
+  'qoo10_available_date_type',
+  'qoo10_available_date_value',
+  'qoo10_release_date',
+  'alibaba_category_id',
+  'alibaba_attributes',
+  'alibaba_group_id',
+  'alibaba_freight_template_id',
+  'alibaba_moq',
+  'alibaba_unit',
+  'alibaba_price_usd',
+  'shopify_vendor',
+  'shopify_product_type',
+  'shopify_tags',
+  'shopify_price',
+  'shopify_currency',
+  'shopify_template_suffix',
+]) {
+  assert(!platformProductSelect.split(',').map((s) => s.trim()).includes(missingLiveColumn), `platform-publish PRODUCT_SELECT must not request missing live products column: ${missingLiveColumn}`);
+}
+for (const requiredShopeeColumn of [
+  'shopee_category_id',
+  'shopee_brand_id',
+  'shopee_image_id',
+  'shopee_extra_attributes',
+  'shopee_days_to_ship',
+  'shopee_global_model_sku',
+]) {
+  assert(platformProductSelect.split(',').map((s) => s.trim()).includes(requiredShopeeColumn), `platform-publish PRODUCT_SELECT must keep Shopee registration column: ${requiredShopeeColumn}`);
+}
 
 for (const token of [
   'platform_listing_snapshots',
@@ -118,6 +165,10 @@ assert(!globalImportMigration.includes('grant select, insert, update on public.p
 assert(!globalImportMigration.includes('grant select, insert, update on public.product_shopee_listings to authenticated'), 'Shopee import migration must not add broad authenticated listing grants');
 assert(html.includes('id="coverage-sku-check"'), 'coverage UI must include SKU lookup action');
 assert(html.includes('async function coverageLookupViaPlatformPublish'), 'coverage UI must route non-Shopee SKU lookup through platform-publish');
+assert(
+  platformPublish.includes('requireAuthenticatedUser(req, { allowGatewayVerifiedServiceRole: true })'),
+  'platform-publish must opt in to gateway-verified service-role JWTs for server-side smoke tests without weakening no-verify bridge routes',
+);
 assert(html.includes('async function coverageLookupQoo10BySku'), 'coverage UI must represent Qoo10 lookup state');
 assert(html.includes('PLATFORM_PUBLISH') && html.includes("capability: 'sync'"), 'coverage UI must absorb found SKU lookups via platform-publish sync');
 assert(html.includes("coverageLookupViaPlatformPublish('qoo10', sku, productId)"), 'Qoo10 SKU lookup must go through platform-publish sync');

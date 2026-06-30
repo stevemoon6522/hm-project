@@ -58,7 +58,7 @@ const ALERT_HMAC_SECRET = (Deno as any)['env']['get']('ALERT_HMAC_SECRET') || ''
 // ---------------------------------------------------------------------------
 const VALID_PLATFORMS = new Set(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba', 'shopify']);
 const QOO10_GOODS_CATEGORY_ID = '300002855';
-const PRODUCT_SELECT = 'id, sku, product_kind, product_name, option_name, description, main_image, extra_images, sourcing_price, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, shopee_option_image_url, components_extracted_en, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, joom_category_id, ebay_sku, ebay_category_id, ebay_inventory_group_key, ebay_listing_mode, ebay_variation_axis, ebay_variation_value, ebay_variation_image_url, qoo10_category_id, qoo10_brand_no, qoo10_brand_name, qoo10_shipping_no, qoo10_available_date_type, qoo10_available_date_value, qoo10_release_date, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, shopee_global_model_sku, alibaba_category_id, alibaba_attributes, alibaba_group_id, alibaba_freight_template_id, alibaba_moq, alibaba_unit, alibaba_price_usd, shopify_vendor, shopify_product_type, shopify_tags, shopify_price, shopify_currency, shopify_template_suffix';
+const PRODUCT_SELECT = 'id, sku, product_name, option_name, description, main_image, extra_images, sourcing_price, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, shopee_option_image_url, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, ebay_category_id, qoo10_category_id, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, shopee_global_item_sku, shopee_global_model_sku';
 
 // §A.2 gate 6: banned Shopee shop IDs.
 // 1002269093 = legacy BR shop permanently banned 2026-05.
@@ -251,7 +251,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
   // =========================================================================
   // GATE 1: Auth — requireAuthenticatedUser (plan §A.2 step 1)
   // =========================================================================
-  const authResult = await requireAuthenticatedUser(req);
+  const authResult = await requireAuthenticatedUser(req, { allowGatewayVerifiedServiceRole: true });
   if (authResult.response) {
     audit('auth_rejected');
     return authResult.response;

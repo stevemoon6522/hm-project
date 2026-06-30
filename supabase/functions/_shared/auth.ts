@@ -15,7 +15,8 @@
 //   - missing Authorization header
 //   - non-Bearer scheme
 //   - empty / malformed JWT
-//   - JWT whose payload role is not 'authenticated' (this catches the anon key)
+//   - JWT whose payload role is not 'authenticated' or exact server service_role
+//     (or gateway-verified service_role when the caller explicitly opts in)
 //   - JWT whose signature fails Supabase verification (handled by getUser)
 //   - expired / revoked tokens (handled by getUser)
 //
@@ -26,6 +27,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL") || "";
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
 
 export const AUTH_CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -75,7 +77,19 @@ export function extractBearerToken(req) {
  * The canonical guard. Returns either { user } (callable result) or
  * { response } (a fully-formed 401 Response the caller must return).
  */
-export async function requireAuthenticatedUser(req) {
+function serviceRoleUser(payload) {
+  return {
+    user: {
+      id: "service_role",
+      email: null,
+      role: payload.role,
+      raw_app_metadata: { provider: "service_role" },
+      raw_user_metadata: {},
+    },
+  };
+}
+
+export async function requireAuthenticatedUser(req, options = {}) {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     return {
       response: jsonError(
@@ -104,6 +118,23 @@ export async function requireAuthenticatedUser(req) {
   if (!payload) {
     return {
       response: jsonError(401, "auth_invalid", "JWT payload not decodable"),
+    };
+  }
+  if (payload.role === "service_role") {
+    if (SUPABASE_SERVICE_ROLE_KEY && token === SUPABASE_SERVICE_ROLE_KEY) {
+      return serviceRoleUser(payload);
+    }
+    // Only use this opt-in from functions deployed with Supabase JWT
+    // verification enabled. No-verify bridge routes must keep exact matching.
+    if (options.allowGatewayVerifiedServiceRole === true) {
+      return serviceRoleUser(payload);
+    }
+    return {
+      response: jsonError(
+        401,
+        "auth_service_role_invalid",
+        "Service-role bearer token does not match the Edge Function environment"
+      ),
     };
   }
   if (payload.role !== "authenticated") {

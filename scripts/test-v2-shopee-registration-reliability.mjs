@@ -39,6 +39,9 @@ const updateDifferentWeightShipping = extractFunction(html, 'rshUpdateDifferentW
 const buildDefaultAttributeList = extractFunction(html, 'buildDefaultAttributeList');
 const publishIdempotencyGate = extractFunction(bridge, 'withPublishRequestId');
 const verifyPublishedListOutcomeOnce = extractFunction(bridge, 'verifyPublishedListOutcomeOnce');
+const nextPublishTaskPollDelayMs = extractFunction(bridge, 'nextPublishTaskPollDelayMs');
+const shouldVerifyPublishedListDuringPublishPolling = extractFunction(bridge, 'shouldVerifyPublishedListDuringPublishPolling');
+const createShopeeTimingRecorder = extractFunction(bridge, 'createShopeeTimingRecorder');
 const renderModal = html.slice(html.indexOf('<section class="rsh-seller-section grid" id="rsh-info-section"'), html.indexOf('<!-- Description -->'));
 const variantSection = html.slice(html.indexOf('<!-- Sales Information -->'), html.indexOf('<!-- Shipping + region pre-order/DTS -->'));
 const shippingSection = html.slice(html.indexOf('<!-- Shipping + region pre-order/DTS -->'), html.indexOf('<!-- Others -->'));
@@ -371,8 +374,38 @@ assert.match(
 );
 assert.match(
   registerCbscBlock,
-  /earlyPublishedOutcome[\s\S]*verified_via_br_early_published_list_[\s\S]*earlyPublishedOutcome \|\| parsePublishOutcome/,
-  'register_cbsc must short-circuit BR polling once published_list confirms the item',
+  /earlyPublishedOutcome[\s\S]*shouldVerifyPublishedListDuringPublishPolling[\s\S]*verified_via_early_published_list_[\s\S]*earlyPublishedOutcome \|\| parsePublishOutcome/,
+  'register_cbsc must short-circuit long publish polling once published_list confirms the item',
+);
+assert.match(
+  nextPublishTaskPollDelayMs,
+  /SHOPEE_PUBLISH_TASK_POLL_DELAYS_MS[\s\S]*Math\.min\([\s\S]*SHOPEE_PUBLISH_TASK_POLL_DELAYS_MS\.length - 1\)/,
+  'publish task polling must use a fast-first bounded delay schedule instead of a fixed 2s sleep before every check',
+);
+assert.match(
+  shouldVerifyPublishedListDuringPublishPolling,
+  /region === 'BR'[\s\S]*attempts >= SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS[\s\S]*attempts >= SHOPEE_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS/,
+  'long publish_task polling must use docs-backed get_published_list early verification for every operating region, with BR keeping its earlier threshold',
+);
+assert.match(
+  `${publishToRegionBlock}\n${registerCbscBlock}`,
+  /nextPublishTaskPollDelayMs\(i,\s*targetRegion\)[\s\S]*verifyPublishedListOutcomeOnce/,
+  'publish_to_region and register_cbsc must use fast-first polling and published_list early verification in their publish loops',
+);
+assert.match(
+  createShopeeTimingRecorder,
+  /snapshot\(\)[\s\S]*total[\s\S]*elapsedMs/,
+  'Shopee registration timing recorder must expose a total elapsed time snapshot',
+);
+assert.match(
+  registerCbscBlock,
+  /const registrationTiming = createShopeeTimingRecorder\(\)[\s\S]*timing_ms: registrationTiming\.snapshot\(\)/,
+  'register_cbsc must return top-level timing_ms so slow live registrations can be diagnosed without rerunning with ad-hoc logs',
+);
+assert.match(
+  `${publishToRegionBlock}\n${registerCbscBlock}`,
+  /regionTiming[\s\S]*publish_task_polling[\s\S]*outcome\.timing_ms/,
+  'publish result rows must include per-region timing_ms with publish_task_polling latency',
 );
 assert.match(
   registerCbscBlock,

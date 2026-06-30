@@ -99,6 +99,9 @@ const SHOPEE_REGION_MODEL_PRICE_RATIO_LIMITS: Record<string, number> = Object.fr
 const SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS = 3;
 const SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_EVERY_POLLS = 3;
 const SHOPEE_BR_MAX_PUBLISH_POLLS = 36;
+const SHOPEE_PUBLISH_TASK_POLL_DELAYS_MS = Object.freeze([800, 1200, 2000]);
+const SHOPEE_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS = 5;
+const SHOPEE_PUBLISHED_LIST_EARLY_CHECK_EVERY_POLLS = 3;
 const PROXY_IMAGE_MAX_BYTES = 15 * 1024 * 1024;
 const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
 const UPLOAD_IMAGE_MIN_DIMENSION = 300;
@@ -210,6 +213,46 @@ function audit(event: string, payload: Record<string, unknown> = {}) {
 }
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+function elapsedMs(startMs: number): number {
+  return Math.max(0, Date.now() - startMs);
+}
+
+function createShopeeTimingRecorder() {
+  const startedAt = Date.now();
+  const marks: Record<string, number> = {};
+  return {
+    mark(name: string, startMs: number) {
+      marks[name] = elapsedMs(startMs);
+      return marks[name];
+    },
+    since(startMs: number) {
+      return elapsedMs(startMs);
+    },
+    snapshot() {
+      return { ...marks, total: elapsedMs(startedAt) };
+    },
+  };
+}
+
+function nextPublishTaskPollDelayMs(attemptIndex: number, targetRegion = ''): number {
+  const index = Math.max(0, Math.floor(Number(attemptIndex) || 0));
+  const delay = SHOPEE_PUBLISH_TASK_POLL_DELAYS_MS[
+    Math.min(index, SHOPEE_PUBLISH_TASK_POLL_DELAYS_MS.length - 1)
+  ];
+  return Number(delay) || 2000;
+}
+
+function shouldVerifyPublishedListDuringPublishPolling(targetRegion: string, pollAttempts: number): boolean {
+  const region = String(targetRegion || '').toUpperCase();
+  const attempts = Math.max(0, Number(pollAttempts) || 0);
+  if (region === 'BR') {
+    return attempts >= SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS
+      && attempts % SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_EVERY_POLLS === 0;
+  }
+  return attempts >= SHOPEE_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS
+    && attempts % SHOPEE_PUBLISHED_LIST_EARLY_CHECK_EVERY_POLLS === 0;
+}
 
 function parsePositiveInt(value: string | null, fallback: number, min = 1, max = 86400): number {
   const n = Number(value);
@@ -4971,6 +5014,8 @@ Deno.serve(async (req) => {
       const results: any[] = [];
       await mapWithConcurrency(targetInputs, 2, async (target: any) => {
         const targetRegion = String(target.region || '').toUpperCase();
+        const regionStartMs = Date.now();
+        const regionTiming: Record<string, number> = {};
         try {
           const shop_id = target.shop_id ? Number(target.shop_id) : await getRegionShopId(targetRegion, reqAccountKey);
           const BRIDGE_BANNED_SHOP_IDS = new Set([1002269093]);
@@ -4993,9 +5038,11 @@ Deno.serve(async (req) => {
           }
           const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
+          const createPublishStartMs = Date.now();
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: reqAccountKey });
+          regionTiming.create_publish_task = elapsedMs(createPublishStartMs);
           if (publishRes.error) {
-            const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
+            const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes, timing_ms: { ...regionTiming, total: elapsedMs(regionStartMs) } };
             if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
               const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, 'br_existing_global_crossupload_create_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
               if (retryOutcome?.ok) results.push(await finalizePublishOutcomeAfterSuccess(retryOutcome, targetRegion, target, body, reqAccountKey));
@@ -5019,25 +5066,27 @@ Deno.serve(async (req) => {
           const publish_task_id = Number(publishRes.response?.publish_task_id);
           let task: any = null;
           let pollAttempts = 0;
+          let pollWaitMs = 0;
           let earlyPublishedOutcome: any = null;
           // BR publish async is slower — double the polling window for BR only
           const maxPoll = (targetRegion === 'BR') ? SHOPEE_BR_MAX_PUBLISH_POLLS : 30;
+          const pollingStartMs = Date.now();
           for (let i = 0; i < maxPoll; i++) {
-            await new Promise(s => setTimeout(s, 2000));
+            const pollDelayMs = nextPublishTaskPollDelayMs(i, targetRegion);
+            pollWaitMs += pollDelayMs;
+            await sleep(pollDelayMs);
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id }, account_key: reqAccountKey });
             task = taskRes;
             pollAttempts = i + 1;
-            if (
-              targetRegion === 'BR'
-              && pollAttempts >= SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS
-              && pollAttempts % SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_EVERY_POLLS === 0
-            ) {
-              earlyPublishedOutcome = await verifyPublishedListOutcomeOnce(targetRegion, shop_id, global_item_id, publish_task_id, task, reqAccountKey, 'verified_via_br_early_published_list_' + pollAttempts).catch(() => null);
+            if (shouldVerifyPublishedListDuringPublishPolling(targetRegion, pollAttempts)) {
+              earlyPublishedOutcome = await verifyPublishedListOutcomeOnce(targetRegion, shop_id, global_item_id, publish_task_id, task, reqAccountKey, 'verified_via_early_published_list_' + pollAttempts).catch(() => null);
               if (earlyPublishedOutcome) break;
             }
             if (isCrossuploadPermissionPublishFailure(taskRes)) break;
             if (!shouldContinuePublishPolling(taskRes)) break;
           }
+          regionTiming.publish_task_polling = elapsedMs(pollingStartMs);
+          regionTiming.publish_task_poll_wait = pollWaitMs;
           let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
           if (!outcome.ok && targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(outcome, task, publishRes)) {
             const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, reqAccountKey, 'br_existing_global_crossupload_task_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
@@ -5056,11 +5105,13 @@ Deno.serve(async (req) => {
             else (outcome as any).minimal_item_retry = retryOutcome;
           }
           // Fallback verification: query published_list — BR gets 3 retries (5s apart), others get 1
+          let fallbackVerificationStartMs = 0;
           if (!outcome.ok) {
+            fallbackVerificationStartMs = Date.now();
             const fbRetries = (targetRegion === 'BR') ? 3 : 1;
             const fbSleep = (targetRegion === 'BR') ? 5000 : 0;
             for (let r = 0; r < fbRetries; r++) {
-              if (r > 0) await new Promise(s => setTimeout(s, fbSleep));
+              if (r > 0) await sleep(fbSleep);
               try {
                 const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id, shop_id_list: String(shop_id) }, account_key: reqAccountKey });
                 const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
@@ -5071,6 +5122,7 @@ Deno.serve(async (req) => {
                 }
               } catch (_) {}
             }
+            regionTiming.fallback_verification = elapsedMs(fallbackVerificationStartMs);
           }
           if (!outcome.ok) {
             const verified = await verifyPublishedListOutcome(targetRegion, shop_id, global_item_id, publish_task_id, task, reqAccountKey).catch(() => null);
@@ -5092,7 +5144,7 @@ Deno.serve(async (req) => {
               if (retryPublishRes.response?.publish_task_id) {
                 const retryTaskId = Number(retryPublishRes.response.publish_task_id);
                 // Give BR 15s for async resolution before final published_list check
-                await new Promise(s => setTimeout(s, 15000));
+                await sleep(15000);
                 const finalPubRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id, shop_id_list: String(shop_id) }, account_key: reqAccountKey });
                 const finalItems = Array.isArray(finalPubRes?.response?.published_item) ? finalPubRes.response.published_item : [];
                 const finalHit = finalItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
@@ -5102,13 +5154,16 @@ Deno.serve(async (req) => {
               }
             } catch (_) {}
           }
+          const finalizeStartMs = Date.now();
           outcome = await finalizePublishOutcomeAfterSuccess(outcome, targetRegion, target, body, reqAccountKey);
+          regionTiming.finalize_publish_success = elapsedMs(finalizeStartMs);
           outcome.raw_create = publishRes;
           outcome.raw_task = task;
           outcome.poll_attempts = pollAttempts;
+          outcome.timing_ms = { ...regionTiming, total: elapsedMs(regionStartMs) };
           results.push(outcome);
         } catch (e: any) {
-          results.push({ ok: false, region: targetRegion, stage: 'publish_exception', error: String(e?.message || e) });
+          results.push({ ok: false, region: targetRegion, stage: 'publish_exception', error: String(e?.message || e), timing_ms: { ...regionTiming, total: elapsedMs(regionStartMs) } });
         }
       });
       const reconciledResults = await reconcilePublishResultsWithPublishedList(global_item_id, targetInputs, results, reqAccountKey, region);
@@ -5315,6 +5370,7 @@ Deno.serve(async (req) => {
       }
 
       return withPublishRequestId(action, `${accountKey}:${r}`, null, body, async () => {
+      const registrationTiming = createShopeeTimingRecorder();
       const stage_logs: string[] = [];
       if (regionalGlobalPriceAdjustments.length) {
         const firstAdjustment = regionalGlobalPriceAdjustments[0] || {};
@@ -5325,7 +5381,9 @@ Deno.serve(async (req) => {
         const firstAdjustment = regionalTargetPriceAdjustments[0] || {};
         stage_logs.push(`regional_target_model_price_ratio_normalized: ${regionalTargetPriceAdjustments.length} model(s), region=${firstAdjustment.region || 'unknown'}, ratio=${firstAdjustment.ratio || 'unknown'}, min=${firstAdjustment.min_price || 'unknown'}->${firstAdjustment.to || 'unknown'}, max=${firstAdjustment.max_price || 'unknown'}, safe_ratio=${firstAdjustment.safe_ratio || 'unknown'}`);
       }
+      const categoryAttributeStartMs = Date.now();
       const catAttrs = await buildCategoryAttributeListForRegions(r, targetInputs.map((target: any) => target.region), Number(body.category_id), Array.isArray(body.attribute_list) ? body.attribute_list : [], accountKey);
+      registrationTiming.mark('category_attributes', categoryAttributeStartMs);
       if (catAttrs.missing.length > 0) {
         return jsonResp({
           ok: false,
@@ -5351,7 +5409,9 @@ Deno.serve(async (req) => {
         days_to_ship: _globalDts,
         is_pre_order: _isPreOrderRegister,
       });
+      const addGlobalItemStartMs = Date.now();
       const addRes = await merchantApiCall(r, '/api/v2/global_product/add_global_item', { method: 'POST', body: addPayload, account_key: accountKey });
+      registrationTiming.mark('add_global_item', addGlobalItemStartMs);
       if (addRes.error) {
         const dbg = String(addRes?.debug_message || '');
         if (/Attribute is mandatory/i.test(dbg) || /CD,\s*DVD\s*&\s*Bluray\s*Type/i.test(`${addRes?.message || ''} ${dbg}`)) {
@@ -5385,11 +5445,13 @@ Deno.serve(async (req) => {
       const baseVariation = preflightVariation;
       if (baseVariation) {
         const globalModels = buildGlobalModels(baseVariation, Number(body.global_price ?? body.price ?? targetInputs[0]?.price), Number(body.stock ?? 0));
+        const initTierVariationStartMs = Date.now();
         const initRes = await merchantApiCall(r, '/api/v2/global_product/init_tier_variation', {
           method: 'POST',
           body: { global_item_id, tier_variation: baseVariation.tier_variation, global_model: [globalModels[0]] },
           account_key: accountKey,
         });
+        registrationTiming.mark('init_tier_variation', initTierVariationStartMs);
         if (initRes.error) {
           // §6-1: init_tier_variation failed → orphan global_item exists. Auto-cleanup.
           stage_logs.push(`init_tier_variation FAILED: ${initRes.error} — attempting delete_global_item cleanup`);
@@ -5424,11 +5486,13 @@ Deno.serve(async (req) => {
         stage_logs.push(`init_tier_variation ok: 1/${globalModels.length} models`);
         if (globalModels.length > 1) {
           const addModelPayload = buildAddGlobalModelPayload(global_item_id, globalModels.slice(1), body, targetInputs[0] || {});
+          const addGlobalModelStartMs = Date.now();
           const addModelRes = await merchantApiCall(r, '/api/v2/global_product/add_global_model', {
             method: 'POST',
             body: addModelPayload,
             account_key: accountKey,
           });
+          registrationTiming.mark('add_global_model', addGlobalModelStartMs);
           if (addModelRes.error) {
             // §6-1: add_global_model failure — partial state. No auto cleanup (dangerous).
             // Return partial_published so UI can surface the correct DB state.
@@ -5500,8 +5564,11 @@ Deno.serve(async (req) => {
       }
 
       const results: any[] = [];
+      const publishRegionsStartMs = Date.now();
       await mapWithConcurrency(targetInputs, 2, async (target: any) => {
         const targetRegion = String(target.region || '').toUpperCase();
+        const regionStartMs = Date.now();
+        const regionTiming: Record<string, number> = {};
         try {
           // Prefer caller-provided shop_id; only fall back to region default when omitted.
           // Ignoring the caller's shop_id (old behaviour) would publish to the wrong shop
@@ -5536,7 +5603,9 @@ Deno.serve(async (req) => {
           }
           const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
           const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
+          const createPublishStartMs = Date.now();
           const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: accountKey });
+          regionTiming.create_publish_task = elapsedMs(createPublishStartMs);
           if (publishRes.error) {
             if (/published this global item to the same shop already/i.test(`${publishRes.message || ''} ${publishRes.debug_message || ''}`)) {
               const verified = await verifyPublishedListOutcome(targetRegion, shop_id, global_item_id, 0, publishRes, accountKey).catch(() => null);
@@ -5547,7 +5616,7 @@ Deno.serve(async (req) => {
                 return;
               }
             }
-            const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes };
+            const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes, timing_ms: { ...regionTiming, total: elapsedMs(regionStartMs) } };
             if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
               const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, 'br_existing_global_crossupload_create_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
               if (retryOutcome?.ok) results.push(await finalizePublishOutcomeAfterSuccess(retryOutcome, targetRegion, target, body, accountKey));
@@ -5572,25 +5641,27 @@ Deno.serve(async (req) => {
           console.log(`[register_cbsc] region=${targetRegion} shop_id=${shop_id} publish_task_id=${publish_task_id} create_publish_task_response=${JSON.stringify(publishRes).slice(0, 800)}`);
           let task: any = null;
           let pollAttempts = 0;
+          let pollWaitMs = 0;
           let earlyPublishedOutcome: any = null;
           // BR publish async is slower — double the polling window for BR only
           const maxPoll = (targetRegion === 'BR') ? SHOPEE_BR_MAX_PUBLISH_POLLS : 30;
+          const pollingStartMs = Date.now();
           for (let i = 0; i < maxPoll; i++) {
-            await new Promise(s => setTimeout(s, 2000));
+            const pollDelayMs = nextPublishTaskPollDelayMs(i, targetRegion);
+            pollWaitMs += pollDelayMs;
+            await sleep(pollDelayMs);
             const taskRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_publish_task_result', { query: { publish_task_id }, account_key: accountKey });
             task = taskRes;
             pollAttempts = i + 1;
-            if (
-              targetRegion === 'BR'
-              && pollAttempts >= SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_AFTER_POLLS
-              && pollAttempts % SHOPEE_BR_PUBLISHED_LIST_EARLY_CHECK_EVERY_POLLS === 0
-            ) {
-              earlyPublishedOutcome = await verifyPublishedListOutcomeOnce(targetRegion, shop_id, global_item_id, publish_task_id, task, accountKey, 'verified_via_br_early_published_list_' + pollAttempts).catch(() => null);
+            if (shouldVerifyPublishedListDuringPublishPolling(targetRegion, pollAttempts)) {
+              earlyPublishedOutcome = await verifyPublishedListOutcomeOnce(targetRegion, shop_id, global_item_id, publish_task_id, task, accountKey, 'verified_via_early_published_list_' + pollAttempts).catch(() => null);
               if (earlyPublishedOutcome) break;
             }
             if (isCrossuploadPermissionPublishFailure(taskRes)) break;
             if (!shouldContinuePublishPolling(taskRes)) break;
           }
+          regionTiming.publish_task_polling = elapsedMs(pollingStartMs);
+          regionTiming.publish_task_poll_wait = pollWaitMs;
           console.log(`[register_cbsc] region=${targetRegion} publish_task_id=${publish_task_id} poll_attempts=${pollAttempts} final_task=${JSON.stringify(task).slice(0, 1200)}`);
           let outcome = earlyPublishedOutcome || parsePublishOutcome(targetRegion, shop_id, publish_task_id, task);
           if (!outcome.ok && targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(outcome, task, publishRes)) {
@@ -5616,11 +5687,13 @@ Deno.serve(async (req) => {
           // resolving async on Shopee's side, query published_list and check whether the
           // global_item_id has actually surfaced as a shop item.
           // BR gets 3 retries (5s apart), other regions get 1 attempt.
+          let fallbackVerificationStartMs = 0;
           if (!outcome.ok) {
+            fallbackVerificationStartMs = Date.now();
             const fbRetries = (targetRegion === 'BR') ? 3 : 1;
             const fbSleep = (targetRegion === 'BR') ? 5000 : 0;
             for (let r = 0; r < fbRetries; r++) {
-              if (r > 0) await new Promise(s => setTimeout(s, fbSleep));
+              if (r > 0) await sleep(fbSleep);
               try {
                 const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id, shop_id_list: String(shop_id) }, account_key: accountKey });
                 const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
@@ -5641,6 +5714,7 @@ Deno.serve(async (req) => {
               } catch (_) { /* ignore — keep original parsePublishOutcome verdict */ }
             }
           }
+          if (fallbackVerificationStartMs) regionTiming.fallback_verification = elapsedMs(fallbackVerificationStartMs);
           if (!outcome.ok) {
             const verified = await verifyPublishedListOutcome(targetRegion, shop_id, global_item_id, publish_task_id, task, accountKey).catch(() => null);
             if (verified) outcome = verified;
@@ -5662,7 +5736,7 @@ Deno.serve(async (req) => {
               if (retryPublishRes.response?.publish_task_id) {
                 const retryTaskId = Number(retryPublishRes.response.publish_task_id);
                 // Give BR 15s for async resolution before final published_list check
-                await new Promise(s => setTimeout(s, 15000));
+                await sleep(15000);
                 const finalPubRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id, shop_id_list: String(shop_id) }, account_key: accountKey });
                 const finalItems = Array.isArray(finalPubRes?.response?.published_item) ? finalPubRes.response.published_item : [];
                 const finalHit = finalItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
@@ -5672,22 +5746,28 @@ Deno.serve(async (req) => {
               }
             } catch (_) {}
           }
+          const finalizeStartMs = Date.now();
           outcome = await finalizePublishOutcomeAfterSuccess(outcome, targetRegion, target, body, accountKey);
+          regionTiming.finalize_publish_success = elapsedMs(finalizeStartMs);
+          outcome.timing_ms = { ...regionTiming, total: elapsedMs(regionStartMs) };
           results.push(outcome);
         } catch (e: any) {
-          results.push({ ok: false, region: target.region || r, stage: 'publish_exception', error: String(e?.message || e) });
+          results.push({ ok: false, region: target.region || r, stage: 'publish_exception', error: String(e?.message || e), timing_ms: { ...regionTiming, total: elapsedMs(regionStartMs) } });
         }
       });
+      registrationTiming.mark('publish_regions', publishRegionsStartMs);
       const reconciledResults = await reconcilePublishResultsWithPublishedList(global_item_id, targetInputs, results, accountKey, r, stage_logs);
       const responseResults = reconciledResults.map((row) => ({ account_key: accountKey, ...row }));
       let mappingResults: any = null;
+      const mappingStartMs = Date.now();
       try {
         const mappingRows = buildShopeePublishMappingRows(global_item_id, body, targetInputs, responseResults, accountKey, r);
         mappingResults = await persistShopeeRegistrationMappings(accountKey, mappingRows);
       } catch (e: any) {
         mappingResults = { ok: false, error: String(e?.message || e) };
       }
-      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id, stage_logs, regional_global_price_adjustments: regionalGlobalPriceAdjustments, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, mapping_results: mappingResults, publishable_shops, publishable_status });
+      registrationTiming.mark('mapping', mappingStartMs);
+      return jsonResp({ ok: responseResults.every((row: any) => row.ok === true), account_key: accountKey, region: r, global_item_id, stage_logs, regional_global_price_adjustments: regionalGlobalPriceAdjustments, regional_target_price_adjustments: regionalTargetPriceAdjustments, br_global_price_adjustments: brGlobalPriceAdjustments, br_target_price_adjustments: brTargetPriceAdjustments, results: responseResults, mapping_results: mappingResults, publishable_shops, publishable_status, timing_ms: registrationTiming.snapshot() });
       }); // end withPublishRequestId for register_cbsc
     }
     if (action === 'item_info') {

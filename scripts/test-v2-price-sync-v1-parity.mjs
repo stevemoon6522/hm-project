@@ -227,8 +227,20 @@ assert(
   'Shopee lookup-sku GET must return complete product_shopee_listings hits before Global Product verification',
 );
 assert(
-  /if \(localMappingComplete\)[\s\S]*global_lookup: null[\s\S]*region_results/.test(lookupSkuGetBlock),
+  /if \(localMappingComplete(?: \|\| localNegativeCacheComplete)?\)[\s\S]*global_lookup: null[\s\S]*region_results/.test(lookupSkuGetBlock),
   'Shopee lookup-sku GET local-complete fast path must not emit duplicate global hits',
+);
+assert(
+  lookupSkuGetBlock.includes('product_shopee_listings_negative_cache'),
+  'Shopee lookup-sku GET must treat fresh not_listed product_shopee_listings rows as a negative cache',
+);
+assert(
+  /const localNegativeCacheComplete[\s\S]*requestedRegions\.every/.test(lookupSkuGetBlock),
+  'Shopee lookup-sku GET must detect complete not_listed coverage before remote search',
+);
+assert(
+  /const remoteRegions[\s\S]*!negativeCacheRegions\.has/.test(lookupSkuGetBlock),
+  'Shopee lookup-sku GET must not remote-search regions covered by a fresh not_listed cache',
 );
 assert(
   v2.includes('coverageMergeShopeeListingIntoState') && /coverageAbsorbShopeePublishedHit[\s\S]*coverageMergeShopeeListingIntoState\(payload\)/.test(v2),

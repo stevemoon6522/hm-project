@@ -6215,6 +6215,8 @@ Deno.serve(async (req) => {
       const max_global_items = Math.max(1, Math.min(1000, Number.isFinite(rawMaxGlobalItems) ? rawMaxGlobalItems : 300));
       const allowRemoteScan = ['1', 'true', 'yes'].includes(String(url.searchParams.get('remote') || url.searchParams.get('scan') || '').toLowerCase());
       const allowGlobalScan = ['1', 'true', 'yes'].includes(String(url.searchParams.get('global_scan') || url.searchParams.get('global') || '').toLowerCase());
+      const negativeCacheTtlMs = 15 * 60 * 1000;
+      const negativeCacheStatuses = new Set(['not_listed', 'missing', 'inactive']);
       const region_results: any[] = [];
       const region_hits: any[] = [];
       const global_region_hits: any[] = [];
@@ -6246,6 +6248,7 @@ Deno.serve(async (req) => {
       }
 
       let listingRows: any[] = [];
+      const negativeCacheRegions = new Set<string>();
       if (productRows.length) {
         const productById = new Map(productRows.map((row: any) => [String(row.id), row]));
         const listingResult = await supabase
@@ -6259,9 +6262,25 @@ Deno.serve(async (req) => {
         }
         listingRows = listingResult.data || [];
         const byRegion = new Map<string, any[]>();
+        const negativeByRegion = new Map<string, any[]>();
+        const nowMs = Date.now();
         for (const row of listingRows) {
           const r = String(row.region || '').toUpperCase();
-          if (!r || !row.shop_item_id) continue;
+          if (!r) continue;
+          const status = String(row.status || '').trim().toLowerCase();
+          const lastSyncedMs = Date.parse(String(row.last_synced_at || ''));
+          const freshNegativeCache = !allowRemoteScan
+            && !allowGlobalScan
+            && !row.shop_item_id
+            && negativeCacheStatuses.has(status)
+            && Number.isFinite(lastSyncedMs)
+            && nowMs >= lastSyncedMs
+            && nowMs - lastSyncedMs <= negativeCacheTtlMs;
+          if (freshNegativeCache) {
+            if (!negativeByRegion.has(r)) negativeByRegion.set(r, []);
+            negativeByRegion.get(r)!.push(row);
+          }
+          if (!row.shop_item_id) continue;
           const product = productById.get(String(row.product_id)) || {};
           const hit = {
             source: 'product_shopee_listings',
@@ -6291,20 +6310,47 @@ Deno.serve(async (req) => {
           const matches = byRegion.get(r) || [];
           const hit = matches[0] || null;
           if (hit) region_hits.push(hit);
-          region_results.push({ region: r, ok: true, source: 'product_shopee_listings', hit, matches, count: matches.length });
+          if (hit) {
+            region_results.push({ region: r, ok: true, source: 'product_shopee_listings', hit, matches, count: matches.length });
+          } else {
+            const negativeMatches = negativeByRegion.get(r) || [];
+            const negative = negativeMatches[0] || null;
+            if (negative) {
+              negativeCacheRegions.add(r);
+              region_results.push({
+                region: r,
+                ok: true,
+                source: 'product_shopee_listings_negative_cache',
+                hit: null,
+                matches: [],
+                count: 0,
+                not_found: true,
+                last_synced_at: negative.last_synced_at || null,
+              });
+            } else {
+              region_results.push({ region: r, ok: true, source: 'product_shopee_listings', hit, matches, count: matches.length });
+            }
+          }
         }
       }
       const localMappingComplete = !allowGlobalScan && requestedRegions.length > 0 && requestedRegions.every((r) =>
         region_results.some((row: any) => String(row?.region || '').toUpperCase() === r && Number(row?.count || 0) > 0)
       );
-      if (localMappingComplete) {
+      const localNegativeCacheComplete = !allowGlobalScan && !allowRemoteScan && requestedRegions.length > 0 && requestedRegions.every((r) =>
+        region_results.some((row: any) => {
+          if (String(row?.region || '').toUpperCase() !== r) return false;
+          if (Number(row?.count || 0) > 0) return true;
+          return row?.not_found === true && String(row?.source || '') === 'product_shopee_listings_negative_cache';
+        })
+      );
+      if (localMappingComplete || localNegativeCacheComplete) {
         return jsonResp({
           ok: true,
           account_key: accountKey,
           sku,
           regions: requestedRegions,
           found: region_hits.length > 0,
-          not_found: false,
+          not_found: region_hits.length === 0,
           region_hits,
           global_region_hits,
           global_lookup: null,
@@ -6350,7 +6396,7 @@ Deno.serve(async (req) => {
       }
 
       const hitRegions = new Set(region_hits.map((hit: any) => String(hit?.region || '').toUpperCase()).filter(Boolean));
-      const remoteRegions = requestedRegions.filter((r) => !hitRegions.has(r));
+      const remoteRegions = requestedRegions.filter((r) => !hitRegions.has(r) && (allowRemoteScan || allowGlobalScan || !negativeCacheRegions.has(r)));
       if (remoteRegions.length) {
         const lookup = await lookupShopeeSkuAcrossRegions(remoteRegions, sku, max_items, accountKey, { scanFallback: allowRemoteScan, itemNameTerms: remoteSearchTerms });
         for (const hit of lookup.region_hits || []) region_hits.push(hit);

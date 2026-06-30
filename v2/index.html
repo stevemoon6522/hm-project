@@ -353,11 +353,22 @@
       gap: 6px;
       flex-wrap: wrap;
     }
+    .pl-master-edit,
+    .pl-master-copy,
     .pl-delete-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 46px;
+      height: 28px;
       font-size: 11px;
-      padding: 2px 7px;
+      padding: 0 9px;
       box-shadow: none;
-      line-height: 1.2;
+      line-height: 1;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .pl-delete-button {
       background: #fee2e2;
       color: #991b1b;
       border-color: #fecaca;
@@ -450,13 +461,15 @@
     }
     .pl-master-title-row {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       gap: 8px;
       min-width: 0;
-      justify-content: space-between;
+      justify-content: flex-start;
+      flex-wrap: wrap;
     }
     .pl-master-title {
       font-weight: 700;
+      flex: 1 1 180px;
       min-width: 0;
       line-height: 1.28;
       overflow-wrap: break-word;
@@ -468,12 +481,25 @@
       gap: 6px;
       flex-wrap: wrap;
     }
-    .pl-master-edit {
-      font-size: 11px;
-      padding: 2px 7px;
-      box-shadow: none;
-      line-height: 1.2;
-      flex-shrink: 0;
+    .custom-master-option-row button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 74px;
+      height: 36px;
+      padding: 0 12px;
+      font-size: 12px;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .custom-master-option-row [data-custom-option-auto-sku] {
+      min-width: 118px;
+      height: 32px;
+      margin-top: 6px;
+    }
+    .custom-master-option-row [data-custom-option-remove] {
+      min-width: 64px;
+      align-self: end;
     }
     .pl-product-title {
       display: block;
@@ -33716,9 +33742,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const duplicateSkus = [];
       const resolved = (options || []).map((opt, index) => {
         const manualSku = String(opt.sku || '').trim();
-        const generatedSku = mrCustomSkuForOption(title, opt.name || opt.option_name || '', index, hasOptions);
+        const skuMode = opt.skuMode === 'manual' ? 'manual' : 'auto';
+        const hasManualSku = Boolean(manualSku && skuMode === 'manual');
+        const generatedSku = manualSku || mrCustomSkuForOption(title, opt.name || opt.option_name || '', index, hasOptions);
         let sku = manualSku;
-        if (manualSku) {
+        if (hasManualSku) {
           if (existingSkus.has(manualSku) || reservedSkus.has(manualSku)) {
             duplicateSkus.push({ index, sku: manualSku, row: opt.row || null });
           }
@@ -33726,9 +33754,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           sku = mrCustomNextAvailableSku(generatedSku, reservedSkus);
         }
         if (sku) reservedSkus.add(sku);
-        return Object.assign({}, opt, { sku });
+        return Object.assign({}, opt, { sku, skuMode: hasManualSku ? 'manual' : 'auto' });
       });
       return { options: resolved, duplicateSkus };
+    }
+
+    function mrCustomApplyResolvedSkus(options = []) {
+      (options || []).forEach((opt) => {
+        const input = opt?.row?.querySelector?.('[data-custom-option-sku]');
+        if (!input || !opt.sku) return;
+        input.value = opt.sku;
+        input.dataset.customOptionSkuMode = opt.skuMode === 'manual' ? 'manual' : 'auto';
+      });
     }
 
     function mrCustomClearSkuPreflightErrors() {
@@ -33766,7 +33803,10 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (sku) reservedSkus.add(sku);
       });
       const input = row.querySelector('[data-custom-option-sku]');
-      if (input) input.value = mrCustomNextAvailableSku(mrCustomSkuForOption(title, optionName, index, mrCustomHasOptions()), reservedSkus);
+      if (input) {
+        input.value = mrCustomNextAvailableSku(mrCustomSkuForOption(title, optionName, index, mrCustomHasOptions()), reservedSkus);
+        input.dataset.customOptionSkuMode = 'auto';
+      }
       mrCustomClearSkuPreflightErrors();
     }
 
@@ -33818,6 +33858,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         return label;
       };
       const row = el('div', {
+        class: 'custom-master-option-row',
         dataset: { customMasterOptionRow: rowId },
         style: 'display:grid;grid-template-columns:minmax(150px,1.2fr) minmax(130px,1fr) repeat(4,minmax(82px,.7fr)) minmax(190px,1.2fr) auto;gap:8px;align-items:end;padding:8px;border:1px solid var(--border);border-radius:8px;background:#fff;',
       });
@@ -33829,7 +33870,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const skuLabel = makeTextInput('SKU (선택)', {
         value: prefill.sku || '',
         placeholder: '비우면 자동 생성',
-        dataset: { customOptionSku: '1' },
+        autocomplete: 'off',
+        dataset: { customOptionSku: '1', customOptionSkuMode: prefill.skuMode || (prefill.sku ? 'manual' : 'auto') },
       });
       const autoSkuBtn = el('button', {
         type: 'button',
@@ -33870,7 +33912,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         style: 'display:block;margin-top:5px;font-size:12px;',
       });
       fileLabel.appendChild(fileInput);
-      const removeBtn = el('button', { type: 'button', style: 'font-size:11px;padding:5px 9px;background:#fee2e2;color:#991b1b;' }, '삭제');
+      const removeBtn = el('button', {
+        type: 'button',
+        'data-custom-option-remove': '1',
+        style: 'background:#fee2e2;color:#991b1b;',
+      }, '삭제');
       removeBtn.addEventListener('click', () => {
         row.remove();
         mrCustomEnsureOptionRow();
@@ -33887,9 +33933,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       wrap.appendChild(row);
       row.querySelector('[data-custom-option-name]')?.addEventListener('input', () => {
         mrCustomClearSkuPreflightErrors();
+        const skuInput = row.querySelector('[data-custom-option-sku]');
+        if (skuInput && skuInput.dataset.customOptionSkuMode !== 'manual') {
+          mrCustomApplyAutoSkuForRow(row);
+        }
         mrCustomMarkInventoryDirty();
       });
-      row.querySelector('[data-custom-option-sku]')?.addEventListener('input', mrCustomClearSkuPreflightErrors);
+      row.querySelector('[data-custom-option-sku]')?.addEventListener('input', (event) => {
+        event.currentTarget.dataset.customOptionSkuMode = 'manual';
+        mrCustomClearSkuPreflightErrors();
+      });
       row.querySelector('[data-custom-option-inventory]')?.addEventListener('input', mrCustomMarkInventoryDirty);
       row.querySelector('[data-custom-option-auto-sku]')?.addEventListener('click', () => mrCustomApplyAutoSkuForRow(row));
       return row;
@@ -33905,7 +33958,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return Array.from($('custom-master-options')?.querySelectorAll('[data-custom-master-option-row]') || [])
         .map((row) => {
           const name = String(row.querySelector('[data-custom-option-name]')?.value || '').trim();
-          const sku = String(row.querySelector('[data-custom-option-sku]')?.value || '').trim();
+          const skuInput = row.querySelector('[data-custom-option-sku]');
+          const sku = String(skuInput?.value || '').trim();
           const readNumber = (selector) => {
             const raw = String(row.querySelector(selector)?.value ?? '').trim();
             if (!raw) return null;
@@ -33917,6 +33971,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             row,
             name,
             sku,
+            skuMode: skuInput?.dataset.customOptionSkuMode === 'manual' ? 'manual' : 'auto',
             sourcingPrice: readNumber('[data-custom-option-sourcing]'),
             costKrw: readNumber('[data-custom-option-cost]'),
             weightG: readNumber('[data-custom-option-weight]'),
@@ -34092,10 +34147,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (hasOptions) {
         const tierNames = Array.isArray(first.variation_tier_names) ? first.variation_tier_names : [];
         mrCustomSetControlValue('custom-master-axis-name', tierNames[0] || 'Option');
-        activeRows.forEach((row) => {
+        const copiedTitle = String(first.product_name || first._product_name || first.name || '').trim();
+        const reservedCopySkus = new Set();
+        activeRows.forEach((row, index) => {
+          const optionName = plOptionDisplay(row) || row.option_name || '';
+          const copySku = mrCustomNextAvailableSku(mrCustomSkuForOption(copiedTitle, optionName, index, true), reservedCopySkus);
+          reservedCopySkus.add(copySku);
           mrRenderCustomOptionRow({
-            name: plOptionDisplay(row) || row.option_name || '',
-            sku: '',
+            name: optionName,
+            sku: copySku,
+            skuMode: 'auto',
             sourcingPrice: Math.floor(Number(row.sourcing_price || row._sourcing_price || 0)) || '',
             costKrw: Math.floor(Number(row.cost_krw || row._cost_krw || 0)) || '',
             weightG: Math.floor(Number(row.weight_g || row._weight_g || 0)) || 200,
@@ -34205,6 +34266,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           return;
         }
         normalizedOptions = skuPreflight.options;
+        mrCustomApplyResolvedSkus(normalizedOptions);
         if (mrCustomInventoryNeedsConfirmation()) {
           mrCustomOpenInventoryModal({ continueAfterSave: true });
           return;

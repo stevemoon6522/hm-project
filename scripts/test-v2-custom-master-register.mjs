@@ -72,7 +72,7 @@ assert.match(masterRegister, /function mrCustomResolveSkuPreflight\(title, optio
 assert.match(masterRegister, /function mrCustomOpenInventoryModal\(options = \{\}\)/, 'custom inventory must be confirmed in a modal before create');
 assert.match(masterRegister, /async function mrPromoteCustomRowsDirect\(group\)/, 'custom create must promote directly without preview');
 assert.match(masterRegister, /dataset: \{ customOptionFile: '1' \}/, 'custom option rows must support option image files');
-assert.match(masterRegister, /dataset: \{ customOptionSku: '1' \}/, 'custom option rows must support manual SKU overrides');
+assert.match(masterRegister, /dataset: \{ customOptionSku: '1', customOptionSkuMode:/, 'custom option rows must support manual SKU overrides while tracking auto/manual mode');
 assert.match(masterRegister, /dataset: \{ customOptionSourcing: '1' \}/, 'custom option rows must support option-level wholesale price');
 assert.match(masterRegister, /dataset: \{ customOptionCost: '1' \}/, 'custom option rows must support option-level settlement price');
 assert.match(masterRegister, /dataset: \{ customOptionWeight: '1' \}/, 'custom option rows must support option-level weight');

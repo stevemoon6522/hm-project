@@ -27,7 +27,7 @@ function extractFunctionBlock(source, functionName) {
 
 const sharedLayeredUrlFn = extractFunctionBlock(html, 'mrBuildMarketplaceLayeredMainImageUrl');
 assert(
-  sharedLayeredUrlFn.includes('rshBuildLayerAwareCoverDataUrl(sourceUrl'),
+  sharedLayeredUrlFn.includes('platformBuildLayerAwareCoverDataUrl(sourceUrl'),
   'marketplace layered image URL helper must reuse the idempotent shop-layer composition path',
 );
 assert(

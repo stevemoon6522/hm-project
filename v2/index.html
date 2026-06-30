@@ -5840,15 +5840,23 @@ LEGACY END -->
     return !!sdProductImagePublicStoragePath(rawUrl);
   }
 
-  function rshSourceImageAlreadyHasShopLayer(rawUrl) {
+  function platformSourceImageAlreadyHasShopLayer(rawUrl) {
     const storagePath = sdProductImagePublicStoragePath(rawUrl).toLowerCase();
     if (!storagePath) return false;
     const fileName = storagePath.split('/').pop() || '';
     return /-(?:representative|cover)-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpe?g|png|webp)$/i.test(fileName);
   }
 
+  function platformShouldApplyShopLayer(rawUrl) {
+    return !platformSourceImageAlreadyHasShopLayer(rawUrl);
+  }
+
+  function rshSourceImageAlreadyHasShopLayer(rawUrl) {
+    return platformSourceImageAlreadyHasShopLayer(rawUrl);
+  }
+
   function rshShouldApplyShopLayer(rawUrl) {
-    return !rshSourceImageAlreadyHasShopLayer(rawUrl);
+    return platformShouldApplyShopLayer(rawUrl);
   }
   const els = {
     status: document.getElementById('conn-status'),
@@ -11152,7 +11160,7 @@ LEGACY END -->
     const imageUrl = String(ref.imageUrl || ref.url || '').trim();
     if (!imageUrl) return '';
     const layered = !!ref.layered;
-    const shouldLayer = layered && rshShouldApplyShopLayer(imageUrl);
+    const shouldLayer = layered && platformShouldApplyShopLayer(imageUrl);
     const dataUrl = shouldLayer
       ? await rshBuildLayeredCoverDataUrl(imageUrl, SHOPEE_DEFAULT_ACCOUNT_KEY)
       : await rshFetchImageDataUrl(imageUrl);
@@ -19341,16 +19349,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return await applyShopLayer(proxyUrl, accountKey);
   }
 
-  async function rshBuildLayerAwareCoverDataUrl(mainImageUrl, accountKeyOverride) {
-    return rshShouldApplyShopLayer(mainImageUrl)
+  async function platformBuildLayerAwareCoverDataUrl(mainImageUrl, accountKeyOverride) {
+    return platformShouldApplyShopLayer(mainImageUrl)
       ? await rshBuildLayeredCoverDataUrl(mainImageUrl, accountKeyOverride)
       : await rshFetchImageDataUrl(mainImageUrl);
   }
 
-  async function rshBuildLayerAwareCoverRef(mainImageUrl, options = {}) {
+  async function platformBuildLayerAwareCoverRef(mainImageUrl, options = {}) {
     const sourceUrl = String(mainImageUrl || '').trim();
     if (!sourceUrl) throw new Error('Representative image URL is empty.');
-    const shouldLayer = rshShouldApplyShopLayer(sourceUrl);
+    const shouldLayer = platformShouldApplyShopLayer(sourceUrl);
     const dataUrl = shouldLayer
       ? await rshBuildLayeredCoverDataUrl(sourceUrl, options.accountKey)
       : await rshFetchImageDataUrl(sourceUrl);
@@ -19364,6 +19372,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       label: options.label || 'Cover',
       shopLayerApplied: shouldLayer,
     };
+  }
+
+  async function rshBuildLayerAwareCoverDataUrl(mainImageUrl, accountKeyOverride) {
+    return platformBuildLayerAwareCoverDataUrl(mainImageUrl, accountKeyOverride);
+  }
+
+  async function rshBuildLayerAwareCoverRef(mainImageUrl, options = {}) {
+    return platformBuildLayerAwareCoverRef(mainImageUrl, options);
   }
 
   async function rshCanvasToJpegDataUrl(canvas, quality = 0.9) {
@@ -20126,7 +20142,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     let coverRef = null;
     try {
-      coverRef = await rshBuildLayerAwareCoverRef(mainUrl, {
+      coverRef = await platformBuildLayerAwareCoverRef(mainUrl, {
         accountKey,
         staronemallUrl: master?.staronemall_url || '',
         idx: 0,
@@ -20173,7 +20189,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const coverRef = (_rsh.selectedImages || [])[0] || null;
       const sourceUrl = coverRef?.sourceUrl || rshMasterMainImageUrl(_rsh.master);
       if (sourceUrl) {
-        const nextCover = await rshBuildLayerAwareCoverRef(sourceUrl, {
+        const nextCover = await platformBuildLayerAwareCoverRef(sourceUrl, {
           accountKey: key,
           staronemallUrl: coverRef?.staronemallUrl || _rsh.master?.staronemall_url || '',
           idx: Number.isFinite(Number(coverRef?.idx)) ? Number(coverRef.idx) : 0,
@@ -20728,7 +20744,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const cacheKey = `${platformKey}:${accountKey}:${sourceUrl}`;
     if (_mrMarketplaceLayeredImageCache.has(cacheKey)) return _mrMarketplaceLayeredImageCache.get(cacheKey);
 
-    const dataUrl = await rshBuildLayerAwareCoverDataUrl(sourceUrl);
+    const dataUrl = await platformBuildLayerAwareCoverDataUrl(sourceUrl);
     const file = await mrQoo10DataUrlToFile(dataUrl, `${platformKey}-cover.png`);
     const uploadRow = {
       ...row,
@@ -21868,7 +21884,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           imgCrawlLoading.style.display = 'block';
         }
         try {
-          const dataUrl = await rshBuildLayerAwareCoverDataUrl(mainImages[0]);
+          const dataUrl = await platformBuildLayerAwareCoverDataUrl(mainImages[0]);
           coverRef = {
             src: dataUrl,
             dataUrl,
@@ -35565,8 +35581,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       // Fetch image once and convert to base64
       let b64;
+      const shouldApplyLayer = isMainImage && platformShouldApplyShopLayer(imageUrl);
       try {
-        if (isMainImage) {
+        if (shouldApplyLayer) {
           // Use composite (cover-crop + overlay layer) for main image
           b64 = await mrCompositeMainImage(imageUrl, accountKey);
         } else {
@@ -35598,7 +35615,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             const resp = await fetch(`${SHOPEE_BRIDGE}/upload_image`, {
               method: 'POST',
               headers: Object.assign({}, AUTH_HEADERS, { 'Content-Type': 'application/json' }),
-              body: JSON.stringify({ region: r, account_key: accountKey, image_base64: b64, layer_version: isMainImage ? sdShopeeLayerVersion(accountKey) : undefined }),
+              body: JSON.stringify({ region: r, account_key: accountKey, image_base64: b64, layer_version: shouldApplyLayer ? sdShopeeLayerVersion(accountKey) : undefined }),
             });
             const json = await resp.json().catch(() => ({ ok: false }));
             if (!json.ok || !json.image_id) {

@@ -38796,7 +38796,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     function mrEbayImageUrls(group, sourceRow, layeredMainImageUrl = '') {
       const firstRow = group?.rows?.[0] || {};
-      const baseUrl = sourceRow?.url || firstRow.url || '';
+      const baseUrl = sourceRow?.url || sourceRow?.staronemall_url || firstRow.url || firstRow.staronemall_url || '';
       const mainImage = String(
         layeredMainImageUrl
         || firstRow._ebayLayeredMainImageUrl
@@ -38806,12 +38806,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         || sourceRow?.main_image
         || ''
       ).trim();
-      const extraRaw = [
-        ...(Array.isArray(sourceRow?._extra_images) ? sourceRow._extra_images : []),
-        ...(Array.isArray(firstRow._extra_images) ? firstRow._extra_images : []),
-        ...(Array.isArray(sourceRow?.observed?.detail_image_urls) ? sourceRow.observed.detail_image_urls : []),
-        ...(Array.isArray(firstRow.observed?.detail_image_urls) ? firstRow.observed.detail_image_urls : []),
-      ];
+      const detailSources = [sourceRow, firstRow, ...(Array.isArray(group?.rows) ? group.rows : [])].filter(Boolean);
+      const extraRaw = detailSources.flatMap((row) => [
+        ...(Array.isArray(row?._extra_images) ? row._extra_images : []),
+        ...(Array.isArray(row?.extra_images) ? row.extra_images : []),
+        ...(Array.isArray(row?._detail_image_urls) ? row._detail_image_urls : []),
+        ...(Array.isArray(row?.observed?.detail_image_urls) ? row.observed.detail_image_urls : []),
+      ]);
       const extraImages = mrJoomNormalizeImageList(extraRaw, baseUrl);
       const seen = new Set();
       return [mainImage, ...extraImages]

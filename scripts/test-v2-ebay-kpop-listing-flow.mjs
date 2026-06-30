@@ -160,6 +160,23 @@ assert.deepEqual(
   ['layered-master-main.jpg', 'detail-a.jpg', 'detail-b.jpg'],
   'eBay default photos must contain the layered representative image and detail images only',
 );
+assert.deepEqual(
+  ebayImageUrls(
+    { rows: [
+      { extra_images: ['detail-from-first-row.jpg'] },
+      { extra_images: ['detail-from-second-row.jpg'] },
+    ] },
+    { extra_images: ['detail-from-source-row.jpg'] },
+    'layered-master-main.jpg',
+  ),
+  [
+    'layered-master-main.jpg',
+    'detail-from-source-row.jpg',
+    'detail-from-first-row.jpg',
+    'detail-from-second-row.jpg',
+  ],
+  'eBay default photos must include raw DB extra_images from source and group rows',
+);
 
 const representativeStart = html.indexOf('    function mrEbayRepresentativeImageUrl');
 const representativeEnd = html.indexOf('    async function mrEbayBuildLayeredMainImageUrl', representativeStart);

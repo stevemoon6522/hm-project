@@ -6036,6 +6036,19 @@ LEGACY END -->
     platformBatchRegistration: null,
     platformMasterSyncDialog: null,
     platformLastResults: {},
+    joomRemoteCleanup: {
+      loading: false,
+      running: false,
+      loaded: false,
+      error: '',
+      search: '',
+      items: [],
+      nextAfter: '',
+      selectedRemoteId: '',
+      selectedMasterKey: '',
+      dryRun: null,
+      result: null,
+    },
     wmsInventoryBySku: new Map(),
     shopeeNameSync: null,
     shopeeEnglishRestore: null,
@@ -8907,6 +8920,296 @@ LEGACY END -->
     </div>`;
   }
 
+  function platformJoomBridgeUrl() {
+    return SHOPEE_BRIDGE.replace('/shopee-bridge', '/joom-bridge');
+  }
+
+  function joomRemoteCleanupState() {
+    if (!state.joomRemoteCleanup) {
+      state.joomRemoteCleanup = {
+        loading: false,
+        running: false,
+        loaded: false,
+        error: '',
+        search: '',
+        items: [],
+        nextAfter: '',
+        selectedRemoteId: '',
+        selectedMasterKey: '',
+        dryRun: null,
+        result: null,
+      };
+    }
+    return state.joomRemoteCleanup;
+  }
+
+  function joomRemoteCleanupMasterGroups() {
+    return platformMasterGroups().filter((group) => (group?.rows || []).some((row) => String(row?.sku || '').trim()));
+  }
+
+  function joomRemoteCleanupSelectedRemoteProduct() {
+    const cleanup = joomRemoteCleanupState();
+    return (cleanup.items || []).find((item) => String(item.id || '') === String(cleanup.selectedRemoteId || '')) || null;
+  }
+
+  function joomRemoteCleanupSelectedMasterGroup() {
+    const cleanup = joomRemoteCleanupState();
+    return joomRemoteCleanupMasterGroups().find((group) => platformGroupKey(group) === cleanup.selectedMasterKey) || null;
+  }
+
+  function joomRemoteCleanupFilteredItems() {
+    const cleanup = joomRemoteCleanupState();
+    const q = String(cleanup.search || '').trim().toLowerCase();
+    const items = Array.isArray(cleanup.items) ? cleanup.items : [];
+    if (!q) return items;
+    return items.filter((item) => {
+      const haystack = [
+        item.id,
+        item.sku,
+        item.name,
+        item.state,
+        item.listing_status,
+        ...(Array.isArray(item.variant_skus) ? item.variant_skus : []),
+      ].join(' ').toLowerCase();
+      return haystack.includes(q);
+    });
+  }
+
+  function joomRemoteCleanupRemoteLabel(item) {
+    if (!item) return '-';
+    const sku = item.sku || (Array.isArray(item.variant_skus) ? item.variant_skus[0] : '') || item.id || '-';
+    const variants = Number(item.variant_count || 0);
+    return `${sku} | ${item.name || '(no title)'} | ${item.listing_status || item.state || '-'} | ${variants} variant${variants === 1 ? '' : 's'}`;
+  }
+
+  function joomRemoteCleanupPanelHtml() {
+    const cleanup = joomRemoteCleanupState();
+    const masters = joomRemoteCleanupMasterGroups();
+    if (!cleanup.selectedMasterKey && masters.length) cleanup.selectedMasterKey = platformGroupKey(masters[0]);
+    const filteredItems = joomRemoteCleanupFilteredItems();
+    const remote = joomRemoteCleanupSelectedRemoteProduct();
+    const master = joomRemoteCleanupSelectedMasterGroup();
+    const remoteOptions = filteredItems.length
+      ? filteredItems.map((item) => `<option value="${text(item.id || '')}"${String(item.id || '') === String(cleanup.selectedRemoteId || '') ? ' selected' : ''}>${text(joomRemoteCleanupRemoteLabel(item))}</option>`).join('')
+      : '<option value="">Load or search remote Joom products</option>';
+    const masterOptions = masters.map((group) => {
+      const key = platformGroupKey(group);
+      const sku = platformGroupSku(group) || '(no sku)';
+      const label = `${sku} | ${platformGroupTitle(group)} | ${(group.rows || []).length} row(s)`;
+      return `<option value="${text(key)}"${key === cleanup.selectedMasterKey ? ' selected' : ''}>${text(label)}</option>`;
+    }).join('');
+    const variantLine = remote
+      ? (Array.isArray(remote.variant_skus) && remote.variant_skus.length ? remote.variant_skus.join(', ') : '-')
+      : '-';
+    const currentSkuLine = master
+      ? platformUniqueValues((master.rows || []).map((row) => row.sku)).join(', ')
+      : '-';
+    const dryRunLine = cleanup.dryRun?.ok
+      ? `Dry-run OK: ${cleanup.dryRun?.dryRun?.payload?.variants?.length || 0} variant(s)`
+      : 'Dry-run not run';
+    const resultHtml = cleanup.result
+      ? `<div class="${cleanup.result.ok ? 'platform-result-ok' : 'platform-result-err'}">${text(cleanup.result.message || '')}</div>`
+      : '';
+    const errorHtml = cleanup.error
+      ? `<div class="platform-result-err">${text(cleanup.error)}</div>`
+      : '';
+    return `
+      <div class="panel" style="margin:12px 0;padding:12px;border:1px solid var(--border);">
+        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
+          <div>
+            <h3 style="margin:0 0 4px;font-size:15px;">Joom remote cleanup</h3>
+            <div class="muted" style="font-size:12px;">Delete an existing remote Joom product, then register the selected current master SKU.</div>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button type="button" data-joom-remote-load ${cleanup.loading || cleanup.running ? 'disabled' : ''}>Load Joom products</button>
+            ${cleanup.nextAfter ? `<button type="button" data-joom-remote-load-more ${cleanup.loading || cleanup.running ? 'disabled' : ''}>Load more</button>` : ''}
+          </div>
+        </div>
+        <div class="grid" style="margin-top:10px;">
+          <div class="field" style="grid-column:span 6;">
+            <label>Remote Joom product to delete</label>
+            <input type="search" data-joom-remote-search value="${text(cleanup.search || '')}" placeholder="Search old SKU, title, product id, variant SKU" style="margin-bottom:6px;">
+            <select data-joom-remote-select size="7" style="width:100%;font-size:12px;" ${cleanup.loading || cleanup.running ? 'disabled' : ''}>${remoteOptions}</select>
+            <div class="muted" style="font-size:11px;margin-top:4px;">Loaded ${text((cleanup.items || []).length)} remote product(s). Matching ${text(filteredItems.length)}.</div>
+          </div>
+          <div class="field" style="grid-column:span 6;">
+            <label>Current dashboard master to register</label>
+            <select data-joom-remote-master style="width:100%;font-size:12px;" ${cleanup.running ? 'disabled' : ''}>${masterOptions || '<option value="">No master product</option>'}</select>
+            <div class="notice" style="margin-top:8px;background:#fff7ed;border-color:#fed7aa;color:#9a3412;">
+              <strong>Irreversible Joom delete</strong><br>
+              The selected remote product and all variants will be removed before the current master is published.
+            </div>
+            <div class="mono" style="font-size:11px;margin-top:6px;white-space:pre-wrap;">Delete ID: ${text(remote?.id || '-')}
+Delete product SKU: ${text(remote?.sku || '-')}
+Delete variant SKU(s): ${text(variantLine)}
+Current SKU(s): ${text(currentSkuLine)}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+          <button type="button" data-joom-remote-dryrun ${cleanup.running || !remote || !master ? 'disabled' : ''}>Dry-run current master</button>
+          <button type="button" class="platform-danger-action" data-joom-remote-delete-reregister ${cleanup.running || !remote || !master ? 'disabled' : ''}>Delete remote and reregister</button>
+          <span class="muted" style="font-size:12px;">${text(cleanup.loading ? 'Loading remote Joom products...' : (cleanup.running ? 'Running cleanup...' : dryRunLine))}</span>
+        </div>
+        ${errorHtml}
+        ${resultHtml}
+      </div>`;
+  }
+
+  async function joomRemoteCleanupLoadProducts(loadMore = false) {
+    const cleanup = joomRemoteCleanupState();
+    cleanup.loading = true;
+    cleanup.error = '';
+    cleanup.result = null;
+    try {
+      const qs = new URLSearchParams({ limit: '100' });
+      if (loadMore && cleanup.nextAfter) qs.set('after', cleanup.nextAfter);
+      const resp = await fetch(`${platformJoomBridgeUrl()}/products-list?${qs.toString()}`, { headers: AUTH_HEADERS });
+      const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+      if (!resp.ok || json.ok === false) throw new Error(json.error || json.message || `HTTP ${resp.status}`);
+      const existing = loadMore ? (cleanup.items || []) : [];
+      const byId = new Map(existing.map((item) => [String(item.id || ''), item]));
+      (Array.isArray(json.items) ? json.items : []).forEach((item) => {
+        if (item?.id) byId.set(String(item.id), item);
+      });
+      cleanup.items = Array.from(byId.values());
+      cleanup.nextAfter = json?.paging?.after || '';
+      cleanup.loaded = true;
+      if (!cleanup.selectedRemoteId && cleanup.items[0]?.id) cleanup.selectedRemoteId = cleanup.items[0].id;
+    } catch (e) {
+      cleanup.error = e?.message || String(e);
+    } finally {
+      cleanup.loading = false;
+    }
+  }
+
+  async function joomRemoteCleanupPreflightCurrentSkus(masterGroup, remoteProduct) {
+    const currentSkus = platformUniqueValues((masterGroup?.rows || []).map((row) => row.sku));
+    if (!currentSkus.length) throw new Error('Current master has no SKU to register.');
+    const remoteId = String(remoteProduct?.id || '');
+    for (const sku of currentSkus) {
+      const resp = await fetch(`${platformJoomBridgeUrl()}/lookup-sku?sku=${encodeURIComponent(sku)}`, { headers: AUTH_HEADERS });
+      const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+      if (resp.status === 404 || json.error === 'joom_product_lookup_failed' || json.error === 'variant_sku_not_found') continue;
+      if (!resp.ok || json.ok === false) throw new Error(json.error || json.message || `Joom SKU preflight failed for ${sku}`);
+      const foundId = String(json.joom_product_id || '');
+      if (foundId && foundId === remoteId) {
+        throw new Error(`Current SKU ${sku} already exists on the selected remote Joom product. This cleanup flow is for stale or duplicate old-SKU products.`);
+      }
+      if (foundId) throw new Error(`Current SKU ${sku} already exists on Joom product ${foundId}. Delete/reregister was blocked before remote deletion.`);
+    }
+    return { ok: true, skus: currentSkus };
+  }
+
+  async function joomRemoteCleanupDryRunMaster(masterGroup) {
+    if (typeof window.mrPrepareJoomHeadlessPublish !== 'function') throw new Error('Joom headless prepare helper is not ready.');
+    const joomGroup = plBuildJoomPublishGroupFromProducts(masterGroup?.rows || []);
+    const prepared = await window.mrPrepareJoomHeadlessPublish(joomGroup);
+    const resp = await fetch(`${platformJoomBridgeUrl()}/dryrun`, {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify(prepared.payload),
+    });
+    const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+    if (!resp.ok || json.ok === false) throw new Error(json.error || json.message || `Joom dryrun HTTP ${resp.status}`);
+    return { ok: true, joomGroup, prepared, dryRun: json, signature: prepared.signature };
+  }
+
+  async function joomRemoteCleanupDeleteSelectedRemoteProduct(remoteProduct, masterGroup) {
+    const productId = String(remoteProduct?.id || '').trim();
+    if (!productId) throw new Error('Remote Joom product id is required.');
+    const infoResp = await fetch(`${platformJoomBridgeUrl()}/product-info?id=${encodeURIComponent(productId)}`, { headers: AUTH_HEADERS });
+    const infoJson = await infoResp.json().catch(() => ({ ok: false, error: `HTTP ${infoResp.status}` }));
+    if (!infoResp.ok || infoJson.ok === false) throw new Error(infoJson.error || infoJson.message || `Joom product-info HTTP ${infoResp.status}`);
+    const fresh = infoJson.product || {};
+    if (String(fresh.id || '') !== productId) throw new Error('Remote Joom product changed before delete.');
+    if (String(fresh.state || '').toLowerCase() === 'archived') throw new Error('Remote Joom product is already archived.');
+    if (Number(remoteProduct.variant_count || 0) && Number(fresh.variant_count || 0) !== Number(remoteProduct.variant_count || 0)) {
+      throw new Error('Remote Joom product variant count changed before delete. Reload products and review again.');
+    }
+    const resp = await fetch(`${platformJoomBridgeUrl()}/delete`, {
+      method: 'POST',
+      headers: AUTH_HEADERS,
+      body: JSON.stringify({
+        productId,
+        target_type: 'id',
+        dry_run: false,
+        reset_local: false,
+        confirm: PLATFORM_DELETE_CONFIRM.joom,
+        product_ids: platformGroupProductIds(masterGroup),
+      }),
+    });
+    const json = await resp.json().catch(() => ({ ok: false, error: `HTTP ${resp.status}` }));
+    if (!resp.ok || json.ok === false) throw new Error(json.error || json.message || `Joom delete HTTP ${resp.status}`);
+    return json;
+  }
+
+  async function joomRemoteCleanupPublishMaster(masterGroup, dryRunResult) {
+    if (typeof window.mrPublishJoomGroupHeadless !== 'function') throw new Error('Joom headless publish helper is not ready.');
+    const joomGroup = dryRunResult?.joomGroup || plBuildJoomPublishGroupFromProducts(masterGroup?.rows || []);
+    return window.mrPublishJoomGroupHeadless(joomGroup, {
+      expectedSignature: dryRunResult?.signature || '',
+    });
+  }
+
+  async function joomRemoteCleanupMarkPublishFailure(masterGroup, publishError) {
+    const ids = platformGroupProductIds(masterGroup);
+    if (!ids.length) return;
+    await db.from('products').update({
+      joom_status: 'archived',
+      joom_mapping_status: null,
+      joom_mapping_error: 'remote_cleanup_publish_failed_after_delete',
+      joom_last_synced_at: new Date().toISOString(),
+    }).in('id', ids);
+    console.warn('[joomRemoteCleanup] publish failed after delete:', publishError);
+  }
+
+  async function joomRemoteCleanupExecute() {
+    const cleanup = joomRemoteCleanupState();
+    if (cleanup.running) return;
+    const remoteProduct = joomRemoteCleanupSelectedRemoteProduct();
+    const masterGroup = joomRemoteCleanupSelectedMasterGroup();
+    if (!remoteProduct) { cleanup.error = 'Select a remote Joom product to delete.'; renderPlatformWorkbench('joom'); return; }
+    if (!masterGroup) { cleanup.error = 'Select a current dashboard master to register.'; renderPlatformWorkbench('joom'); return; }
+    cleanup.running = true;
+    cleanup.error = '';
+    cleanup.result = null;
+    renderPlatformWorkbench('joom');
+    try {
+      await joomRemoteCleanupPreflightCurrentSkus(masterGroup, remoteProduct);
+      const dryRunResult = await joomRemoteCleanupDryRunMaster(masterGroup);
+      cleanup.dryRun = dryRunResult;
+      const deleted = await joomRemoteCleanupDeleteSelectedRemoteProduct(remoteProduct, masterGroup);
+      try {
+        const published = await joomRemoteCleanupPublishMaster(masterGroup, dryRunResult);
+        cleanup.result = {
+          ok: true,
+          deleted,
+          published,
+          message: `Joom remote deleted and current SKU registered: ${published?.joom_product_id || ''}`.trim(),
+        };
+        showToast(cleanup.result.message, 'ok');
+        await loadData();
+      } catch (publishError) {
+        await joomRemoteCleanupMarkPublishFailure(masterGroup, publishError);
+        cleanup.result = {
+          ok: false,
+          deleted,
+          message: `Joom remote delete completed, but reregister failed: ${publishError?.message || publishError}`,
+        };
+        cleanup.error = 'remote_cleanup_publish_failed_after_delete';
+        await loadData();
+      }
+    } catch (e) {
+      cleanup.error = e?.message || String(e);
+      cleanup.result = { ok: false, message: cleanup.error };
+      showToast('Joom remote cleanup failed: ' + cleanup.error, 'err');
+    } finally {
+      cleanup.running = false;
+      renderPlatformWorkbench('joom');
+      renderProducts();
+    }
+  }
+
   function shopeePlatformRollupDetailEntries(row) {
     const rollup = rollupFor(row?.id, 'shopee');
     const detail = rollup?.per_shop_detail || {};
@@ -9262,6 +9565,7 @@ LEGACY END -->
     const masterSyncDialogHtml = state.platformMasterSyncDialog?.platform === platform ? platformMasterSyncDialogHtml(platform) : '';
     const shopeeNameSyncHtml = platform === 'shopee' ? shopeeNameSyncPanelHtml() : '';
     const shopeeEnglishRestoreHtml = platform === 'shopee' ? shopeeEnglishRestorePanelHtml() : '';
+    const joomRemoteCleanupHtml = platform === 'joom' ? joomRemoteCleanupPanelHtml() : '';
     const platformTableClass = platform === 'shopee' ? 'platform-table platform-table-shopee' : 'platform-table';
     const summaryHtml = platform === 'shopee'
       ? ''
@@ -9334,6 +9638,7 @@ LEGACY END -->
       </div>
       ${isAlibaba ? '<div class="notice" style="margin-bottom:10px;">Alibaba(ICBU) 등록은 운영자 설정이 끝나야 실제 동작합니다: alibaba-bridge 시크릿(App Key/Secret/access_token) + ALIBABA_BRIDGE_ENABLED=true + auth_verified 플립. (1차: create_listing + sync, 카테고리/속성/운임은 선택)</div>' : ''}
       ${effectiveToolbarHtml}
+      ${joomRemoteCleanupHtml}
       ${batchHtml}
       ${previewHtml}
       ${masterSyncDialogHtml}
@@ -9468,6 +9773,61 @@ LEGACY END -->
       renderPlatformWorkbench(platform);
     });
     root.querySelector('[data-platform-preview-execute]')?.addEventListener('click', () => platformExecutePreview());
+    if (platform === 'joom') {
+      root.querySelector('[data-joom-remote-load]')?.addEventListener('click', async () => {
+        await joomRemoteCleanupLoadProducts(false);
+        renderPlatformWorkbench('joom');
+      });
+      root.querySelector('[data-joom-remote-load-more]')?.addEventListener('click', async () => {
+        await joomRemoteCleanupLoadProducts(true);
+        renderPlatformWorkbench('joom');
+      });
+      root.querySelector('[data-joom-remote-search]')?.addEventListener('input', (event) => {
+        const cleanup = joomRemoteCleanupState();
+        cleanup.search = event.target?.value || '';
+        cleanup.result = null;
+        renderPlatformWorkbench('joom');
+      });
+      root.querySelector('[data-joom-remote-select]')?.addEventListener('change', (event) => {
+        const cleanup = joomRemoteCleanupState();
+        cleanup.selectedRemoteId = event.target?.value || '';
+        cleanup.dryRun = null;
+        cleanup.result = null;
+        cleanup.error = '';
+        renderPlatformWorkbench('joom');
+      });
+      root.querySelector('[data-joom-remote-master]')?.addEventListener('change', (event) => {
+        const cleanup = joomRemoteCleanupState();
+        cleanup.selectedMasterKey = event.target?.value || '';
+        cleanup.dryRun = null;
+        cleanup.result = null;
+        cleanup.error = '';
+        renderPlatformWorkbench('joom');
+      });
+      root.querySelector('[data-joom-remote-dryrun]')?.addEventListener('click', async () => {
+        const cleanup = joomRemoteCleanupState();
+        cleanup.error = '';
+        cleanup.result = null;
+        try {
+          const masterGroup = joomRemoteCleanupSelectedMasterGroup();
+          if (!masterGroup) throw new Error('Select a current dashboard master to register.');
+          cleanup.dryRun = await joomRemoteCleanupDryRunMaster(masterGroup);
+          cleanup.result = { ok: true, message: 'Joom current master dry-run passed.' };
+        } catch (e) {
+          cleanup.error = e?.message || String(e);
+          cleanup.result = { ok: false, message: cleanup.error };
+        }
+        renderPlatformWorkbench('joom');
+      });
+      root.querySelector('[data-joom-remote-delete-reregister]')?.addEventListener('click', async () => {
+        const remote = joomRemoteCleanupSelectedRemoteProduct();
+        const master = joomRemoteCleanupSelectedMasterGroup();
+        const skuLine = master ? platformUniqueValues((master.rows || []).map((row) => row.sku)).join(', ') : '-';
+        if (!remote || !master) return;
+        if (!confirm(`This will permanently delete the selected Joom remote product and then register the current dashboard SKU.\n\nDelete product: ${remote.sku || remote.id}\nCurrent SKU(s): ${skuLine}\n\nContinue?`)) return;
+        await joomRemoteCleanupExecute();
+      });
+    }
     root.querySelector('[data-platform-batch-start]')?.addEventListener('click', () => platformBatchBegin());
     root.querySelector('[data-platform-batch-open-current]')?.addEventListener('click', () => platformBatchOpenCurrent());
     root.querySelector('[data-platform-batch-confirm-success]')?.addEventListener('click', () => platformBatchConfirmCurrentSuccess());
@@ -20401,6 +20761,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       _cachedParentSku: plParentSku(sortedRows),
     };
   }
+
+  window.plBuildJoomPublishGroupFromProducts = plBuildJoomPublishGroupFromProducts;
 
   function plBuildEbayPublishGroupFromProducts(rows) {
     const allRows = rshSortedProducts(rows || []);
@@ -35463,19 +35825,23 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
           // Status badge
           const joomStatus = group.joomStatus || 'pending';
-          let joomDot = '', joomStatusText = '', joomStatusColor = 'var(--muted)';
+          const joomRemoteStatus = group.joomRemoteVerification?.status || '';
+          let joomDot = '', joomStatusText = '', joomStatusColor = 'var(--muted)', joomStatusTitle = '';
           if (joomStatus === 'pending') {
             joomDot = '⚪'; joomStatusText = '발행 전'; joomStatusColor = 'var(--muted)';
           } else if (joomStatus === 'publishing') {
             joomDot = '🟡'; joomStatusText = '발행 중...'; joomStatusColor = '#a15c07';
+          } else if (joomStatus === 'published' && joomRemoteStatus === 'not_checked') {
+            joomDot = '🟢'; joomStatusText = '등록 요청 완료 / 원격 미확인'; joomStatusColor = 'var(--green)';
+            joomStatusTitle = '빠른 등록 모드로 처리되어 Joom 원격 조회를 기다리지 않았습니다. 필요하면 후속 확인을 실행해 실제 Joom 반영 상태를 확인하세요.';
           } else if (joomStatus === 'published') {
-            joomDot = '🟢'; joomStatusText = '발행 완료'; joomStatusColor = 'var(--green)';
+            joomDot = '🟢'; joomStatusText = '등록 확인 완료'; joomStatusColor = 'var(--green)';
           } else if (joomStatus === 'failed') {
-            joomDot = '🔴'; joomStatusText = '실패'; joomStatusColor = 'var(--red)';
+            joomDot = '🔴'; joomStatusText = '등록 실패'; joomStatusColor = 'var(--red)';
           } else if (joomStatus === 'blocked') {
             joomDot = '🚫'; joomStatusText = 'Joom 영구 위반'; joomStatusColor = 'var(--red)';
           }
-          joomStatusRow.appendChild(el('span', { style: `color:${joomStatusColor};` }, `${joomDot} ${joomStatusText}`));
+          joomStatusRow.appendChild(el('span', { style: `color:${joomStatusColor};`, title: joomStatusTitle }, `${joomDot} ${joomStatusText}`));
 
           if (joomStatus === 'published' && group.joomProductId) {
             const joomLink = el('a', {
@@ -37808,6 +38174,60 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return { draft, payload, detailImages };
     }
 
+    async function mrPostJoomDryRunPayload(payload) {
+      const resp = await fetch(mrJoomBridgeUrl() + '/dryrun', {
+        method: 'POST',
+        headers: AUTH_HEADERS,
+        body: JSON.stringify(payload),
+      });
+      const json = await resp.json().catch(() => ({ ok: false, error: `dryrun HTTP ${resp.status}` }));
+      if (!resp.ok || !json.ok) {
+        throw new Error(json.error || json.message || ('dryrun HTTP ' + resp.status));
+      }
+      return json;
+    }
+
+    async function mrPrepareJoomHeadlessPublish(group) {
+      if (!group?.rows?.length) throw new Error('No product row was found.');
+      const sourceImagesPromise = mrEnsureJoomSourceImages(group);
+      const brandOptionsPromise = mrLoadJoomBrandOptions(group);
+      const countryPromise = _v2LoadJoomCountry();
+      const [, , joomCountry] = await Promise.all([
+        sourceImagesPromise,
+        brandOptionsPromise,
+        countryPromise,
+      ]);
+      mrApplyPreferredJoomBrand(group);
+      const draft = mrBuildJoomDraft(group, joomCountry);
+      if (draft.errors.length) throw new Error(draft.errors.join('\n'));
+      const built = await mrBuildJoomPayload(group, {
+        joomCountry,
+        detailImages: draft.extraImages.slice(),
+      });
+      return {
+        ...built,
+        signature: mrJoomDraftSignature(built.draft),
+      };
+    }
+
+    async function mrPublishJoomGroupHeadless(group, opts = {}) {
+      const prepared = await mrPrepareJoomHeadlessPublish(group);
+      if (opts.expectedSignature && opts.expectedSignature !== prepared.signature) {
+        throw new Error('remote_cleanup_draft_changed_after_delete');
+      }
+      await mrPostJoomDryRunPayload(prepared.payload);
+      group._joomDryRunSignature = prepared.signature;
+      await mrPromoteJoomLocked(group);
+      if (group.joomStatus === 'published' || group.joomProductId) {
+        return {
+          ok: true,
+          joom_product_id: group.joomProductId || null,
+          signature: prepared.signature,
+        };
+      }
+      throw new Error(group.joomError || 'Joom publish failed');
+    }
+
     function mrJoomImageThumbHtml(url, label, meta = '') {
       const imageUrl = String(url || '').trim();
       if (!imageUrl) {
@@ -38087,15 +38507,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       try {
         const { draft, payload } = await mrBuildJoomPayload(_mrPendingJoomGroup);
         const signature = mrJoomDraftSignature(draft);
-        const resp = await fetch(mrJoomBridgeUrl() + '/dryrun', {
-          method: 'POST',
-          headers: AUTH_HEADERS,
-          body: JSON.stringify(payload),
-        });
-        const json = await resp.json();
-        if (!resp.ok || !json.ok) {
-          throw new Error(json.error || json.message || ('dryrun HTTP ' + resp.status));
-        }
+        const json = await mrPostJoomDryRunPayload(payload);
         _mrPendingJoomDraftSignature = signature;
         _mrPendingJoomDryRunOk = true;
         _mrPendingJoomDryRunResult = json;
@@ -38417,7 +38829,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         if (json.ok && json.joom_product_id) {
           group.joomRemoteVerification = {
             status: 'not_checked',
-            message: 'Joom 원격 상태 재확인은 등록 완료 후 별도 검증에서 수행합니다.',
+            message: 'Joom 등록 요청은 완료됐고, Joom 원격 조회 확인은 아직 하지 않았습니다.',
             product_id: json.joom_product_id,
           };
 
@@ -38450,7 +38862,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             group.joomStatus = 'published';
             group.joomProductId = json.joom_product_id;
             const warnInfractions = (json.infractions || []).filter(i => i.kind !== 'permanent');
-            const msg = `Joom 발행 완료 ${json.joom_product_id}` + (warnInfractions.length ? ` (warning ${warnInfractions.length}건)` : '');
+            const msg = `Joom 등록 요청 완료 · 원격 확인은 아직 안 함 ${json.joom_product_id}` + (warnInfractions.length ? ` (warning ${warnInfractions.length}건)` : '');
             showToast(msg, 'ok');
           }
         } else {
@@ -39615,6 +40027,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // eBay button raises a ReferenceError before the confirmation modal can open.
     window.mrDeriveFromTitle = mrDeriveFromTitle;
     window.mrOpenJoomModal = mrOpenJoomModal;
+    window.mrPrepareJoomHeadlessPublish = mrPrepareJoomHeadlessPublish;
+    window.mrPublishJoomGroupHeadless = mrPublishJoomGroupHeadless;
     window.mrOpenEbayModal = mrOpenEbayModal;
 
     // Initialize after DOM is ready and auth has settled.

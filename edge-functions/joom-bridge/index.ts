@@ -110,6 +110,19 @@ async function joomFetch(path: string, init: RequestInit = {}): Promise<any> {
   return body.data;
 }
 
+async function joomFetchRaw(path: string, init: RequestInit = {}): Promise<any> {
+  const token = await getValidAccessToken();
+  const url = path.startsWith("http") ? path : `${JOOM_V3}${path}`;
+  const r = await fetch(url, {
+    ...init,
+    headers: { ...(init.headers || {}), "Authorization": `Bearer ${token}` },
+  });
+  let body: any;
+  try { body = await r.json(); } catch { body = { code: -1, message: "non-json response" }; }
+  if (body.code !== 0) throw new Error(`Joom error code=${body.code} msg=${body.message} (HTTP ${r.status})`);
+  return body;
+}
+
 async function markJoomListingRemoved(body: any, productId: string, raw: any) {
   if (body.reset_local === false || body.resetLocal === false) return null;
   const productIds = Array.isArray(body.product_ids)
@@ -194,6 +207,43 @@ function addJoomBrandOption(map: Map<string, { name: string; count: number; stat
   current.count += 1;
   if (state) current.states.add(state);
   map.set(key, current);
+}
+
+function normalizeJoomRemoteProduct(product: any) {
+  const variants = Array.isArray(product?.variants) ? product.variants : [];
+  const variantRows = variants.map((variant: any) => ({
+    id: String(variant?.id || ""),
+    sku: String(variant?.sku || "").trim(),
+    enabled: !!variant?.enabled,
+    price: variant?.price ?? null,
+    currency: variant?.currency || null,
+  }));
+  return {
+    id: String(product?.id || ""),
+    sku: String(product?.sku || "").trim(),
+    name: String(product?.name || ""),
+    state: product?.state || null,
+    listing_status: joomProductListingStatus(product),
+    hasActiveVersion: product?.hasActiveVersion ?? null,
+    brand: product?.brand || null,
+    variant_count: variantRows.length,
+    variant_skus: variantRows.map((variant: any) => variant.sku).filter(Boolean),
+    variants: variantRows,
+  };
+}
+
+function joomPagingAfterToken(nextUrl: unknown): string | null {
+  const raw = String(nextUrl || "").trim();
+  if (!raw) return null;
+  try {
+    return new URL(raw).searchParams.get("after");
+  } catch {
+    try {
+      return new URL(raw, JOOM_V3).searchParams.get("after");
+    } catch {
+      return null;
+    }
+  }
 }
 
 async function getJoomBrandOptions(limit: number): Promise<Array<{ name: string; count: number; states: string[] }>> {
@@ -1162,6 +1212,43 @@ async function handleRequest(req: Request): Promise<Response> {
       });
     }
 
+    if (action === "products-list" && req.method === "GET") {
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
+      const requestedLimit = Number(url.searchParams.get("limit") || 100);
+      const safeLimit = Math.max(1, Math.min(Number.isFinite(requestedLimit) ? Math.floor(requestedLimit) : 100, 100));
+      const after = String(url.searchParams.get("after") || "").trim();
+      const query = new URLSearchParams({ limit: String(safeLimit) });
+      if (after) query.set("after", after);
+      // Official local doc: C:\dev\api-refs\marketplaces\joom\openapi.yaml
+      // /products/multi returns account products and a paging.next cursor.
+      const raw = await joomFetchRaw(`/products/multi?${query.toString()}`);
+      const data = raw?.data || {};
+      const items = Array.isArray(data?.items) ? data.items : [];
+      const paging = raw?.paging || data?.paging || {};
+      const next = paging?.next || null;
+      return jsonResp({
+        ok: true,
+        items: items.map(normalizeJoomRemoteProduct),
+        paging: {
+          next,
+          after: joomPagingAfterToken(next),
+        },
+      });
+    }
+
+    if (action === "product-info" && req.method === "GET") {
+      const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+      if (denied) return denied;
+      const id = String(url.searchParams.get("id") || "").trim();
+      const sku = String(url.searchParams.get("sku") || "").trim();
+      if (!id && !sku) return jsonResp({ ok: false, error: "id or sku query param required" }, 400);
+      // Official local doc: C:\dev\api-refs\marketplaces\joom\openapi.yaml
+      // /products retrieves one product by Joom id or merchant SKU.
+      const product = await joomFetch(id ? `/products?id=${encodeURIComponent(id)}` : `/products?sku=${encodeURIComponent(sku)}`);
+      return jsonResp({ ok: true, product: normalizeJoomRemoteProduct(product) });
+    }
+
     if ((action === "publish" || action === "dryrun") && req.method === "POST") {
       const denied = await requireBridgeTokenOrAuthenticatedUser(req);
       if (denied) return denied;
@@ -1610,10 +1697,22 @@ async function handleRequest(req: Request): Promise<Response> {
       if (denied) return denied;
       const body = await req.json();
       const dryRun = body?.dry_run !== false && body?.dryRun !== false;
-      const productId = body.productId || body.product_id || body.sku;
+      const targetType = String(body.target_type || body.targetType || "").toLowerCase();
+      const explicitId = String(body.id || body.productId || body.product_id || "").trim();
+      const explicitSku = String(body.sku || "").trim();
+      const productId = explicitId || explicitSku;
       if (!productId) return jsonResp({ ok: false, error: "productId 필요" }, 400);
-      const isHexId = /^[a-f0-9]{24}$/.test(productId);
-      const param = isHexId ? `id=${encodeURIComponent(productId)}` : `sku=${encodeURIComponent(productId)}`;
+      let param = "";
+      if (targetType === "id") {
+        if (!explicitId) return jsonResp({ ok: false, error: "id target_type requires productId/id" }, 400);
+        param = `id=${encodeURIComponent(explicitId)}`;
+      } else if (targetType === "sku") {
+        if (!explicitSku && !productId) return jsonResp({ ok: false, error: "sku target_type requires sku" }, 400);
+        param = `sku=${encodeURIComponent(explicitSku || productId)}`;
+      } else {
+        const isHexId = /^[a-f0-9]{24}$/.test(productId);
+        param = isHexId ? `id=${encodeURIComponent(productId)}` : `sku=${encodeURIComponent(productId)}`;
+      }
       if (dryRun) {
         return jsonResp({
           ok: true,
@@ -1633,7 +1732,7 @@ async function handleRequest(req: Request): Promise<Response> {
         }, 400);
       }
       // Official local doc: C:\dev\api-refs\marketplaces\joom\openapi.yaml
-      // POST /products/remove archives/removes the product and all variants.
+      // POST /products/remove removes a product and all variants.
       const result = await joomFetch(`/products/remove?${param}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

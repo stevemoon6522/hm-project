@@ -48,6 +48,10 @@ _Avoid_: translated name, region title
 The seller-controlled title on a Shopee Shop Item in a specific region. It may match the Global English Name exactly or be customized/localized for that region.
 _Avoid_: global item name, master product name
 
+**TW English Short Name**:
+A shortened English Shopee Shop Item Name used only for Taiwan when the Global English Name exceeds Taiwan's title length limit. For multi-version products it is the common product title, while version differences stay in Shopee option names. It preserves idol and album terms; availability phrases such as READY STOCK or PRE ORDER may be omitted, and version terms may be omitted only when still needed to fit Taiwan's limit.
+_Avoid_: translated Taiwan name, arbitrary truncation, removing idol or album terms
+
 **Shopee Sync Field**:
 A shop-level setting that controls which Shopee Global Product fields are propagated to Shopee Shop Items, such as name and description, media, variation names, price, and days to ship.
 _Avoid_: item update, product data
@@ -59,6 +63,10 @@ _Avoid_: price ratio error, SET option error, token expired
 **Shopee Seller Centre Publish**:
 A manual publication action performed inside Shopee Seller Centre. It can use Shopee's first-party session and internal publication path, so it is not proof that the OpenAPI `create_publish_task` path has the same permission binding for that shop.
 _Avoid_: OpenAPI publish, bridge publish, token refresh
+
+**Shopee Global Product Coverage**:
+The default V2 Shopee registration target: keep one Shopee Global Product as the parent and publish regional Shopee Shop Items from it, even when optimizing upload latency. Single-shop-only Product API upload can be evaluated as a separate operator mode, but it should not replace the default CBSC/KRSC Global Product flow.
+_Avoid_: fastest possible shop-only upload, batch add replacement
 
 **Source Listing Snapshot**:
 A point-in-time capture of a remote marketplace listing before the operator accepts it as part of the master data. A Shopee listing imported from the shop catalog is a Source Listing Snapshot, not canonical truth by itself.
@@ -87,6 +95,10 @@ Developer: "First we save the Shopee listing as a Source Listing Snapshot. If `m
 Operator: "I want the English Global Product name to appear exactly in TW, TH, and BR."
 
 Developer: "That means making each region's Shopee Shop Item Name exactly match the Global English Name. We need to verify both the Shopee Sync Field policy and direct Shop Item update results."
+
+Operator: "TW rejects this title because it is over 60 characters."
+
+Developer: "Use a TW English Short Name: keep the idol and album terms, remove availability phrases like READY STOCK or PRE ORDER first, then omit version terms only if the title is still too long. For multi-version products, keep version differences in the Shopee option names."
 
 Operator: "Use our fixed notice above every Qoo10 product detail."
 

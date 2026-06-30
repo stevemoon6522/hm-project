@@ -107,6 +107,10 @@ const UPLOAD_IMAGE_MAX_BYTES = 2 * 1024 * 1024;
 const UPLOAD_IMAGE_MIN_DIMENSION = 300;
 const UPLOAD_IMAGE_MAX_DIMENSION = 4096;
 const GENERATED_UPLOAD_CACHE_TTL_MS = 30 * 60 * 1000;
+const SHOPEE_ATTRIBUTE_TREE_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const SHOPEE_LOGISTICS_CHANNEL_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const SHOPEE_TW_ITEM_NAME_LIMIT = 60;
+const SHOPEE_AVAILABILITY_PHRASES_FOR_TITLE_SHORTENING = ['READY STOCK', 'PRE ORDER', 'PREORDER'];
 const IMAGE_PROXY_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Cache-Control': 'no-store',
@@ -1203,6 +1207,130 @@ async function findRecentGeneratedUpload(idempotencyKeyHash: string, region: str
     return null;
   }
   return data || null;
+}
+
+function shopeeRegistrationReadCacheKey(kind: string, accountKey: string, region: string, scope: string) {
+  return `shopee_registration_read_cache:${kind}:v1:${accountKey}:${String(region || '').toUpperCase()}:${scope}`;
+}
+
+async function readShopeeRegistrationCache(cacheKey: string, forceRefresh = false) {
+  if (!cacheKey || forceRefresh) return { hit: false, payload: null, forced: forceRefresh };
+  try {
+    const { data, error } = await supabase
+      .from('shopee_registration_read_cache')
+      .select('cache_key, payload, expires_at, hit_count')
+      .eq('cache_key', cacheKey)
+      .maybeSingle();
+    if (error) {
+      audit('shopee_registration_read_cache_lookup_failed', { cache_key: cacheKey, error: error.message });
+      return { hit: false, payload: null, error: error.message };
+    }
+    if (!data?.payload || !data.expires_at || Date.parse(data.expires_at) <= Date.now()) {
+      return { hit: false, payload: null, expired: !!data };
+    }
+    const nextHitCount = Number(data.hit_count || 0) + 1;
+    supabase
+      .from('shopee_registration_read_cache')
+      .update({ hit_count: nextHitCount, last_hit_at: new Date().toISOString() })
+      .eq('cache_key', cacheKey)
+      .then(({ error: updateError }) => {
+        if (updateError) audit('shopee_registration_read_cache_hit_update_failed', { cache_key: cacheKey, error: updateError.message });
+      });
+    return { hit: true, payload: data.payload, expires_at: data.expires_at, hit_count: nextHitCount };
+  } catch (e: any) {
+    audit('shopee_registration_read_cache_lookup_exception', { cache_key: cacheKey, error: String(e?.message || e) });
+    return { hit: false, payload: null, error: String(e?.message || e) };
+  }
+}
+
+async function writeShopeeRegistrationCache(params: {
+  cacheKey: string;
+  cacheKind: string;
+  accountKey: string;
+  region: string;
+  cacheScope: string;
+  payload: any;
+  ttlMs: number;
+}) {
+  if (!params.cacheKey || params.payload == null) return { ok: false, skipped: true };
+  try {
+    const expiresAt = new Date(Date.now() + Math.max(1000, params.ttlMs || 1000)).toISOString();
+    const { error } = await supabase
+      .from('shopee_registration_read_cache')
+      .upsert({
+        cache_key: params.cacheKey,
+        cache_kind: params.cacheKind,
+        account_key: params.accountKey,
+        region: String(params.region || '').toUpperCase(),
+        cache_scope: params.cacheScope,
+        payload: params.payload,
+        expires_at: expiresAt,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'cache_key' });
+    if (error) {
+      audit('shopee_registration_read_cache_write_failed', { cache_key: params.cacheKey, error: error.message });
+      return { ok: false, error: error.message };
+    }
+    return { ok: true, expires_at: expiresAt };
+  } catch (e: any) {
+    audit('shopee_registration_read_cache_write_exception', { cache_key: params.cacheKey, error: String(e?.message || e) });
+    return { ok: false, error: String(e?.message || e) };
+  }
+}
+
+async function cachedGlobalAttributeTree(region: string, categoryId: number, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, forceRefresh = false) {
+  const regionCode = String(region || '').toUpperCase();
+  const cacheScope = `category:${categoryId}:language:en`;
+  const cacheKey = shopeeRegistrationReadCacheKey('attribute_tree', accountKey, regionCode, cacheScope);
+  const lookupStart = Date.now();
+  const cached = await readShopeeRegistrationCache(cacheKey, forceRefresh);
+  if (cached.hit) {
+    return { result: cached.payload, cache_hit: true, cache_key: cacheKey, lookup_ms: elapsedMs(lookupStart), refresh_ms: 0 };
+  }
+  const refreshStart = Date.now();
+  const result = await merchantApiCall(regionCode, '/api/v2/global_product/get_attribute_tree', {
+    query: { category_id_list: String(categoryId), language: 'en' },
+    account_key: accountKey,
+  });
+  const refreshMs = elapsedMs(refreshStart);
+  if (!result?.error) {
+    await writeShopeeRegistrationCache({
+      cacheKey,
+      cacheKind: 'attribute_tree',
+      accountKey,
+      region: regionCode,
+      cacheScope,
+      payload: result,
+      ttlMs: SHOPEE_ATTRIBUTE_TREE_CACHE_TTL_MS,
+    });
+  }
+  return { result, cache_hit: false, cache_key: cacheKey, lookup_ms: elapsedMs(lookupStart), refresh_ms: refreshMs, forced: forceRefresh };
+}
+
+async function cachedLogisticsChannelList(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, forceRefresh = false) {
+  const regionCode = String(region || '').toUpperCase();
+  const cacheScope = 'channel_list';
+  const cacheKey = shopeeRegistrationReadCacheKey('logistics_channels', accountKey, regionCode, cacheScope);
+  const lookupStart = Date.now();
+  const cached = await readShopeeRegistrationCache(cacheKey, forceRefresh);
+  if (cached.hit) {
+    return { result: cached.payload, cache_hit: true, cache_key: cacheKey, lookup_ms: elapsedMs(lookupStart), refresh_ms: 0 };
+  }
+  const refreshStart = Date.now();
+  const result = await shopApiCall(regionCode, '/api/v2/logistics/get_channel_list', { account_key: accountKey });
+  const refreshMs = elapsedMs(refreshStart);
+  if (!result?.error) {
+    await writeShopeeRegistrationCache({
+      cacheKey,
+      cacheKind: 'logistics_channels',
+      accountKey,
+      region: regionCode,
+      cacheScope,
+      payload: result,
+      ttlMs: SHOPEE_LOGISTICS_CHANNEL_CACHE_TTL_MS,
+    });
+  }
+  return { result, cache_hit: false, cache_key: cacheKey, lookup_ms: elapsedMs(lookupStart), refresh_ms: refreshMs, forced: forceRefresh };
 }
 
 async function insertUploadLog(params: {
@@ -2413,6 +2541,143 @@ function buildPublishModels(variation: any, fallbackPrice: number) {
   }));
 }
 
+function shopeeTitleCharCount(value: string) {
+  return Array.from(String(value || '')).length;
+}
+
+function cleanShopeeTitle(value: string) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s+([)\]])/g, '$1')
+    .replace(/([(\[])\s+/g, '$1')
+    .replace(/\s+[-|/,]\s*$/g, '')
+    .replace(/^\s*[-|/,]\s+/g, '')
+    .trim();
+}
+
+function escapeRegExp(value: string) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function removeShopeeAvailabilityPhrases(name: string) {
+  const availabilityAlternatives = SHOPEE_AVAILABILITY_PHRASES_FOR_TITLE_SHORTENING
+    .map((phrase) => escapeRegExp(phrase).replace(/\\ /g, '\\s*'))
+    .join('|');
+  return cleanShopeeTitle(
+    String(name || '')
+      .replace(new RegExp(`\\s*[\\[(]?\\s*(${availabilityAlternatives})\\s*[\\])]?`, 'gi'), ' ')
+      .replace(/\s{2,}/g, ' '),
+  );
+}
+
+function collectStrings(value: any, out: string[] = []) {
+  if (value == null) return out;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const s = String(value || '').trim();
+    if (s) out.push(s);
+    return out;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((entry) => collectStrings(entry, out));
+    return out;
+  }
+  if (typeof value === 'object') {
+    for (const key of ['option', 'option_name', 'variation_option_name', 'version', 'version_name', 'name']) {
+      if (value?.[key] != null) collectStrings(value[key], out);
+    }
+  }
+  return out;
+}
+
+function structuredVersionTermsForTwShortName(body: any, target: any) {
+  const terms: string[] = [];
+  for (const source of [target, body]) {
+    collectStrings(source?.variation_option_names, terms);
+    collectStrings(source?.option_name, terms);
+    collectStrings(source?.version_name, terms);
+    collectStrings(source?.version, terms);
+    const variation = normalizeVariation(source?.variation);
+    if (variation) {
+      for (const tier of variation.tier_variation || []) {
+        for (const option of tier?.option_list || []) collectStrings(option?.option, terms);
+      }
+    }
+  }
+  const seen = new Set<string>();
+  return terms
+    .map(cleanShopeeTitle)
+    .filter((term) => shopeeTitleCharCount(term) >= 2)
+    .sort((a, b) => b.length - a.length)
+    .filter((term) => {
+      const key = term.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+function removeStructuredVersionTermsFromTitle(name: string, terms: string[]) {
+  let out = String(name || '');
+  for (const term of terms) {
+    if (!term) continue;
+    const escaped = escapeRegExp(term);
+    out = out
+      .replace(new RegExp(`\\s*[-|/,]?\\s*[\\[(]?\\s*${escaped}\\s*[\\])]`, 'gi'), ' ')
+      .replace(new RegExp(`\\s*[-|/,]\\s*${escaped}\\b`, 'gi'), ' ')
+      .replace(new RegExp(`\\b${escaped}\\b\\s*[-|/,]?\\s*`, 'gi'), ' ');
+  }
+  return cleanShopeeTitle(out);
+}
+
+function buildTwEnglishShortName(globalName: string, body: any = {}, target: any = {}) {
+  const original = cleanShopeeTitle(globalName);
+  if (shopeeTitleCharCount(original) <= SHOPEE_TW_ITEM_NAME_LIMIT) {
+    return { ok: true, name: original, changed: false, removed_availability: false, removed_versions: [] };
+  }
+  const withoutAvailability = removeShopeeAvailabilityPhrases(original);
+  if (shopeeTitleCharCount(withoutAvailability) <= SHOPEE_TW_ITEM_NAME_LIMIT) {
+    return { ok: true, name: withoutAvailability, changed: withoutAvailability !== original, removed_availability: withoutAvailability !== original, removed_versions: [] };
+  }
+  const versionTerms = structuredVersionTermsForTwShortName(body, target);
+  const withoutVersions = removeStructuredVersionTermsFromTitle(withoutAvailability, versionTerms);
+  const removedVersions = versionTerms.filter((term) => withoutAvailability.toLowerCase().includes(term.toLowerCase()) && !withoutVersions.toLowerCase().includes(term.toLowerCase()));
+  if (shopeeTitleCharCount(withoutVersions) <= SHOPEE_TW_ITEM_NAME_LIMIT) {
+    return { ok: true, name: withoutVersions, changed: withoutVersions !== original, removed_availability: withoutAvailability !== original, removed_versions: removedVersions };
+  }
+  return {
+    ok: false,
+    name: withoutVersions,
+    error: 'tw_english_short_name_over_limit',
+    message: `TW English Short Name still exceeds 60 characters (${shopeeTitleCharCount(withoutVersions)}/${SHOPEE_TW_ITEM_NAME_LIMIT})`,
+    limit: SHOPEE_TW_ITEM_NAME_LIMIT,
+    chars: shopeeTitleCharCount(withoutVersions),
+    removed_availability: withoutAvailability !== original,
+    removed_versions: removedVersions,
+  };
+}
+
+function buildPublishItemNameForRegion(body: any, target: any) {
+  const targetRegion = String(target?.region || body?.region || '').toUpperCase();
+  const sourceName = cleanShopeeTitle(target?.item_name || target?.name || body?.name || body?.item_name || '');
+  if (targetRegion !== 'TW') return sourceName;
+  const shortName = buildTwEnglishShortName(sourceName, body, target);
+  if (!shortName.ok) throw new Error(shortName.message || 'TW English Short Name still exceeds 60 characters');
+  return shortName.name;
+}
+
+function validateTwEnglishShortNamePreflight(body: any, targets: any[]) {
+  for (const target of targets || []) {
+    const region = String(target?.region || body?.region || '').toUpperCase();
+    if (region !== 'TW') continue;
+    const sourceName = cleanShopeeTitle(target?.item_name || target?.name || body?.name || body?.item_name || '');
+    const shortName = buildTwEnglishShortName(sourceName, body, target);
+    if (!shortName.ok) {
+      return { ok: false, region, stage: 'name_preflight', error: shortName.error, message: shortName.message, generated_name: shortName.name, limit: shortName.limit, chars: shortName.chars };
+    }
+  }
+  return { ok: true };
+}
+
 function buildGlobalItemPayload(body: any) {
   return {
     global_item_name: body.name,
@@ -2565,7 +2830,7 @@ function parseMandatoryFromDebug(debugMessage: string): Array<{ attribute_id: nu
   return out;
 }
 
-async function buildCategoryAttributeList(region: string, categoryId: number, inputAttrs: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+async function buildCategoryAttributeList(region: string, categoryId: number, inputAttrs: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, options: any = {}) {
   const normalized = normalizeAttributeList(inputAttrs);
   const byId = new Map<number, any>();
   normalized.forEach((a) => byId.set(Number(a.attribute_id), a));
@@ -2574,7 +2839,8 @@ async function buildCategoryAttributeList(region: string, categoryId: number, in
   // partner endpoint the correct path is /get_attribute_tree but the parameter must be
   // category_id_list (CSV/array), not category_id. Single-value category_id returns
   // an empty response{}; passing the list form fills attribute_list correctly.
-  const attrTreeRes = await merchantApiCall(region, '/api/v2/global_product/get_attribute_tree', { query: { category_id_list: String(categoryId), language: 'en' }, account_key: accountKey });
+  const attrTreeCached = await cachedGlobalAttributeTree(region, categoryId, accountKey, options.forceAttributeRefresh === true);
+  const attrTreeRes = attrTreeCached.result;
   const treeAttrs = flattenGlobalAttributes(attrTreeRes, region);
   const missing: any[] = [];
   for (const attr of treeAttrs) {
@@ -2607,17 +2873,18 @@ async function buildCategoryAttributeList(region: string, categoryId: number, in
       })),
     });
   }
-  return { attribute_list: Array.from(byId.values()), missing, attr_tree_raw: attrTreeRes };
+  return { attribute_list: Array.from(byId.values()), missing, attr_tree_raw: attrTreeRes, cache: attrTreeCached };
 }
 
-async function buildCategoryAttributeListForRegions(baseRegion: string, regions: string[], categoryId: number, inputAttrs: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
+async function buildCategoryAttributeListForRegions(baseRegion: string, regions: string[], categoryId: number, inputAttrs: any[], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, options: any = {}) {
+  const forceAttributeRefresh = options.forceAttributeRefresh === true;
   const uniqueRegions = Array.from(new Set([baseRegion, ...regions].map((x) => String(x || '').toUpperCase()).filter(Boolean)));
   let attributeList = normalizeAttributeList(inputAttrs);
   const missingByKey = new Map<string, any>();
   const attrTrees: any[] = [];
   for (const region of uniqueRegions) {
-    const result = await buildCategoryAttributeList(region, categoryId, attributeList, accountKey);
-    attrTrees.push({ region, raw: result.attr_tree_raw });
+    const result = await buildCategoryAttributeList(region, categoryId, attributeList, accountKey, { ...options, forceAttributeRefresh });
+    attrTrees.push({ region, raw: result.attr_tree_raw, cache: result.cache });
     attributeList = result.attribute_list;
     for (const missing of result.missing || []) {
       const key = `${missing.attribute_id || ''}:${missing.attribute_name || ''}`;
@@ -2629,7 +2896,7 @@ async function buildCategoryAttributeListForRegions(baseRegion: string, regions:
       }
     }
   }
-  return { attribute_list: attributeList, missing: Array.from(missingByKey.values()), attr_tree_raw: attrTrees };
+  return { attribute_list: attributeList, missing: Array.from(missingByKey.values()), attr_tree_raw: attrTrees, cache_stats: attrTrees.map(({ region, cache }) => ({ region, cache_hit: !!cache?.cache_hit, cache_key: cache?.cache_key || null, refresh_ms: cache?.refresh_ms ?? null })) };
 }
 
 async function getRegionShopId(region: string, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY): Promise<number> {
@@ -2639,8 +2906,10 @@ async function getRegionShopId(region: string, accountKey = DEFAULT_SHOPEE_ACCOU
   return shopId;
 }
 
-async function getPublishLogistics(region: string, isPreOrder = false, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
-  const result = await shopApiCall(region, '/api/v2/logistics/get_channel_list', { account_key: accountKey });
+async function getPublishLogistics(region: string, isPreOrder = false, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, options: any = {}) {
+  const forceRefresh = options.forceRefresh === true || options.force_logistics_refresh === true;
+  const cachedChannels = await cachedLogisticsChannelList(region, accountKey, forceRefresh);
+  const result = cachedChannels.result;
   const channels: any[] = result?.response?.logistics_channel_list || [];
   const pickId = (ch: any) => ch?.logistics_channel_id ?? ch?.logistic_id ?? ch?.channel_id ?? ch?.id;
   const pickName = (ch: any) => ch?.logistics_channel_name ?? ch?.logistic_name ?? ch?.name ?? `channel_${pickId(ch)}`;
@@ -2662,7 +2931,12 @@ async function getPublishLogistics(region: string, isPreOrder = false, accountKe
     enabled: true,
     is_free: false,
   }));
-  return out.length ? out : [{ logistic_id: 80007, logistic_name: 'Default', enabled: true, is_free: false }];
+  const finalList: any[] = out.length ? out : [{ logistic_id: 80007, logistic_name: 'Default', enabled: true, is_free: false }];
+  (finalList as any).__cache_hit = !!cachedChannels.cache_hit;
+  (finalList as any).__cache_key = cachedChannels.cache_key;
+  (finalList as any).__cache_refresh_ms = cachedChannels.refresh_ms;
+  (finalList as any).__force_refresh = forceRefresh;
+  return finalList;
 }
 
 function logisticsIdFrom(row: any): number {
@@ -2752,6 +3026,13 @@ async function repairPublishedItemLogisticsForGlobalItem(globalItemId: number, a
 
 function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
   const price = Number(target.price ?? body.price);
+  const targetRegion = String(target?.region || body?.region || '').toUpperCase();
+  let itemName = cleanShopeeTitle(target?.item_name || target?.name || body?.name || body?.item_name || '');
+  if (targetRegion === 'TW') {
+    const twShortName = buildTwEnglishShortName(itemName, body, target);
+    if (!twShortName.ok) throw new Error(twShortName.message || 'TW English Short Name still exceeds 60 characters');
+    itemName = twShortName.name;
+  }
   // is_pre_order is decided by caller (adapter) via body.is_pre_order OR
   // lifecycle_state === 'pre_order'. Default false (Ready Stock) for back-compat.
   const isPreOrder = body.is_pre_order === true || body.lifecycle_state === 'pre_order';
@@ -2762,7 +3043,7 @@ function buildPublishItemPayload(body: any, target: any, logistics: any[]) {
   const description = sanitizeShopeePlainTextDescription(target.description ?? body.description)
     || `${body.name}\n\nK-POP Official Merchandise. Ready stock.`;
   const item: any = {
-    item_name: body.name,
+    item_name: itemName,
     description,
     item_status: body.item_status || 'NORMAL',
     original_price: price,
@@ -2791,6 +3072,15 @@ function isPublishPending(task: any): boolean {
 function isTransientPublishTaskLookup(task: any): boolean {
   const text = `${task?.error || ''} ${task?.message || ''} ${task?.debug_message || ''}`.toLowerCase();
   return /task not found|cannot_get_publish_result|taking some time|system busy|try later|crossupload\.api error:partner does not have permission to operate shop/.test(text);
+}
+
+function isLogisticsChannelPublishFailure(...parts: any[]): boolean {
+  const text = parts.map((part) => {
+    if (!part) return '';
+    if (typeof part === 'string') return part;
+    try { return JSON.stringify(part); } catch (_) { return String(part); }
+  }).join(' ').toLowerCase();
+  return /logistic|logistics|shipping channel|delivery channel|channel_id|channel id|logistic_id|logistic id|not support pre.?order|delivery option/.test(text);
 }
 
 function isAmbiguousPublishFailure(task: any): boolean {
@@ -2870,6 +3160,22 @@ async function verifyPublishedListOutcomeOnce(region: string, shopId: number, gl
     };
   }
   return null;
+}
+
+async function loadShopPublishableStatusForDiagnostics(globalItemId: number, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, region = 'SG', stageLogs?: string[]) {
+  try {
+    const result = await merchantApiCall(region, '/api/v2/global_product/get_shop_publishable_status', {
+      query: { global_item_id: globalItemId, offset: 0, page_size: 100 },
+      account_key: accountKey,
+    });
+    const list = Array.isArray(result?.response?.shop_publishable_status_list) ? result.response.shop_publishable_status_list : [];
+    stageLogs?.push(`shop_publishable_status_diagnostics: ${list.length} shops checked`);
+    return result;
+  } catch (e: any) {
+    const error = String(e?.message || e);
+    stageLogs?.push(`shop_publishable_status_diagnostics_failed: ${error}`);
+    return { error: 'shop_publishable_status_diagnostics_failed', message: error };
+  }
 }
 
 async function reconcilePublishResultsWithPublishedList(globalItemId: number, targets: any[] = [], results: any[] = [], accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, lookupRegion = 'SG', stageLogs?: string[]) {
@@ -4959,7 +5265,7 @@ Deno.serve(async (req) => {
       if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
       if (!shop_id) return jsonResp({ ok: false, error: 'shop_id required' }, 400);
       return withPublishRequestId(action, `${reqAccountKey}:${r}`, shop_id, body, async () => {
-        const logistics = await getPublishLogistics(r, false, reqAccountKey);
+        const logistics = await getPublishLogistics(r, false, reqAccountKey, { force_logistics_refresh: body.force_logistics_refresh === true });
         const item = body.item || buildPublishItemPayload(body, body, logistics);
         if (!item.logistic) item.logistic = logistics;
         const sent = { global_item_id, shop_id, shop_region: r, item };
@@ -5023,7 +5329,9 @@ Deno.serve(async (req) => {
             results.push({ ok: false, region: targetRegion, shop_id, stage: 'banned_shop', error: 'shop_id is permanently banned' });
             return;
           }
-          const logistics = await getPublishLogistics(targetRegion, _isPreOrderRepublish, reqAccountKey);
+          let logistics = await getPublishLogistics(targetRegion, _isPreOrderRepublish, reqAccountKey, { force_logistics_refresh: target.force_logistics_refresh === true || body.force_logistics_refresh === true });
+          regionTiming.logistics_cache_hit = (logistics as any).__cache_hit ? 1 : 0;
+          regionTiming.logistics_refresh_ms = Number((logistics as any).__cache_refresh_ms || 0);
           const brMinimalFirst = await publishBrOptionMinimalFirst(global_item_id, shop_id, target, body, logistics, reqAccountKey).catch((e: any) => ({
             ok: false,
             region: targetRegion,
@@ -5036,11 +5344,27 @@ Deno.serve(async (req) => {
             results.push(brMinimalFirst);
             return;
           }
-          const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
-          const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
+          let item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
+          let publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const createPublishStartMs = Date.now();
-          const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: reqAccountKey });
+          let publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: reqAccountKey });
           regionTiming.create_publish_task = elapsedMs(createPublishStartMs);
+          if (publishRes.error && isLogisticsChannelPublishFailure(publishRes, publishBody)) {
+            const forceLogisticsRefreshStartMs = Date.now();
+            const refreshedLogistics = await getPublishLogistics(targetRegion, _isPreOrderRepublish, reqAccountKey, { force_logistics_refresh: true });
+            const retryItem = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, refreshedLogistics);
+            const retryPublishBody = { global_item_id, shop_id, shop_region: targetRegion, item: retryItem };
+            const retryPublishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: retryPublishBody, account_key: reqAccountKey });
+            regionTiming.force_logistics_refresh = elapsedMs(forceLogisticsRefreshStartMs);
+            if (!retryPublishRes.error) {
+              logistics = refreshedLogistics;
+              item = retryItem;
+              publishBody = retryPublishBody;
+              publishRes = retryPublishRes;
+            } else {
+              publishRes = { ...publishRes, force_logistics_refresh_retry: retryPublishRes };
+            }
+          }
           if (publishRes.error) {
             const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes, timing_ms: { ...regionTiming, total: elapsedMs(regionStartMs) } };
             if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
@@ -5368,6 +5692,8 @@ Deno.serve(async (req) => {
           message: pricePreflightMessage,
         }, 400);
       }
+      const twNamePreflight = validateTwEnglishShortNamePreflight(body, targetInputs);
+      if (!twNamePreflight.ok) return jsonResp(twNamePreflight, 400);
 
       return withPublishRequestId(action, `${accountKey}:${r}`, null, body, async () => {
       const registrationTiming = createShopeeTimingRecorder();
@@ -5381,9 +5707,14 @@ Deno.serve(async (req) => {
         const firstAdjustment = regionalTargetPriceAdjustments[0] || {};
         stage_logs.push(`regional_target_model_price_ratio_normalized: ${regionalTargetPriceAdjustments.length} model(s), region=${firstAdjustment.region || 'unknown'}, ratio=${firstAdjustment.ratio || 'unknown'}, min=${firstAdjustment.min_price || 'unknown'}->${firstAdjustment.to || 'unknown'}, max=${firstAdjustment.max_price || 'unknown'}, safe_ratio=${firstAdjustment.safe_ratio || 'unknown'}`);
       }
+      const forceAttributeRefresh = body.force_refresh === true || body.force_attribute_refresh === true || body.force_attribute_tree_refresh === true;
       const categoryAttributeStartMs = Date.now();
-      const catAttrs = await buildCategoryAttributeListForRegions(r, targetInputs.map((target: any) => target.region), Number(body.category_id), Array.isArray(body.attribute_list) ? body.attribute_list : [], accountKey);
+      const catAttrs = await buildCategoryAttributeListForRegions(r, targetInputs.map((target: any) => target.region), Number(body.category_id), Array.isArray(body.attribute_list) ? body.attribute_list : [], accountKey, { forceAttributeRefresh });
       registrationTiming.mark('category_attributes', categoryAttributeStartMs);
+      if (Array.isArray(catAttrs.cache_stats) && catAttrs.cache_stats.length) {
+        const cacheHitCount = catAttrs.cache_stats.filter((row: any) => row.cache_hit).length;
+        stage_logs.push(`attribute_tree_cache: ${cacheHitCount}/${catAttrs.cache_stats.length} hit(s), force_refresh=${forceAttributeRefresh ? 'true' : 'false'}`);
+      }
       if (catAttrs.missing.length > 0) {
         return jsonResp({
           ok: false,
@@ -5529,12 +5860,26 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Diagnostic: query KRSC publishable_shop for this global_item_id once. Result is
-      // recorded in stage_logs + returned so adapter/UI can show which region shops
-      // Shopee considers eligible (KRSC blocks publish to non-publishable shops).
+      const targetShopIdSet = new Set<number>();
+      for (const target of targetInputs) {
+        const directShopId = Number(target.shop_id || 0);
+        if (directShopId) {
+          targetShopIdSet.add(directShopId);
+          continue;
+        }
+        try {
+          const shopId = await getRegionShopId(String(target.region || '').toUpperCase(), accountKey);
+          if (Number.isFinite(shopId) && shopId > 0) targetShopIdSet.add(shopId);
+        } catch (_) {}
+      }
+      const targetShopIds = Array.from(targetShopIdSet);
+
+      // Diagnostic: query KRSC publishable_shop for this global_item_id once,
+      // scoped to the shops this registration actually targets.
       let publishable_shops: any = null;
       try {
-        const psRes = await merchantApiCall(r, '/api/v2/global_product/get_publishable_shop', { query: { global_item_id }, account_key: accountKey });
+        const publishableShopQuery = { global_item_id, ...(targetShopIds.length ? { shop_id_list: targetShopIds.join(',') } : {}) };
+        const psRes = await merchantApiCall(r, '/api/v2/global_product/get_publishable_shop', { query: publishableShopQuery, account_key: accountKey });
         publishable_shops = psRes;
         console.log(`[register_cbsc] get_publishable_shop global_item_id=${global_item_id} response=${JSON.stringify(psRes).slice(0, 1200)}`);
         const shopList = Array.isArray(psRes?.response?.publishable_shop) ? psRes.response.publishable_shop : [];
@@ -5544,24 +5889,16 @@ Deno.serve(async (req) => {
       }
 
       // Codex hypothesis C — pre-check per-shop publishable status (with reason)
-      // so we can surface KRSC's "category prohibited" / "channel/region not
-      // supported" reasons up-front instead of getting a generic publish_task
-      // failure that misattributes the cause.
+      // Load detailed KRSC diagnostics only when a publish failure needs them.
       let publishable_status: any = null;
-      const unpublishableByShop = new Map<number, string>();
-      try {
-        const stRes = await merchantApiCall(r, '/api/v2/global_product/get_shop_publishable_status', { query: { global_item_id, offset: 0, page_size: 100 }, account_key: accountKey });
-        publishable_status = stRes;
-        const list = Array.isArray(stRes?.response?.shop_publishable_status_list) ? stRes.response.shop_publishable_status_list : [];
-        for (const row of list) {
-          if (row?.shop_publishable_status === false && row?.unpublishable_reason) {
-            unpublishableByShop.set(Number(row.shop_id), String(row.unpublishable_reason));
-          }
+      let publishableStatusDiagnosticsLoaded = false;
+      const loadRegisterPublishableStatusDiagnostics = async () => {
+        if (!publishableStatusDiagnosticsLoaded) {
+          publishableStatusDiagnosticsLoaded = true;
+          publishable_status = await loadShopPublishableStatusForDiagnostics(Number(global_item_id), accountKey, r, stage_logs);
         }
-        stage_logs.push(`shop_publishable_status: ${list.length} shops checked, ${unpublishableByShop.size} unpublishable`);
-      } catch (e) {
-        stage_logs.push(`shop_publishable_status_failed: ${String(e)}`);
-      }
+        return publishable_status;
+      };
 
       const results: any[] = [];
       const publishRegionsStartMs = Date.now();
@@ -5580,15 +5917,9 @@ Deno.serve(async (req) => {
             results.push({ ok: false, region: targetRegion, shop_id, stage: 'banned_shop', error: 'shop_id is permanently banned', message: `shop_id ${shop_id} is banned and cannot be published to` });
             return;
           }
-          // Pre-check: if KRSC reported this shop as unpublishable, surface the
-          // reason verbatim instead of letting create_publish_task return a
-          // generic failure with a misleading message.
-          const blockedReason = unpublishableByShop.get(shop_id);
-          if (blockedReason) {
-            results.push({ ok: false, region: targetRegion, shop_id, stage: 'shop_unpublishable', error: 'shop_unpublishable', message: blockedReason });
-            return;
-          }
-          const logistics = await getPublishLogistics(targetRegion, _isPreOrderRegister, accountKey);
+          let logistics = await getPublishLogistics(targetRegion, _isPreOrderRegister, accountKey, { force_logistics_refresh: target.force_logistics_refresh === true || body.force_logistics_refresh === true });
+          regionTiming.logistics_cache_hit = (logistics as any).__cache_hit ? 1 : 0;
+          regionTiming.logistics_refresh_ms = Number((logistics as any).__cache_refresh_ms || 0);
           const brMinimalFirst = await publishBrOptionMinimalFirst(global_item_id, shop_id, target, body, logistics, accountKey).catch((e: any) => ({
             ok: false,
             region: targetRegion,
@@ -5601,11 +5932,27 @@ Deno.serve(async (req) => {
             results.push(brMinimalFirst);
             return;
           }
-          const item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
-          const publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
+          let item = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, logistics);
+          let publishBody = { global_item_id, shop_id, shop_region: targetRegion, item };
           const createPublishStartMs = Date.now();
-          const publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: accountKey });
+          let publishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: publishBody, account_key: accountKey });
           regionTiming.create_publish_task = elapsedMs(createPublishStartMs);
+          if (publishRes.error && isLogisticsChannelPublishFailure(publishRes, publishBody)) {
+            const forceLogisticsRefreshStartMs = Date.now();
+            const refreshedLogistics = await getPublishLogistics(targetRegion, _isPreOrderRegister, accountKey, { force_logistics_refresh: true });
+            const retryItem = buildPublishItemPayload({ ...body, image_id: target.image_id || body.image_id, image_url: target.image_url || body.image_url, image_id_list: target.image_id_list || body.image_id_list, image_url_list: target.image_url_list || body.image_url_list }, target, refreshedLogistics);
+            const retryPublishBody = { global_item_id, shop_id, shop_region: targetRegion, item: retryItem };
+            const retryPublishRes = await merchantApiCall(targetRegion, '/api/v2/global_product/create_publish_task', { method: 'POST', body: retryPublishBody, account_key: accountKey });
+            regionTiming.force_logistics_refresh = elapsedMs(forceLogisticsRefreshStartMs);
+            if (!retryPublishRes.error) {
+              logistics = refreshedLogistics;
+              item = retryItem;
+              publishBody = retryPublishBody;
+              publishRes = retryPublishRes;
+            } else {
+              publishRes = { ...publishRes, force_logistics_refresh_retry: retryPublishRes };
+            }
+          }
           if (publishRes.error) {
             if (/published this global item to the same shop already/i.test(`${publishRes.message || ''} ${publishRes.debug_message || ''}`)) {
               const verified = await verifyPublishedListOutcome(targetRegion, shop_id, global_item_id, 0, publishRes, accountKey).catch(() => null);
@@ -5617,6 +5964,7 @@ Deno.serve(async (req) => {
               }
             }
             const createFailure: any = { ok: false, region: targetRegion, shop_id, stage: 'create_publish_task', error: publishRes.error, message: publishRes.message, raw: publishRes, timing_ms: { ...regionTiming, total: elapsedMs(regionStartMs) } };
+            createFailure.publishable_status_diagnostics = await loadRegisterPublishableStatusDiagnostics();
             if (targetRegion === 'BR' && hasOptionVariationPayload(target, body) && isCrossuploadPermissionPublishFailure(createFailure, publishRes)) {
               const retryOutcome = await retryMinimalPublish(global_item_id, shop_id, target, body, logistics, accountKey, 'br_existing_global_crossupload_create_retry').catch((e: any) => ({ ok: false, region: targetRegion, shop_id, stage: 'minimal_publish_exception', error: String(e?.message || e) }));
               if (retryOutcome?.ok) results.push(await finalizePublishOutcomeAfterSuccess(retryOutcome, targetRegion, target, body, accountKey));
@@ -5745,6 +6093,9 @@ Deno.serve(async (req) => {
                 }
               }
             } catch (_) {}
+          }
+          if (!outcome.ok) {
+            (outcome as any).publishable_status_diagnostics = await loadRegisterPublishableStatusDiagnostics();
           }
           const finalizeStartMs = Date.now();
           outcome = await finalizePublishOutcomeAfterSuccess(outcome, targetRegion, target, body, accountKey);

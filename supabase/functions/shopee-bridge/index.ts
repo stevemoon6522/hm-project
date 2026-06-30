@@ -374,6 +374,15 @@ function fp(v: string | null | undefined): string {
   return Math.abs(h).toString(16).slice(0, 8);
 }
 
+function uniquePositiveNumberList(values: unknown[]): number[] {
+  return [...new Set(
+    values
+      .map((value) => Number(value || 0))
+      .filter((value) => Number.isFinite(value) && value > 0)
+      .map((value) => Math.floor(value)),
+  )];
+}
+
 function isMissingAccountKeyColumn(error: any): boolean {
   const text = `${error?.code || ''} ${error?.message || ''} ${error?.details || ''}`;
   return error?.code === '42703' && /account_key/i.test(text);
@@ -1373,7 +1382,9 @@ async function withPublishRequestId(
   body: any,
   handler: () => Promise<Response>,
 ): Promise<Response> {
-  const rawId = typeof body?.publish_request_id === 'string' ? body.publish_request_id.trim() : null;
+  const publishRequestId = typeof body?.publish_request_id === 'string' ? body.publish_request_id.trim() : '';
+  const legacyIdempotencyToken = typeof body?.idempotency_token === 'string' ? body.idempotency_token.trim() : '';
+  const rawId = publishRequestId || legacyIdempotencyToken || null;
   // Validate UUID format — reject malformed values so they don't slip through.
   const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!rawId || !uuidRe.test(rawId)) {
@@ -2799,7 +2810,7 @@ async function verifyPublishedListOutcome(region: string, shopId: number, global
 }
 
 async function verifyPublishedListOutcomeOnce(region: string, shopId: number, globalItemId: number, publishTaskId: number, task: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY, status = 'verified_via_published_list') {
-  const publishedRes = await merchantApiCall(region, '/api/v2/global_product/get_published_list', { query: { global_item_id: globalItemId }, account_key: accountKey });
+  const publishedRes = await merchantApiCall(region, '/api/v2/global_product/get_published_list', { query: { global_item_id: globalItemId, shop_id_list: String(shopId) }, account_key: accountKey });
   const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
   const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shopId));
   if (hit && hit.item_id) {
@@ -2836,7 +2847,19 @@ async function reconcilePublishResultsWithPublishedList(globalItemId: number, ta
   if (!needsReconcile) return results;
 
   try {
-    const publishedRes = await merchantApiCall(lookupRegion || 'SG', '/api/v2/global_product/get_published_list', { query: { global_item_id: globalItemId }, account_key: accountKey });
+    const shopIdsByRegion = new Map<string, number>();
+    for (const { target, region } of requested) {
+      const existing = byRegion.get(region)?.row;
+      let shopId = Number(target?.shop_id || existing?.shop_id || 0);
+      if (!shopId) {
+        try { shopId = await getRegionShopId(region, accountKey); } catch (_) { shopId = 0; }
+      }
+      if (shopId) shopIdsByRegion.set(region, shopId);
+    }
+    const shopIds = uniquePositiveNumberList(Array.from(shopIdsByRegion.values()));
+    const publishedQuery: Record<string, any> = { global_item_id: globalItemId };
+    if (shopIds.length) publishedQuery.shop_id_list = shopIds.map((id) => String(id)).join(',');
+    const publishedRes = await merchantApiCall(lookupRegion || 'SG', '/api/v2/global_product/get_published_list', { query: publishedQuery, account_key: accountKey });
     const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
     if (!pubItems.length) return results;
     const next = (results || []).slice();
@@ -2844,7 +2867,7 @@ async function reconcilePublishResultsWithPublishedList(globalItemId: number, ta
       const existingInfo = byRegion.get(region);
       const existing = existingInfo?.row;
       if (existing?.ok && existing?.item_id) continue;
-      let shopId = Number(target?.shop_id || existing?.shop_id || 0);
+      let shopId = shopIdsByRegion.get(region) || Number(target?.shop_id || existing?.shop_id || 0);
       if (!shopId) {
         try { shopId = await getRegionShopId(region, accountKey); } catch (_) { shopId = 0; }
       }
@@ -5039,7 +5062,7 @@ Deno.serve(async (req) => {
             for (let r = 0; r < fbRetries; r++) {
               if (r > 0) await new Promise(s => setTimeout(s, fbSleep));
               try {
-                const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id }, account_key: reqAccountKey });
+                const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id, shop_id_list: String(shop_id) }, account_key: reqAccountKey });
                 const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
                 const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
                 if (hit && hit.item_id) {
@@ -5070,7 +5093,7 @@ Deno.serve(async (req) => {
                 const retryTaskId = Number(retryPublishRes.response.publish_task_id);
                 // Give BR 15s for async resolution before final published_list check
                 await new Promise(s => setTimeout(s, 15000));
-                const finalPubRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id }, account_key: reqAccountKey });
+                const finalPubRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id, shop_id_list: String(shop_id) }, account_key: reqAccountKey });
                 const finalItems = Array.isArray(finalPubRes?.response?.published_item) ? finalPubRes.response.published_item : [];
                 const finalHit = finalItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
                 if (finalHit && finalHit.item_id) {
@@ -5230,8 +5253,8 @@ Deno.serve(async (req) => {
       const r = body.region || 'SG';
       const accountKey = normalizeAccountKey(body.account_key || body.accountKey || url.searchParams.get('account_key') || url.searchParams.get('accountKey'));
       body.account_key = accountKey;
-      // Use UI-supplied idempotency_token as the publish request id when provided (§6-2).
-      const _cbscIdempotencyToken = body.idempotency_token ? String(body.idempotency_token) : null;
+      // Keep older UI callers protected by the publish_request_id idempotency gate.
+      if (!body.publish_request_id && body.idempotency_token) body.publish_request_id = String(body.idempotency_token);
       const targetInputs = (Array.isArray(body.targets) && body.targets.length ? body.targets : [body])
         .map((t: any) => ({ ...t, region: t.region || r }))
         .filter((t: any) => t.region);
@@ -5291,7 +5314,7 @@ Deno.serve(async (req) => {
         }, 400);
       }
 
-      return withPublishRequestId(action, `${accountKey}:${r}`, _cbscIdempotencyToken, body, async () => {
+      return withPublishRequestId(action, `${accountKey}:${r}`, null, body, async () => {
       const stage_logs: string[] = [];
       if (regionalGlobalPriceAdjustments.length) {
         const firstAdjustment = regionalGlobalPriceAdjustments[0] || {};
@@ -5599,7 +5622,7 @@ Deno.serve(async (req) => {
             for (let r = 0; r < fbRetries; r++) {
               if (r > 0) await new Promise(s => setTimeout(s, fbSleep));
               try {
-                const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id }, account_key: accountKey });
+                const publishedRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id, shop_id_list: String(shop_id) }, account_key: accountKey });
                 const pubItems = Array.isArray(publishedRes?.response?.published_item) ? publishedRes.response.published_item : [];
                 const hit = pubItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
                 if (hit && hit.item_id) {
@@ -5640,7 +5663,7 @@ Deno.serve(async (req) => {
                 const retryTaskId = Number(retryPublishRes.response.publish_task_id);
                 // Give BR 15s for async resolution before final published_list check
                 await new Promise(s => setTimeout(s, 15000));
-                const finalPubRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id }, account_key: accountKey });
+                const finalPubRes = await merchantApiCall(targetRegion, '/api/v2/global_product/get_published_list', { query: { global_item_id, shop_id_list: String(shop_id) }, account_key: accountKey });
                 const finalItems = Array.isArray(finalPubRes?.response?.published_item) ? finalPubRes.response.published_item : [];
                 const finalHit = finalItems.find((p: any) => Number(p.shop_id) === Number(shop_id));
                 if (finalHit && finalHit.item_id) {
@@ -6169,9 +6192,11 @@ Deno.serve(async (req) => {
     if (action === 'published_list') {
       const global_item_id = parseInt(url.searchParams.get('global_item_id') || '0');
       if (!global_item_id) return jsonResp({ ok: false, error: 'global_item_id required' }, 400);
-      // No shop_id_list per plan R2 — Shopee returns publishable shops automatically (max 300, we have 6)
-      const result = await merchantApiCall(region, '/api/v2/global_product/get_published_list', { query: { global_item_id }, account_key: accountKey });
-      return jsonResp({ ok: !result.error, account_key: accountKey, region, global_item_id, result });
+      const shop_id_list = String(url.searchParams.get('shop_id_list') || url.searchParams.get('shop_id') || '').trim();
+      const query: Record<string, any> = { global_item_id };
+      if (shop_id_list) query.shop_id_list = shop_id_list;
+      const result = await merchantApiCall(region, '/api/v2/global_product/get_published_list', { query, account_key: accountKey });
+      return jsonResp({ ok: !result.error, account_key: accountKey, region, global_item_id, shop_id_list: shop_id_list || null, result });
     }
     if (action === 'shop_model_list') {
       const item_id = parseInt(url.searchParams.get('item_id') || '0');

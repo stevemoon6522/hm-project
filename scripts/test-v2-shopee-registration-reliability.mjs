@@ -6,6 +6,7 @@ const root = process.cwd();
 const html = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
 const bridge = readFileSync(join(root, 'supabase', 'functions', 'shopee-bridge', 'index.ts'), 'utf8');
 const shopeeAdapter = readFileSync(join(root, 'supabase', 'functions', 'platform-publish', 'adapters', 'shopee.ts'), 'utf8');
+const runtimeSchemaGuardMigration = readFileSync(join(root, 'supabase', 'migrations', '202606300002_shopee_registration_runtime_schema_guards.sql'), 'utf8');
 
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -36,6 +37,8 @@ const regionBatchOrder = extractFunction(html, 'shopeeRegionBatchOrder');
 const batchRegister = extractFunction(html, 'shopeeRegisterCbscWithRegionBatches');
 const updateDifferentWeightShipping = extractFunction(html, 'rshUpdateDifferentWeightShipping');
 const buildDefaultAttributeList = extractFunction(html, 'buildDefaultAttributeList');
+const publishIdempotencyGate = extractFunction(bridge, 'withPublishRequestId');
+const verifyPublishedListOutcomeOnce = extractFunction(bridge, 'verifyPublishedListOutcomeOnce');
 const renderModal = html.slice(html.indexOf('<section class="rsh-seller-section grid" id="rsh-info-section"'), html.indexOf('<!-- Description -->'));
 const variantSection = html.slice(html.indexOf('<!-- Sales Information -->'), html.indexOf('<!-- Shipping + region pre-order/DTS -->'));
 const shippingSection = html.slice(html.indexOf('<!-- Shipping + region pre-order/DTS -->'), html.indexOf('<!-- Others -->'));
@@ -305,6 +308,41 @@ assert.match(
   bridge,
   /const retries = region === 'BR' \? 4/,
   'BR published_list verification must stay bounded so single-region retries finish inside the Edge timeout',
+);
+assert.match(
+  runtimeSchemaGuardMigration,
+  /add column if not exists account_key text not null default 'starphotocard'[\s\S]*add column if not exists global_model_id bigint[\s\S]*add column if not exists shop_id bigint[\s\S]*add column if not exists raw_payload jsonb[\s\S]*product_id, account_key, region/,
+  'runtime schema guard must keep product_shopee_listings compatible with Shopee registration mapping upserts',
+);
+assert.match(
+  runtimeSchemaGuardMigration,
+  /create table if not exists public\.shopee_publish_idempotency[\s\S]*publish_request_id uuid primary key/,
+  'runtime schema guard must create the bridge idempotency cache table',
+);
+assert.match(
+  runtimeSchemaGuardMigration,
+  /shopee_category_id[\s\S]*shopee_brand_id[\s\S]*shopee_global_model_sku/,
+  'runtime schema guard must add Shopee product fields used by V2 registration and mapping flows',
+);
+assert.match(
+  publishIdempotencyGate,
+  /body\?\.publish_request_id[\s\S]*body\?\.idempotency_token/,
+  'Shopee bridge idempotency gate must accept legacy idempotency_token callers as publish_request_id callers',
+);
+assert.doesNotMatch(
+  registerCbscBlock,
+  /withPublishRequestId\(action,\s*`\$\{accountKey\}:\$\{r\}`,\s*_cbscIdempotencyToken,/,
+  'register_cbsc must not pass idempotency_token as shop_id to the idempotency cache row',
+);
+assert.match(
+  verifyPublishedListOutcomeOnce,
+  /shop_id_list:\s*String\(shopId\)/,
+  'published_list verification must scope get_published_list to the target shop_id_list when Shopee supports it',
+);
+assert.match(
+  reconcilePublishedList,
+  /shop_id_list/,
+  'final published_list reconciliation must scope get_published_list to requested shop ids to reduce ambiguity and latency',
 );
 assert.match(
   bridge,

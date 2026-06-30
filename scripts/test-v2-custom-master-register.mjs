@@ -37,7 +37,9 @@ assert.match(customPanel, /id="custom-master-components"/, 'custom panel must co
 assert.match(customPanel, /id="custom-master-cost"/, 'custom panel must collect settlement price');
 assert.match(customPanel, /id="custom-master-sourcing-price"/, 'custom panel may collect wholesale price');
 assert.match(customPanel, /id="custom-master-weight"/, 'custom panel must collect a default weight');
-assert.match(customPanel, /id="custom-master-inventory"/, 'custom panel must collect a default inventory quantity');
+assert.match(customPanel, /<input type="hidden" id="custom-master-inventory" value="50"/, 'custom panel must keep one canonical hidden inventory quantity');
+assert.match(customPanel, /id="custom-master-inventory-open"/, 'custom panel must collect inventory through the confirmation modal');
+assert.match(customPanel, /id="custom-master-inventory-summary"/, 'custom panel must summarize marketplace initial stock before creation');
 assert.match(customPanel, /id="custom-master-option-mode"/, 'custom panel must expose single/options mode');
 assert.match(customPanel, /<option value="single" selected>단일 상품<\/option>/, 'custom panel must default to single product mode');
 assert.match(customPanel, /<option value="options">옵션 있음<\/option>/, 'custom panel must support option products');
@@ -66,6 +68,8 @@ assert.match(html, /window\.sdRegisterWorkbenchActivate\(\['url', 'custom', 'wms
 assert.match(masterRegister, /async function mrStageCustomMaster\(\)/, 'custom create handler must exist');
 assert.match(masterRegister, /function mrCustomToggleOptionMode\(\)/, 'custom option mode toggle must exist');
 assert.match(masterRegister, /function mrCustomSkuBaseFromTitle\(title\)/, 'custom SKU must be generated from product title');
+assert.match(masterRegister, /function mrCustomResolveSkuPreflight\(title, options, hasOptions\)/, 'custom SKU collisions must be resolved before upload/promotion');
+assert.match(masterRegister, /function mrCustomOpenInventoryModal\(options = \{\}\)/, 'custom inventory must be confirmed in a modal before create');
 assert.match(masterRegister, /async function mrPromoteCustomRowsDirect\(group\)/, 'custom create must promote directly without preview');
 assert.match(masterRegister, /dataset: \{ customOptionFile: '1' \}/, 'custom option rows must support option image files');
 assert.match(masterRegister, /dataset: \{ customOptionSku: '1' \}/, 'custom option rows must support manual SKU overrides');
@@ -80,14 +84,16 @@ assert.match(customHandler, /const productKind = normalizeProductKind\(\$\('cust
 assert.match(customHandler, /const categoryDefaults = mrCustomReadCategoryDefaults\(productKind\)/, 'custom stage must use selected platform category overrides');
 assert.match(customHandler, /const costKrw = explicitCost > 0 \? explicitCost : sourcingPrice/, 'custom stage must not auto-multiply wholesale into settlement');
 assert.match(customHandler, /const weightG = Number\(\$\('custom-master-weight'\)\?\.value \|\| 0\) \|\| 200/, 'custom stage must default hidden advanced weight to 200g');
-assert.match(customHandler, /const inventory = Number\(\$\('custom-master-inventory'\)\?\.value \|\| 0\) \|\| 50/, 'custom stage must default inventory to a publishable quantity');
+assert.match(customHandler, /const inventory = mrCustomReadNumberControl\('custom-master-inventory', 50\)/, 'custom stage must read marketplace initial stock from the canonical hidden inventory control');
 assert.match(customHandler, /if \(!components\)/, 'custom stage must require product components');
 assert.match(customHandler, /if \(!hasOptions && !\(costKrw > 0\)\)/, 'custom stage must require top-level cost only for single products');
 assert.match(customHandler, /if \(hasOptions && !optionInputs\.length\)/, 'option mode must require at least one option');
 assert.match(customHandler, /const optionSourcingPrice = Number\(opt\.sourcingPrice \|\| 0\) > 0 \? Number\(opt\.sourcingPrice \|\| 0\) : sourcingPrice/, 'custom stage must calculate per-option wholesale price');
 assert.match(customHandler, /const optionCostKrw = Number\(opt\.costKrw \|\| 0\) > 0 \? Number\(opt\.costKrw \|\| 0\) : optionSourcingPrice/, 'custom stage must calculate per-option settlement price');
 assert.match(customHandler, /const optionWeightG = Number\(opt\.weightG \|\| 0\) > 0 \? Number\(opt\.weightG \|\| 0\) : weightG/, 'custom stage must calculate per-option weight');
-assert.match(customHandler, /const optionInventory = Number\(opt\.inventory \|\| 0\) > 0 \? Math\.floor\(Number\(opt\.inventory \|\| 0\)\) : inventory/, 'custom stage must calculate per-option inventory');
+assert.match(customHandler, /const optionInventory = mrCustomNumberOrFallback\(opt\.inventory, inventory\)/, 'custom stage must calculate per-option marketplace initial stock and preserve explicit zero');
+assert.match(customHandler, /if \(mrCustomInventoryNeedsConfirmation\(\)\)/, 'custom stage must require inventory confirmation before image upload');
+assert.match(customHandler, /const skuPreflight = mrCustomResolveSkuPreflight\(title, normalizedOptions, hasOptions\)/, 'custom stage must preflight SKUs before image upload');
 assert.match(customHandler, /mrPromoteCustomRowsDirect\(group\)/, 'custom stage must call direct promote');
 assert.match(customHandler, /mrOpenCreatedMasterEdit\(createdIds\[0\]\)/, 'custom stage must open the created master edit modal');
 assert.doesNotMatch(customHandler, /rshSettlementFromSourcing/, 'custom stage must not use StarOneMall wholesale settlement calculation');

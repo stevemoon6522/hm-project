@@ -45,6 +45,8 @@ for (const token of [
   'data-master-option-restore',
   'data-option-row-status',
   'data-client-id',
+  'data-field="inventory"',
+  'inventoryValue',
 ]) {
   assert.match(optionRender, new RegExp(token), `master edit option table must render ${token}`);
 }
@@ -66,6 +68,7 @@ for (const token of [
   'deletedOptionIds',
   'returnedIds',
   ".in\\('id', returnedIds\\)",
+  'inventory',
 ]) {
   assert.match(optionPatchReader + saveFlow, new RegExp(token), `save payload must include ${token}`);
 }
@@ -86,6 +89,8 @@ for (const token of [
   'insert into public.products',
   'delete from public.products',
   "sourcing_price = case when oi.patch ? 'sourcing_price'",
+  "inventory = case when oi.patch ? 'inventory'",
+  "coalesce(nullif(v_patch ->> 'inventory', '')::integer, 0)",
   'client_id text',
 ]) {
   assert.match(migrationSql, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `RPC migration must support ${token}`);

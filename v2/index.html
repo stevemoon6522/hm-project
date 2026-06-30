@@ -3175,9 +3175,7 @@
                   <label style="display:block;max-width:220px;font-size:12px;">무게(g)
                     <input type="number" id="custom-master-weight" min="1" step="1" value="200" placeholder="예: 200" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
                   </label>
-                  <label style="display:block;max-width:220px;font-size:12px;">기본 재고
-                    <input type="number" id="custom-master-inventory" min="1" step="1" value="50" placeholder="예: 50" style="width:100%;font-size:12px;padding:6px 8px;text-align:right;">
-                  </label>
+                  <input type="hidden" id="custom-master-inventory" value="50">
                   <label style="display:block;max-width:220px;font-size:12px;">Shopee category
                     <select id="custom-master-shopee-category" style="width:100%;font-size:12px;padding:6px 8px;">
                       <option value="101390" selected>101390 Goods</option>
@@ -3219,12 +3217,33 @@
               <div id="custom-master-options" style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;"></div>
             </div>
             <div class="register-form-row" style="font-size:12px;">
+              <button type="button" id="custom-master-inventory-open" class="ghost-btn" style="font-size:12px;padding:6px 12px;">재고 입력</button>
+              <span id="custom-master-inventory-summary" class="muted" style="font-size:12px;">재고 50 (확인 필요)</span>
               <button type="button" id="custom-master-stage-btn" class="primary" style="font-size:13px;padding:6px 14px;">마스터 상품 생성</button>
               <span id="custom-master-status" style="color:var(--muted);font-size:12px;"></span>
             </div>
             <div id="custom-master-error" class="notice error" style="display:none;margin-top:10px;"></div>
           </div>
         </section>
+
+        <div id="custom-master-inventory-modal" class="modal-overlay" aria-hidden="true">
+          <div class="modal" role="dialog" aria-modal="true" aria-labelledby="custom-master-inventory-title" style="max-width:640px;">
+            <div class="modal-head">
+              <h3 id="custom-master-inventory-title">Custom Master 재고 입력</h3>
+              <button type="button" class="modal-close" data-custom-inventory-close="1" aria-label="Close">×</button>
+            </div>
+            <div class="modal-body">
+              <p class="muted" style="font-size:12px;margin:0 0 10px;">이 재고는 WMS가 아닌 마켓플레이스 최초 등록 stock으로만 저장됩니다.</p>
+              <div id="custom-master-inventory-modal-rows" style="display:flex;flex-direction:column;gap:8px;"></div>
+              <div id="custom-master-inventory-error" class="notice error" style="display:none;margin-top:10px;"></div>
+            </div>
+            <div class="modal-foot">
+              <button type="button" class="ghost-btn" data-custom-inventory-close="1">취소</button>
+              <button type="button" id="custom-master-inventory-save" class="primary">저장</button>
+              <button type="button" id="custom-master-inventory-save-create" class="primary" data-custom-inventory-save-create="1">저장 후 생성</button>
+            </div>
+          </div>
+        </div>
 
         <section class="panel register-work-panel" data-register-workbench-panel="url" hidden>
           <div class="register-panel-head">
@@ -7343,6 +7362,9 @@ LEGACY END -->
     els.productBody.querySelectorAll('[data-edit-master]').forEach((btn) => {
       btn.addEventListener('click', () => openProductMasterEditModal(btn.dataset.editMaster));
     });
+    els.productBody.querySelectorAll('[data-copy-master]').forEach((btn) => {
+      btn.addEventListener('click', () => window.openCustomMasterCopyRegister?.(btn.dataset.copyMaster));
+    });
     els.productBody.querySelectorAll('[data-delete]').forEach((btn) => {
       btn.addEventListener('click', () => deleteOneMasterProduct(btn));
     });
@@ -7869,10 +7891,13 @@ LEGACY END -->
     const editButton = cleanEditTarget
       ? `<button type="button" class="pl-master-edit" data-edit-master="${text(cleanEditTarget)}" title="마스터 상품 데이터 수정">수정</button>`
       : '';
+    const copyButton = cleanEditTarget
+      ? `<button type="button" class="pl-master-copy" data-copy-master="${text(cleanEditTarget)}" title="이미지를 제외하고 Custom Master로 복사 등록">복사</button>`
+      : '';
     const deleteButton = ids.length
       ? `<button type="button" class="pl-delete-button" data-delete="${text(ids[0])}" data-delete-ids="${text(ids.join(','))}" data-sku="${text(safeLabel)}">삭제</button>`
       : '';
-    return `<div class="pl-action-buttons">${editButton}${deleteButton}</div>`;
+    return `<div class="pl-action-buttons">${editButton}${copyButton}${deleteButton}</div>`;
   }
 
   function plImageUrlFromShopeeId(imageId) {
@@ -9076,6 +9101,7 @@ LEGACY END -->
                 <div class="pl-master-title-row">
                   <span class="pl-master-title">${text(platformGroupTitle(group))}</span>
                   <button type="button" class="pl-master-edit" data-edit-master="${text(plMasterEditTargetKey(first))}" title="마스터 상품 데이터 수정">수정</button>
+                  <button type="button" class="pl-master-copy" data-copy-master="${text(plMasterEditTargetKey(first))}" title="이미지를 제외하고 Custom Master로 복사 등록">복사</button>
                 </div>
                 <div class="pl-option-summary">${text(platformGroupSku(group) || '(no sku)')} · ${text(optionSummary)}</div>
               </div>
@@ -9450,6 +9476,9 @@ LEGACY END -->
     });
     root.querySelectorAll('[data-edit-master]').forEach((btn) => {
       btn.addEventListener('click', () => openProductMasterEditModal(btn.dataset.editMaster));
+    });
+    root.querySelectorAll('[data-copy-master]').forEach((btn) => {
+      btn.addEventListener('click', () => window.openCustomMasterCopyRegister?.(btn.dataset.copyMaster));
     });
     root.querySelectorAll('.pl-led').forEach((btn) => {
       btn.addEventListener('click', (e) => { e.stopPropagation(); showLedPopover(btn); });
@@ -13331,6 +13360,7 @@ LEGACY END -->
       sourcingValue: String(Number(row.sourcing_price || row._sourcing_price || 0) || ''),
       costValue: String(Number(row.cost_krw || 0) || ''),
       weightValue: String(Number(row.weight_g || 0) || ''),
+      inventoryValue: String(Number(row.inventory ?? row._inventory_quantity ?? row._inventory ?? 0) || 0),
       isDeleted,
       isNew,
       statusText: isDeleted ? '삭제 예정' : (isNew ? '신규 옵션' : '저장됨'),
@@ -13352,12 +13382,13 @@ LEGACY END -->
         <table class="pl-master-edit-options-table">
           <colgroup>
             <col style="width:14%;">
-            <col style="width:25%;">
-            <col style="width:9%;">
+            <col style="width:23%;">
+            <col style="width:8%;">
+            <col style="width:8%;">
             <col style="width:9%;">
             <col style="width:8%;">
-            <col style="width:26%;">
-            <col style="width:9%;">
+            <col style="width:22%;">
+            <col style="width:8%;">
           </colgroup>
           <thead>
             <tr>
@@ -13366,6 +13397,7 @@ LEGACY END -->
               <th class="num">매입가</th>
               <th class="num">정산가</th>
               <th class="num">무게(g)</th>
+              <th class="num">재고</th>
               <th>옵션 이미지</th>
               <th>작업</th>
             </tr>
@@ -13398,6 +13430,9 @@ LEGACY END -->
                   </td>
                   <td class="num">
                     <input data-field="weight_g" type="number" min="1" step="1" value="${text(payload.weightValue)}" ${disabled}>
+                  </td>
+                  <td class="num">
+                    <input data-field="inventory" type="number" min="0" step="1" value="${text(payload.inventoryValue)}" ${disabled}>
                   </td>
                   <td>
                     <div class="pl-master-edit-option-image-cell">
@@ -13447,6 +13482,7 @@ LEGACY END -->
         sourcing_price: Number(fieldValue('sourcing_price', existing.sourcing_price || existing._sourcing_price || 0) || 0),
         cost_krw: Number(fieldValue('cost_krw', existing.cost_krw || 0) || 0),
         weight_g: Number(fieldValue('weight_g', existing.weight_g || 0) || 0),
+        inventory: Number(fieldValue('inventory', existing.inventory ?? existing._inventory_quantity ?? existing._inventory ?? 0) || 0),
         main_image: representativeUrl || String(existing.main_image || '').trim(),
         shopee_option_image_url: fieldValue('shopee_option_image_url', existing.shopee_option_image_url),
         _optionImageInputActive: true,
@@ -13463,18 +13499,55 @@ LEGACY END -->
     return document.querySelector('#pl-master-edit-modal .modal-body');
   }
 
-  function plMasterEditPreserveModalScroll(callback) {
+  function plMasterEditCaptureModalPosition(anchorRow = null) {
+    const body = plMasterEditModalBody();
+    if (!body) return { scrollTop: 0, scrollLeft: 0, rowKey: '', anchorOffset: 0 };
+    const rowKey = anchorRow
+      ? String(anchorRow.dataset.productId || anchorRow.dataset.clientId || '').trim()
+      : '';
+    const anchorOffset = anchorRow && body.contains(anchorRow)
+      ? anchorRow.getBoundingClientRect().top - body.getBoundingClientRect().top
+      : 0;
+    return {
+      scrollTop: body.scrollTop,
+      scrollLeft: body.scrollLeft,
+      rowKey,
+      anchorOffset,
+    };
+  }
+
+  function plMasterEditFindOptionRowByPosition(position = {}) {
+    const rowKey = String(position.rowKey || '').trim();
+    if (!rowKey) return null;
+    return Array.from(document.querySelectorAll('#pl-master-edit-options tr[data-option-row]'))
+      .find((row) => String(row.dataset.productId || row.dataset.clientId || '').trim() === rowKey) || null;
+  }
+
+  function plMasterEditRestoreModalPosition(position = {}) {
+    const body = plMasterEditModalBody();
+    if (!body) return;
+    const scrollTop = Number(position.scrollTop || 0);
+    const scrollLeft = Number(position.scrollLeft || 0);
+    const restore = () => {
+      const anchorRow = plMasterEditFindOptionRowByPosition(position);
+      if (anchorRow) {
+        const nextOffset = anchorRow.getBoundingClientRect().top - body.getBoundingClientRect().top;
+        body.scrollTop += nextOffset - Number(position.anchorOffset || 0);
+      } else {
+        body.scrollTop = scrollTop;
+      }
+      body.scrollLeft = scrollLeft;
+    };
+    restore();
+    requestAnimationFrame(restore);
+  }
+
+  function plMasterEditPreserveModalScroll(callback, anchorRow = null) {
     const body = plMasterEditModalBody();
     if (!body) return callback();
-    const scrollTop = body.scrollTop;
-    const scrollLeft = body.scrollLeft;
+    const position = plMasterEditCaptureModalPosition(anchorRow);
     const result = callback();
-    body.scrollTop = scrollTop;
-    body.scrollLeft = scrollLeft;
-    requestAnimationFrame(() => {
-      body.scrollTop = scrollTop;
-      body.scrollLeft = scrollLeft;
-    });
+    plMasterEditRestoreModalPosition(position);
     return result;
   }
 
@@ -13490,11 +13563,12 @@ LEGACY END -->
     if (clearBtn) clearBtn.disabled = !url;
     const rows = plGroupRowsById(document.getElementById('pl-master-edit-modal')?.dataset.productGroupId || '');
     const renderedRows = plMasterEditRowsFromModal(rows);
-    if (renderedRows.length) plMasterEditPreserveModalScroll(() => plMasterEditRenderImageSummary(renderedRows));
+    if (renderedRows.length) plMasterEditPreserveModalScroll(() => plMasterEditRenderImageSummary(renderedRows), tr);
   }
 
-  async function plMasterEditUploadOptionImage(tr, file, inputEl = null) {
+  async function plMasterEditUploadOptionImage(tr, file, inputEl = null, restorePosition = null) {
     if (!tr || !file) return;
+    const position = restorePosition || plMasterEditCaptureModalPosition(tr);
     const productId = String(tr.dataset.productId || '');
     const groupId = document.getElementById('pl-master-edit-modal')?.dataset.productGroupId || '';
     let rows = plGroupRowsById(groupId);
@@ -13515,6 +13589,7 @@ LEGACY END -->
       const imageUrl = await sdUploadProductImageFile(file, uploadRow, { kind: 'option' });
       if (imageInput) imageInput.value = imageUrl;
       plMasterEditRefreshOptionImagePreview(tr);
+      plMasterEditRestoreModalPosition(position);
       showToast('마스터 옵션 이미지가 추가되었습니다. 저장 버튼을 눌러 확정하세요.', 'ok');
     } catch (e) {
       showToast('마스터 옵션 이미지 업로드 실패: ' + (e.message || e), 'err');
@@ -13523,6 +13598,7 @@ LEGACY END -->
         inputEl.disabled = false;
         inputEl.value = '';
       }
+      plMasterEditRestoreModalPosition(position);
     }
   }
 
@@ -13666,6 +13742,7 @@ LEGACY END -->
       sourcing_price: Number(template.sourcing_price || template._sourcing_price || 0) || 0,
       cost_krw: Number(template.cost_krw || 0) || 0,
       weight_g: Number(template.weight_g || 0) || 1,
+      inventory: Number(template.inventory ?? template._inventory_quantity ?? template._inventory ?? 0) || 0,
     };
     newRow.sku = plMasterEditAutoSku(newRow, optionName);
     plMasterEditRenderOptions([...rows, newRow]);
@@ -13735,7 +13812,8 @@ LEGACY END -->
       fileInput?.addEventListener('change', (e) => {
         const file = e.target.files && e.target.files[0];
         if (!file) return;
-        void plMasterEditUploadOptionImage(tr, file, fileInput);
+        const restorePosition = plMasterEditCaptureModalPosition(tr);
+        void plMasterEditUploadOptionImage(tr, file, fileInput, restorePosition);
       });
     });
   }
@@ -13882,9 +13960,11 @@ LEGACY END -->
       const sourcing = Number(field('sourcing_price')?.value || 0);
       const cost = Number(field('cost_krw')?.value || 0);
       const weight = Number(field('weight_g')?.value || 0);
+      const inventory = Number(field('inventory')?.value || 0);
       if (!(sourcing >= 0)) throw new Error(`${sku} 매입가가 올바르지 않습니다.`);
       if (!(cost >= 0)) throw new Error(`${sku} 정산가가 올바르지 않습니다.`);
       if (!(weight > 0)) throw new Error(`${sku} 무게는 1g 이상이어야 합니다.`);
+      if (!(inventory >= 0)) throw new Error(`${sku} 재고는 0 이상이어야 합니다.`);
       return {
         id,
         client_id,
@@ -13896,6 +13976,7 @@ LEGACY END -->
           sourcing_price: sourcing,
           cost_krw: cost,
           weight_g: weight,
+          inventory,
           shopee_option_image_url: String(field('shopee_option_image_url')?.value || '').trim() || null,
         },
       };
@@ -33372,6 +33453,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     let MR_CUSTOM_NEXT_OPTION = 1;
+    let customMasterInventoryConfirmed = false;
+    let MR_CUSTOM_CREATING = false;
 
     function mrCustomSetStatus(message, isError = false) {
       const status = $('custom-master-status');
@@ -33405,6 +33488,170 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (axisWrap) axisWrap.style.display = hasOptions ? '' : 'none';
       if (optionSection) optionSection.style.display = hasOptions ? '' : 'none';
       if (hasOptions) mrCustomEnsureOptionRow();
+      mrCustomMarkInventoryDirty();
+    }
+
+    function mrCustomReadNumberControl(id, fallback = 0) {
+      const raw = String($(id)?.value ?? '').trim();
+      if (raw === '') return Math.max(0, Math.floor(Number(fallback || 0)));
+      const value = Number(raw);
+      return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : Math.max(0, Math.floor(Number(fallback || 0)));
+    }
+
+    function mrCustomNumberOrFallback(value, fallback = 0) {
+      if (value === undefined || value === null || String(value).trim() === '') {
+        return Math.max(0, Math.floor(Number(fallback || 0)));
+      }
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : Math.max(0, Math.floor(Number(fallback || 0)));
+    }
+
+    function mrCustomInventoryOptionRows() {
+      return Array.from($('custom-master-options')?.querySelectorAll('[data-custom-master-option-row]') || []);
+    }
+
+    // Custom Master stock is marketplace initial registration stock only, not WMS stock.
+    function mrCustomReadInventoryState() {
+      const defaultInventory = mrCustomReadNumberControl('custom-master-inventory', 50);
+      const hasOptions = mrCustomHasOptions();
+      const options = mrCustomInventoryOptionRows().map((row, index) => {
+        const name = String(row.querySelector('[data-custom-option-name]')?.value || '').trim();
+        const sku = String(row.querySelector('[data-custom-option-sku]')?.value || '').trim();
+        const inventoryInput = row.querySelector('[data-custom-option-inventory]');
+        return {
+          index,
+          row,
+          name,
+          sku,
+          inventory: mrCustomNumberOrFallback(inventoryInput?.value, defaultInventory),
+        };
+      });
+      return {
+        hasOptions,
+        defaultInventory,
+        inventory: defaultInventory,
+        options,
+      };
+    }
+
+    function mrCustomWriteInventoryState(state = {}) {
+      const defaultInventory = mrCustomNumberOrFallback(state.defaultInventory ?? state.inventory, 50);
+      const control = $('custom-master-inventory');
+      if (control) control.value = String(defaultInventory);
+      const optionValues = Array.isArray(state.options) ? state.options : [];
+      mrCustomInventoryOptionRows().forEach((row, index) => {
+        const input = row.querySelector('[data-custom-option-inventory]');
+        if (!input) return;
+        const value = optionValues[index]?.inventory ?? defaultInventory;
+        input.value = String(mrCustomNumberOrFallback(value, defaultInventory));
+      });
+      mrCustomUpdateInventorySummary();
+    }
+
+    function mrCustomUpdateInventorySummary() {
+      const summary = $('custom-master-inventory-summary');
+      if (!summary) return;
+      const state = mrCustomReadInventoryState();
+      const suffix = customMasterInventoryConfirmed ? '확인됨' : '확인 필요';
+      if (state.hasOptions) {
+        const total = state.options.reduce((sum, opt) => sum + mrCustomNumberOrFallback(opt.inventory, 0), 0);
+        summary.textContent = `재고 옵션 ${state.options.length}개 / 총 ${total} (${suffix})`;
+      } else {
+        summary.textContent = `재고 ${state.defaultInventory} (${suffix})`;
+      }
+    }
+
+    function mrCustomRenderInventoryModalRows() {
+      const rowsEl = $('custom-master-inventory-modal-rows');
+      if (!rowsEl) return;
+      rowsEl.innerHTML = '';
+      const state = mrCustomReadInventoryState();
+      const entries = state.hasOptions && state.options.length
+        ? state.options
+        : [{ index: 0, name: String($('custom-master-title')?.value || '').trim() || 'Single product', sku: '', inventory: state.defaultInventory }];
+      entries.forEach((entry, index) => {
+        const row = el('label', {
+          style: 'display:grid;grid-template-columns:minmax(0,1fr) 120px;gap:10px;align-items:center;font-size:12px;padding:8px;border:1px solid var(--border);border-radius:8px;background:#fff;',
+        });
+        const labelText = state.hasOptions
+          ? `${entry.name || `Option ${index + 1}`}${entry.sku ? ` / ${entry.sku}` : ''}`
+          : entry.name;
+        row.appendChild(el('span', { style: 'min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' }, labelText));
+        row.appendChild(el('input', {
+          type: 'number',
+          min: '0',
+          step: '1',
+          value: String(mrCustomNumberOrFallback(entry.inventory, state.defaultInventory)),
+          dataset: { customInventoryModalIndex: String(index) },
+          style: 'width:100%;font-size:12px;padding:6px 8px;text-align:right;',
+        }));
+        rowsEl.appendChild(row);
+      });
+    }
+
+    function mrCustomApplyInventoryModal() {
+      const modal = $('custom-master-inventory-modal');
+      const error = $('custom-master-inventory-error');
+      if (error) { error.textContent = ''; error.style.display = 'none'; }
+      try {
+        const inputs = Array.from($('custom-master-inventory-modal-rows')?.querySelectorAll('[data-custom-inventory-modal-index]') || []);
+        const values = inputs.map((input) => {
+          const raw = String(input.value ?? '').trim();
+          const value = raw === '' ? 0 : Number(raw);
+          if (!Number.isFinite(value) || value < 0) throw new Error('재고는 0 이상의 숫자로 입력해주세요.');
+          return Math.floor(value);
+        });
+        const state = mrCustomReadInventoryState();
+        if (state.hasOptions) {
+          mrCustomInventoryOptionRows().forEach((row, index) => {
+            const input = row.querySelector('[data-custom-option-inventory]');
+            if (input) input.value = String(values[index] ?? state.defaultInventory);
+          });
+          const control = $('custom-master-inventory');
+          if (control) control.value = String(values[0] ?? state.defaultInventory);
+        } else {
+          const control = $('custom-master-inventory');
+          if (control) control.value = String(values[0] ?? state.defaultInventory);
+        }
+        customMasterInventoryConfirmed = true;
+        mrCustomUpdateInventorySummary();
+        mrCustomCloseInventoryModal();
+        return true;
+      } catch (e) {
+        if (error) {
+          error.textContent = e.message || String(e);
+          error.style.display = 'block';
+        }
+        modal?.setAttribute('aria-hidden', 'false');
+        return false;
+      }
+    }
+
+    function mrCustomOpenInventoryModal(options = {}) {
+      const modal = $('custom-master-inventory-modal');
+      if (!modal) return;
+      modal.dataset.continueAfterSave = options.continueAfterSave ? '1' : '';
+      mrCustomRenderInventoryModalRows();
+      const error = $('custom-master-inventory-error');
+      if (error) { error.textContent = ''; error.style.display = 'none'; }
+      modal.setAttribute('aria-hidden', 'false');
+      requestAnimationFrame(() => modal.querySelector('[data-custom-inventory-modal-index]')?.focus?.());
+    }
+
+    function mrCustomCloseInventoryModal() {
+      const modal = $('custom-master-inventory-modal');
+      if (!modal) return;
+      modal.setAttribute('aria-hidden', 'true');
+      modal.dataset.continueAfterSave = '';
+    }
+
+    function mrCustomInventoryNeedsConfirmation() {
+      return !customMasterInventoryConfirmed;
+    }
+
+    function mrCustomMarkInventoryDirty() {
+      customMasterInventoryConfirmed = false;
+      mrCustomUpdateInventorySummary();
     }
 
     function mrCustomSkuBaseFromTitle(title) {
@@ -33434,6 +33681,95 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return `${base}-${optionSlug}`;
     }
 
+    function mrCustomExistingSkuSet() {
+      const skus = new Set(Array.from(MR_EXISTING_SKUS || []).map((sku) => String(sku || '').trim()).filter(Boolean));
+      (state.products || []).forEach((product) => {
+        const sku = String(product?.sku || product?._sku || '').trim();
+        if (sku) skus.add(sku);
+      });
+      return skus;
+    }
+
+    function mrCustomNextAvailableSku(baseSku, reservedSkus = new Set()) {
+      const existingSkus = mrCustomExistingSkuSet();
+      const cleanBase = String(baseSku || 'CUSTOM')
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/&/g, 'AND')
+        .replace(/[^a-zA-Z0-9-]+/g, '-')
+        .replace(/-+/g, '-')
+        .replace(/^-|-$/g, '')
+        .slice(0, 50)
+        .toUpperCase() || 'CUSTOM';
+      let candidate = cleanBase;
+      let suffix = 2;
+      while (existingSkus.has(candidate) || reservedSkus.has(candidate)) {
+        const suffixText = `-${suffix++}`;
+        candidate = `${cleanBase.slice(0, Math.max(1, 50 - suffixText.length))}${suffixText}`;
+      }
+      return candidate;
+    }
+
+    function mrCustomResolveSkuPreflight(title, options, hasOptions) {
+      const existingSkus = mrCustomExistingSkuSet();
+      const reservedSkus = new Set();
+      const duplicateSkus = [];
+      const resolved = (options || []).map((opt, index) => {
+        const manualSku = String(opt.sku || '').trim();
+        const generatedSku = mrCustomSkuForOption(title, opt.name || opt.option_name || '', index, hasOptions);
+        let sku = manualSku;
+        if (manualSku) {
+          if (existingSkus.has(manualSku) || reservedSkus.has(manualSku)) {
+            duplicateSkus.push({ index, sku: manualSku, row: opt.row || null });
+          }
+        } else {
+          sku = mrCustomNextAvailableSku(generatedSku, reservedSkus);
+        }
+        if (sku) reservedSkus.add(sku);
+        return Object.assign({}, opt, { sku });
+      });
+      return { options: resolved, duplicateSkus };
+    }
+
+    function mrCustomClearSkuPreflightErrors() {
+      document.querySelectorAll('[data-custom-option-sku-error]').forEach((el) => {
+        el.textContent = '';
+        el.style.display = 'none';
+      });
+    }
+
+    function mrCustomRenderSkuPreflightErrors(errors = []) {
+      mrCustomClearSkuPreflightErrors();
+      if (!errors.length) return;
+      const optionRows = mrCustomInventoryOptionRows();
+      errors.forEach((error) => {
+        const row = error.row || optionRows[error.index];
+        const errorEl = row?.querySelector?.('[data-custom-option-sku-error]');
+        if (errorEl) {
+          errorEl.textContent = `이미 존재하는 SKU: ${error.sku}`;
+          errorEl.style.display = 'block';
+        }
+      });
+      mrCustomSetStatus(`이미 존재하는 SKU가 있습니다: ${errors.map((entry) => entry.sku).join(', ')}`, true);
+    }
+
+    function mrCustomApplyAutoSkuForRow(row) {
+      if (!row) return;
+      const rows = mrCustomInventoryOptionRows();
+      const index = Math.max(0, rows.indexOf(row));
+      const title = String($('custom-master-title')?.value || '').trim();
+      const optionName = String(row.querySelector('[data-custom-option-name]')?.value || '').trim();
+      const reservedSkus = new Set();
+      rows.forEach((otherRow) => {
+        if (otherRow === row) return;
+        const sku = String(otherRow.querySelector('[data-custom-option-sku]')?.value || '').trim();
+        if (sku) reservedSkus.add(sku);
+      });
+      const input = row.querySelector('[data-custom-option-sku]');
+      if (input) input.value = mrCustomNextAvailableSku(mrCustomSkuForOption(title, optionName, index, mrCustomHasOptions()), reservedSkus);
+      mrCustomClearSkuPreflightErrors();
+    }
+
     function mrCustomQoo10Patch(lifecycle, releaseDate) {
       if (lifecycle === 'ready_stock') {
         return {
@@ -33459,7 +33795,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const defaultSourcing = Number($('custom-master-sourcing-price')?.value || 0) || '';
       const defaultCost = Number($('custom-master-cost')?.value || 0) || defaultSourcing || '';
       const defaultWeight = Number($('custom-master-weight')?.value || 0) || 200;
-      const defaultInventory = Number($('custom-master-inventory')?.value || 0) || 50;
+      const defaultInventory = mrCustomReadNumberControl('custom-master-inventory', 50);
       const valueOrDefault = (value, fallback) => (
         value !== undefined && value !== null && value !== '' ? String(value) : String(fallback || '')
       );
@@ -33495,6 +33831,17 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         placeholder: '비우면 자동 생성',
         dataset: { customOptionSku: '1' },
       });
+      const autoSkuBtn = el('button', {
+        type: 'button',
+        'data-custom-option-auto-sku': '1',
+        style: 'margin-top:4px;font-size:11px;padding:3px 8px;',
+      }, 'Auto SKU');
+      const skuError = el('div', {
+        'data-custom-option-sku-error': '1',
+        style: 'display:none;margin-top:3px;color:#b91c1c;font-size:11px;',
+      });
+      skuLabel.appendChild(autoSkuBtn);
+      skuLabel.appendChild(skuError);
       const sourcingLabel = makeNumberInput('도매가', {
         value: valueOrDefault(prefill.sourcingPrice ?? prefill.sourcing_price, defaultSourcing),
         placeholder: '기본값',
@@ -33511,7 +33858,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         dataset: { customOptionWeight: '1' },
       });
       const inventoryLabel = makeNumberInput('재고', {
-        min: '1',
+        min: '0',
         value: valueOrDefault(prefill.inventory, defaultInventory),
         dataset: { customOptionInventory: '1' },
       });
@@ -33527,6 +33874,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       removeBtn.addEventListener('click', () => {
         row.remove();
         mrCustomEnsureOptionRow();
+        mrCustomMarkInventoryDirty();
       });
       row.appendChild(nameLabel);
       row.appendChild(skuLabel);
@@ -33537,6 +33885,13 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       row.appendChild(fileLabel);
       row.appendChild(removeBtn);
       wrap.appendChild(row);
+      row.querySelector('[data-custom-option-name]')?.addEventListener('input', () => {
+        mrCustomClearSkuPreflightErrors();
+        mrCustomMarkInventoryDirty();
+      });
+      row.querySelector('[data-custom-option-sku]')?.addEventListener('input', mrCustomClearSkuPreflightErrors);
+      row.querySelector('[data-custom-option-inventory]')?.addEventListener('input', mrCustomMarkInventoryDirty);
+      row.querySelector('[data-custom-option-auto-sku]')?.addEventListener('click', () => mrCustomApplyAutoSkuForRow(row));
       return row;
     }
 
@@ -33559,6 +33914,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           };
           const file = row.querySelector('[data-custom-option-file]')?.files?.[0] || null;
           return {
+            row,
             name,
             sku,
             sourcingPrice: readNumber('[data-custom-option-sourcing]'),
@@ -33697,8 +34053,92 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       mrCustomSetControlValue('custom-master-ebay-category', defaults.ebay_category_id || '');
     }
 
+    function mrCustomResetImageInputs() {
+      ['custom-master-cover-file', 'custom-master-detail-files'].forEach((id) => {
+        const input = $(id);
+        if (input) input.value = '';
+      });
+      document.querySelectorAll('#custom-master-options [data-custom-option-file]').forEach((input) => {
+        input.value = '';
+      });
+    }
+
+    function mrCustomClearOptionRows() {
+      const wrap = $('custom-master-options');
+      if (wrap) wrap.innerHTML = '';
+      MR_CUSTOM_NEXT_OPTION = 1;
+    }
+
+    function mrCustomPrefillFromRows(rows) {
+      const activeRows = (rows || []).filter(Boolean);
+      const first = activeRows[0] || {};
+      const productKind = normalizeProductKind(productKindOfRow(first) || PRODUCT_KIND_GOODS);
+      mrCustomSetControlValue('custom-master-product-kind', productKind);
+      mrCustomSyncCategoryDefaults();
+      mrCustomSetControlValue('custom-master-shopee-category', first.shopee_category_id || productKindDefaults(productKind).shopee_category_id || '');
+      mrCustomSetControlValue('custom-master-joom-category', normalizeJoomCategoryId(first.joom_category_id || productKindDefaults(productKind).joom_category_id || ''));
+      mrCustomSetControlValue('custom-master-qoo10-category', first.qoo10_category_id || productKindDefaults(productKind).qoo10_category_id || '');
+      mrCustomSetControlValue('custom-master-ebay-category', first.ebay_category_id || productKindDefaults(productKind).ebay_category_id || '');
+      mrCustomSetControlValue('custom-master-lifecycle', first.lifecycle_state === 'ready_stock' ? 'ready_stock' : 'pre_order');
+      mrCustomSetControlValue('custom-master-title', first.product_name || first._product_name || first.name || '');
+      mrCustomSetControlValue('custom-master-components', first.components_extracted_en || first._components_en || '');
+      mrCustomSetControlValue('custom-master-sourcing-price', Math.floor(Number(first.sourcing_price || first._sourcing_price || 0)) || '');
+      mrCustomSetControlValue('custom-master-cost', Math.floor(Number(first.cost_krw || first._cost_krw || 0)) || '');
+      mrCustomSetControlValue('custom-master-weight', Math.floor(Number(first.weight_g || first._weight_g || 0)) || 200);
+      mrCustomSetControlValue('custom-master-inventory', mrCustomNumberOrFallback(first.inventory ?? first._inventory_quantity ?? first._inventory, 50));
+      const hasOptions = activeRows.length > 1 || activeRows.some((row) => plOptionDisplay(row) || row.option_name);
+      mrCustomSetControlValue('custom-master-option-mode', hasOptions ? 'options' : 'single');
+      mrCustomClearOptionRows();
+      if (hasOptions) {
+        const tierNames = Array.isArray(first.variation_tier_names) ? first.variation_tier_names : [];
+        mrCustomSetControlValue('custom-master-axis-name', tierNames[0] || 'Option');
+        activeRows.forEach((row) => {
+          mrRenderCustomOptionRow({
+            name: plOptionDisplay(row) || row.option_name || '',
+            sku: '',
+            sourcingPrice: Math.floor(Number(row.sourcing_price || row._sourcing_price || 0)) || '',
+            costKrw: Math.floor(Number(row.cost_krw || row._cost_krw || 0)) || '',
+            weightG: Math.floor(Number(row.weight_g || row._weight_g || 0)) || 200,
+            inventory: mrCustomNumberOrFallback(row.inventory ?? row._inventory_quantity ?? row._inventory, mrCustomReadNumberControl('custom-master-inventory', 50)),
+          });
+        });
+      }
+      mrCustomToggleOptionMode();
+      mrCustomResetImageInputs();
+      customMasterInventoryConfirmed = false;
+      mrCustomUpdateInventorySummary();
+    }
+
+    function openCustomMasterCopyRegister(productGroupId) {
+      let groupId = String(productGroupId || '').trim();
+      let rows = plGroupRowsById(groupId);
+      if (!rows.length) {
+        const single = (state.products || []).find((p) => String(p.id) === groupId);
+        if (single) {
+          groupId = String(single.product_group_id || single.id || groupId);
+          rows = single.product_group_id ? plGroupRowsById(groupId) : [single];
+          if (!rows.length) rows = [single];
+        }
+      }
+      if (!rows.length) {
+        showToast('복사 등록할 마스터 상품을 찾지 못했습니다.', 'err');
+        return;
+      }
+      if (typeof openMasterRegisterPanel === 'function') openMasterRegisterPanel('custom');
+      if (typeof window.sdRegisterWorkbenchActivate === 'function') window.sdRegisterWorkbenchActivate('custom');
+      mrCustomPrefillFromRows(rows);
+      mrCustomResetImageInputs();
+      customMasterInventoryConfirmed = false;
+      mrCustomUpdateInventorySummary();
+      mrCustomSetStatus('이미지를 새로 첨부한 뒤 재고를 확인하고 생성하세요.');
+      const titleInput = $('custom-master-title');
+      try { titleInput?.focus?.({ preventScroll: true }); } catch (_) { titleInput?.focus?.(); }
+    }
+    window.openCustomMasterCopyRegister = openCustomMasterCopyRegister;
+
     async function mrStageCustomMaster() {
       const btn = $('custom-master-stage-btn');
+      if (MR_CUSTOM_CREATING) return;
       const title = String($('custom-master-title')?.value || '').trim();
       const productKind = normalizeProductKind($('custom-master-product-kind')?.value || PRODUCT_KIND_GOODS);
       const categoryDefaults = mrCustomReadCategoryDefaults(productKind);
@@ -33711,7 +34151,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const explicitCost = Number($('custom-master-cost')?.value || 0);
       const costKrw = explicitCost > 0 ? explicitCost : sourcingPrice;
       const weightG = Number($('custom-master-weight')?.value || 0) || 200;
-      const inventory = Number($('custom-master-inventory')?.value || 0) || 50;
+      const inventory = mrCustomReadNumberControl('custom-master-inventory', 50);
       const axisName = String($('custom-master-axis-name')?.value || '').trim() || 'Option';
       const coverFile = $('custom-master-cover-file')?.files?.[0] || null;
       const detailFiles = Array.from($('custom-master-detail-files')?.files || []);
@@ -33722,7 +34162,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!title) { mrCustomSetStatus('Master 상품명을 입력해주세요.', true); return; }
       if (!components) { mrCustomSetStatus('상품 구성품을 입력해주세요.', true); return; }
       if (!(weightG > 0)) { mrCustomSetStatus('무게(g)를 1 이상으로 입력해주세요.', true); return; }
-      if (!(inventory > 0)) { mrCustomSetStatus('기본 재고를 1 이상으로 입력해주세요.', true); return; }
       if (!hasOptions && !(costKrw > 0)) { mrCustomSetStatus('정산가 또는 도매가를 입력해주세요.', true); return; }
       if (!coverFile) { mrCustomSetStatus('대표 이미지를 첨부해주세요.', true); return; }
       if (hasOptions && !optionInputs.length) { mrCustomSetStatus('옵션 있음은 최소 1개의 옵션명이 필요합니다.', true); return; }
@@ -33730,13 +34169,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       const baseSku = mrCustomSkuBaseFromTitle(title);
       const baseRow = { _sku: baseSku, sku: baseSku, product_name: title, option_name: 'custom' };
-
-      if (btn) { btn.disabled = true; btn.textContent = '업로드 중...'; }
-      mrCustomSetStatus('대표 이미지 업로드 중...');
-
+      let normalizedOptions = [];
       try {
-        mrSetLifecycleValue(lifecycle);
-
         const effectiveOptions = hasOptions ? optionInputs : [{
           name: '',
           sku: '',
@@ -33747,15 +34181,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           weightG,
           inventory,
         }];
-        const normalizedOptions = effectiveOptions.map((opt, idx) => {
+        normalizedOptions = effectiveOptions.map((opt, idx) => {
           const optionSourcingPrice = Number(opt.sourcingPrice || 0) > 0 ? Number(opt.sourcingPrice || 0) : sourcingPrice;
           const optionCostKrw = Number(opt.costKrw || 0) > 0 ? Number(opt.costKrw || 0) : optionSourcingPrice;
           const optionWeightG = Number(opt.weightG || 0) > 0 ? Number(opt.weightG || 0) : weightG;
-          const optionInventory = Number(opt.inventory || 0) > 0 ? Math.floor(Number(opt.inventory || 0)) : inventory;
+          const optionInventory = mrCustomNumberOrFallback(opt.inventory, inventory);
           const label = opt.name || `Option ${idx + 1}`;
           if (!(optionCostKrw > 0)) throw new Error(`${label}: 정산가 또는 도매가를 1 이상으로 입력해주세요.`);
           if (!(optionWeightG > 0)) throw new Error(`${label}: 무게(g)를 1 이상으로 입력해주세요.`);
-          if (!(optionInventory > 0)) throw new Error(`${label}: 재고를 1 이상으로 입력해주세요.`);
+          if (!(optionInventory >= 0)) throw new Error(`${label}: 재고를 0 이상으로 입력해주세요.`);
           return Object.assign({}, opt, {
             sku: String(opt.sku || '').trim(),
             sourcing_price: optionSourcingPrice,
@@ -33764,6 +34198,28 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             inventory: optionInventory,
           });
         });
+        await mrLoadExistingSkus();
+        const skuPreflight = mrCustomResolveSkuPreflight(title, normalizedOptions, hasOptions);
+        if (skuPreflight.duplicateSkus.length) {
+          mrCustomRenderSkuPreflightErrors(skuPreflight.duplicateSkus);
+          return;
+        }
+        normalizedOptions = skuPreflight.options;
+        if (mrCustomInventoryNeedsConfirmation()) {
+          mrCustomOpenInventoryModal({ continueAfterSave: true });
+          return;
+        }
+      } catch (e) {
+        mrCustomSetStatus(e?.message || String(e), true);
+        return;
+      }
+
+      MR_CUSTOM_CREATING = true;
+      if (btn) { btn.disabled = true; btn.textContent = '업로드 중...'; }
+      mrCustomSetStatus('대표 이미지 업로드 중...');
+
+      try {
+        mrSetLifecycleValue(lifecycle);
 
         const coverUrl = await mrCustomUploadImageFile(coverFile, baseRow, 'cover');
         const detailImageUrls = [];
@@ -33916,6 +34372,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       } catch (e) {
         mrCustomSetStatus(e?.message || String(e), true);
       } finally {
+        MR_CUSTOM_CREATING = false;
         if (btn) { btn.disabled = false; btn.textContent = '마스터 상품 생성'; }
       }
     }
@@ -38938,7 +39395,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       mrCustomSyncCategoryDefaults();
       mrCustomToggleOptionMode();
       $('custom-master-option-mode')?.addEventListener('change', mrCustomToggleOptionMode);
-      $('custom-master-add-option')?.addEventListener('click', () => mrRenderCustomOptionRow());
+      $('custom-master-add-option')?.addEventListener('click', () => {
+        mrRenderCustomOptionRow();
+        mrCustomMarkInventoryDirty();
+      });
+      $('custom-master-inventory-open')?.addEventListener('click', () => mrCustomOpenInventoryModal());
+      document.querySelectorAll('[data-custom-inventory-close]').forEach((btn) => {
+        btn.addEventListener('click', mrCustomCloseInventoryModal);
+      });
+      $('custom-master-inventory-save')?.addEventListener('click', () => mrCustomApplyInventoryModal());
+      $('custom-master-inventory-save-create')?.addEventListener('click', () => {
+        if (mrCustomApplyInventoryModal()) void mrStageCustomMaster();
+      });
+      mrCustomUpdateInventorySummary();
       $('custom-master-stage-btn')?.addEventListener('click', mrStageCustomMaster);
 
       $('mr-add-row').addEventListener('click', () => mrAddRow());

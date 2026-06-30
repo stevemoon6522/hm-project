@@ -42,9 +42,12 @@ const scrollHelpers = sliceBetween(
 
 for (const token of [
   "document.querySelector('#pl-master-edit-modal .modal-body')",
-  'function plMasterEditPreserveModalScroll(callback)',
-  'const scrollTop = body.scrollTop',
-  'const scrollLeft = body.scrollLeft',
+  'function plMasterEditCaptureModalPosition(anchorRow = null)',
+  'function plMasterEditFindOptionRowByPosition(position = {})',
+  'function plMasterEditRestoreModalPosition(position = {})',
+  'function plMasterEditPreserveModalScroll(callback, anchorRow = null)',
+  'anchorOffset',
+  'rowKey',
   'requestAnimationFrame',
 ]) {
   assert(scrollHelpers.includes(token), `master edit modal scroll helper missing token: ${token}`);
@@ -57,8 +60,20 @@ const optionImageRefresh = sliceBetween(
 );
 
 assert(
-  optionImageRefresh.includes('plMasterEditPreserveModalScroll(() => plMasterEditRenderImageSummary(renderedRows))'),
-  'option image preview refresh must preserve the modal body scroll while rerendering the image summary',
+  optionImageRefresh.includes('plMasterEditPreserveModalScroll(() => plMasterEditRenderImageSummary(renderedRows), tr)'),
+  'option image preview refresh must preserve the modal body scroll while rerendering the image summary anchored to the option row',
+);
+
+const optionImageBinding = sliceBetween(
+  html,
+  'function plMasterEditBindOptionImageControls',
+  'async function openProductMasterEditModal',
+);
+
+assert(
+  optionImageBinding.includes('const restorePosition = plMasterEditCaptureModalPosition(tr)')
+    && optionImageBinding.includes('plMasterEditUploadOptionImage(tr, file, fileInput, restorePosition)'),
+  'option image upload must capture the modal position before the async file picker/upload rerenders previews',
 );
 
 const openModal = sliceBetween(

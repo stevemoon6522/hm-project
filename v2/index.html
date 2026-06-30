@@ -31174,6 +31174,27 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return null;
   }
 
+  function coverageMergeShopeeListingIntoState(payload) {
+    if (!payload?.product_id || !payload?.region) return;
+    if (!Array.isArray(state.listings)) state.listings = [];
+    const accountKey = payload.account_key || SHOPEE_DEFAULT_ACCOUNT_KEY;
+    const region = String(payload.region || '').toUpperCase();
+    const index = state.listings.findIndex((row) =>
+      String(row?.product_id || '') === String(payload.product_id || '')
+      && String(row?.account_key || SHOPEE_DEFAULT_ACCOUNT_KEY) === String(accountKey)
+      && String(row?.region || '').toUpperCase() === region
+    );
+    const row = {
+      ...(index >= 0 ? state.listings[index] : {}),
+      ...payload,
+      account_key: accountKey,
+      region,
+      updated_at: new Date().toISOString(),
+    };
+    if (index >= 0) state.listings[index] = row;
+    else state.listings.push(row);
+  }
+
   async function coverageAbsorbShopeePublishedHit(productId, hit) {
     const rows = Array.isArray(hit?.regionHits) ? hit.regionHits : [];
     for (const row of rows) {
@@ -31193,6 +31214,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       };
       const { error } = await db.from('product_shopee_listings').upsert(payload, { onConflict: SHOPEE_LISTING_CONFLICT });
       if (error) throw error;
+      coverageMergeShopeeListingIntoState(payload);
     }
     return rows.length;
   }

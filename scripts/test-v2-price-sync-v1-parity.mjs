@@ -220,6 +220,20 @@ assert(
   /if \(globalItemIds\.length \|\| allowGlobalScan\)[\s\S]*lookupShopeeGlobalSku/.test(lookupSkuGetBlock),
   'Shopee lookup-sku GET must only run Global Product SKU lookup for explicit global_item_id or global_scan callers',
 );
+const localCompleteReturnIndex = lookupSkuGetBlock.indexOf('const localMappingComplete = !allowGlobalScan && requestedRegions.length > 0 && requestedRegions.every');
+const globalLookupIndex = lookupSkuGetBlock.indexOf('lookupShopeeGlobalSku');
+assert(
+  localCompleteReturnIndex >= 0 && localCompleteReturnIndex < globalLookupIndex,
+  'Shopee lookup-sku GET must return complete product_shopee_listings hits before Global Product verification',
+);
+assert(
+  /if \(localMappingComplete\)[\s\S]*global_lookup: null[\s\S]*region_results/.test(lookupSkuGetBlock),
+  'Shopee lookup-sku GET local-complete fast path must not emit duplicate global hits',
+);
+assert(
+  v2.includes('coverageMergeShopeeListingIntoState') && /coverageAbsorbShopeePublishedHit[\s\S]*coverageMergeShopeeListingIntoState\(payload\)/.test(v2),
+  'Shopee SKU mapping must merge newly upserted mappings into state.listings so sibling SKUs reuse Global Product context',
+);
 assert(shopeeBridge.includes("if (action === 'update_item_logistics' && req.method === 'POST')"), 'Shopee bridge must expose explicit item logistics updates for price-limit recovery');
 assert(shopeeBridge.includes("shopApiCall(r, '/api/v2/product/update_item'"), 'Shopee item logistics recovery must use product.update_item per local API docs');
 assert(v2.includes("SHOPEE_BRIDGE + '/tokens?region=SG&account_key='"), 'Shopee published_list auto-resolution must map shop_id back to region using token shop ids');

@@ -6218,6 +6218,15 @@ Deno.serve(async (req) => {
       const region_results: any[] = [];
       const region_hits: any[] = [];
       const global_region_hits: any[] = [];
+      const lookupSkuSourceDocs = [
+        'docs_ai/apis/product/v2.product.search_item.json:item_sku',
+        'docs_ai/apis/product/v2.product.search_item.json:item_name',
+        'docs_ai/apis/product/v2.product.get_model_list.json:model_sku',
+        'docs_ai/apis/global_product/v2.global_product.get_global_item_list.json:global_item_id',
+        'docs_ai/apis/global_product/v2.global_product.get_global_item_info.json:global_item_sku',
+        'docs_ai/apis/global_product/v2.global_product.get_global_model_list.json:global_model_sku',
+        'docs_ai/apis/global_product/v2.global_product.get_published_list.json:item_id',
+      ];
       let global_lookup: any = null;
 
       const productRows: any[] = [];
@@ -6284,6 +6293,24 @@ Deno.serve(async (req) => {
           if (hit) region_hits.push(hit);
           region_results.push({ region: r, ok: true, source: 'product_shopee_listings', hit, matches, count: matches.length });
         }
+      }
+      const localMappingComplete = !allowGlobalScan && requestedRegions.length > 0 && requestedRegions.every((r) =>
+        region_results.some((row: any) => String(row?.region || '').toUpperCase() === r && Number(row?.count || 0) > 0)
+      );
+      if (localMappingComplete) {
+        return jsonResp({
+          ok: true,
+          account_key: accountKey,
+          sku,
+          regions: requestedRegions,
+          found: region_hits.length > 0,
+          not_found: false,
+          region_hits,
+          global_region_hits,
+          global_lookup: null,
+          region_results,
+          source_docs: lookupSkuSourceDocs,
+        });
       }
       const remoteSearchTerms = shopeeSkuLookupNameTerms([
         ...url.searchParams.getAll('item_name'),
@@ -6369,15 +6396,7 @@ Deno.serve(async (req) => {
         global_region_hits,
         global_lookup,
         region_results,
-        source_docs: [
-          'docs_ai/apis/product/v2.product.search_item.json:item_sku',
-          'docs_ai/apis/product/v2.product.search_item.json:item_name',
-          'docs_ai/apis/product/v2.product.get_model_list.json:model_sku',
-          'docs_ai/apis/global_product/v2.global_product.get_global_item_list.json:global_item_id',
-          'docs_ai/apis/global_product/v2.global_product.get_global_item_info.json:global_item_sku',
-          'docs_ai/apis/global_product/v2.global_product.get_global_model_list.json:global_model_sku',
-          'docs_ai/apis/global_product/v2.global_product.get_published_list.json:item_id',
-        ],
+        source_docs: lookupSkuSourceDocs,
       });
     }
     if (action === 'batch_update_outlet_price' && req.method === 'POST') {

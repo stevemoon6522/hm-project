@@ -38,7 +38,10 @@ function extractFunction(source, name) {
 function stripTinyTs(block) {
   return block
     .replace(/export\s+/g, '')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*any\[\]/g, '$1')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*any/g, '$1')
     .replace(/\)\s*:\s*[A-Za-z0-9_<>\[\]\s|]+\s*\{/g, ') {')
+    .replace(/\)\s*:\s*Record<[^>]+>\[\]\s*\{/g, ') {')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*unknown/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string\[\]/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string/g, '$1')
@@ -176,6 +179,57 @@ assert.deepEqual(
     'detail-from-second-row.jpg',
   ],
   'eBay default photos must include raw DB extra_images from source and group rows',
+);
+
+const bridgeImageHelpers = [
+  's',
+  'parseLooseStringArray',
+  'normalizeImageUrls',
+  'ebayPublishImageUrlsFromRows',
+].map((name) => stripTinyTs(extractFunction(edge, name))).join('\n');
+const ebayPublishImageUrlsFromRows = new Function(`${bridgeImageHelpers}\nreturn ebayPublishImageUrlsFromRows;`)();
+assert.deepEqual(
+  ebayPublishImageUrlsFromRows(
+    { imageUrls: ['https://cdn.example.com/layered-main.jpg'] },
+    [{ main_image: 'https://cdn.example.com/raw-main.jpg', extra_images: ['https://cdn.example.com/detail-a.jpg', 'https://cdn.example.com/detail-b.jpg'] }],
+  ),
+  [
+    'https://cdn.example.com/layered-main.jpg',
+    'https://cdn.example.com/detail-a.jpg',
+    'https://cdn.example.com/detail-b.jpg',
+  ],
+  'eBay bridge publish payloads must merge DB detail images after the caller-provided representative image',
+);
+assert.deepEqual(
+  ebayPublishImageUrlsFromRows(
+    { imageUrls: [] },
+    [{ main_image: 'https://cdn.example.com/raw-main.jpg', extra_images: ['https://cdn.example.com/detail-a.jpg'] }],
+  ),
+  ['https://cdn.example.com/raw-main.jpg', 'https://cdn.example.com/detail-a.jpg'],
+  'eBay bridge publish payloads must fall back to DB main_image when the caller sends no image URLs',
+);
+assert(
+  edge.includes('async function enrichEbayPublishBodyImageUrls')
+    && edge.includes('.select("id,product_group_id,main_image,extra_images")'),
+  'eBay bridge must load product main/detail images before publish when product ids or product group ids are available',
+);
+const singlePublishWrapperStart = edge.indexOf('async function handlePublish(body: any)');
+const singlePublishWrapperEnd = edge.indexOf('async function handleHeadlessPublishPayload', singlePublishWrapperStart);
+assert(singlePublishWrapperStart >= 0 && singlePublishWrapperEnd > singlePublishWrapperStart, 'eBay single publish wrapper must be extractable');
+const bridgeSinglePublishWrapper = edge.slice(singlePublishWrapperStart, singlePublishWrapperEnd);
+assert(
+  bridgeSinglePublishWrapper.includes('const enrichedBody = await enrichEbayPublishBodyImageUrls(body);')
+    && bridgeSinglePublishWrapper.includes('withEbayPublishRun("single", enrichedBody'),
+  'eBay single publish audit and request must use the enriched image payload',
+);
+const variationPublishWrapperStart = edge.indexOf('async function handlePublishVariation(body: any)');
+const variationPublishWrapperEnd = edge.indexOf('function normalizeMasterSyncAspects', variationPublishWrapperStart);
+assert(variationPublishWrapperStart >= 0 && variationPublishWrapperEnd > variationPublishWrapperStart, 'eBay variation publish wrapper must be extractable');
+const bridgeVariationPublishWrapper = edge.slice(variationPublishWrapperStart, variationPublishWrapperEnd);
+assert(
+  bridgeVariationPublishWrapper.includes('const enrichedBody = await enrichEbayPublishBodyImageUrls(body);')
+    && bridgeVariationPublishWrapper.includes('withEbayPublishRun("variation", enrichedBody'),
+  'eBay variation publish audit and request must use the enriched image payload',
 );
 
 const representativeStart = html.indexOf('    function mrEbayRepresentativeImageUrl');

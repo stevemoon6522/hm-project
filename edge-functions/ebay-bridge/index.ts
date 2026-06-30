@@ -867,6 +867,98 @@ function buildEbayImageUrlsFromProduct(product: any, body: any = {}): string[] {
   return normalizeImageUrls(raw, 24);
 }
 
+function uniqueNonEmptyStrings(values: any[]): string[] {
+  const seen = new Set<string>();
+  return (Array.isArray(values) ? values : [])
+    .map((value) => s(value).trim())
+    .filter((value) => value && !seen.has(value) && seen.add(value));
+}
+
+function ebayPublishImageUrlsFromRows(body: any, rows: any[]): string[] {
+  const directImages = normalizeImageUrls([
+    s(body?.mainImage || body?.main_image),
+    ...parseLooseStringArray(body?.extraImages || body?.extra_images),
+    ...parseLooseStringArray(body?.imageUrls || body?.image_urls),
+  ], 24);
+  const dbDetailImages = (Array.isArray(rows) ? rows : [])
+    .flatMap((row) => parseLooseStringArray(row?.extra_images));
+  const dbMainFallbacks = directImages.length
+    ? []
+    : (Array.isArray(rows) ? rows : []).map((row) => row?.main_image);
+  return normalizeImageUrls([
+    ...directImages,
+    ...dbMainFallbacks,
+    ...dbDetailImages,
+  ], 24);
+}
+
+function ebayPublishImageLookupKeys(body: any): { productIds: string[]; groupIds: string[] } {
+  const variations = Array.isArray(body?.variations) ? body.variations : [];
+  return {
+    productIds: uniqueNonEmptyStrings([
+      body?.productId,
+      body?.product_id,
+      body?.masterProductId,
+      body?.master_product_id,
+      ...variations.flatMap((variation: any) => [
+        variation?.productId,
+        variation?.product_id,
+      ]),
+    ]),
+    groupIds: uniqueNonEmptyStrings([
+      body?.productGroupId,
+      body?.product_group_id,
+    ]),
+  };
+}
+
+async function loadEbayPublishImageRows(body: any): Promise<any[]> {
+  const { productIds, groupIds } = ebayPublishImageLookupKeys(body);
+  if (!productIds.length && !groupIds.length) return [];
+
+  const rows: any[] = [];
+  const seen = new Set<string>();
+  const addRows = (data: any[] | null | undefined) => {
+    for (const row of Array.isArray(data) ? data : []) {
+      const id = s(row?.id).trim();
+      const key = id || JSON.stringify(row);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      rows.push(row);
+    }
+  };
+
+  if (productIds.length) {
+    const { data, error } = await supabase
+      .from("products")
+      .select("id,product_group_id,main_image,extra_images")
+      .in("id", productIds)
+      .limit(50);
+    if (error) console.warn("[ebay-bridge] product image lookup by id skipped", error);
+    else addRows(data);
+  }
+
+  for (const groupId of groupIds) {
+    const { data, error } = await supabase
+      .from("products")
+      .select("id,product_group_id,main_image,extra_images")
+      .eq("product_group_id", groupId)
+      .limit(50);
+    if (error) console.warn("[ebay-bridge] product image lookup by group skipped", error);
+    else addRows(data);
+  }
+
+  return rows;
+}
+
+async function enrichEbayPublishBodyImageUrls(body: any): Promise<any> {
+  const rows = await loadEbayPublishImageRows(body);
+  return {
+    ...(body || {}),
+    imageUrls: ebayPublishImageUrlsFromRows(body || {}, rows),
+  };
+}
+
 function ebayDescriptionForPayload(value: unknown): string {
   const text = s(value)
     .replace(/\r\n/g, "\n")
@@ -1564,7 +1656,8 @@ async function handlePublishSingle(body: any): Promise<Response> {
 }
 
 async function handlePublish(body: any): Promise<Response> {
-  return await withEbayPublishRun("single", body, () => handlePublishSingle(body));
+  const enrichedBody = await enrichEbayPublishBodyImageUrls(body);
+  return await withEbayPublishRun("single", enrichedBody, () => handlePublishSingle(enrichedBody));
 }
 
 async function handleHeadlessPublishPayload(body: any): Promise<Response> {
@@ -1971,7 +2064,8 @@ async function handlePublishVariationCore(body: any): Promise<Response> {
 }
 
 async function handlePublishVariation(body: any): Promise<Response> {
-  return await withEbayPublishRun("variation", body, () => handlePublishVariationCore(body));
+  const enrichedBody = await enrichEbayPublishBodyImageUrls(body);
+  return await withEbayPublishRun("variation", enrichedBody, () => handlePublishVariationCore(enrichedBody));
 }
 
 function normalizeMasterSyncAspects(value: any): Record<string, string[]> {

@@ -5811,6 +5811,45 @@ LEGACY END -->
     const profile = sdShopeeAccountProfile(accountKey);
     return `${sdNormalizeShopeeAccountKey(profile.account_key)}:${profile.layer_asset_path || 'shop-overlay-layer.png'}`;
   }
+
+  function sdProductImagePublicStoragePath(rawUrl) {
+    const value = String(rawUrl || '').trim();
+    if (!value) return '';
+    let parsed;
+    try {
+      const baseUrl = (typeof window !== 'undefined' && window.location?.href)
+        ? window.location.href
+        : 'https://shopee-dashboard-kohl.vercel.app/v2/';
+      parsed = new URL(value, baseUrl);
+    } catch (_) {
+      return '';
+    }
+    const marker = '/storage/v1/object/public/product-images/';
+    const path = String(parsed.pathname || '');
+    const idx = path.indexOf(marker);
+    if (idx < 0) return '';
+    const storagePath = path.slice(idx + marker.length);
+    try {
+      return decodeURIComponent(storagePath);
+    } catch (_) {
+      return storagePath;
+    }
+  }
+
+  function sdIsProductImagePublicUrl(rawUrl) {
+    return !!sdProductImagePublicStoragePath(rawUrl);
+  }
+
+  function rshSourceImageAlreadyHasShopLayer(rawUrl) {
+    const storagePath = sdProductImagePublicStoragePath(rawUrl).toLowerCase();
+    if (!storagePath) return false;
+    const fileName = storagePath.split('/').pop() || '';
+    return /-(?:representative|cover)-[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:jpe?g|png|webp)$/i.test(fileName);
+  }
+
+  function rshShouldApplyShopLayer(rawUrl) {
+    return !rshSourceImageAlreadyHasShopLayer(rawUrl);
+  }
   const els = {
     status: document.getElementById('conn-status'),
     authPanel: document.getElementById('auth-panel'),
@@ -11113,7 +11152,8 @@ LEGACY END -->
     const imageUrl = String(ref.imageUrl || ref.url || '').trim();
     if (!imageUrl) return '';
     const layered = !!ref.layered;
-    const dataUrl = layered
+    const shouldLayer = layered && rshShouldApplyShopLayer(imageUrl);
+    const dataUrl = shouldLayer
       ? await rshBuildLayeredCoverDataUrl(imageUrl, SHOPEE_DEFAULT_ACCOUNT_KEY)
       : await rshFetchImageDataUrl(imageUrl);
     const body = {
@@ -11124,7 +11164,7 @@ LEGACY END -->
       actor,
       run_id: runId,
     };
-    if (layered) {
+    if (shouldLayer) {
       body.main_image_url = imageUrl;
       body.layer_version = sdShopeeLayerVersion(SHOPEE_DEFAULT_ACCOUNT_KEY);
     }
@@ -19301,6 +19341,31 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return await applyShopLayer(proxyUrl, accountKey);
   }
 
+  async function rshBuildLayerAwareCoverDataUrl(mainImageUrl, accountKeyOverride) {
+    return rshShouldApplyShopLayer(mainImageUrl)
+      ? await rshBuildLayeredCoverDataUrl(mainImageUrl, accountKeyOverride)
+      : await rshFetchImageDataUrl(mainImageUrl);
+  }
+
+  async function rshBuildLayerAwareCoverRef(mainImageUrl, options = {}) {
+    const sourceUrl = String(mainImageUrl || '').trim();
+    if (!sourceUrl) throw new Error('Representative image URL is empty.');
+    const shouldLayer = rshShouldApplyShopLayer(sourceUrl);
+    const dataUrl = shouldLayer
+      ? await rshBuildLayeredCoverDataUrl(sourceUrl, options.accountKey)
+      : await rshFetchImageDataUrl(sourceUrl);
+    return {
+      src: dataUrl,
+      dataUrl,
+      sourceUrl,
+      staronemallUrl: options.staronemallUrl || '',
+      idx: Number.isFinite(Number(options.idx)) ? Number(options.idx) : 0,
+      kind: shouldLayer ? (options.layeredKind || 'layered-cover') : (options.plainKind || 'cover'),
+      label: options.label || 'Cover',
+      shopLayerApplied: shouldLayer,
+    };
+  }
+
   async function rshCanvasToJpegDataUrl(canvas, quality = 0.9) {
     return await new Promise((resolve, reject) => {
       canvas.toBlob((blob) => {
@@ -20061,16 +20126,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const accountKey = sdNormalizeShopeeAccountKey(accountKeyOverride || sdSelectedShopeeAccountKey());
     let coverRef = null;
     try {
-      const dataUrl = await rshBuildLayeredCoverDataUrl(mainUrl, accountKey);
-      coverRef = {
-        src: dataUrl,
-        dataUrl,
-        sourceUrl: mainUrl,
+      coverRef = await rshBuildLayerAwareCoverRef(mainUrl, {
+        accountKey,
         staronemallUrl: master?.staronemall_url || '',
         idx: 0,
-        kind: 'master-layered-cover',
+        layeredKind: 'master-layered-cover',
+        plainKind: 'master-cover',
         label: 'Master cover',
-      };
+      });
     } catch (e) {
       console.warn('[rsh] master layered cover failed, falling back to raw master image:', e);
       coverRef = {
@@ -20110,16 +20173,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       const coverRef = (_rsh.selectedImages || [])[0] || null;
       const sourceUrl = coverRef?.sourceUrl || rshMasterMainImageUrl(_rsh.master);
       if (sourceUrl) {
-        const dataUrl = await rshBuildLayeredCoverDataUrl(sourceUrl, key);
-        const nextCover = {
-          ...(coverRef || {}),
-          src: dataUrl,
-          dataUrl,
-          sourceUrl,
+        const nextCover = await rshBuildLayerAwareCoverRef(sourceUrl, {
+          accountKey: key,
+          staronemallUrl: coverRef?.staronemallUrl || _rsh.master?.staronemall_url || '',
           idx: Number.isFinite(Number(coverRef?.idx)) ? Number(coverRef.idx) : 0,
-          kind: coverRef?.kind || 'account-layered-cover',
+          layeredKind: 'account-layered-cover',
+          plainKind: /layered-cover/i.test(String(coverRef?.kind || '')) ? 'account-cover' : (coverRef?.kind || 'account-cover'),
           label: coverRef?.label || 'Cover',
-        };
+        });
+        Object.assign(nextCover, coverRef || {}, nextCover);
         _rsh.selectedImages = [nextCover];
         _rsh.uploadMode = true;
         return true;
@@ -20666,7 +20728,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const cacheKey = `${platformKey}:${accountKey}:${sourceUrl}`;
     if (_mrMarketplaceLayeredImageCache.has(cacheKey)) return _mrMarketplaceLayeredImageCache.get(cacheKey);
 
-    const dataUrl = await rshBuildLayeredCoverDataUrl(sourceUrl);
+    const dataUrl = await rshBuildLayerAwareCoverDataUrl(sourceUrl);
     const file = await mrQoo10DataUrlToFile(dataUrl, `${platformKey}-cover.png`);
     const uploadRow = {
       ...row,
@@ -21806,7 +21868,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           imgCrawlLoading.style.display = 'block';
         }
         try {
-          const dataUrl = await rshBuildLayeredCoverDataUrl(mainImages[0]);
+          const dataUrl = await rshBuildLayerAwareCoverDataUrl(mainImages[0]);
           coverRef = {
             src: dataUrl,
             dataUrl,

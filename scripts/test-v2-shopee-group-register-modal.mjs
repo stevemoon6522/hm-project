@@ -114,7 +114,8 @@ assert(
     && rshModal.includes('function rshMasterDetailImageRefs(master)')
     && rshModal.includes('function rshActiveDetailImageSources()')
     && rshModal.includes('function rshRenderImageRolePreview()')
-    && rshModal.includes("kind: 'master-layered-cover'")
+    && rshModal.includes("layeredKind: 'master-layered-cover'")
+    && rshModal.includes("plainKind: 'master-cover'")
     && rshModal.includes('detailRefs.slice(0, REGISTER_MAX_IMAGE_IDS - 1)')
     && rshModal.indexOf('if (master.main_image)') < rshModal.indexOf('} else if (master.staronemall_url)'),
   'group modal must prefer master main_image/extra_images, with StarOneMall crawl only as fallback',

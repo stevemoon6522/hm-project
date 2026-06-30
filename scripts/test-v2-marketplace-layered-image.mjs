@@ -27,8 +27,8 @@ function extractFunctionBlock(source, functionName) {
 
 const sharedLayeredUrlFn = extractFunctionBlock(html, 'mrBuildMarketplaceLayeredMainImageUrl');
 assert(
-  sharedLayeredUrlFn.includes('rshBuildLayeredCoverDataUrl(sourceUrl)'),
-  'marketplace layered image URL helper must reuse the Shopee shop-layer composition path',
+  sharedLayeredUrlFn.includes('rshBuildLayerAwareCoverDataUrl(sourceUrl'),
+  'marketplace layered image URL helper must reuse the idempotent shop-layer composition path',
 );
 assert(
   sharedLayeredUrlFn.includes("sdUploadProductImageFile(file, uploadRow")

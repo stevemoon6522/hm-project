@@ -49,6 +49,8 @@ for (const helper of [
 assert.match(customHandler, /if \(mrCustomInventoryNeedsConfirmation\(\)\)/, 'custom create must require inventory confirmation before uploads');
 assert.match(customHandler, /mrCustomOpenInventoryModal\(\{ continueAfterSave: true \}\)/, 'custom create should resume after inventory modal save');
 assert.doesNotMatch(customHandler, /if \(!\(inventory > 0\)\)/, 'custom stock must allow zero because it is only marketplace initial registration stock');
+assert.match(masterRegister, /modal\.classList\.add\('show'\)/, 'opening the custom inventory modal must make the shared modal overlay visible');
+assert.match(masterRegister, /modal\.classList\.remove\('show'\)/, 'closing the custom inventory modal must hide the shared modal overlay');
 assert.match(masterRegister, /\$\('custom-master-inventory-open'\)\?\.addEventListener\('click', \(\) => mrCustomOpenInventoryModal\(\)\)/, 'inventory modal open button must be wired');
 assert.match(masterRegister, /\$\('custom-master-inventory-save-create'\)\?\.addEventListener\('click'/, 'inventory modal save-and-create button must be wired');
 

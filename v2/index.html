@@ -33660,6 +33660,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       mrCustomRenderInventoryModalRows();
       const error = $('custom-master-inventory-error');
       if (error) { error.textContent = ''; error.style.display = 'none'; }
+      modal.classList.add('show');
       modal.setAttribute('aria-hidden', 'false');
       requestAnimationFrame(() => modal.querySelector('[data-custom-inventory-modal-index]')?.focus?.());
     }
@@ -33667,6 +33668,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     function mrCustomCloseInventoryModal() {
       const modal = $('custom-master-inventory-modal');
       if (!modal) return;
+      modal.classList.remove('show');
       modal.setAttribute('aria-hidden', 'true');
       modal.dataset.continueAfterSave = '';
     }

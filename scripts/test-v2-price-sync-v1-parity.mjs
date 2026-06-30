@@ -210,6 +210,16 @@ assert(shopeeBridge.includes("if (action === 'lookup-sku' && req.method === 'GET
 assert(shopeeBridge.includes('region_hits') && shopeeBridge.includes('region_results'), 'Shopee lookup-sku must return frontend-compatible region hit shapes');
 assert(shopeeBridge.includes("source: 'product_shopee_listings'"), 'Shopee lookup-sku must use DB mappings before expensive remote scans');
 assert(shopeeBridge.includes("'remote_list_items'"), 'Shopee lookup-sku must retain an explicit remote scan fallback');
+const lookupSkuGetBlock = shopeeBridge.slice(
+  shopeeBridge.indexOf("if (action === 'lookup-sku' && req.method === 'GET')"),
+  shopeeBridge.indexOf("if (action === 'batch_update_outlet_price'"),
+);
+assert(lookupSkuGetBlock.includes("url.searchParams.get('max_scan_items')"), 'Shopee lookup-sku GET must honor max_scan_items alias used by debug callers');
+assert(/const allowGlobalScan[\s\S]*global_scan/.test(lookupSkuGetBlock), 'Shopee lookup-sku GET must require explicit global_scan before scanning Global Product pages');
+assert(
+  /if \(globalItemIds\.length \|\| allowGlobalScan\)[\s\S]*lookupShopeeGlobalSku/.test(lookupSkuGetBlock),
+  'Shopee lookup-sku GET must only run Global Product SKU lookup for explicit global_item_id or global_scan callers',
+);
 assert(shopeeBridge.includes("if (action === 'update_item_logistics' && req.method === 'POST')"), 'Shopee bridge must expose explicit item logistics updates for price-limit recovery');
 assert(shopeeBridge.includes("shopApiCall(r, '/api/v2/product/update_item'"), 'Shopee item logistics recovery must use product.update_item per local API docs');
 assert(v2.includes("SHOPEE_BRIDGE + '/tokens?region=SG&account_key='"), 'Shopee published_list auto-resolution must map shop_id back to region using token shop ids');

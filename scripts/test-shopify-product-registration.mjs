@@ -16,6 +16,7 @@ const docsReadme = readApiRef('README.md');
 const productCreateRef = readApiRef('product-create.graphql.md');
 const productCreateInputRef = readApiRef('product-create-input.graphql.md');
 const variantsBulkRef = readApiRef('product-variants-bulk-create.graphql.md');
+const variantsBulkUpdateRef = readApiRef('product-variants-bulk-update.graphql.md');
 const inventoryRef = readApiRef('inventory-set-quantities.graphql.md');
 const publishRef = readApiRef('publishable-publish.graphql.md');
 const collectionRef = readApiRef('collection.graphql.md');
@@ -29,6 +30,8 @@ assert.match(productCreateRef, /USD/, 'productCreate doc must record Shopify USD
 assert.match(productCreateInputRef, /tags/, 'ProductCreateInput doc must cover initial product tags');
 assert.match(productCreateInputRef, /collectionsToJoin/, 'ProductCreateInput doc must record optional collection joins');
 assert.match(variantsBulkRef, /REMOVE_STANDALONE_VARIANT/, 'variant doc must record standalone variant removal strategy');
+assert.match(variantsBulkUpdateRef, /productVariantsBulkUpdate/, 'variant update doc must record the Shopify bulk update mutation');
+assert.match(variantsBulkUpdateRef, /price\s*\(Money\)/, 'variant update doc must record price updates through ProductVariantsBulkInput');
 assert.match(inventoryRef, /write_inventory/, 'inventory doc must record write_inventory scope');
 assert.match(publishRef, /write_publications/, 'publish doc must record write_publications scope');
 assert.match(collectionRef, /smart collection/i, 'Collection doc must record current smart collection behavior');
@@ -93,7 +96,7 @@ assert.match(shopifyAdapter, /SHOPIFY_DUPLICATE_SKU/, 'Shopify duplicate SKU pre
 assert.match(shopifyAdapter, /publishableGroupRows\(ctx\.masterProduct/, 'Shopify adapter must support grouped master variants');
 assert.match(shopifyAdapter, /productVariantsBulkCreate/, 'Shopify adapter dry-run payload must expose variant bulk intent');
 assert.match(shopifyAdapter, /option_products/, 'Shopify adapter must return option mapping hints for grouped creates');
-assert.match(shopifyAdapter, /SHOPIFY_DEFAULT_PRICE_POLICY[\s\S]*currency:\s*'USD'[\s\S]*krwPerUsd:\s*1460[\s\S]*targetMarginPct:\s*30[\s\S]*paymentFeePct:\s*1[\s\S]*transactionFeePct:\s*10[\s\S]*includeShippingInPrice:\s*false[\s\S]*defaultStatus:\s*'ACTIVE'[\s\S]*setInventory:\s*false/, 'Shopify adapter must keep the approved USD active-first price policy as the fallback');
+assert.match(shopifyAdapter, /SHOPIFY_DEFAULT_PRICE_POLICY[\s\S]*currency:\s*'USD'[\s\S]*krwPerUsd:\s*1460[\s\S]*targetMarginPct:\s*0[\s\S]*paymentFeePct:\s*1[\s\S]*transactionFeePct:\s*10[\s\S]*includeShippingInPrice:\s*false[\s\S]*defaultStatus:\s*'ACTIVE'[\s\S]*setInventory:\s*false/, 'Shopify adapter must keep the approved USD active-first price policy as the fallback');
 assert.match(shopifyAdapter, /async function loadShopifyPricePolicy[\s\S]*\.from\('shopify_price_policy'\)/, 'Shopify adapter must load the approved price policy from DB before creation');
 assert.match(shopifyAdapter, /function shopifyPriceFromCostKrw[\s\S]*feePct = policy\.targetMarginPct \+ policy\.paymentFeePct \+ policy\.transactionFeePct \+ policy\.fixedOperationFeePct[\s\S]*denominator = 1 - feePct \/ 100[\s\S]*costKrw \/ policy\.krwPerUsd \/ denominator/, 'Shopify adapter must calculate USD price by backing out margin and percentage fees');
 assert.match(shopifyAdapter, /status:\s*shopifyProductStatus\(shopify, policy\)/, 'Shopify adapter must create products with the DB-backed default status');
@@ -168,6 +171,7 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   assert.match(source, /action === 'oauth-callback'/, `${label} Shopify bridge must expose OAuth callback exchange`);
   assert.match(source, /action === 'create-product'/, `${label} Shopify bridge must expose product creation`);
   assert.match(source, /action === 'lookup-sku'/, `${label} Shopify bridge must expose SKU lookup`);
+  assert.match(source, /action === 'reprice-products'/, `${label} Shopify bridge must expose internal product repricing`);
   assert.match(source, /function shopifySearchString/, `${label} Shopify lookup must escape search query values`);
   assert.match(source, /const queryText = `sku:"\$\{escapedSku\}"`/, `${label} Shopify lookup must quote SKU searches so hyphenated SKUs are exact`);
   assert.match(source, /productCreate/, `${label} Shopify bridge must call productCreate`);
@@ -176,6 +180,10 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   const createProductBlock = source.slice(source.indexOf('async function createProduct'), source.indexOf('async function createVariants'));
   assert.doesNotMatch(createProductBlock, /userErrors\s*\{\s*field\s+message\s+code\s*\}/, `${label} Shopify productCreate must not request unsupported UserError.code`);
   assert.match(source, /productVariantsBulkCreate/, `${label} Shopify bridge must call productVariantsBulkCreate`);
+  assert.match(source, /productVariantsBulkUpdate/, `${label} Shopify bridge must call productVariantsBulkUpdate for repricing`);
+  assert.match(source, /async function handleRepriceProducts/, `${label} Shopify bridge must include a bulk repricing handler`);
+  assert.match(source, /target_margin_pct/, `${label} Shopify repricing must update the DB-backed target margin policy`);
+  assert.match(source, /remote_price/, `${label} Shopify repricing must mirror updated prices into platform_listings.remote_price`);
   assert.match(source, /async function archiveProduct/, `${label} Shopify bridge must include a product archive cleanup helper`);
   assert.match(source, /productUpdate/, `${label} Shopify bridge must archive failed creates with productUpdate`);
   assert.match(source, /status:\s*'ARCHIVED'/, `${label} Shopify cleanup must set product status to ARCHIVED`);
@@ -219,6 +227,7 @@ for (const token of [
   'function platformConfirmShopifyActiveRegistration',
   'Shopify ACTIVE registration will create a live product',
   'platformConfirmShopifyActiveRegistration(groups)',
+  'target_margin_pct: 0',
   "body.shopify = { status: 'ACTIVE' }",
   "platform === 'shopify' ? 'create_listing' :",
   "coverageBridgeUrl('shopify')",

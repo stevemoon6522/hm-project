@@ -11,7 +11,7 @@ const html = read('v2', 'index.html');
 
 assert.match(migration, /create table if not exists public\.shopify_price_policy/, 'Shopify price policy table must exist');
 assert.match(migration, /krw_per_usd numeric not null default 1460/, 'Shopify policy must seed KRW/USD 1460');
-assert.match(migration, /target_margin_pct numeric not null default 30/, 'Shopify policy must seed target margin 30%');
+assert.match(migration, /target_margin_pct numeric not null default 0/, 'Shopify policy must seed target margin 0%');
 assert.match(migration, /payment_fee_pct numeric not null default 1/, 'Shopify policy must seed payment fee 1%');
 assert.match(migration, /transaction_fee_pct numeric not null default 10/, 'Shopify policy must seed transaction fee 10%');
 assert.match(migration, /include_shipping_in_price boolean not null default false/, 'Shopify policy must keep shipping out of product price by default');

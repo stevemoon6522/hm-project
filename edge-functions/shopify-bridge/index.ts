@@ -11,6 +11,7 @@
 // action === 'oauth-url'
 // action === 'oauth-callback'
 // action === 'create-product'
+// action === 'reprice-products'
 // action === 'archive-product'
 // action === 'lookup-sku'
 // function shopifySearchString
@@ -24,6 +25,10 @@
 // function shopifyProductStatus
 // status: shopifyProductStatus(product.status)
 // productVariantsBulkCreate
+// productVariantsBulkUpdate
+// async function handleRepriceProducts
+// target_margin_pct
+// remote_price
 // inventorySetQuantities
 // publishablePublish
 // listing_status: mapShopifyListingStatus(product)

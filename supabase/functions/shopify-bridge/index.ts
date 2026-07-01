@@ -4,6 +4,7 @@
 // Local docs:
 //   C:\dev\api-refs\marketplaces\shopify\product-create.graphql.md
 //   C:\dev\api-refs\marketplaces\shopify\product-variants-bulk-create.graphql.md
+//   C:\dev\api-refs\marketplaces\shopify\product-variants-bulk-update.graphql.md
 //   C:\dev\api-refs\marketplaces\shopify\inventory-set-quantities.graphql.md
 //   C:\dev\api-refs\marketplaces\shopify\publishable-publish.graphql.md
 //
@@ -43,6 +44,11 @@ function jsonResp(body: unknown, status = 200): Response {
 
 function norm(value: unknown): string {
   return String(value ?? '').trim();
+}
+
+function num(value: unknown, fallback = 0): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 function uniq(values: unknown[]): string[] {
@@ -153,6 +159,33 @@ function shopifyProductStatus(value: unknown): string {
 
 function shopifySearchString(value: unknown): string {
   return norm(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function normalizeRepricePolicy(row: any, targetMarginPct: number) {
+  const krwPerUsd = num(row?.krw_per_usd, 1460);
+  const paymentFeePct = num(row?.payment_fee_pct, 1);
+  const transactionFeePct = num(row?.transaction_fee_pct, 10);
+  const fixedOperationFeePct = num(row?.fixed_operation_fee_pct, 0);
+  return {
+    currency: norm(row?.currency || 'USD').toUpperCase() || 'USD',
+    krw_per_usd: krwPerUsd > 0 ? krwPerUsd : 1460,
+    target_margin_pct: targetMarginPct >= 0 && targetMarginPct < 100 ? targetMarginPct : 0,
+    payment_fee_pct: paymentFeePct >= 0 ? paymentFeePct : 1,
+    transaction_fee_pct: transactionFeePct >= 0 ? transactionFeePct : 10,
+    fixed_operation_fee_pct: fixedOperationFeePct >= 0 ? fixedOperationFeePct : 0,
+    include_shipping_in_price: row?.include_shipping_in_price === true,
+    default_status: shopifyProductStatus(row?.default_status),
+    set_inventory: row?.set_inventory === true,
+  };
+}
+
+function shopifyPriceFromCostKrw(costKrw: number, policy: any): string {
+  if (!(costKrw > 0)) return '';
+  const feePct = policy.target_margin_pct + policy.payment_fee_pct + policy.transaction_fee_pct + policy.fixed_operation_fee_pct;
+  const denominator = 1 - feePct / 100;
+  if (!(policy.krw_per_usd > 0) || !(denominator > 0)) return '';
+  const raw = costKrw / policy.krw_per_usd / denominator;
+  return (Math.ceil(raw * 100) / 100).toFixed(2);
 }
 
 function shopScopeSet(shop: any): Set<string> {
@@ -524,6 +557,219 @@ async function publishablePublish(shop: any, productId: string, publicationId: s
   return shopifyGraphql(shop, query, { id: productId, input: [{ publicationId }] });
 }
 
+async function readShopifyRepricePolicy(targetMarginPct: number) {
+  const { data, error } = await supabase
+    .from('shopify_price_policy')
+    .select('currency,krw_per_usd,target_margin_pct,payment_fee_pct,transaction_fee_pct,fixed_operation_fee_pct,include_shipping_in_price,default_status,set_inventory')
+    .eq('id', 'default')
+    .maybeSingle();
+  if (error) throw new Error(`shopify_price_policy lookup failed: ${error.message}`);
+  return normalizeRepricePolicy(data || {}, targetMarginPct);
+}
+
+async function persistShopifyRepricePolicy(policy: any) {
+  const { error } = await supabase
+    .from('shopify_price_policy')
+    .upsert({
+      id: 'default',
+      currency: policy.currency,
+      krw_per_usd: policy.krw_per_usd,
+      target_margin_pct: policy.target_margin_pct,
+      payment_fee_pct: policy.payment_fee_pct,
+      transaction_fee_pct: policy.transaction_fee_pct,
+      fixed_operation_fee_pct: policy.fixed_operation_fee_pct,
+      include_shipping_in_price: policy.include_shipping_in_price,
+      default_status: policy.default_status,
+      set_inventory: policy.set_inventory,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+  if (error) throw new Error(`shopify_price_policy update failed: ${error.message}`);
+}
+
+async function updateShopifyVariantPrices(shop: any, productId: string, variants: any[]) {
+  const query = `
+    mutation ShopifyBridgeProductVariantsBulkUpdate(
+      $productId: ID!,
+      $variants: [ProductVariantsBulkInput!]!,
+      $allowPartialUpdates: Boolean
+    ) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants, allowPartialUpdates: $allowPartialUpdates) {
+        product { id title status publishedAt }
+        productVariants { id sku price }
+        userErrors { field message code }
+      }
+    }
+  `;
+  return shopifyGraphql(shop, query, {
+    productId,
+    variants: variants.map((row) => ({ id: row.variant_id, price: row.new_price })),
+    allowPartialUpdates: false,
+  });
+}
+
+async function shopifyRepriceCandidateRows(shop: any, policy: any, limit: number) {
+  let query = supabase
+    .from('platform_listings')
+    .select('id,master_product_id,shop_id,platform_item_id,external_variant_id,external_sku,remote_price,listing_status,publish_origin,last_payload,created_at,updated_at')
+    .eq('platform', 'shopify')
+    .is('deleted_at', null)
+    .not('platform_item_id', 'is', null)
+    .not('external_variant_id', 'is', null)
+    .order('created_at', { ascending: true });
+  if (limit > 0) query = query.limit(limit);
+  const { data: listings, error } = await query;
+  if (error) throw new Error(`platform_listings lookup failed: ${error.message}`);
+
+  const productIds = uniq((listings || []).map((row: any) => row.master_product_id));
+  let productsById = new Map<string, any>();
+  if (productIds.length) {
+    const { data: products, error: productErr } = await supabase
+      .from('products')
+      .select('id,sku,product_name,option_name,cost_krw,sourcing_price,shopify_price,shopify_currency')
+      .in('id', productIds);
+    if (productErr) throw new Error(`products lookup failed: ${productErr.message}`);
+    productsById = new Map((products || []).map((row: any) => [norm(row.id), row]));
+  }
+
+  const rows: any[] = [];
+  const skipped: any[] = [];
+  for (const listing of listings || []) {
+    const listingShopId = norm(listing.shop_id);
+    if (listingShopId && listingShopId !== norm(shop.shop_domain)) {
+      skipped.push({ listing_id: listing.id, reason: 'shop_id_mismatch', shop_id: listing.shop_id });
+      continue;
+    }
+    const productId = norm(listing.platform_item_id);
+    const variantId = norm(listing.external_variant_id);
+    if (!productId.startsWith('gid://shopify/Product/')) {
+      skipped.push({ listing_id: listing.id, reason: 'invalid_product_gid', platform_item_id: listing.platform_item_id });
+      continue;
+    }
+    if (!variantId.startsWith('gid://shopify/ProductVariant/')) {
+      skipped.push({ listing_id: listing.id, reason: 'invalid_variant_gid', external_variant_id: listing.external_variant_id });
+      continue;
+    }
+    const product = productsById.get(norm(listing.master_product_id));
+    if (!product) {
+      skipped.push({ listing_id: listing.id, reason: 'product_missing', master_product_id: listing.master_product_id });
+      continue;
+    }
+    const costKrw = num(product.cost_krw, 0);
+    const newPrice = shopifyPriceFromCostKrw(costKrw, policy);
+    if (!newPrice) {
+      skipped.push({ listing_id: listing.id, reason: 'missing_cost_krw', master_product_id: listing.master_product_id, cost_krw: product.cost_krw });
+      continue;
+    }
+    rows.push({
+      listing_id: listing.id,
+      master_product_id: listing.master_product_id,
+      product_id: productId,
+      variant_id: variantId,
+      sku: norm(listing.external_sku || product.sku),
+      title: norm(product.product_name),
+      option_name: norm(product.option_name),
+      sourcing_price: num(product.sourcing_price, 0),
+      cost_krw: costKrw,
+      previous_remote_price: listing.remote_price == null ? null : Number(listing.remote_price),
+      previous_shopify_price_override: product.shopify_price == null ? null : Number(product.shopify_price),
+      new_price: newPrice,
+      currency: policy.currency,
+      publish_origin: listing.publish_origin,
+    });
+  }
+  return { rows, skipped };
+}
+
+async function handleRepriceProducts(req: Request): Promise<Response> {
+  const denied = requireInternalBridge(req);
+  if (denied) return denied;
+  const body = await req.json().catch(() => ({}));
+  const dryRun = body?.dry_run === true;
+  const targetMarginPct = num(body?.target_margin_pct, 0);
+  const limit = Math.max(0, Math.floor(num(body?.limit, 0)));
+  const shop = await configuredShop(normalizeShopDomain(body?.shop_domain));
+  const policy = await readShopifyRepricePolicy(targetMarginPct);
+  const { rows, skipped } = await shopifyRepriceCandidateRows(shop, policy, limit);
+  const groups = new Map<string, any[]>();
+  for (const row of rows) {
+    if (!groups.has(row.product_id)) groups.set(row.product_id, []);
+    groups.get(row.product_id)!.push(row);
+  }
+
+  if (!dryRun) await persistShopifyRepricePolicy(policy);
+
+  const updated: any[] = [];
+  const errors: any[] = [];
+  for (const [productId, groupRows] of groups.entries()) {
+    if (dryRun) {
+      updated.push(...groupRows.map((row) => ({ ...row, dry_run: true })));
+      continue;
+    }
+    const { status, raw } = await updateShopifyVariantPrices(shop, productId, groupRows);
+    const userErrors = graphUserErrors(raw, 'productVariantsBulkUpdate');
+    if (status < 200 || status >= 300 || raw?.errors?.length || userErrors.length) {
+      errors.push({
+        product_id: productId,
+        listing_ids: groupRows.map((row) => row.listing_id),
+        error: graphErrorMessage(raw, 'productVariantsBulkUpdate'),
+        raw,
+      });
+      continue;
+    }
+
+    const returnedVariants = raw?.data?.productVariantsBulkUpdate?.productVariants || [];
+    for (const row of groupRows) {
+      const hit = returnedVariants.find((variant: any) => norm(variant?.id) === row.variant_id) || null;
+      const confirmedPrice = norm(hit?.price || row.new_price);
+      const { error: updateErr } = await supabase
+        .from('platform_listings')
+        .update({
+          remote_price: Number(confirmedPrice),
+          currency: policy.currency,
+          last_payload: {
+            action: 'reprice-products',
+            product_id: row.product_id,
+            variant_id: row.variant_id,
+            sku: row.sku,
+            previous_remote_price: row.previous_remote_price,
+            new_price: confirmedPrice,
+            pricing_policy: policy,
+          },
+          last_sync_at: new Date().toISOString(),
+          last_seen_at: new Date().toISOString(),
+          error_msg: null,
+          error_code: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', row.listing_id);
+      if (updateErr) {
+        errors.push({ listing_id: row.listing_id, product_id: productId, error: `platform_listings update failed: ${updateErr.message}` });
+        continue;
+      }
+      updated.push({ ...row, confirmed_price: confirmedPrice, shopify_variant: hit });
+    }
+  }
+
+  return jsonResp({
+    ok: errors.length === 0,
+    dry_run: dryRun,
+    shop_domain: shop.shop_domain,
+    policy,
+    source: 'platform_listings.platform=shopify active rows with mapped product and variant GIDs',
+    counts: {
+      candidates: rows.length,
+      products: groups.size,
+      updated: dryRun ? 0 : updated.length,
+      planned: dryRun ? updated.length : 0,
+      skipped: skipped.length,
+      errors: errors.length,
+    },
+    updated,
+    skipped,
+    errors,
+  }, errors.length ? 207 : 200);
+}
+
 async function archiveProduct(shop: any, productId: string) {
   const id = norm(productId);
   if (!id) return { ok: false, status: 400, raw: { error: 'product_id required' }, error: 'product_id required' };
@@ -736,6 +982,7 @@ async function handleRequest(req: Request): Promise<Response> {
     if ((action === 'carrier-service' || action === 'shipping-carrier-service') && req.method === 'POST') return await handleCarrierService(req);
     if (action === 'create-product' && req.method === 'POST') return await handleCreateProduct(req);
     if (action === 'archive-product' && req.method === 'POST') return await handleArchiveProduct(req);
+    if (action === 'reprice-products' && req.method === 'POST') return await handleRepriceProducts(req);
     if (action === 'lookup-sku' && req.method === 'GET') return await handleLookupSku(req);
     if (action === 'internal-check' && req.method === 'GET') {
       const denied = requireInternalBridge(req);

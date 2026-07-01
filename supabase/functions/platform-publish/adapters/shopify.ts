@@ -14,7 +14,7 @@ const PLATFORM_BRIDGE_INTERNAL_TOKEN = (Deno as any).env.get('PLATFORM_BRIDGE_IN
 const SHOPIFY_DEFAULT_PRICE_POLICY = Object.freeze({
   currency: 'USD',
   krwPerUsd: 1460,
-  targetMarginPct: 30,
+  targetMarginPct: 0,
   paymentFeePct: 1,
   transactionFeePct: 10,
   fixedOperationFeePct: 0,

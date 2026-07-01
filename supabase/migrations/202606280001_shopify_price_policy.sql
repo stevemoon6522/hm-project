@@ -1,12 +1,12 @@
 -- Shopify product pricing policy.
 -- This keeps operator-editable Shopify pricing inputs out of the Edge Function
--- source while preserving the approved 2026-06 USD defaults.
+-- source while preserving the approved USD defaults.
 
 create table if not exists public.shopify_price_policy (
   id text primary key default 'default',
   currency text not null default 'USD',
   krw_per_usd numeric not null default 1460 check (krw_per_usd > 0),
-  target_margin_pct numeric not null default 30 check (target_margin_pct >= 0 and target_margin_pct < 100),
+  target_margin_pct numeric not null default 0 check (target_margin_pct >= 0 and target_margin_pct < 100),
   payment_fee_pct numeric not null default 1 check (payment_fee_pct >= 0),
   transaction_fee_pct numeric not null default 10 check (transaction_fee_pct >= 0),
   fixed_operation_fee_pct numeric not null default 0 check (fixed_operation_fee_pct >= 0),
@@ -38,7 +38,7 @@ insert into public.shopify_price_policy (
   'default',
   'USD',
   1460,
-  30,
+  0,
   1,
   10,
   0,

@@ -40081,7 +40081,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       id: 'default',
       currency: 'USD',
       krw_per_usd: 1460,
-      target_margin_pct: 30,
+      target_margin_pct: 0,
       payment_fee_pct: 1,
       transaction_fee_pct: 10,
       fixed_operation_fee_pct: 0,
@@ -40092,7 +40092,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const SHOPIFY_PRICE_POLICY_FIELDS = [
       { key: 'currency', label: 'Selling currency', type: 'text', hint: 'Current Shopify selling currency. Default: USD.' },
       { key: 'krw_per_usd', label: 'KRW to selling currency', type: 'number', step: '0.01', unit: 'KRW', hint: 'KRW per 1 selling-currency unit. Default: 1460 KRW.' },
-      { key: 'target_margin_pct', label: 'Target margin', type: 'number', step: '0.01', unit: '%', hint: 'Target margin backed out of the final Shopify price. Default: 30%.' },
+      { key: 'target_margin_pct', label: 'Target margin', type: 'number', step: '0.01', unit: '%', hint: 'Target margin backed out of the final Shopify price. Default: 0%.' },
       { key: 'payment_fee_pct', label: 'Payment fee', type: 'number', step: '0.01', unit: '%', hint: 'Shopify payment fee. Default: 1%.' },
       { key: 'transaction_fee_pct', label: 'Transaction fee', type: 'number', step: '0.01', unit: '%', hint: 'Shopify transaction/platform fee. Default: 10%.' },
       { key: 'fixed_operation_fee_pct', label: 'Fixed operation fee', type: 'number', step: '0.01', unit: '%', hint: 'Packing/operation overhead as a percentage. Default: 0%.' },

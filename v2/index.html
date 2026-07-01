@@ -6076,6 +6076,7 @@ LEGACY END -->
     platformMasterSyncDialog: null,
     platformLastResults: {},
     joomRemoteCleanup: {
+      open: false,
       loading: false,
       running: false,
       loaded: false,
@@ -8933,7 +8934,13 @@ LEGACY END -->
     if (platform !== 'alibaba') {
       if (platform !== 'shopify') buttons.push(`<button type="button" data-platform-master-sync-needed ${needsUpdateMasterSyncCount ? '' : 'disabled'}>${text(needsUpdateMasterSyncLabel)}</button>`);
       if (copy.editLabel) buttons.push(`<button type="button" data-platform-preview="edit" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.editLabel)}</button>`);
-      if (copy.deleteLabel) buttons.push(`<button type="button" class="platform-danger-action" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.deleteLabel)}</button>`);
+      if (copy.deleteLabel) {
+        if (platform === 'joom') {
+          buttons.push(`<button type="button" class="platform-danger-action" data-joom-remote-open>${text(copy.deleteLabel)}</button>`);
+        } else {
+          buttons.push(`<button type="button" class="platform-danger-action" data-platform-preview="delete" ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.deleteLabel)}</button>`);
+        }
+      }
       if (copy.syncLabel) buttons.push(`<button type="button" data-platform-sync ${canRunSelectionAction ? '' : 'disabled'}>${text(copy.syncLabel)}</button>`);
     }
     return `<div class="platform-toolbar">
@@ -8966,6 +8973,7 @@ LEGACY END -->
   function joomRemoteCleanupState() {
     if (!state.joomRemoteCleanup) {
       state.joomRemoteCleanup = {
+        open: false,
         loading: false,
         running: false,
         loaded: false,
@@ -9021,7 +9029,7 @@ LEGACY END -->
     return `${sku} | ${item.name || '(no title)'} | ${item.listing_status || item.state || '-'} | ${variants} variant${variants === 1 ? '' : 's'}`;
   }
 
-  function joomRemoteCleanupPanelHtml() {
+  function joomRemoteCleanupModalHtml() {
     const cleanup = joomRemoteCleanupState();
     const masters = joomRemoteCleanupMasterGroups();
     if (!cleanup.selectedMasterKey && masters.length) cleanup.selectedMasterKey = platformGroupKey(masters[0]);
@@ -9030,7 +9038,7 @@ LEGACY END -->
     const master = joomRemoteCleanupSelectedMasterGroup();
     const remoteOptions = filteredItems.length
       ? filteredItems.map((item) => `<option value="${text(item.id || '')}"${String(item.id || '') === String(cleanup.selectedRemoteId || '') ? ' selected' : ''}>${text(joomRemoteCleanupRemoteLabel(item))}</option>`).join('')
-      : '<option value="">Load or search remote Joom products</option>';
+      : '<option value="">Joom 상품을 불러오거나 검색하세요</option>';
     const masterOptions = masters.map((group) => {
       const key = platformGroupKey(group);
       const sku = platformGroupSku(group) || '(no sku)';
@@ -9044,8 +9052,8 @@ LEGACY END -->
       ? platformUniqueValues((master.rows || []).map((row) => row.sku)).join(', ')
       : '-';
     const dryRunLine = cleanup.dryRun?.ok
-      ? `Dry-run OK: ${cleanup.dryRun?.dryRun?.payload?.variants?.length || 0} variant(s)`
-      : 'Dry-run not run';
+      ? `등록 검증 완료: ${cleanup.dryRun?.dryRun?.payload?.variants?.length || 0} variant(s)`
+      : '아직 등록 검증 전';
     const resultHtml = cleanup.result
       ? `<div class="${cleanup.result.ok ? 'platform-result-ok' : 'platform-result-err'}">${text(cleanup.result.message || '')}</div>`
       : '';
@@ -9053,44 +9061,52 @@ LEGACY END -->
       ? `<div class="platform-result-err">${text(cleanup.error)}</div>`
       : '';
     return `
-      <div class="panel" style="margin:12px 0;padding:12px;border:1px solid var(--border);">
-        <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap;">
-          <div>
-            <h3 style="margin:0 0 4px;font-size:15px;">Joom remote cleanup</h3>
-            <div class="muted" style="font-size:12px;">Delete an existing remote Joom product, then register the selected current master SKU.</div>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button type="button" data-joom-remote-load ${cleanup.loading || cleanup.running ? 'disabled' : ''}>Load Joom products</button>
-            ${cleanup.nextAfter ? `<button type="button" data-joom-remote-load-more ${cleanup.loading || cleanup.running ? 'disabled' : ''}>Load more</button>` : ''}
-          </div>
-        </div>
-        <div class="grid" style="margin-top:10px;">
-          <div class="field" style="grid-column:span 6;">
-            <label>Remote Joom product to delete</label>
-            <input type="search" data-joom-remote-search value="${text(cleanup.search || '')}" placeholder="Search old SKU, title, product id, variant SKU" style="margin-bottom:6px;">
-            <select data-joom-remote-select size="7" style="width:100%;font-size:12px;" ${cleanup.loading || cleanup.running ? 'disabled' : ''}>${remoteOptions}</select>
-            <div class="muted" style="font-size:11px;margin-top:4px;">Loaded ${text((cleanup.items || []).length)} remote product(s). Matching ${text(filteredItems.length)}.</div>
-          </div>
-          <div class="field" style="grid-column:span 6;">
-            <label>Current dashboard master to register</label>
-            <select data-joom-remote-master style="width:100%;font-size:12px;" ${cleanup.running ? 'disabled' : ''}>${masterOptions || '<option value="">No master product</option>'}</select>
-            <div class="notice" style="margin-top:8px;background:#fff7ed;border-color:#fed7aa;color:#9a3412;">
-              <strong>Irreversible Joom delete</strong><br>
-              The selected remote product and all variants will be removed before the current master is published.
+      <div id="joom-remote-cleanup-modal" class="modal-overlay show joom-remote-cleanup-modal" role="dialog" aria-modal="true" aria-hidden="false">
+        <div class="modal">
+          <div class="modal-header">
+            <div>
+              <h2>Joom 기존 상품 삭제 후 재등록</h2>
+              <div class="muted" style="font-size:12px;margin-top:3px;">기존 Joom 원격 상품을 삭제하고 현재 대시보드 마스터 SKU로 다시 등록합니다.</div>
             </div>
-            <div class="mono" style="font-size:11px;margin-top:6px;white-space:pre-wrap;">Delete ID: ${text(remote?.id || '-')}
+            <button type="button" data-joom-remote-close ${cleanup.running ? 'disabled' : ''}>닫기</button>
+          </div>
+          <div class="modal-body">
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" data-joom-remote-load ${cleanup.loading || cleanup.running ? 'disabled' : ''}>Joom 상품 불러오기</button>
+              ${cleanup.nextAfter ? `<button type="button" data-joom-remote-load-more ${cleanup.loading || cleanup.running ? 'disabled' : ''}>더 불러오기</button>` : ''}
+              <span class="muted" style="font-size:12px;align-self:center;">${text(cleanup.loading ? 'Joom 상품 불러오는 중...' : (cleanup.running ? '삭제 후 재등록 처리 중...' : dryRunLine))}</span>
+            </div>
+            <div class="grid">
+              <div class="field" style="grid-column:span 6;">
+                <label>삭제할 기존 Joom 상품</label>
+                <input type="search" data-joom-remote-search value="${text(cleanup.search || '')}" placeholder="기존 SKU, 상품명, product id, variant SKU 검색" style="margin-bottom:6px;">
+                <select data-joom-remote-select size="7" style="width:100%;font-size:12px;" ${cleanup.loading || cleanup.running ? 'disabled' : ''}>${remoteOptions}</select>
+                <div class="muted" style="font-size:11px;margin-top:4px;">불러온 원격 상품 ${text((cleanup.items || []).length)}개, 검색 결과 ${text(filteredItems.length)}개</div>
+              </div>
+              <div class="field" style="grid-column:span 6;">
+                <label>재등록할 현재 대시보드 마스터</label>
+                <select data-joom-remote-master style="width:100%;font-size:12px;" ${cleanup.running ? 'disabled' : ''}>${masterOptions || '<option value="">현재 마스터 상품 없음</option>'}</select>
+                <div class="notice" style="margin-top:8px;background:#fff7ed;border-color:#fed7aa;color:#9a3412;">
+                  <strong>Joom 삭제는 되돌릴 수 없습니다</strong><br>
+                  선택한 원격 상품과 variant가 삭제된 뒤 현재 마스터 상품 등록을 시도합니다.
+                </div>
+                <div class="mono" style="font-size:11px;margin-top:6px;white-space:pre-wrap;">Delete ID: ${text(remote?.id || '-')}
 Delete product SKU: ${text(remote?.sku || '-')}
 Delete variant SKU(s): ${text(variantLine)}
 Current SKU(s): ${text(currentSkuLine)}</div>
+              </div>
+            </div>
+            ${errorHtml}
+            ${resultHtml}
+          </div>
+          <div class="modal-footer" style="justify-content:space-between;flex-wrap:wrap;">
+            <span class="muted" style="font-size:12px;">삭제 대상과 재등록 마스터를 다시 확인한 뒤 실행하세요.</span>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button type="button" data-joom-remote-dryrun ${cleanup.running || !remote || !master ? 'disabled' : ''}>현재 마스터 검증</button>
+              <button type="button" class="platform-danger-action" data-joom-remote-delete-reregister ${cleanup.running || !remote || !master ? 'disabled' : ''}>삭제 후 재등록</button>
+            </div>
           </div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">
-          <button type="button" data-joom-remote-dryrun ${cleanup.running || !remote || !master ? 'disabled' : ''}>Dry-run current master</button>
-          <button type="button" class="platform-danger-action" data-joom-remote-delete-reregister ${cleanup.running || !remote || !master ? 'disabled' : ''}>Delete remote and reregister</button>
-          <span class="muted" style="font-size:12px;">${text(cleanup.loading ? 'Loading remote Joom products...' : (cleanup.running ? 'Running cleanup...' : dryRunLine))}</span>
-        </div>
-        ${errorHtml}
-        ${resultHtml}
       </div>`;
   }
 
@@ -9604,7 +9620,7 @@ Current SKU(s): ${text(currentSkuLine)}</div>
     const masterSyncDialogHtml = state.platformMasterSyncDialog?.platform === platform ? platformMasterSyncDialogHtml(platform) : '';
     const shopeeNameSyncHtml = platform === 'shopee' ? shopeeNameSyncPanelHtml() : '';
     const shopeeEnglishRestoreHtml = platform === 'shopee' ? shopeeEnglishRestorePanelHtml() : '';
-    const joomRemoteCleanupHtml = platform === 'joom' ? joomRemoteCleanupPanelHtml() : '';
+    const joomRemoteCleanupModal = platform === 'joom' && joomRemoteCleanupState().open ? joomRemoteCleanupModalHtml() : '';
     const platformTableClass = platform === 'shopee' ? 'platform-table platform-table-shopee' : 'platform-table';
     const summaryHtml = platform === 'shopee'
       ? ''
@@ -9677,7 +9693,6 @@ Current SKU(s): ${text(currentSkuLine)}</div>
       </div>
       ${isAlibaba ? '<div class="notice" style="margin-bottom:10px;">Alibaba(ICBU) 등록은 운영자 설정이 끝나야 실제 동작합니다: alibaba-bridge 시크릿(App Key/Secret/access_token) + ALIBABA_BRIDGE_ENABLED=true + auth_verified 플립. (1차: create_listing + sync, 카테고리/속성/운임은 선택)</div>' : ''}
       ${effectiveToolbarHtml}
-      ${joomRemoteCleanupHtml}
       ${batchHtml}
       ${previewHtml}
       ${masterSyncDialogHtml}
@@ -9689,6 +9704,7 @@ Current SKU(s): ${text(currentSkuLine)}</div>
           <tbody>${platformTableRows(platform)}</tbody>
         </table>
       </div>
+      ${joomRemoteCleanupModal}
     `;
     bindPlatformWorkbench(root, platform);
   }
@@ -9813,6 +9829,19 @@ Current SKU(s): ${text(currentSkuLine)}</div>
     });
     root.querySelector('[data-platform-preview-execute]')?.addEventListener('click', () => platformExecutePreview());
     if (platform === 'joom') {
+      root.querySelector('[data-joom-remote-open]')?.addEventListener('click', () => {
+        const cleanup = joomRemoteCleanupState();
+        cleanup.open = true;
+        cleanup.error = '';
+        cleanup.result = null;
+        renderPlatformWorkbench('joom');
+      });
+      root.querySelector('[data-joom-remote-close]')?.addEventListener('click', () => {
+        const cleanup = joomRemoteCleanupState();
+        if (cleanup.running) return;
+        cleanup.open = false;
+        renderPlatformWorkbench('joom');
+      });
       root.querySelector('[data-joom-remote-load]')?.addEventListener('click', async () => {
         await joomRemoteCleanupLoadProducts(false);
         renderPlatformWorkbench('joom');

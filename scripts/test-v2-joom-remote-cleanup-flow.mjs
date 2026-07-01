@@ -32,7 +32,11 @@ for (const source of [bridge, edgeBridge]) {
 
 for (const token of [
   'joomRemoteCleanup',
-  'function joomRemoteCleanupPanelHtml',
+  'open: false',
+  'function joomRemoteCleanupModalHtml',
+  'data-joom-remote-open',
+  'data-joom-remote-close',
+  'joom-remote-cleanup-modal',
   'data-joom-remote-load',
   'data-joom-remote-search',
   'data-joom-remote-select',
@@ -52,6 +56,15 @@ for (const token of [
 ]) {
   assertIncludes(html, token, 'V2 Joom remote cleanup UI');
 }
+
+assert(
+  !html.includes('const joomRemoteCleanupHtml = platform === \'joom\' ? joomRemoteCleanupPanelHtml() : \'\';'),
+  'Joom remote cleanup must not render as a persistent top panel',
+);
+assert(
+  !html.includes('${joomRemoteCleanupHtml}'),
+  'Joom remote cleanup must not be inserted above the registration table',
+);
 
 const preflight = html.indexOf('await joomRemoteCleanupPreflightCurrentSkus');
 const dryrun = html.indexOf('await joomRemoteCleanupDryRunMaster');

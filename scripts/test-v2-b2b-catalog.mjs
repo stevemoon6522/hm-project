@@ -6,6 +6,7 @@ const root = process.cwd();
 const html = readFileSync(join(root, 'v2', 'index.html'), 'utf8');
 const migration = readFileSync(join(root, 'supabase', 'migrations', '202606200001_b2b_catalog_items.sql'), 'utf8');
 const deleteMigration = readFileSync(join(root, 'supabase', 'migrations', '202606210001_catalog_items_delete_policy.sql'), 'utf8');
+const wmsMatchMigration = readFileSync(join(root, 'supabase', 'migrations', '202607010002_b2b_catalog_wms_match.sql'), 'utf8');
 const crawler = readFileSync(join(root, 'supabase', 'functions', 'starone-crawl', 'index.ts'), 'utf8');
 const api = readFileSync(join(root, 'api', 'b2b-catalog-sheet-sync.js'), 'utf8');
 
@@ -34,6 +35,16 @@ for (const token of [
   'grant delete on public.catalog_items to authenticated',
 ]) {
   assert(deleteMigration.includes(token), `catalog_items delete migration missing token: ${token}`);
+}
+
+for (const token of [
+  'alter table public.catalog_items',
+  'add column if not exists wms_inventory_id bigint',
+  'add column if not exists wms_sku text',
+  'add column if not exists wms_matched_at timestamptz',
+  'catalog_items_wms_inventory_idx',
+]) {
+  assert(wmsMatchMigration.includes(token), `catalog_items WMS match migration missing token: ${token}`);
 }
 
 for (const token of [
@@ -66,6 +77,10 @@ for (const token of [
   '=IMAGE("',
   'Staronemall PNO',
   'Staronemall URL',
+  'WMS SKU',
+  'WMS Inventory ID',
+  'wms_inventory_id,wms_sku,wms_matched_at',
+  "if (item.wms_sku || item.wms_inventory_id) return 'Linked';",
   'requireUser(req)',
   "const SHEET_SYNC_DIRECTION = 'DB_TO_GOOGLE_SHEET'",
   "const SHEET_AUTH_MODE = 'GOOGLE_SERVICE_ACCOUNT_JSON'",
@@ -79,7 +94,7 @@ for (const token of [
 const publicHeadersLine = api.match(/const PUBLIC_HEADERS = \[[^\n]+\]/)?.[0] || '';
 assert(!publicHeadersLine.includes('Staronemall'), 'public buyer headers must not expose StarOneMall URL or pno');
 assert(
-  api.includes('Catalog: [\n        PUBLIC_HEADERS,\n        ...coverageRows.map(publicRow),'),
+  /Catalog:\s*\[\s*PUBLIC_HEADERS,\s*\.\.\.coverageRows\.map\(publicRow\),\s*\]/.test(api),
   'Catalog tab must contain every B2B row and rely on the Availability column/filter instead of splitting public tabs',
 );
 assert(
@@ -106,9 +121,12 @@ for (const token of [
   'id="b2b-conflict-modal"',
   'id="b2b-catalog-edit-modal"',
   'id="b2b-catalog-bulk-modal"',
+  'id="b2b-wms-match-modal"',
   'id="b2b-catalog-check-all"',
   'data-b2b-edit',
   'data-b2b-delete',
+  'data-b2b-wms-match',
+  'data-b2b-wms-match-select',
   'data-b2b-bulk-apply',
   'const B2B_CATEGORIES',
   'const B2B_AVAILABILITY',
@@ -130,6 +148,12 @@ for (const token of [
   'function renderB2bCatalogView',
   'function b2bMasterStatus',
   'function b2bWmsStatus',
+  'function b2bWmsCandidates',
+  'function b2bOpenWmsMatchModal',
+  'function b2bSaveWmsMatch',
+  'function b2bClearWmsMatch',
+  'wms_inventory_id,wms_sku,wms_matched_at',
+  "row.wms_sku || row.wms_inventory_id",
   "if (viewId === 'view-b2b-catalog') renderB2bCatalogView(false)",
 ]) {
   assert(html.includes(token), `V2 B2B catalog UI missing token: ${token}`);
@@ -163,6 +187,9 @@ for (const token of [
   "b2bEl('b2b-catalog-bulk-cancel')?.addEventListener('click', b2bCloseBulkEditModal)",
   "b2bEl('b2b-conflict-close')?.addEventListener('click', b2bCloseConflictModal)",
   "b2bEl('b2b-conflict-cancel')?.addEventListener('click', b2bCloseConflictModal)",
+  "b2bEl('b2b-wms-match-close')?.addEventListener('click', b2bCloseWmsMatchModal)",
+  "b2bEl('b2b-wms-match-cancel')?.addEventListener('click', b2bCloseWmsMatchModal)",
+  "b2bEl('b2b-wms-match-clear')?.addEventListener('click', b2bClearWmsMatch)",
 ]) {
   assert(html.includes(token), `B2B modal close behavior regression missing token: ${token}`);
 }

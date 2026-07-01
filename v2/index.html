@@ -2574,6 +2574,25 @@
     .b2b-chip.linked, .b2b-chip.found { color: #15803d; border-color: #bbf7d0; background: #f0fdf4; }
     .b2b-chip.missing { color: #9f1239; border-color: #fecdd3; background: #fff1f2; }
     .b2b-chip.review { color: #92400e; border-color: #fde68a; background: #fffbeb; }
+    .b2b-wms-match-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+      margin-top: 10px;
+    }
+    .b2b-wms-match-table th,
+    .b2b-wms-match-table td {
+      border-bottom: 1px solid var(--border);
+      padding: 7px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .b2b-wms-match-table th {
+      background: #f8fafc;
+      color: #344054;
+      font-size: 11px;
+      white-space: nowrap;
+    }
     .b2b-modal-overlay {
       display: none;
       position: fixed;
@@ -4804,7 +4823,7 @@
                 <th>Master</th>
                 <th>WMS</th>
                 <th>Supply Note</th>
-                <th style="width:116px;">Actions</th>
+                <th style="width:230px;">Actions</th>
               </tr>
             </thead>
             <tbody id="b2b-catalog-body">
@@ -5133,6 +5152,26 @@
     <div class="b2b-modal-footer">
       <button type="button" id="b2b-catalog-bulk-cancel">Cancel</button>
       <button type="button" id="b2b-catalog-bulk-save" class="primary">Apply to selected</button>
+    </div>
+  </div>
+</div>
+
+<div class="b2b-modal-overlay" id="b2b-wms-match-modal" aria-hidden="true">
+  <div class="b2b-modal" role="dialog" aria-modal="true" aria-labelledby="b2b-wms-match-title">
+    <div class="b2b-modal-header">
+      <div>
+        <h2 id="b2b-wms-match-title" style="font-size:16px;margin:0;">Match WMS inventory</h2>
+        <div class="b2b-subtitle">Choose the exact WMS SKU for this internal catalog row.</div>
+      </div>
+      <button type="button" id="b2b-wms-match-close">Close</button>
+    </div>
+    <div class="b2b-modal-body">
+      <div id="b2b-wms-match-body"></div>
+      <div id="b2b-wms-match-error" class="notice error" style="display:none;margin-top:12px;"></div>
+    </div>
+    <div class="b2b-modal-footer">
+      <button type="button" id="b2b-wms-match-clear">Clear match</button>
+      <button type="button" id="b2b-wms-match-cancel">Cancel</button>
     </div>
   </div>
 </div>
@@ -29278,6 +29317,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     catalogRows: [],
     catalogSelectedIds: new Set(),
     editingCatalogId: '',
+    matchingCatalogId: '',
     conflicts: [],
     masterPnos: new Set(),
     wmsRows: [],
@@ -29686,25 +29726,32 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return b2bCatalogState.masterPnos.has(String(row.staronemall_pno || '').trim()) ? 'Linked' : 'Missing';
   }
 
-  function b2bWmsStatus(row) {
+  function b2bWmsCandidates(row) {
     const artist = b2bNormalize(row.artist);
     const release = b2bNormalize(row.release_title);
-    const edition = b2bNormalize(row.edition);
-    const hits = (b2bCatalogState.wmsRows || []).filter(function(wms) {
+    return (b2bCatalogState.wmsRows || []).filter(function(wms) {
       const idol = b2bNormalize(wms.idol);
       const album = b2bNormalize(wms.album);
       if (artist && idol && !idol.includes(artist) && !artist.includes(idol)) return false;
       if (release && album && !album.includes(release) && !release.includes(album)) return false;
       return true;
     });
+  }
+
+  function b2bWmsCandidateMatchesEdition(row, wms) {
+    const edition = b2bNormalize(row.edition);
+    if (!edition || edition === 'standard') return true;
+    const version = b2bNormalize(wms.version);
+    const member = b2bNormalize(wms.member);
+    return (version && (version.includes(edition) || edition.includes(version)))
+      || (member && (member.includes(edition) || edition.includes(member)));
+  }
+
+  function b2bWmsStatus(row) {
+    if (row.wms_sku || row.wms_inventory_id) return 'Linked';
+    const hits = b2bWmsCandidates(row);
     if (!hits.length) return 'Missing';
-    if (!edition || edition === 'standard') return 'Found';
-    return hits.some(function(wms) {
-      const version = b2bNormalize(wms.version);
-      const member = b2bNormalize(wms.member);
-      return (version && (version.includes(edition) || edition.includes(version)))
-        || (member && (member.includes(edition) || edition.includes(member)));
-    }) ? 'Found' : 'Review';
+    return hits.some(function(wms) { return b2bWmsCandidateMatchesEdition(row, wms); }) ? 'Found' : 'Review';
   }
 
   function b2bChip(value) {
@@ -29726,6 +29773,151 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (!el) return;
     el.textContent = message || '';
     el.style.display = message ? 'block' : 'none';
+  }
+
+  function b2bReplaceCatalogRow(updated) {
+    if (!updated?.id) return;
+    b2bCatalogState.catalogRows = (b2bCatalogState.catalogRows || []).map(function(row) {
+      return String(row.id || '') === String(updated.id || '') ? updated : row;
+    });
+  }
+
+  function b2bWmsCandidateById(row, wmsId) {
+    const id = String(wmsId || '');
+    return b2bWmsCandidates(row).find(function(wms) {
+      return String(wms.id || '') === id;
+    }) || null;
+  }
+
+  function b2bWmsMatchRowHtml(row, wms) {
+    const exact = b2bWmsCandidateMatchesEdition(row, wms);
+    const current = String(row.wms_inventory_id || '') === String(wms.id || '')
+      || (String(row.wms_sku || '').trim() && String(row.wms_sku || '').trim() === String(wms.sku || '').trim());
+    const button = current
+      ? '<button type="button" disabled>Current</button>'
+      : '<button type="button" class="primary" data-b2b-wms-match-select="' + esc(wms.id || '') + '">Use</button>';
+    return '<tr>'
+      + '<td class="mono">' + esc(wms.sku || '') + '</td>'
+      + '<td>' + esc(wms.idol || '') + '</td>'
+      + '<td>' + esc(wms.album || '') + '</td>'
+      + '<td>' + esc(wms.version || '') + '</td>'
+      + '<td>' + esc(wms.member || '') + '</td>'
+      + '<td>' + b2bChip(exact ? 'Found' : 'Review') + '</td>'
+      + '<td>' + button + '</td>'
+      + '</tr>';
+  }
+
+  function b2bRenderWmsMatchBody(row) {
+    const body = b2bEl('b2b-wms-match-body');
+    if (!body) return;
+    const candidates = b2bWmsCandidates(row).slice().sort(function(a, b) {
+      const aExact = b2bWmsCandidateMatchesEdition(row, a) ? 0 : 1;
+      const bExact = b2bWmsCandidateMatchesEdition(row, b) ? 0 : 1;
+      return aExact - bExact || String(a.sku || '').localeCompare(String(b.sku || ''));
+    });
+    const currentMatch = row.wms_sku || row.wms_inventory_id
+      ? 'Current WMS match: ' + [row.wms_sku, row.wms_inventory_id ? '#' + row.wms_inventory_id : ''].filter(Boolean).join(' / ')
+      : 'No WMS match saved.';
+    const heading = '<div class="b2b-status" style="margin-bottom:8px;">'
+      + esc([row.artist, row.release_title, row.edition].filter(Boolean).join(' / '))
+      + '</div><div class="b2b-status">' + esc(currentMatch) + '</div>';
+    if (!candidates.length) {
+      body.innerHTML = heading + '<div class="cat-empty" style="margin-top:10px;">No WMS candidates found for this artist/release. Refresh catalog after WMS inventory changes.</div>';
+      return;
+    }
+    body.innerHTML = heading
+      + '<table class="b2b-wms-match-table"><thead><tr>'
+      + '<th>SKU</th><th>Idol</th><th>Album</th><th>Version</th><th>Member</th><th>Auto</th><th>Action</th>'
+      + '</tr></thead><tbody>'
+      + candidates.map(function(wms) { return b2bWmsMatchRowHtml(row, wms); }).join('')
+      + '</tbody></table>';
+    body.querySelectorAll('[data-b2b-wms-match-select]').forEach(function(btn) {
+      btn.addEventListener('click', function() { b2bSaveWmsMatch(btn.dataset.b2bWmsMatchSelect); });
+    });
+  }
+
+  function b2bOpenWmsMatchModal(rowId) {
+    const row = b2bCatalogRowById(rowId);
+    if (!row) return;
+    b2bCatalogState.matchingCatalogId = String(row.id || '');
+    b2bSetModalError('b2b-wms-match-error', '');
+    b2bRenderWmsMatchBody(row);
+    const clear = b2bEl('b2b-wms-match-clear');
+    if (clear) clear.disabled = !(row.wms_sku || row.wms_inventory_id);
+    const modal = b2bEl('b2b-wms-match-modal');
+    if (modal) {
+      modal.classList.add('show');
+      modal.setAttribute('aria-hidden', 'false');
+    }
+  }
+
+  function b2bCloseWmsMatchModal() {
+    const modal = b2bEl('b2b-wms-match-modal');
+    if (modal) {
+      modal.classList.remove('show');
+      modal.setAttribute('aria-hidden', 'true');
+    }
+    b2bCatalogState.matchingCatalogId = '';
+    b2bSetModalError('b2b-wms-match-error', '');
+  }
+
+  async function b2bSaveWmsMatch(wmsId) {
+    const row = b2bCatalogRowById(b2bCatalogState.matchingCatalogId);
+    if (!row) {
+      b2bSetModalError('b2b-wms-match-error', 'Catalog row was not found.');
+      return;
+    }
+    const wms = b2bWmsCandidateById(row, wmsId);
+    if (!wms) {
+      b2bSetModalError('b2b-wms-match-error', 'WMS candidate was not found. Refresh catalog and try again.');
+      return;
+    }
+    const numericId = Number(wms.id);
+    const patch = {
+      wms_inventory_id: Number.isFinite(numericId) ? Math.trunc(numericId) : null,
+      wms_sku: String(wms.sku || '').trim() || null,
+      wms_matched_at: new Date().toISOString(),
+    };
+    try {
+      const { data, error } = await db
+        .from('catalog_items')
+        .update(patch)
+        .eq('id', row.id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      b2bReplaceCatalogRow(data);
+      b2bRenderCatalogRows();
+      b2bCloseWmsMatchModal();
+      b2bSetStatus('WMS match saved: ' + (patch.wms_sku || patch.wms_inventory_id) + '. Sync Google Sheet when ready.');
+      showToast('B2B WMS match saved', 'ok');
+    } catch (e) {
+      b2bSetModalError('b2b-wms-match-error', 'WMS match save failed: ' + (e.message || e));
+    }
+  }
+
+  async function b2bClearWmsMatch() {
+    const row = b2bCatalogRowById(b2bCatalogState.matchingCatalogId);
+    if (!row) {
+      b2bSetModalError('b2b-wms-match-error', 'Catalog row was not found.');
+      return;
+    }
+    try {
+      const { data, error } = await db
+        .from('catalog_items')
+        .update({ wms_inventory_id: null, wms_sku: null, wms_matched_at: null })
+        .eq('id', row.id)
+        .select('*')
+        .single();
+      if (error) throw error;
+      b2bReplaceCatalogRow(data);
+      b2bRenderCatalogRows();
+      b2bCloseWmsMatchModal();
+      b2bSetStatus('WMS match cleared. Sync Google Sheet when ready.');
+      showToast('B2B WMS match cleared', 'ok');
+    } catch (e) {
+      b2bSetModalError('b2b-wms-match-error', 'WMS match clear failed: ' + (e.message || e));
+    }
   }
 
   function b2bCatalogPatchFromValues(values) {
@@ -30034,6 +30226,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         + '<td>' + b2bChip(wms) + '</td>'
         + '<td>' + esc(row.supply_note || '') + '</td>'
         + '<td style="white-space:nowrap;">'
+        + '<button type="button" data-b2b-wms-match="' + esc(row.id || '') + '" style="font-size:11px;padding:4px 8px;">Match WMS</button> '
         + '<button type="button" data-b2b-edit="' + esc(row.id || '') + '" style="font-size:11px;padding:4px 8px;">Edit</button> '
         + '<button type="button" data-b2b-delete="' + esc(row.id || '') + '" style="font-size:11px;padding:4px 8px;background:#fee2e2;color:#991b1b;">Delete</button>'
         + '</td>'
@@ -30050,6 +30243,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     });
     body.querySelectorAll('[data-b2b-edit]').forEach(function(btn) {
       btn.addEventListener('click', function() { b2bOpenCatalogEditModal(btn.dataset.b2bEdit); });
+    });
+    body.querySelectorAll('[data-b2b-wms-match]').forEach(function(btn) {
+      btn.addEventListener('click', function() { b2bOpenWmsMatchModal(btn.dataset.b2bWmsMatch); });
     });
     body.querySelectorAll('[data-b2b-delete]').forEach(function(btn) {
       btn.addEventListener('click', function() { b2bDeleteCatalogRows([btn.dataset.b2bDelete]); });
@@ -30068,7 +30264,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     try {
       const { data, error } = await db
         .from('catalog_items')
-        .select('*')
+        .select('id,artist,release_title,edition,category,availability_status,retail_price_krw,supply_note,main_image_url,staronemall_url,staronemall_pno,source_option_key,raw_title,raw_payload,manual_discontinued,last_crawled_at,wms_inventory_id,wms_sku,wms_matched_at,created_at,updated_at')
         .order('artist', { ascending: true })
         .order('release_title', { ascending: true })
         .order('edition', { ascending: true });
@@ -30159,6 +30355,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     b2bEl('b2b-conflict-close')?.addEventListener('click', b2bCloseConflictModal);
     b2bEl('b2b-conflict-cancel')?.addEventListener('click', b2bCloseConflictModal);
     b2bEl('b2b-conflict-confirm')?.addEventListener('click', b2bConfirmConflictOverwrite);
+    b2bEl('b2b-wms-match-close')?.addEventListener('click', b2bCloseWmsMatchModal);
+    b2bEl('b2b-wms-match-cancel')?.addEventListener('click', b2bCloseWmsMatchModal);
+    b2bEl('b2b-wms-match-clear')?.addEventListener('click', b2bClearWmsMatch);
   }
 
   initCatRegionFilters();

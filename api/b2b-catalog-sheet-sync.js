@@ -22,6 +22,8 @@ const INTERNAL_HEADERS = [
   'Supply Note',
   'Master Status',
   'WMS Status',
+  'WMS SKU',
+  'WMS Inventory ID',
   'Staronemall PNO',
   'Staronemall URL',
   'Raw Title',
@@ -36,7 +38,7 @@ const SHEET_AUTH_MODE = 'GOOGLE_SERVICE_ACCOUNT_JSON';
 const COLUMN_MAPPING = {
   public_tabs: PUBLIC_HEADERS,
   internal_coverage: INTERNAL_HEADERS,
-  hidden_internal_columns: ['Master Status', 'WMS Status', 'Staronemall PNO', 'Staronemall URL', 'Raw Title', 'Updated At'],
+  hidden_internal_columns: ['Master Status', 'WMS Status', 'WMS SKU', 'WMS Inventory ID', 'Staronemall PNO', 'Staronemall URL', 'Raw Title', 'Updated At'],
 };
 
 function json(res, body, status = 200) {
@@ -199,6 +201,7 @@ function masterStatus(item, productPnos) {
 }
 
 function wmsStatus(item, inventoryRows) {
+  if (item.wms_sku || item.wms_inventory_id) return 'Linked';
   const artist = normalizeText(item.artist);
   const release = normalizeText(item.release_title);
   const edition = normalizeText(item.edition);
@@ -320,7 +323,7 @@ module.exports = async function handler(req, res) {
     const [catalogRows, productRows] = await Promise.all([
       supabaseFetch(
         'catalog_items',
-        '?select=id,artist,release_title,edition,category,availability_status,retail_price_krw,supply_note,main_image_url,staronemall_url,staronemall_pno,raw_title,updated_at&order=artist.asc,release_title.asc,edition.asc',
+        '?select=id,artist,release_title,edition,category,availability_status,retail_price_krw,supply_note,main_image_url,staronemall_url,staronemall_pno,wms_inventory_id,wms_sku,wms_matched_at,raw_title,updated_at&order=artist.asc,release_title.asc,edition.asc',
         auth.token,
         20000,
       ),
@@ -355,6 +358,8 @@ module.exports = async function handler(req, res) {
           row.supply_note || '',
           row.master_status,
           row.wms_status,
+          row.wms_sku || '',
+          row.wms_inventory_id || '',
           row.staronemall_pno || '',
           row.staronemall_url || '',
           row.raw_title || '',

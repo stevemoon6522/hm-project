@@ -488,6 +488,7 @@ function mapBridgeError(status: number, raw: any): AdapterErrorCode {
   if (status === 401 || status === 403 || text.includes('auth') || text.includes('token') || text.includes('oauth')) return 'PLATFORM_AUTH_FAILED';
   if (status === 429 || text.includes('throttl') || text.includes('rate')) return 'PLATFORM_THROTTLED';
   if (status === 404 || text.includes('not_found') || text.includes('not found') || text.includes('product_not_found')) return 'PLATFORM_NOT_FOUND';
+  if (status === 409 || text.includes('duplicate_sku') || text.includes('ambiguous')) return 'PLATFORM_VALIDATION_ERROR';
   if (status === 400 || text.includes('required') || text.includes('invalid') || text.includes('usererrors')) return 'PLATFORM_VALIDATION_ERROR';
   return 'PLATFORM_UNKNOWN';
 }

@@ -14801,12 +14801,13 @@ Current SKU(s): ${text(currentSkuLine)}</div>
   }
 
   function normalizePlatformSyncTargets(platforms) {
-    const allowed = ['shopee', 'joom', 'qoo10', 'ebay'];
+    const defaultTargets = ['shopee', 'joom', 'qoo10', 'ebay'];
+    const allowed = [...defaultTargets, 'shopify'];
     const requested = Array.isArray(platforms) ? platforms : [];
     const clean = requested
       .map((platform) => String(platform || '').toLowerCase())
       .filter((platform, index, arr) => allowed.includes(platform) && arr.indexOf(platform) === index);
-    return clean.length ? clean : allowed;
+    return clean.length ? clean : defaultTargets;
   }
 
   async function syncPlatformSkusForProductIds(productIds, platforms = null) {

@@ -15,6 +15,10 @@
 // action === 'lookup-sku'
 // function shopifySearchString
 // const queryText = `sku:"${escapedSku}"`
+// const exactMatches = nodes.filter
+// norm(node?.sku) === sku || norm(node?.inventoryItem?.sku) === sku
+// exactMatches.length > 1 duplicate_sku
+// exact_match_count
 // productCreate
 // productUpdate
 // async function archiveProduct

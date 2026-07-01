@@ -165,6 +165,11 @@ function platformListingMappingStatus(adapterResult: any): 'mapped' | 'needs_rev
   return 'needs_review';
 }
 
+function platformLookupShopId(platform: string, raw: any, fallback: string | undefined): string | null {
+  if (platform === 'shopify') return String(raw?.shop_domain || fallback || '').trim() || null;
+  return fallback ?? null;
+}
+
 async function clearRemoteMissingMapping(
   svc: any,
   args: {
@@ -850,11 +855,11 @@ Deno.serve(async (req: Request): Promise<Response> => {
       rpcArgs = {
         p_master_product_id: master_product_id,
         p_platform: platform,
-        p_external_sku: product.sku,
+        p_external_sku: platform === 'shopify' ? (raw.sku || product.sku) : product.sku,
         p_platform_item_id: adapterResult.platformItemId ?? raw.joom_product_id ?? raw.platform_item_id ?? raw.verification?.listing_id ?? null,
         p_external_variant_id: raw.joom_variant_id ?? raw.variant_id ?? offer?.offerId ?? offer?.legacyVariantId ?? offer?.sku ?? null,
         p_country: country ?? null,
-        p_shop_id: shop_id ?? null,
+        p_shop_id: platformLookupShopId(platform, raw, shop_id),
         p_listing_status: adapterResult.listingStatus,
         p_raw_payload: raw,
       };

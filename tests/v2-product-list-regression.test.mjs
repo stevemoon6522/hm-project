@@ -527,7 +527,7 @@ test('master register flow has a manual option-image management modal and sends 
 });
 
 test('platform SKU sync includes Shopee lookup-sku and absorbs matched region ids', () => {
-  assert.match(platformSync, /const allowed = \['shopee', 'joom', 'qoo10', 'ebay'\]/, 'product list platform sync default targets should include Shopee');
+  assert.match(platformSync, /const defaultTargets = \['shopee', 'joom', 'qoo10', 'ebay'\]/, 'product list platform sync default targets should include Shopee');
   assert.match(platformSync, /const targetPlatforms = normalizePlatformSyncTargets\(options\.platforms\)/, 'platform SKU sync should accept a narrowed platform target list');
   assert.match(platformSync, /async function syncPlatformSkusForProductIds\(productIds, platforms = null\)[\s\S]*return await syncPlatformSkus\(\{ platforms \}\)/, 'platform tab SKU mapping should pass selected product IDs with narrowed platform targets');
   assert.doesNotMatch(platformSync, /rollupListedCountForLed\(rollup, platform\) > 0\)[\s\S]{0,120}continue;/, 'green LED rows must be remotely rechecked instead of skipped');
@@ -702,6 +702,24 @@ test('platform SKU sync absorbs Joom/Qoo10/eBay lookup hits through platform-pub
   assert.match(coverageLookup, /async function coverageLookupQoo10BySku\(sku, productId\)[\s\S]*coverageLookupViaPlatformPublish\('qoo10', sku, productId\)/, 'Qoo10 SKU sync should use platform-publish so stale mappings are cleared server-side');
   assert.match(coverageLookup, /syncedByPlatformPublish/, 'platform-publish lookup responses should not be re-synced by the browser');
   assert.match(coverageLookup, /listingStatus === 'not_listed'[\s\S]*notFound: true/, 'non-Shopee not_listed sync responses should clear stale LEDs');
+});
+
+test('Shopify platform SKU sync keeps the explicit Shopify target', () => {
+  const normalizeFactory = new Function(
+    `${extractFunctionBlock(html, 'normalizePlatformSyncTargets')}; return normalizePlatformSyncTargets;`,
+  );
+  const normalizePlatformSyncTargets = normalizeFactory();
+
+  assert.deepEqual(
+    normalizePlatformSyncTargets(['shopify']),
+    ['shopify'],
+    'Shopify tab SKU sync must not fall back to Shopee/Joom/Qoo10/eBay',
+  );
+  assert.deepEqual(
+    normalizePlatformSyncTargets(['shopify', 'joom', 'shopify']),
+    ['shopify', 'joom'],
+    'explicit sync targets should preserve Shopify and de-duplicate in request order',
+  );
 });
 
 test('Joom registration stores pending/non-active responses without marking them mapped', () => {

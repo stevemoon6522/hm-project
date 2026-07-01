@@ -701,14 +701,30 @@ async function handleLookupSku(req: Request): Promise<Response> {
     return jsonResp({ ok: false, error: graphErrorMessage(raw), raw }, status || 502);
   }
   const nodes = raw?.data?.productVariants?.nodes || [];
-  const hit = nodes.find((node: any) => norm(node?.sku) === sku) || nodes[0] || null;
-  if (!hit) {
-    return jsonResp({ ok: false, error: 'product_not_found', sku, raw }, 404);
+  const exactMatches = nodes.filter((node: any) => norm(node?.sku) === sku || norm(node?.inventoryItem?.sku) === sku);
+  if (!exactMatches.length) {
+    return jsonResp({ ok: false, error: 'product_not_found', sku, match_count: nodes.length, exact_match_count: 0, raw }, 404);
   }
+  if (exactMatches.length > 1) {
+    return jsonResp({
+      ok: false,
+      error: 'duplicate_sku',
+      message: `Shopify SKU is ambiguous: ${sku}`,
+      sku,
+      match_count: nodes.length,
+      exact_match_count: exactMatches.length,
+      product_ids: exactMatches.map((node: any) => node?.product?.id).filter(Boolean),
+      variant_ids: exactMatches.map((node: any) => node?.id).filter(Boolean),
+      raw,
+    }, 409);
+  }
+  const hit = exactMatches[0];
   return jsonResp({
     ok: true,
     shop_domain: shop.shop_domain,
     sku,
+    match_count: nodes.length,
+    exact_match_count: exactMatches.length,
     product_id: hit.product?.id || null,
     platform_item_id: hit.product?.id || null,
     variant_id: hit.id,

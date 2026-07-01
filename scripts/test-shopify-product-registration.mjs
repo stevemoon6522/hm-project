@@ -90,6 +90,7 @@ assert.match(shopifyAdapter, /async function preflightShopifyDuplicateSkus/, 'Sh
 assert.match(shopifyAdapter, /duplicate_sku_preflight:\s*true/, 'Shopify dry-run payload must declare duplicate SKU preflight coverage');
 assert.match(shopifyAdapter, /preflightShopifyDuplicateSkus\(payload, userToken\)/, 'Shopify live create must run duplicate SKU preflight before mutation');
 assert.match(shopifyAdapter, /SHOPIFY_DUPLICATE_SKU/, 'Shopify duplicate SKU preflight must return a clear machine-readable marker');
+assert.match(shopifyAdapter, /status === 409[\s\S]*duplicate_sku[\s\S]*PLATFORM_VALIDATION_ERROR/, 'Shopify sync must report duplicate SKU lookup as a validation error');
 assert.match(shopifyAdapter, /publishableGroupRows\(ctx\.masterProduct/, 'Shopify adapter must support grouped master variants');
 assert.match(shopifyAdapter, /productVariantsBulkCreate/, 'Shopify adapter dry-run payload must expose variant bulk intent');
 assert.match(shopifyAdapter, /option_products/, 'Shopify adapter must return option mapping hints for grouped creates');
@@ -170,6 +171,13 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   assert.match(source, /action === 'lookup-sku'/, `${label} Shopify bridge must expose SKU lookup`);
   assert.match(source, /function shopifySearchString/, `${label} Shopify lookup must escape search query values`);
   assert.match(source, /const queryText = `sku:"\$\{escapedSku\}"`/, `${label} Shopify lookup must quote SKU searches so hyphenated SKUs are exact`);
+  const lookupSkuBlock = source.slice(source.indexOf('async function handleLookupSku'), source.indexOf('async function handleRequest'));
+  const lookupSource = lookupSkuBlock || source;
+  assert.match(lookupSource, /const exactMatches = nodes\.filter/, `${label} Shopify lookup must filter exact SKU matches after Shopify search`);
+  assert.match(lookupSource, /norm\(node\?\.sku\) === sku \|\| norm\(node\?\.inventoryItem\?\.sku\) === sku/, `${label} Shopify lookup must verify the variant or inventory item SKU exactly`);
+  assert.match(lookupSource, /exactMatches\.length > 1[\s\S]*duplicate_sku/, `${label} Shopify lookup must reject duplicate exact SKU hits`);
+  assert.match(lookupSource, /exact_match_count/, `${label} Shopify lookup responses must expose exact match diagnostics`);
+  assert.doesNotMatch(lookupSkuBlock, /nodes\.find[\s\S]*\|\| nodes\[0\]/, `${label} Shopify lookup must not fall back to the first fuzzy SKU result`);
   assert.match(source, /productCreate/, `${label} Shopify bridge must call productCreate`);
   assert.match(source, /function shopifyProductStatus/, `${label} Shopify bridge must sanitize requested Shopify product status`);
   assert.match(source, /status:\s*shopifyProductStatus\(product\.status\)/, `${label} Shopify productCreate must honor the adapter status`);

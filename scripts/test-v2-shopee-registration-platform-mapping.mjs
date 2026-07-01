@@ -43,6 +43,7 @@ const recordRegistrationMapping = extractFunction(bridge, 'recordRegistrationMap
 const finalizePublishOutcomeAfterSuccess = extractFunction(bridge, 'finalizePublishOutcomeAfterSuccess');
 const fetchShopeeModelMappingRowsForPublishedItem = extractFunction(bridge, 'fetchShopeeModelMappingRowsForPublishedItem');
 const reconcilePublishResultsWithPublishedList = extractFunction(bridge, 'reconcilePublishResultsWithPublishedList');
+const buildShopeePublishMappingRows = extractFunction(bridge, 'buildShopeePublishMappingRows');
 const addItemBlock = sliceBetween(
   bridge,
   "if (action === 'add_item' && req.method === 'POST')",
@@ -99,6 +100,26 @@ assert.match(
   finalizePublishOutcomeAfterSuccess,
   /model_mappings/,
   'successful publish finalization must attach enriched model mappings to the publish result',
+);
+assert.doesNotMatch(
+  finalizePublishOutcomeAfterSuccess,
+  /outcome\.ok\s*=\s*false/,
+  'post-publish price sync failures must not overwrite an already published item result as a region failure',
+);
+assert.match(
+  finalizePublishOutcomeAfterSuccess,
+  /price_sync_stage:\s*'post_publish_price_sync'|outcome\.price_sync_stage\s*=\s*'post_publish_price_sync'/,
+  'post-publish price sync failures must be reported as a separate warning stage',
+);
+assert.match(
+  finalizePublishOutcomeAfterSuccess,
+  /needs_price_review/,
+  'post-publish price sync failures must flag the mapped listing for price review',
+);
+assert.match(
+  buildShopeePublishMappingRows,
+  /const status = shopItemId \? 'mapped' : 'failed'/,
+  'Shopee mapping rows must stay mapped when Shopee returned an item_id even if a post-publish warning is present',
 );
 assert.match(
   fetchShopeeModelMappingRowsForPublishedItem,

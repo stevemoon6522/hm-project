@@ -37364,7 +37364,14 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 for (const row of shopeeRows) {
                   for (const res of normalizedResults) {
                     const rgn = String(res.region || '').toUpperCase();
-                    const mapped = !!(res.ok && res.item_id);
+                    const mapped = !!(res.item_id);
+                    const priceSyncWarning = mapped && (
+                      res.price_sync_warning
+                        || (res.needs_price_review ? 'post-publish price sync needs review' : '')
+                        || (res.price_sync && res.price_sync.ok === false
+                          ? (res.price_sync.error || res.price_sync.stage || 'post-publish price sync failed')
+                          : '')
+                    );
                     listingUpserts.push({
                       product_id:      row.product_id,
                       account_key:     accountKey,
@@ -37379,6 +37386,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                       published_at:    mapped ? nowIso : null,
                       last_synced_at:  nowIso,
                       updated_at:      nowIso,
+                      raw_payload:     {
+                        source: 'master_promote_register_cbsc_result',
+                        publish_result: res,
+                        price_sync_warning: priceSyncWarning || null,
+                      },
                     });
                   }
                 }
@@ -37388,8 +37400,15 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 }
 
                 // 7. Update products from actual per-region results.
-                const failedRegions = normalizedResults.filter(r => !r.ok || !r.item_id).map(r => r.region);
-                const mappedRegions = normalizedResults.filter(r => r.ok && r.item_id).map(r => r.region);
+                const failedRegions = normalizedResults.filter(r => !r.item_id).map(r => r.region);
+                const mappedRegions = normalizedResults.filter(r => r.item_id).map(r => r.region);
+                const priceWarningRegions = normalizedResults
+                  .filter(r => r.item_id && (
+                    r.price_sync_warning
+                      || r.needs_price_review
+                      || (r.price_sync && r.price_sync.ok === false)
+                  ))
+                  .map(r => r.region);
                 const publishState = failedRegions.length === 0 && normalizedResults.length > 0
                   ? 'published'
                   : (mappedRegions.length > 0 ? 'partial_published' : 'publish_failed');
@@ -37409,6 +37428,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                       : `Shopee 발행 실패: ${failedRegions.join(', ')}`,
                     mappedRegions.length > 0 ? 'warn' : 'err'
                   );
+                } else if (priceWarningRegions.length > 0) {
+                  shopeeRows.forEach(r => {
+                    r.shopeePublishState = 'published';
+                    r.shopeePublishNote  = `Price review needed: ${priceWarningRegions.join(', ')}`;
+                  });
+                  showToast(`Shopee publish completed; price review needed: ${priceWarningRegions.join(', ')}`, 'warn');
                 } else {
                   shopeeRows.forEach(r => { r.shopeePublishState = 'published'; });
                   showToast(`Shopee 발행 완료 (global_item_id: ${globalItemId}, ${resultsArr.length}개 리전)`, 'ok');

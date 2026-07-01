@@ -130,9 +130,11 @@ assert(
 
 assert(
   bridge.includes('async function finalizePublishOutcomeAfterSuccess')
-    && bridge.includes("outcome.stage = 'post_publish_price_sync'")
+    && bridge.includes("outcome.price_sync_stage = 'post_publish_price_sync'")
+    && bridge.includes('outcome.needs_price_review = true')
+    && !sliceBetween(bridge, 'async function finalizePublishOutcomeAfterSuccess', 'function shopeePublishResultMessage').includes('outcome.ok = false')
     && registerCbscBlock.includes('await finalizePublishOutcomeAfterSuccess(outcome, targetRegion, target, body, accountKey)'),
-  'register_cbsc must sync shop prices after normal publish success and fail the region when price sync cannot be confirmed',
+  'register_cbsc must sync shop prices after normal publish success without converting post-publish price sync warnings into region publish failures',
 );
 
 for (const token of [

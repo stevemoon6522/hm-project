@@ -116,8 +116,8 @@ assert.match(
 );
 assert.match(
   masterPromoteBlock,
-  /const mapped = !!\(res\.ok && res\.item_id\)[\s\S]*status:\s*mapped \? 'mapped' : 'failed'/,
-  'master promote listing upsert must persist mapped/failed status only when item_id exists',
+  /const mapped = !!\(res\.item_id\)[\s\S]*priceSyncWarning[\s\S]*status:\s*mapped \? 'mapped' : 'failed'/,
+  'master promote listing upsert must persist mapped status whenever item_id exists and keep post-publish price sync as a warning',
 );
 
 assert.doesNotMatch(
@@ -228,7 +228,7 @@ assert.match(
 assert.match(
   batchRegister,
   /ok:\s*results\.length > 0 && results\.every\(\(row\) => row\?\.ok === true\)/,
-  'V2 batch registration must fail the overall response when any follow-up region publish fails',
+  'V2 batch registration must fail the overall response only when a region publish result fails',
 );
 assert.match(
   regionBatchOrder,

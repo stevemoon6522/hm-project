@@ -3367,18 +3367,21 @@ async function fetchShopeeModelMappingRowsForPublishedItem(region: string, itemI
 
 async function finalizePublishOutcomeAfterSuccess(outcome: any, region: string, target: any, body: any, accountKey = DEFAULT_SHOPEE_ACCOUNT_KEY) {
   if (!outcome?.ok || !outcome?.item_id) return outcome;
-  if (outcome.price_sync?.ok) return outcome;
-  try {
-    outcome.price_sync = await syncShopModelPricesAfterPublish(region, Number(outcome.item_id), target, body, accountKey);
-  } catch (e: any) {
-    outcome.price_sync = { ok: false, stage: 'price_sync_exception', error: String(e?.message || e) };
+  if (!outcome.price_sync) {
+    try {
+      outcome.price_sync = await syncShopModelPricesAfterPublish(region, Number(outcome.item_id), target, body, accountKey);
+    } catch (e: any) {
+      outcome.price_sync = { ok: false, stage: 'price_sync_exception', error: String(e?.message || e) };
+    }
   }
   if (outcome.price_sync?.ok === false) {
     const reason = outcome.price_sync.error || outcome.price_sync.stage || 'price sync failed';
-    outcome.ok = false;
-    outcome.stage = 'post_publish_price_sync';
-    outcome.error = reason;
+    outcome.price_sync_stage = 'post_publish_price_sync';
     outcome.price_sync_warning = reason;
+    outcome.needs_price_review = true;
+    const warnings = Array.isArray(outcome.post_publish_warnings) ? outcome.post_publish_warnings : [];
+    if (!warnings.includes('price_sync_failed')) warnings.push('price_sync_failed');
+    outcome.post_publish_warnings = warnings;
   }
   try {
     const modelMappings = await fetchShopeeModelMappingRowsForPublishedItem(region, Number(outcome.item_id), target, body, accountKey);
@@ -3437,7 +3440,7 @@ function buildShopeePublishMappingRows(globalItemId: number | null, body: any, t
     const rowGlobalItemId = Object.prototype.hasOwnProperty.call(info || {}, 'global_item_id')
       ? numberOrNull(info.global_item_id)
       : numberOrNull(globalItemId);
-    const status = info?.ok === true && shopItemId ? 'mapped' : 'failed';
+    const status = shopItemId ? 'mapped' : 'failed';
     const base = {
       account_key: accountKey,
       region,

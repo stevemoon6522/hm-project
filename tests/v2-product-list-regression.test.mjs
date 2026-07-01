@@ -536,6 +536,8 @@ test('platform SKU sync includes Shopee lookup-sku and absorbs matched region id
   assert.match(coverageLookup, /coverageLookupShopeePublishedBySku/, 'Shopee lookup should use the shared platform lookup entrypoint');
   assert.match(coverageLookup, /coverageNormalizeShopeeSkuLookupHit/, 'Shopee lookup-sku response should be normalized before absorb');
   assert.match(coverageLookup, /SHOPEE_BRIDGE\}\/lookup-sku\?\$\{qs\.toString\(\)\}/, 'Shopee sync should call the bridge SKU lookup route');
+  assert.match(coverageLookup, /ignore_negative_cache['"], ['"]1/, 'Shopee tab SKU mapping should force a fresh remote recheck instead of trusting stale not_listed cache');
+  assert.doesNotMatch(coverageLookup, /qs\.set\(['"]remote['"], ['"]1['"]\)/, 'Shopee tab cache bypass should not enable full shop-list scanning by default');
   assert.match(coverageLookup, /pushTerm\(productName\)[\s\S]*terms\.forEach\(\(term\) => qs\.append\('item_name', term\)\)/, 'Shopee sync should pass the selected master product name for remote item-name lookup');
   assert.match(coverageLookup, /regions: SHOPEE_PLATFORM_ACTIVE_REGIONS\.join\(','\)/, 'Shopee lookup should check every active marketplace region');
   assert.match(coverageLookup, /coverageAbsorbShopeePublishedHit/, 'Shopee hit should be absorbed into product_shopee_listings');
@@ -595,17 +597,20 @@ test('Shopee Global Product SKU lookup hits map without shop listing ids', async
       };
     },
   };
+  const mergedListings = [];
   const absorbFactory = new Function(
     'db',
     'SHOPEE_DEFAULT_ACCOUNT_KEY',
     'SHOPEE_LISTING_CONFLICT',
+    'coverageMergeShopeeListingIntoState',
     `${extractFunctionBlock(html, 'coverageAbsorbShopeePublishedHit')}; return coverageAbsorbShopeePublishedHit;`,
   );
-  const absorb = absorbFactory(db, 'starphotocard', 'product_id,account_key,region');
+  const absorb = absorbFactory(db, 'starphotocard', 'product_id,account_key,region', (payload) => mergedListings.push(payload));
   const count = await absorb('product-1', hit);
 
   assert.equal(count, 1);
   assert.equal(calls.length, 1);
+  assert.equal(mergedListings.length, 1);
   assert.equal(calls[0].table, 'product_shopee_listings');
   assert.equal(calls[0].payload.region, 'SG');
   assert.equal(calls[0].payload.global_item_id, 57356515280);

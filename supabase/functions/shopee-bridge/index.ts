@@ -6215,6 +6215,7 @@ Deno.serve(async (req) => {
       const max_global_items = Math.max(1, Math.min(1000, Number.isFinite(rawMaxGlobalItems) ? rawMaxGlobalItems : 300));
       const allowRemoteScan = ['1', 'true', 'yes'].includes(String(url.searchParams.get('remote') || url.searchParams.get('scan') || '').toLowerCase());
       const allowGlobalScan = ['1', 'true', 'yes'].includes(String(url.searchParams.get('global_scan') || url.searchParams.get('global') || '').toLowerCase());
+      const ignoreNegativeCache = ['1', 'true', 'yes'].includes(String(url.searchParams.get('ignore_negative_cache') || url.searchParams.get('refresh') || '').toLowerCase());
       const negativeCacheTtlMs = 15 * 60 * 1000;
       const negativeCacheStatuses = new Set(['not_listed', 'missing', 'inactive']);
       const region_results: any[] = [];
@@ -6269,7 +6270,8 @@ Deno.serve(async (req) => {
           if (!r) continue;
           const status = String(row.status || '').trim().toLowerCase();
           const lastSyncedMs = Date.parse(String(row.last_synced_at || ''));
-          const freshNegativeCache = !allowRemoteScan
+          const freshNegativeCache = !ignoreNegativeCache
+            && !allowRemoteScan
             && !allowGlobalScan
             && !row.shop_item_id
             && negativeCacheStatuses.has(status)
@@ -6336,7 +6338,7 @@ Deno.serve(async (req) => {
       const localMappingComplete = !allowGlobalScan && requestedRegions.length > 0 && requestedRegions.every((r) =>
         region_results.some((row: any) => String(row?.region || '').toUpperCase() === r && Number(row?.count || 0) > 0)
       );
-      const localNegativeCacheComplete = !allowGlobalScan && !allowRemoteScan && requestedRegions.length > 0 && requestedRegions.every((r) =>
+      const localNegativeCacheComplete = !ignoreNegativeCache && !allowGlobalScan && !allowRemoteScan && requestedRegions.length > 0 && requestedRegions.every((r) =>
         region_results.some((row: any) => {
           if (String(row?.region || '').toUpperCase() !== r) return false;
           if (Number(row?.count || 0) > 0) return true;

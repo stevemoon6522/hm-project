@@ -36,3 +36,23 @@ test('Shopee bridge exposes a SKU lookup route backed by official item_sku/model
     assert.match(source, /source_docs:[\s\S]*v2\.product\.search_item\.json:item_sku[\s\S]*v2\.product\.search_item\.json:item_name[\s\S]*v2\.product\.get_model_list\.json:model_sku[\s\S]*v2\.global_product\.get_global_item_list\.json:global_item_id[\s\S]*v2\.global_product\.get_global_item_info\.json:global_item_sku[\s\S]*v2\.global_product\.get_global_model_list\.json:global_model_sku[\s\S]*v2\.global_product\.get_published_list\.json:item_id/, `${label} bridge response should cite the local Shopee API docs used`);
   }
 });
+
+test('Shopee lookup can bypass stale negative cache without enabling full remote scan', () => {
+  for (const [label, source] of bridgeCopies) {
+    assert.match(
+      source,
+      /const ignoreNegativeCache = \['1', 'true', 'yes'\]\.includes\(String\(url\.searchParams\.get\('ignore_negative_cache'\) \|\| url\.searchParams\.get\('refresh'\) \|\| ''\)\.toLowerCase\(\)\)/,
+      `${label} GET lookup-sku should accept an explicit negative-cache bypass flag`,
+    );
+    assert.match(
+      source,
+      /const freshNegativeCache = !ignoreNegativeCache[\s\S]*&& !allowRemoteScan[\s\S]*&& !allowGlobalScan/,
+      `${label} negative-cache bypass should be independent from expensive remote/global scan flags`,
+    );
+    assert.match(
+      source,
+      /lookupShopeeSkuAcrossRegions\(remoteRegions, sku, max_items, accountKey, \{ scanFallback: allowRemoteScan, itemNameTerms: remoteSearchTerms \}\)/,
+      `${label} cache bypass must not turn on full scan fallback by itself`,
+    );
+  }
+});

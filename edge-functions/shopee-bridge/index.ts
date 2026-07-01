@@ -5858,14 +5858,27 @@ Deno.serve(async (req) => {
       const sku = String(url.searchParams.get('sku') || '').trim();
       if (!sku) return jsonResp({ ok: false, error: 'sku required' }, 400);
       const requestedRegions = parseTargetRegions(url.searchParams.get('regions') || url.searchParams.get('region'));
-      const rawMaxItems = parseInt(url.searchParams.get('max_items') || '5000');
+      const rawMaxItems = parseInt(url.searchParams.get('max_items') || url.searchParams.get('max_scan_items') || '5000');
       const max_items = Math.max(1, Math.min(5000, Number.isFinite(rawMaxItems) ? rawMaxItems : 5000));
       const rawMaxGlobalItems = parseInt(url.searchParams.get('max_global_items') || '300');
       const max_global_items = Math.max(1, Math.min(1000, Number.isFinite(rawMaxGlobalItems) ? rawMaxGlobalItems : 300));
       const allowRemoteScan = ['1', 'true', 'yes'].includes(String(url.searchParams.get('remote') || url.searchParams.get('scan') || '').toLowerCase());
+      const allowGlobalScan = ['1', 'true', 'yes'].includes(String(url.searchParams.get('global_scan') || url.searchParams.get('global') || '').toLowerCase());
+      const ignoreNegativeCache = ['1', 'true', 'yes'].includes(String(url.searchParams.get('ignore_negative_cache') || url.searchParams.get('refresh') || '').toLowerCase());
+      const negativeCacheTtlMs = 15 * 60 * 1000;
+      const negativeCacheStatuses = new Set(['not_listed', 'missing', 'inactive']);
       const region_results: any[] = [];
       const region_hits: any[] = [];
       const global_region_hits: any[] = [];
+      const lookupSkuSourceDocs = [
+        'docs_ai/apis/product/v2.product.search_item.json:item_sku',
+        'docs_ai/apis/product/v2.product.search_item.json:item_name',
+        'docs_ai/apis/product/v2.product.get_model_list.json:model_sku',
+        'docs_ai/apis/global_product/v2.global_product.get_global_item_list.json:global_item_id',
+        'docs_ai/apis/global_product/v2.global_product.get_global_item_info.json:global_item_sku',
+        'docs_ai/apis/global_product/v2.global_product.get_global_model_list.json:global_model_sku',
+        'docs_ai/apis/global_product/v2.global_product.get_published_list.json:item_id',
+      ];
       let global_lookup: any = null;
 
       const productRows: any[] = [];
@@ -5885,6 +5898,7 @@ Deno.serve(async (req) => {
       }
 
       let listingRows: any[] = [];
+      const negativeCacheRegions = new Set<string>();
       if (productRows.length) {
         const productById = new Map(productRows.map((row: any) => [String(row.id), row]));
         const listingResult = await supabase
@@ -5898,9 +5912,26 @@ Deno.serve(async (req) => {
         }
         listingRows = listingResult.data || [];
         const byRegion = new Map<string, any[]>();
+        const negativeByRegion = new Map<string, any[]>();
+        const nowMs = Date.now();
         for (const row of listingRows) {
           const r = String(row.region || '').toUpperCase();
-          if (!r || !row.shop_item_id) continue;
+          if (!r) continue;
+          const status = String(row.status || '').trim().toLowerCase();
+          const lastSyncedMs = Date.parse(String(row.last_synced_at || ''));
+          const freshNegativeCache = !ignoreNegativeCache
+            && !allowRemoteScan
+            && !allowGlobalScan
+            && !row.shop_item_id
+            && negativeCacheStatuses.has(status)
+            && Number.isFinite(lastSyncedMs)
+            && nowMs >= lastSyncedMs
+            && nowMs - lastSyncedMs <= negativeCacheTtlMs;
+          if (freshNegativeCache) {
+            if (!negativeByRegion.has(r)) negativeByRegion.set(r, []);
+            negativeByRegion.get(r)!.push(row);
+          }
+          if (!row.shop_item_id) continue;
           const product = productById.get(String(row.product_id)) || {};
           const hit = {
             source: 'product_shopee_listings',
@@ -5930,8 +5961,53 @@ Deno.serve(async (req) => {
           const matches = byRegion.get(r) || [];
           const hit = matches[0] || null;
           if (hit) region_hits.push(hit);
-          region_results.push({ region: r, ok: true, source: 'product_shopee_listings', hit, matches, count: matches.length });
+          if (hit) {
+            region_results.push({ region: r, ok: true, source: 'product_shopee_listings', hit, matches, count: matches.length });
+          } else {
+            const negativeMatches = negativeByRegion.get(r) || [];
+            const negative = negativeMatches[0] || null;
+            if (negative) {
+              negativeCacheRegions.add(r);
+              region_results.push({
+                region: r,
+                ok: true,
+                source: 'product_shopee_listings_negative_cache',
+                hit: null,
+                matches: [],
+                count: 0,
+                not_found: true,
+                last_synced_at: negative.last_synced_at || null,
+              });
+            } else {
+              region_results.push({ region: r, ok: true, source: 'product_shopee_listings', hit, matches, count: matches.length });
+            }
+          }
         }
+      }
+      const localMappingComplete = !allowGlobalScan && requestedRegions.length > 0 && requestedRegions.every((r) =>
+        region_results.some((row: any) => String(row?.region || '').toUpperCase() === r && Number(row?.count || 0) > 0)
+      );
+      const localNegativeCacheComplete = !ignoreNegativeCache && !allowGlobalScan && !allowRemoteScan && requestedRegions.length > 0 && requestedRegions.every((r) =>
+        region_results.some((row: any) => {
+          if (String(row?.region || '').toUpperCase() !== r) return false;
+          if (Number(row?.count || 0) > 0) return true;
+          return row?.not_found === true && String(row?.source || '') === 'product_shopee_listings_negative_cache';
+        })
+      );
+      if (localMappingComplete || localNegativeCacheComplete) {
+        return jsonResp({
+          ok: true,
+          account_key: accountKey,
+          sku,
+          regions: requestedRegions,
+          found: region_hits.length > 0,
+          not_found: region_hits.length === 0,
+          region_hits,
+          global_region_hits,
+          global_lookup: null,
+          region_results,
+          source_docs: lookupSkuSourceDocs,
+        });
       }
       const remoteSearchTerms = shopeeSkuLookupNameTerms([
         ...url.searchParams.getAll('item_name'),
@@ -5949,27 +6025,29 @@ Deno.serve(async (req) => {
       ]
         .map((value) => Number(value))
         .filter((value) => Number.isFinite(value) && value > 0);
-      global_lookup = await lookupShopeeGlobalSku('SG', sku, max_global_items, accountKey, {
-        itemNameTerms: remoteSearchTerms,
-        globalItemIds,
-      });
-      if (global_lookup?.found && global_lookup.hit) {
-        for (const r of requestedRegions) {
-          global_region_hits.push({
-            ...global_lookup.hit,
-            source: global_lookup.hit.lookup_source || 'global_model_list',
-            region: r,
-          });
-        }
-        const publishedLookup = await lookupShopeePublishedGlobalSkuAcrossRegions(requestedRegions, sku, global_lookup.hit, accountKey);
-        for (const hit of publishedLookup.region_hits || []) region_hits.push(hit);
-        if (Array.isArray(publishedLookup.errors) && publishedLookup.errors.length) {
-          global_lookup.published_errors = publishedLookup.errors;
+      if (globalItemIds.length || allowGlobalScan) {
+        global_lookup = await lookupShopeeGlobalSku('SG', sku, globalItemIds.length && !allowGlobalScan ? Math.max(1, globalItemIds.length) : max_global_items, accountKey, {
+          itemNameTerms: remoteSearchTerms,
+          globalItemIds,
+        });
+        if (global_lookup?.found && global_lookup.hit) {
+          for (const r of requestedRegions) {
+            global_region_hits.push({
+              ...global_lookup.hit,
+              source: global_lookup.hit.lookup_source || 'global_model_list',
+              region: r,
+            });
+          }
+          const publishedLookup = await lookupShopeePublishedGlobalSkuAcrossRegions(requestedRegions, sku, global_lookup.hit, accountKey);
+          for (const hit of publishedLookup.region_hits || []) region_hits.push(hit);
+          if (Array.isArray(publishedLookup.errors) && publishedLookup.errors.length) {
+            global_lookup.published_errors = publishedLookup.errors;
+          }
         }
       }
 
       const hitRegions = new Set(region_hits.map((hit: any) => String(hit?.region || '').toUpperCase()).filter(Boolean));
-      const remoteRegions = requestedRegions.filter((r) => !hitRegions.has(r));
+      const remoteRegions = requestedRegions.filter((r) => !hitRegions.has(r) && (allowRemoteScan || allowGlobalScan || !negativeCacheRegions.has(r)));
       if (remoteRegions.length) {
         const lookup = await lookupShopeeSkuAcrossRegions(remoteRegions, sku, max_items, accountKey, { scanFallback: allowRemoteScan, itemNameTerms: remoteSearchTerms });
         for (const hit of lookup.region_hits || []) region_hits.push(hit);
@@ -6015,15 +6093,7 @@ Deno.serve(async (req) => {
         global_region_hits,
         global_lookup,
         region_results,
-        source_docs: [
-          'docs_ai/apis/product/v2.product.search_item.json:item_sku',
-          'docs_ai/apis/product/v2.product.search_item.json:item_name',
-          'docs_ai/apis/product/v2.product.get_model_list.json:model_sku',
-          'docs_ai/apis/global_product/v2.global_product.get_global_item_list.json:global_item_id',
-          'docs_ai/apis/global_product/v2.global_product.get_global_item_info.json:global_item_sku',
-          'docs_ai/apis/global_product/v2.global_product.get_global_model_list.json:global_model_sku',
-          'docs_ai/apis/global_product/v2.global_product.get_published_list.json:item_id',
-        ],
+        source_docs: lookupSkuSourceDocs,
       });
     }
     if (action === 'batch_update_outlet_price' && req.method === 'POST') {

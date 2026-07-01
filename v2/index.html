@@ -31429,6 +31429,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         regions: SHOPEE_PLATFORM_ACTIVE_REGIONS.join(','),
         sku,
       });
+      qs.set('ignore_negative_cache', '1');
       const productName = String(product?.product_name || '').trim();
       const optionName = String(product?.option_name || '').trim();
       (context.globalItemIds || []).forEach((id) => qs.append('global_item_id', String(id)));

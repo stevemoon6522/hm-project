@@ -4833,30 +4833,6 @@
       <div class="panel" style="padding:20px;" id="fee-fields-panel">
         <div style="color:var(--muted);font-size:13px;">국가 탭을 선택하면 수수료 항목이 표시됩니다.</div>
       </div>
-      <div class="panel" style="padding:20px;margin-top:16px;" id="shopify-price-policy-panel">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;">
-          <div>
-            <h3 style="font-size:15px;margin:0 0 4px;">Shopify price policy</h3>
-            <div style="font-size:12px;color:var(--muted);">shopify_price_policy default row · used by platform-publish before product creation</div>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px;">
-            <span class="fee-save-status" id="shopify-policy-status">Loading...</span>
-            <button type="button" id="shopify-policy-reset-btn" style="font-size:12px;padding:5px 12px;">Reload</button>
-            <button type="button" id="shopify-policy-save-btn" class="primary" style="font-size:12px;padding:5px 12px;" disabled>Save</button>
-          </div>
-        </div>
-        <div id="shopify-policy-fields" class="fee-grid-v2">
-          <div class="fee-input-v2"><label>Selling currency</label><div class="fee-row"><input type="text" value="USD" data-shopify-policy-key="currency"><span class="fee-unit"></span></div><div class="fee-hint">Current Shopify selling currency.</div></div>
-          <div class="fee-input-v2"><label>KRW to selling currency</label><div class="fee-row"><input type="number" step="0.01" value="1460" data-shopify-policy-key="krw_per_usd"><span class="fee-unit">KRW</span></div><div class="fee-hint">KRW per 1 selling-currency unit.</div></div>
-          <div class="fee-input-v2"><label>Target margin</label><div class="fee-row"><input type="number" step="0.01" value="30" data-shopify-policy-key="target_margin_pct"><span class="fee-unit">%</span></div><div class="fee-hint">Target margin backed out of the final Shopify price.</div></div>
-          <div class="fee-input-v2"><label>Payment fee</label><div class="fee-row"><input type="number" step="0.01" value="1" data-shopify-policy-key="payment_fee_pct"><span class="fee-unit">%</span></div><div class="fee-hint">Shopify payment fee.</div></div>
-          <div class="fee-input-v2"><label>Transaction fee</label><div class="fee-row"><input type="number" step="0.01" value="10" data-shopify-policy-key="transaction_fee_pct"><span class="fee-unit">%</span></div><div class="fee-hint">Shopify transaction/platform fee.</div></div>
-          <div class="fee-input-v2"><label>Fixed operation fee</label><div class="fee-row"><input type="number" step="0.01" value="0" data-shopify-policy-key="fixed_operation_fee_pct"><span class="fee-unit">%</span></div><div class="fee-hint">Packing/operation overhead as a percentage.</div></div>
-          <div class="fee-input-v2"><label>Include shipping in price</label><div class="fee-row"><input type="checkbox" data-shopify-policy-key="include_shipping_in_price"><span class="fee-unit">toggle</span></div><div class="fee-hint">Off means shipping is handled by the Shopify carrier callback.</div></div>
-          <div class="fee-input-v2"><label>Initial product status</label><div class="fee-row"><select data-shopify-policy-key="default_status"><option value="ACTIVE" selected>ACTIVE</option><option value="DRAFT">DRAFT</option><option value="ARCHIVED">ARCHIVED</option></select><span class="fee-unit">status</span></div><div class="fee-hint">Status used when the row action does not override it.</div></div>
-          <div class="fee-input-v2"><label>Push inventory to Shopify</label><div class="fee-row"><input type="checkbox" data-shopify-policy-key="set_inventory"><span class="fee-unit">toggle</span></div><div class="fee-hint">Off keeps Shopify inventory creation/update disabled.</div></div>
-        </div>
-      </div>
     </div><!-- /view-fee-settings -->
 
       </section>
@@ -40021,7 +39997,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   // ════════════════════════════════════════════════════════════════
   // FEE / EXCHANGE-RATE SETTINGS  (ported from V1 §03 수수료/환율 설정)
   // Operates on country_settings table directly via Supabase client.
-  // Supported rows: SG TW TH MY PH BR JM Q10 EX (virtual marketplace rows included)
+  // Supported rows: SG TW TH MY PH BR JM Q10 EX + Shopify price policy.
   // ════════════════════════════════════════════════════════════════
   (() => {
     // Field definitions (mirrors V1 FEE_FIELDS)
@@ -40051,16 +40027,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       { key: 'other_fee', label: 'Megawari Fee', unit: '%', hint: 'Megawari event fee included in normal pricing. Default: 1%.', isPercent: true, defaultValue: 1 },
     ];
     function feeFieldsForCountry(code) {
+      if (code === 'SHOPIFY') return [];
       if (code === 'Q10') return FEE_QOO10_FIELDS;
       return code === 'EX' ? FEE_EBAY_FIELDS : FEE_FIELDS;
     }
 
     // Operating country codes in display order
-    const FEE_COUNTRIES = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'Q10', 'EX'];
+    const FEE_COUNTRIES = ['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'Q10', 'EX', 'SHOPIFY'];
     const FEE_COUNTRY_LABELS = {
       JM: 'Joom (Global)',
       Q10: 'Qoo10 JP',
       EX: 'eBay EX (가상)',
+      SHOPIFY: 'Shopify price policy',
     };
     const FEE_COUNTRY_CURRENCIES = {
       SG: 'SGD',
@@ -40125,6 +40103,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     let shopifyPolicyRow = null;
     let shopifyPolicyDirty = false;
 
+    function shopifyPolicyUpdateTabDirtyMarker() {
+      const tab = document.querySelector('[data-fee-code="SHOPIFY"]');
+      if (tab) tab.textContent = feeCountryLabel('SHOPIFY') + (shopifyPolicyDirty ? ' *' : '');
+    }
+
     function shopifyPolicySetStatus(message, cls) {
       const el = document.getElementById('shopify-policy-status');
       if (!el) return;
@@ -40158,6 +40141,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       shopifyPolicySetStatus('Unsaved changes', '');
       const saveBtn = document.getElementById('shopify-policy-save-btn');
       if (saveBtn) saveBtn.disabled = false;
+      shopifyPolicyUpdateTabDirtyMarker();
     }
 
     function shopifyPolicyFieldHtml(field, row) {
@@ -40194,6 +40178,23 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         '<span class="fee-unit">' + (field.unit || '') + '</span>' +
         '</div>' +
         '<div class="fee-hint">' + field.hint + '</div>' +
+        '</div>';
+    }
+
+    function renderShopifyPolicyPanel() {
+      return '<div id="shopify-price-policy-panel">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;flex-wrap:wrap;">' +
+        '<div>' +
+        '<h3 style="font-size:15px;margin:0 0 4px;">Shopify price policy</h3>' +
+        '<div style="font-size:12px;color:var(--muted);">shopify_price_policy default row · used by platform-publish before product creation</div>' +
+        '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;">' +
+        '<span class="fee-save-status" id="shopify-policy-status">Loading...</span>' +
+        '<button type="button" id="shopify-policy-reset-btn" style="font-size:12px;padding:5px 12px;">Reload</button>' +
+        '<button type="button" id="shopify-policy-save-btn" class="primary" style="font-size:12px;padding:5px 12px;" disabled>Save</button>' +
+        '</div>' +
+        '</div>' +
+        '<div id="shopify-policy-fields" class="fee-grid-v2"></div>' +
         '</div>';
     }
 
@@ -40234,6 +40235,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
       if (resetBtn) resetBtn.onclick = shopifyPolicyLoad;
       if (!shopifyPolicyDirty) shopifyPolicySetStatus('Loaded', 'ok');
+      shopifyPolicyUpdateTabDirtyMarker();
     }
 
     async function shopifyPolicyLoad() {
@@ -40358,7 +40360,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
       // Country tabs
       tabsEl.innerHTML = FEE_COUNTRIES.map(code => {
-        const label = feeCountryLabel(code) + (feeDirty.has(code) ? ' *' : '');
+        const dirty = code === 'SHOPIFY' ? shopifyPolicyDirty : feeDirty.has(code);
+        const label = feeCountryLabel(code) + (dirty ? ' *' : '');
         return '<button class="fee-country-tab' + (code === feeActiveCountry ? ' active' : '') + '" data-fee-code="' + code + '">' + label + '</button>';
       }).join('');
       tabsEl.querySelectorAll('.fee-country-tab').forEach(function(btn) {
@@ -40367,6 +40370,12 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
           feeRender();
         });
       });
+
+      if (feeActiveCountry === 'SHOPIFY') {
+        panelEl.innerHTML = renderShopifyPolicyPanel();
+        shopifyPolicyRender();
+        return;
+      }
 
       const row = feeRows[feeActiveCountry];
       if (!row) {
@@ -40533,6 +40542,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     // ── Load single row from DB ─────────────────────────────────
     async function feeLoadRow(code) {
+      if (code === 'SHOPIFY') return;
       const { data, error } = await db
         .from('country_settings')
         .select('*')
@@ -40548,7 +40558,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     // ── Load all operating rows ─────────────────────────────────
     async function feeInit() {
       await Promise.all([
-        Promise.all(FEE_COUNTRIES.map(feeLoadRow)),
+        Promise.all(FEE_COUNTRIES.filter(function(code) { return code !== 'SHOPIFY'; }).map(feeLoadRow)),
         shopifyPolicyLoad(),
       ]);
       feeRender();

@@ -34,6 +34,11 @@ assert.match(adapter, /set_inventory:\s*shopify\.set_inventory === true && polic
 assert.match(adapter, /pricing_policy:\s*policy/, 'Shopify dry-run payload must report the policy actually used');
 assert.doesNotMatch(adapter, /SHOPIFY_USD_PRICE_POLICY/, 'Hardcoded Shopify USD policy name must be retired from create path');
 
+assert.match(html, /FEE_COUNTRIES = \['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'Q10', 'EX', 'SHOPIFY'\]/, 'V2 fee settings must include Shopify in the top fee filter tabs');
+assert.match(html, /SHOPIFY: 'Shopify price policy'/, 'V2 fee settings must label the Shopify fee tab clearly');
+assert.match(html, /function renderShopifyPolicyPanel/, 'V2 fee settings must render Shopify policy through the active fee panel');
+assert.match(html, /feeActiveCountry === 'SHOPIFY'[\s\S]*renderShopifyPolicyPanel/, 'V2 fee settings must show Shopify policy when the Shopify tab is active');
+assert.match(html, /code === 'SHOPIFY' \? shopifyPolicyDirty : feeDirty\.has\(code\)/, 'V2 fee tabs must keep the Shopify dirty marker when switching tabs');
 assert.match(html, /id="shopify-price-policy-panel"/, 'V2 fee settings must include a Shopify policy panel');
 assert.match(html, /SHOPIFY_PRICE_POLICY_DEFAULTS/, 'V2 must define Shopify policy UI defaults');
 assert.match(html, /async function shopifyPolicyLoad/, 'V2 must load Shopify policy from Supabase');

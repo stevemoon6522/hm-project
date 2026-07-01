@@ -55,10 +55,11 @@ assert.match(preOrderLogic, /poSelectAll\.addEventListener\('change'/, 'PRE ORDE
 assert.match(preOrderLogic, /new Set\(state\.selectedPreOrderIds\)/, 'READY STOCK wizard must open with selected PRE ORDER rows');
 
 assert.match(fees, /FEE_COUNTRY_LABELS/, 'fee settings must label virtual country rows');
-assert.match(fees, /FEE_COUNTRIES = \['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'Q10', 'EX'\]/, 'fee settings must expose the Joom, Qoo10, and eBay virtual fee rows');
+assert.match(fees, /FEE_COUNTRIES = \['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'Q10', 'EX', 'SHOPIFY'\]/, 'fee settings must expose the Joom, Qoo10, eBay, and Shopify virtual fee rows');
 assert.match(fees, /JM: 'Joom \(Global\)'/, 'fee settings must label JM as Joom global');
 assert.match(fees, /Q10: 'Qoo10 JP'/, 'fee settings must label Q10 as Qoo10 Japan');
 assert.match(fees, /EX: 'eBay EX \(가상\)'/, 'fee settings must clarify EX as the eBay virtual row');
+assert.match(fees, /SHOPIFY: 'Shopify price policy'/, 'fee settings must label Shopify as the price policy row');
 assert.match(fees, /feeCountryLabel\(code\)/, 'fee tabs and reset labels must use user-facing country labels');
 assert.match(fees, /FEE_EBAY_FIELDS/, 'fee settings must define an eBay-specific fee field list');
 assert.match(fees, /Final Value Fee · CD\/Music category/, 'eBay EX fee tab must expose the 15.3% category final value fee');

@@ -27338,23 +27338,8 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const blocked = [];
     const skipped = [];
 
-    // Stability/perf: avoid duplicate get_model_list calls for the same item/region.
-    // Item-level rows can trust fresh mappings, but variant rows must verify model_sku
-    // because shop_model_id mappings can drift between options.
-    const PREFLIGHT_TRUST_TTL_MS = 6 * 60 * 60 * 1000;
-    const now = Date.now();
-    function isTrustedListing(listing) {
-      if (!listing || listing.status !== 'mapped') return false;
-      const tsRaw = listing.last_synced_at || listing.published_at;
-      if (!tsRaw) return false;
-      const ts = Date.parse(tsRaw);
-      if (!Number.isFinite(ts)) return false;
-      return (now - ts) < PREFLIGHT_TRUST_TTL_MS;
-    }
-    function isMappedListing(listing) {
-      return !!listing && listing.status === 'mapped';
-    }
-
+    // Verify every target item before update_price. Local rows cannot reliably
+    // tell whether Shopee expects model_id=0 or a real shop model_id.
     const allKeys = new Map();
     const mixedKeys = new Set();
     for (const p of payloads) {
@@ -27362,33 +27347,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       if (!Number.isFinite(itemId) || itemId <= 0) continue;
       const key = p.region + ':' + itemId;
       if (!allKeys.has(key)) allKeys.set(key, { region: p.region, itemId: itemId });
-      if (p.needsModel) {
-        mixedKeys.add(key);
-      } else if (!isTrustedListing(p.listing)) {
-        mixedKeys.add(key);
-      }
-    }
-
-    const trustedModelIds = new Map();
-    const trustedItemNoModel = new Set();
-    for (const p of payloads) {
-      const itemId = Number(p.itemId);
-      if (!Number.isFinite(itemId) || itemId <= 0) continue;
-      const key = p.region + ':' + itemId;
-      if (mixedKeys.has(key)) continue;
-      const modelId = p.listing && p.listing.shop_model_id ? Number(p.listing.shop_model_id) : null;
-      if (modelId && !p.needsModel) {
-        if (!trustedModelIds.has(key)) trustedModelIds.set(key, new Set());
-        trustedModelIds.get(key).add(modelId);
-      } else if (!p.needsModel) {
-        trustedItemNoModel.add(key);
-      }
-    }
-    for (const [key, modelIds] of trustedModelIds.entries()) {
-      cache.set(key, { ok: true, hasModel: modelIds.size > 0, modelIds: modelIds, _trusted: true });
-    }
-    for (const key of trustedItemNoModel) {
-      if (!cache.has(key)) cache.set(key, { ok: true, hasModel: false, modelIds: new Set(), _trusted: true });
+      mixedKeys.add(key);
     }
 
     const needsFetch = [];
@@ -27435,12 +27394,32 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         valid.push(p);
         continue;
       }
+      const models = info.models || [];
+      if (!p.needsModel) {
+        const matchedModel = models.find(function(m) { return catShopeeModelMatchesPayloadSku(m, p); });
+        const singleModel = models.length === 1 ? models[0] : null;
+        const resolvedModel = matchedModel || singleModel;
+        const resolvedModelId = Number(resolvedModel && resolvedModel.model_id);
+        if (Number.isFinite(resolvedModelId) && resolvedModelId > 0) {
+          p.needsModel = true;
+          p.modelId = resolvedModelId;
+          if (p.listing) p.listing.shop_model_id = resolvedModelId;
+          p.payload.price_list = [catBuildShopeePriceEntry({
+            needsModel: true,
+            modelId: resolvedModelId,
+            originalPrice: p.price,
+          })];
+          valid.push(p);
+          continue;
+        }
+        blocked.push(Object.assign({}, p, { reason: 'item has multiple models but shop_model_id mapping is missing' }));
+        continue;
+      }
       if (p.needsModel && !p.modelId) {
         blocked.push(Object.assign({}, p, { reason: 'variant mapping requires shop_model_id' }));
         continue;
       }
       if (p.needsModel && p.modelId) {
-        const models = info.models || [];
         let matchedModel = models.find(function(m) { return Number(m && m.model_id) === Number(p.modelId); });
         if (!catShopeeModelMatchesPayloadSku(matchedModel, p)) {
           const correctedModel = models.find(function(m) { return catShopeeModelMatchesPayloadSku(m, p); });

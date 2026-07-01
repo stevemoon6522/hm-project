@@ -80,16 +80,15 @@ assert.match(priceSync, /function catShopeeRemoteListingMissingMessage\(/, 'Shop
 assert.match(preflight, /PREFLIGHT_PARALLELISM\s*=\s*5/, 'Shopee bulk price preflight must limit parallel Shopee model lookups to 5');
 assert.match(preflight, /needsFetch\.slice\(i,\s*i \+ PREFLIGHT_PARALLELISM\)/, 'Shopee preflight must process model lookup chunks');
 assert.match(preflight, /Promise\.all\(chunk\.map\(async/, 'Shopee preflight must fetch model indexes concurrently within each chunk');
-assert.match(preflight, /PREFLIGHT_TRUST_TTL_MS\s*=\s*6 \* 60 \* 60 \* 1000/, 'Shopee preflight may trust fresh mapped item-level listings');
-assert.match(preflight, /listing\.last_synced_at \|\| listing\.published_at/, 'Shopee preflight must use last sync/published freshness for item-level mapped listing trust');
-assert.match(preflight, /status !== 'mapped'/, 'Shopee preflight must only skip API validation for mapped listings');
-assert.match(preflight, /mixedKeys/, 'Shopee preflight must fetch when any target for an item is untrusted');
-assert.match(preflight, /_trusted:\s*true/, 'Shopee preflight must mark synthetic cache entries for trusted mappings');
-assert.match(preflight, /else if \(!p\.needsModel\)/, 'Shopee preflight must not trust item-level updates for rows that require a model id');
+assert.doesNotMatch(preflight, /PREFLIGHT_TRUST_TTL_MS/, 'Shopee price preflight must not trust fresh local no-model mappings before update_price');
+assert.match(preflight, /mixedKeys/, 'Shopee preflight must collect unique region/item targets for remote get_model_list verification');
+assert.doesNotMatch(preflight, /_trusted:\s*true/, 'Shopee preflight must not create trusted synthetic model caches from local listing rows');
+assert.match(preflight, /mixedKeys\.add\(key\)/, 'Shopee preflight must verify every selected region/item before update_price');
 assert.match(preflight, /p\.needsModel && !p\.modelId/, 'Shopee preflight must block variant rows without shop_model_id before update_price');
 assert.match(preflight, /if \(!info\.hasModel\)[\s\S]*p\.needsModel = false[\s\S]*catBuildShopeePriceEntry/, 'Shopee preflight must downgrade false variant mappings when the remote item has no models');
+assert.match(preflight, /if \(!p\.needsModel[\s\S]*models\.length === 1[\s\S]*p\.needsModel = true[\s\S]*catBuildShopeePriceEntry/, 'Shopee preflight must upgrade standalone item-level payloads to the single remote model when Shopee has one model');
 assert.match(preflight, /skipped\.push/, 'Shopee preflight must skip stale remote item ids without failing valid region price updates');
-assert.match(preflight, /if \(p\.needsModel\)[\s\S]*mixedKeys\.add\(key\)/, 'Shopee variant rows must fetch remote model lists even when local mappings look fresh');
+assert.match(preflight, /for \(const p of payloads\)[\s\S]*mixedKeys\.add\(key\)/, 'Shopee price preflight must fetch remote model lists for every selected region/item');
 assert.doesNotMatch(preflight, /isMappedListing\(p\.listing\) && p\.needsModel[\s\S]*trustedModelIds/, 'Shopee variant rows must not trust local shop_model_id without SKU verification');
 assert.match(preflight, /catShopeeModelMatchesPayloadSku\(matchedModel, p\)/, 'Shopee preflight must verify model_id belongs to the selected SKU before update_price');
 assert.match(preflight, /catShopeeModelMatchesPayloadSku\(m,\s*p\)/, 'Shopee preflight must find the correct remote model by selected SKU when local shop_model_id is stale');
@@ -1071,6 +1070,89 @@ async function runNoModelPreflightHarness() {
   return JSON.parse(JSON.stringify(context.result));
 }
 
+async function runSingleRemoteModelPreflightHarness() {
+  const context = {
+    Date,
+    JSON,
+    Map,
+    Math,
+    Number,
+    Object,
+    Promise,
+    Set,
+    String,
+    globalThis: null,
+  };
+  context.globalThis = context;
+  vm.createContext(context);
+
+  const harness = `
+  ${extractFunction(v2, 'catBuildShopeePriceEntry')}
+  ${extractFunction(v2, 'catNormalizeSkuText')}
+  ${extractFunction(v2, 'catShopeeTierIndexValues')}
+  ${extractFunction(v2, 'catShopeeTierIndexMatches')}
+  ${extractFunction(v2, 'catShopeeRemoteListingMissingMessage')}
+  ${extractFunction(v2, 'catShopeeModelMatchesPayloadSku')}
+  let fetchCalls = 0;
+  async function catFetchShopeeModelIndex() {
+    fetchCalls += 1;
+    return {
+      ok: true,
+      hasModel: true,
+      modelIds: new Set([228163860406]),
+      models: [{
+        model_id: 228163860406,
+        model_sku: '',
+        model_name: 'FANSLIKE POB + LIGHTSTICK',
+        tier_index: [0],
+      }],
+    };
+  }
+  ${preflight}
+  (async function() {
+    const payloads = [{
+      productId: 'meovv',
+      sku: 'MEOVV-LIGHTSTICK',
+      region: 'SG',
+      itemId: 29792877164,
+      modelId: null,
+      needsModel: false,
+      price: 70.23,
+      listing: {
+        status: 'mapped',
+        shop_item_id: 29792877164,
+        shop_model_id: null,
+        last_synced_at: new Date().toISOString(),
+      },
+      payload: {
+        region: 'SG',
+        item_id: 29792877164,
+        price_list: [{ model_id: 0, original_price: 70.23 }],
+      },
+    }];
+    const result = await catPreflightShopeePayloads(payloads);
+    globalThis.result = {
+      fetchCalls,
+      valid: result.valid.map(function(p) {
+        return {
+          sku: p.sku,
+          region: p.region,
+          needsModel: p.needsModel,
+          modelId: p.modelId,
+          priceList: p.payload.price_list,
+          listingModelId: p.listing && p.listing.shop_model_id,
+        };
+      }),
+      blocked: result.blocked.map(function(p) { return { sku: p.sku, region: p.region, reason: p.reason }; }),
+      skipped: result.skipped.map(function(p) { return { sku: p.sku, region: p.region, reason: p.reason }; }),
+    };
+  })();
+  `;
+
+  await new vm.Script(harness, { filename: 'v2-shopee-single-remote-model-preflight-harness.mjs' }).runInContext(context);
+  return JSON.parse(JSON.stringify(context.result));
+}
+
 async function runMissingRegionPreflightHarness() {
   const context = {
     Date,
@@ -1697,6 +1779,24 @@ assert.deepEqual(
     priceList: [{ model_id: 0, original_price: 67.92 }],
   }],
   'Remote no-model preflight must downgrade false variant mappings to item-level update_price payloads',
+);
+
+assert.deepEqual(
+  await runSingleRemoteModelPreflightHarness(),
+  {
+    fetchCalls: 1,
+    valid: [{
+      sku: 'MEOVV-LIGHTSTICK',
+      region: 'SG',
+      needsModel: true,
+      modelId: 228163860406,
+      priceList: [{ model_id: 228163860406, original_price: 70.23 }],
+      listingModelId: 228163860406,
+    }],
+    blocked: [],
+    skipped: [],
+  },
+  'Standalone-looking Shopee items with one remote model must be upgraded to model-level update_price before live sync',
 );
 
 const missingRegionPreflight = await runMissingRegionPreflightHarness();

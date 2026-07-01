@@ -56,6 +56,14 @@ assert.match(preOrderLogic, /new Set\(state\.selectedPreOrderIds\)/, 'READY STOC
 
 assert.match(fees, /FEE_COUNTRY_LABELS/, 'fee settings must label virtual country rows');
 assert.match(fees, /FEE_COUNTRIES = \['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'Q10', 'EX', 'SHOPIFY'\]/, 'fee settings must expose the Joom, Qoo10, eBay, and Shopify virtual fee rows');
+assert.match(fees, /FEE_TAB_LABELS/, 'fee settings must define display-only platform tab labels');
+assert.match(fees, /SG: 'Shopee SG'/, 'fee settings tab must prefix Shopee regions with the platform name');
+assert.match(fees, /TW: 'Shopee TW'/, 'fee settings tab must prefix Shopee TW with the platform name');
+assert.match(fees, /JM: 'Joom'/, 'fee settings tab must show only the Joom platform name');
+assert.match(fees, /Q10: 'Qoo10'/, 'fee settings tab must show only the Qoo10 platform name');
+assert.match(fees, /EX: 'eBay'/, 'fee settings tab must show only the eBay platform name');
+assert.match(fees, /SHOPIFY: 'Shopify'/, 'fee settings tab must show only the Shopify platform name');
+assert.match(fees, /feeTabLabel\(code\)/, 'fee settings tabs must use the display-only platform label helper');
 assert.match(fees, /JM: 'Joom \(Global\)'/, 'fee settings must label JM as Joom global');
 assert.match(fees, /Q10: 'Qoo10 JP'/, 'fee settings must label Q10 as Qoo10 Japan');
 assert.match(fees, /EX: 'eBay EX \(가상\)'/, 'fee settings must clarify EX as the eBay virtual row');

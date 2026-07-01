@@ -35,7 +35,8 @@ assert.match(adapter, /pricing_policy:\s*policy/, 'Shopify dry-run payload must 
 assert.doesNotMatch(adapter, /SHOPIFY_USD_PRICE_POLICY/, 'Hardcoded Shopify USD policy name must be retired from create path');
 
 assert.match(html, /FEE_COUNTRIES = \['SG', 'TW', 'TH', 'MY', 'PH', 'BR', 'JM', 'Q10', 'EX', 'SHOPIFY'\]/, 'V2 fee settings must include Shopify in the top fee filter tabs');
-assert.match(html, /SHOPIFY: 'Shopify price policy'/, 'V2 fee settings must label the Shopify fee tab clearly');
+assert.match(html, /SHOPIFY: 'Shopify'/, 'V2 fee settings must label the Shopify tab with the platform name only');
+assert.match(html, /feeTabLabel\(code\)/, 'V2 fee settings must render top fee tabs with display-only platform labels');
 assert.match(html, /function renderShopifyPolicyPanel/, 'V2 fee settings must render Shopify policy through the active fee panel');
 assert.match(html, /feeActiveCountry === 'SHOPIFY'[\s\S]*renderShopifyPolicyPanel/, 'V2 fee settings must show Shopify policy when the Shopify tab is active');
 assert.match(html, /code === 'SHOPIFY' \? shopifyPolicyDirty : feeDirty\.has\(code\)/, 'V2 fee tabs must keep the Shopify dirty marker when switching tabs');

@@ -40040,6 +40040,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       EX: 'eBay EX (가상)',
       SHOPIFY: 'Shopify price policy',
     };
+    const FEE_TAB_LABELS = {
+      SG: 'Shopee SG',
+      TW: 'Shopee TW',
+      TH: 'Shopee TH',
+      MY: 'Shopee MY',
+      PH: 'Shopee PH',
+      BR: 'Shopee BR',
+      JM: 'Joom',
+      Q10: 'Qoo10',
+      EX: 'eBay',
+      SHOPIFY: 'Shopify',
+    };
     const FEE_COUNTRY_CURRENCIES = {
       SG: 'SGD',
       TW: 'NTD',
@@ -40053,6 +40065,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     };
     function feeCountryLabel(code) {
       return FEE_COUNTRY_LABELS[code] || code;
+    }
+    function feeTabLabel(code) {
+      return FEE_TAB_LABELS[code] || feeCountryLabel(code);
     }
     function feeDefaultRow(code) {
       const row = {
@@ -40105,7 +40120,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
     function shopifyPolicyUpdateTabDirtyMarker() {
       const tab = document.querySelector('[data-fee-code="SHOPIFY"]');
-      if (tab) tab.textContent = feeCountryLabel('SHOPIFY') + (shopifyPolicyDirty ? ' *' : '');
+      if (tab) tab.textContent = feeTabLabel('SHOPIFY') + (shopifyPolicyDirty ? ' *' : '');
     }
 
     function shopifyPolicySetStatus(message, cls) {
@@ -40361,7 +40376,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       // Country tabs
       tabsEl.innerHTML = FEE_COUNTRIES.map(code => {
         const dirty = code === 'SHOPIFY' ? shopifyPolicyDirty : feeDirty.has(code);
-        const label = feeCountryLabel(code) + (dirty ? ' *' : '');
+        const label = feeTabLabel(code) + (dirty ? ' *' : '');
         return '<button class="fee-country-tab' + (code === feeActiveCountry ? ' active' : '') + '" data-fee-code="' + code + '">' + label + '</button>';
       }).join('');
       tabsEl.querySelectorAll('.fee-country-tab').forEach(function(btn) {
@@ -40418,7 +40433,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
             // Update active tab label to show dirty marker
             tabsEl.querySelectorAll('.fee-country-tab').forEach(function(b) {
               if (b.dataset.feeCode === feeActiveCountry) {
-                b.textContent = feeCountryLabel(feeActiveCountry) + ' *';
+                b.textContent = feeTabLabel(feeActiveCountry) + ' *';
               }
             });
           }

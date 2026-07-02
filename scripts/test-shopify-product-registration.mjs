@@ -22,6 +22,8 @@ const inventoryRef = readApiRef('inventory-set-quantities.graphql.md');
 const publishRef = readApiRef('publishable-publish.graphql.md');
 const collectionRef = readApiRef('collection.graphql.md');
 const tagsAddRef = readApiRef('tags-add.graphql.md');
+const fixturePath = join(root, 'scripts', 'shopify-option-image-live-fixture.mjs');
+const fixtureScript = existsSync(fixturePath) ? readFileSync(fixturePath, 'utf8') : '';
 
 assert.match(docsReadme, /product-create\.graphql\.md/, 'Shopify README must index productCreate local docs');
 assert.match(docsReadme, /product-variants-bulk-create\.graphql\.md/, 'Shopify README must index variant bulk create local docs');
@@ -48,6 +50,12 @@ assert.match(inventoryRef, /write_inventory/, 'inventory doc must record write_i
 assert.match(publishRef, /write_publications/, 'publish doc must record write_publications scope');
 assert.match(collectionRef, /smart collection/i, 'Collection doc must record current smart collection behavior');
 assert.match(tagsAddRef, /additive/i, 'tagsAdd doc must record additive tag behavior for existing products');
+assert.equal(existsSync(fixturePath), true, 'Shopify option image live fixture script must exist');
+assert.match(fixtureScript, /postBridge\(\{\s*supabaseUrl,\s*token,\s*action:\s*'create-product',\s*body:\s*payload\s*\}\)/, 'Shopify option image fixture must call create-product through postBridge');
+assert.match(fixtureScript, /function assertLiveCreate[\s\S]*const productId = norm\(result\.product_id\);/, 'Shopify option image fixture live success must require result.product_id');
+assert.doesNotMatch(fixtureScript, /function assertLiveCreate[\s\S]*result\.product_id\s*\|\|\s*result\.platform_item_id[\s\S]*function run/, 'Shopify option image fixture live success must not accept platform_item_id fallback');
+assert.match(fixtureScript, /\}\s*finally\s*\{[\s\S]*if \(!args\.dryRun && productId\) \{[\s\S]*if \(args\.keep\) \{[\s\S]*action:\s*'archive-product'/, 'Shopify option image fixture cleanup must run from finally, skip dry-run, honor --keep, and archive otherwise');
+assert.match(fixtureScript, /variants\.map\(\(variant\) => variantMediaNodes\(variant\)\.length\)/, 'Shopify option image fixture must assert variant media.nodes counts via variantMediaNodes');
 
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}`);

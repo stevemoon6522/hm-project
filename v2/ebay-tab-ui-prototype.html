@@ -1,14 +1,14 @@
 <!doctype html>
 <!--
-  PROTOTYPE - eBay tab UI only, no API calls.
-  Question: which eBay operations layout should be promoted into the V2 dashboard?
+  PROTOTYPE - Master product + eBay tab UI only, no API calls.
+  Question: how should a created master product surface in the eBay workbench?
   Variants are switchable with ?variant=A, ?variant=B, ?variant=C.
 -->
 <html lang="ko">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>H&M eBay Tab UI Prototype</title>
+  <title>H&M Master + eBay UI Prototype</title>
   <style>
     :root {
       color-scheme: light;
@@ -195,6 +195,10 @@
       color: #fff;
     }
 
+    .app-view[hidden] {
+      display: none !important;
+    }
+
     .side-foot {
       margin-top: auto;
       display: grid;
@@ -269,6 +273,25 @@
 
     .content > * {
       min-width: 0;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 86px;
+      z-index: 32;
+      max-width: min(380px, calc(100vw - 24px));
+      border: 1px solid #bfdbfe;
+      border-radius: 8px;
+      background: #eff6ff;
+      color: #1e3a8a;
+      box-shadow: var(--shadow);
+      padding: 10px 12px;
+      font-weight: 750;
+    }
+
+    .toast[hidden] {
+      display: none !important;
     }
 
     .page-head {
@@ -365,6 +388,50 @@
       overflow: hidden;
       box-shadow: 0 3px 12px rgba(23, 32, 51, .04);
       min-width: 0;
+    }
+
+    .master-grid {
+      display: grid;
+      grid-template-columns: minmax(360px, .72fr) minmax(0, 1.28fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .master-form {
+      display: grid;
+      gap: 11px;
+    }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .field {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 850;
+      text-transform: uppercase;
+    }
+
+    .field.full {
+      grid-column: 1 / -1;
+    }
+
+    .master-table {
+      min-width: 980px;
+    }
+
+    .master-table th:nth-child(1),
+    .master-table td:nth-child(1) {
+      width: 120px;
     }
 
     .toolbar {
@@ -747,7 +814,9 @@
       }
 
       .metric-strip,
-      .price-grid {
+      .price-grid,
+      .master-grid,
+      .field-grid {
         grid-template-columns: 1fr;
       }
 
@@ -788,10 +857,11 @@
       </div>
       <nav class="side-nav">
         <button type="button">Overview</button>
+        <button type="button" class="active" data-view-nav="master">Master Products</button>
         <button type="button">Shopee</button>
         <button type="button">Joom</button>
         <button type="button">Qoo10</button>
-        <button type="button" class="active">eBay</button>
+        <button type="button" data-view-nav="ebay">eBay</button>
         <button type="button">Shopify</button>
       </nav>
       <div class="side-foot">
@@ -804,16 +874,162 @@
       <header class="topbar">
         <div class="topbar-title">
           <span class="ebay-mark" aria-label="eBay"><span>e</span><span>B</span><span>a</span><span>y</span></span>
-          <h1>eBay 운영 탭</h1>
+          <h1 data-page-title>마스터 상품</h1>
         </div>
         <div class="topbar-actions">
-          <button type="button">정책 새로고침</button>
-          <button type="button">수수료 확인</button>
-          <button type="button" class="primary">등록 검증</button>
+          <button type="button" data-view-nav="master">마스터 보기</button>
+          <button type="button" data-view-nav="ebay">eBay 조회</button>
+          <button type="button" class="primary" data-create-sample-top>샘플 생성</button>
         </div>
       </header>
 
-      <section class="content">
+      <section class="content app-view" data-view-panel="master">
+        <div class="page-head">
+          <div class="page-title">
+            <h2>마스터 상품</h2>
+            <p>마스터 상품을 만들면 같은 메모리 상태를 바라보는 eBay 탭의 등록 큐와 매핑 조회에 즉시 나타납니다.</p>
+          </div>
+          <div class="mini-row">
+            <span class="badge green" data-master-ready-pill>0 eBay ready</span>
+            <span class="badge blue" data-master-total-pill>0 masters</span>
+            <span class="badge amber">prototype state</span>
+          </div>
+        </div>
+
+        <div class="metric-strip" aria-label="Master product metrics">
+          <div class="metric">
+            <label>Total masters</label>
+            <strong data-master-total>0</strong>
+            <span>in-memory rows</span>
+          </div>
+          <div class="metric">
+            <label>eBay searchable</label>
+            <strong data-master-ebay-ready>0</strong>
+            <span>has SKU and category</span>
+          </div>
+          <div class="metric">
+            <label>Blocked</label>
+            <strong data-master-blocked>0</strong>
+            <span>needs SKU, category, or image</span>
+          </div>
+          <div class="metric">
+            <label>Last created</label>
+            <strong data-master-last-created>-</strong>
+            <span>shown in eBay lookup</span>
+          </div>
+        </div>
+
+        <div class="master-grid">
+          <section class="panel">
+            <div class="panel-head">
+              <h3>마스터 상품 생성</h3>
+              <span class="badge blue">HTML only</span>
+            </div>
+            <div class="panel-body">
+              <form class="master-form" data-master-form>
+                <div class="field full">
+                  <label for="master-name">Product name</label>
+                  <input id="master-name" name="name" required value="LE SSERAFIM EASY H&M Sample Set">
+                </div>
+                <div class="field-grid">
+                  <div class="field">
+                    <label for="master-sku">Master SKU</label>
+                    <input id="master-sku" name="sku" required value="HM-LSF-EASY-SET">
+                  </div>
+                  <div class="field">
+                    <label for="master-artist">Artist</label>
+                    <input id="master-artist" name="artist" required value="LE SSERAFIM">
+                  </div>
+                  <div class="field">
+                    <label for="master-kind">Kind</label>
+                    <select id="master-kind" name="kind">
+                      <option value="album" selected>Album</option>
+                      <option value="goods">Goods</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="master-lifecycle">Lifecycle</label>
+                    <select id="master-lifecycle" name="lifecycle">
+                      <option value="pre_order" selected>PRE ORDER</option>
+                      <option value="ready_stock">READY STOCK</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="master-cost">Cost KRW</label>
+                    <input id="master-cost" name="costKrw" type="number" min="1" step="1" required value="26800">
+                  </div>
+                  <div class="field">
+                    <label for="master-weight">Weight g</label>
+                    <input id="master-weight" name="weightG" type="number" min="1" step="1" required value="690">
+                  </div>
+                  <div class="field">
+                    <label for="master-stock">Inventory</label>
+                    <input id="master-stock" name="inventory" type="number" min="0" step="1" required value="6">
+                  </div>
+                  <div class="field">
+                    <label for="master-category">eBay category</label>
+                    <input id="master-category" name="ebayCategoryId" value="176984">
+                  </div>
+                </div>
+                <div class="field full">
+                  <label for="master-description">Description draft</label>
+                  <textarea id="master-description" name="description">Official K-pop album set prepared for H&M project eBay registration preview.</textarea>
+                </div>
+                <div class="actions">
+                  <button type="button" data-fill-sample>샘플 채우기</button>
+                  <button type="submit" class="primary">마스터 상품 생성</button>
+                  <button type="button" data-create-and-open-ebay>생성 후 eBay 조회</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <section class="workbench">
+            <div class="toolbar">
+              <div class="filters">
+                <input type="search" data-master-search placeholder="마스터 SKU / 상품명 / artist">
+                <div class="segmented" data-master-status-tabs>
+                  <button type="button" class="active" data-master-status="all">전체</button>
+                  <button type="button" data-master-status="ready">eBay ready</button>
+                  <button type="button" data-master-status="blocked">차단</button>
+                  <button type="button" data-master-status="mapped">등록됨</button>
+                </div>
+              </div>
+              <div class="actions">
+                <button type="button" data-create-sample>샘플 마스터 생성</button>
+                <button type="button" class="primary" data-open-ebay-selected>선택 eBay 조회</button>
+              </div>
+            </div>
+            <div class="split">
+              <div class="table-scroll">
+                <table class="master-table" aria-label="Master products">
+                  <thead>
+                    <tr>
+                      <th>Master SKU</th>
+                      <th>Product</th>
+                      <th>Kind</th>
+                      <th>Cost / Weight</th>
+                      <th>eBay readiness</th>
+                      <th>eBay SKU</th>
+                      <th>Created</th>
+                    </tr>
+                  </thead>
+                  <tbody data-master-row-host></tbody>
+                </table>
+              </div>
+              <aside class="side-panel">
+                <div class="panel-head">
+                  <h3>마스터 상세</h3>
+                  <span class="badge blue">shared state</span>
+                </div>
+                <div class="panel-body" data-master-detail-body></div>
+              </aside>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="content app-view" data-view-panel="ebay" hidden>
         <div class="page-head">
           <div class="page-title">
             <h2>eBay US 작업 큐</h2>
@@ -941,11 +1157,7 @@
                         <th>Sync state</th>
                       </tr>
                     </thead>
-                    <tbody>
-                      <tr><td>TXT BEOMGYU PANIC</td><td class="mono">SPC-TXT-BG-PANIC</td><td>32.99 USD</td><td>34.49 USD</td><td class="delta up">+4.5%</td><td><span class="badge amber">confirm</span></td></tr>
-                      <tr><td>IVE SWITCH SET</td><td class="mono">SPC-IVE-SWITCH-SET</td><td>48.50 USD</td><td>47.99 USD</td><td class="delta down">-1.1%</td><td><span class="badge green">ready</span></td></tr>
-                      <tr><td>aespa ARMAGEDDON Zine</td><td class="mono">SPC-AES-ARM-ZINE</td><td>-</td><td>29.99 USD</td><td>-</td><td><span class="badge red">unmapped</span></td></tr>
-                    </tbody>
+                    <tbody data-price-row-host></tbody>
                   </table>
                 </div>
               </div>
@@ -965,11 +1177,7 @@
                         <th>State</th>
                       </tr>
                     </thead>
-                    <tbody>
-                      <tr><td class="mono">TXT-BG-PANIC</td><td class="mono">SPC-TXT-BG-PANIC</td><td>286513755306</td><td>110090441021</td><td>EBAY_US</td><td><span class="badge green">mapped</span></td></tr>
-                      <tr><td class="mono">IVE-SWITCH-SET</td><td class="mono">SPC-IVE-SWITCH-SET</td><td>286622814905</td><td>110090551447</td><td>EBAY_US</td><td><span class="badge green">mapped</span></td></tr>
-                      <tr><td class="mono">AES-ARM-ZINE</td><td class="mono">-</td><td>-</td><td>-</td><td>EBAY_US</td><td><span class="badge red">missing SKU</span></td></tr>
-                    </tbody>
+                    <tbody data-mapping-row-host></tbody>
                   </table>
                 </div>
               </div>
@@ -1099,70 +1307,112 @@ Content-Language: en-US</textarea></div>
   </div>
 
   <script>
-    const rows = [
+    const SAMPLE_MASTER = Object.freeze({
+      id: 'hm-lsf-easy-set',
+      sku: 'HM-LSF-EASY-SET',
+      product: 'LE SSERAFIM EASY H&M Sample Set',
+      artist: 'LE SSERAFIM',
+      kind: 'album',
+      lifecycle: 'pre_order',
+      costKrw: 26800,
+      weightG: 690,
+      inventory: 6,
+      ebayCategoryId: '176984',
+      ebaySku: 'SPC-HM-LSF-EASY-SET',
+      offer: 'draft',
+      itemId: '-',
+      current: '-',
+      status: 'ready',
+      blockers: 'none',
+      last: 'just now',
+      createdAt: 'created in prototype',
+      description: 'Official K-pop album set prepared for H&M project eBay registration preview.',
+    });
+
+    const masterProducts = [
       {
         id: 'txt',
+        sku: 'TXT-BG-PANIC',
         product: 'TXT BEOMGYU PANIC',
-        meta: 'single SKU · Music > CDs · 620g',
-        status: 'ready',
-        badge: 'green',
-        sku: 'SPC-TXT-BG-PANIC',
+        artist: 'TXT',
+        kind: 'album',
+        lifecycle: 'pre_order',
+        costKrw: 24700,
+        weightG: 620,
+        inventory: 3,
+        ebayCategoryId: '176984',
+        ebaySku: 'SPC-TXT-BG-PANIC',
         offer: '110090441021',
+        itemId: '286513755306',
         current: '32.99 USD',
-        next: '34.49 USD',
-        delta: '+4.5%',
-        deltaClass: 'up',
-        inventory: '3',
+        status: 'ready',
         blockers: 'none',
         last: 'today 10:42',
+        createdAt: 'seed row',
+        description: 'TXT BEOMGYU PANIC Official KPOP Album CD Photocard Gift',
       },
       {
         id: 'ive',
+        sku: 'IVE-SWITCH-SET',
         product: 'IVE SWITCH SET',
-        meta: 'variation · Version axis · 840g',
-        status: 'mapped',
-        badge: 'blue',
-        sku: 'SPC-IVE-SWITCH-SET',
+        artist: 'IVE',
+        kind: 'album',
+        lifecycle: 'pre_order',
+        costKrw: 33800,
+        weightG: 840,
+        inventory: 8,
+        ebayCategoryId: '176984',
+        ebaySku: 'SPC-IVE-SWITCH-SET',
         offer: '110090551447',
+        itemId: '286622814905',
         current: '48.50 USD',
-        next: '47.99 USD',
-        delta: '-1.1%',
-        deltaClass: 'down',
-        inventory: '8',
+        status: 'mapped',
         blockers: 'none',
         last: 'today 09:11',
+        createdAt: 'seed row',
+        description: 'IVE SWITCH album set with version options.',
       },
       {
         id: 'aes',
+        sku: 'AES-ARM-ZINE',
         product: 'aespa ARMAGEDDON Zine',
-        meta: 'goods · category 108857 required · 410g',
-        status: 'blocked',
-        badge: 'red',
-        sku: '-',
+        artist: 'aespa',
+        kind: 'goods',
+        lifecycle: 'ready_stock',
+        costKrw: 18800,
+        weightG: 410,
+        inventory: 5,
+        ebayCategoryId: '',
+        ebaySku: '',
         offer: '-',
+        itemId: '-',
         current: '-',
-        next: '29.99 USD',
-        delta: '-',
-        deltaClass: '',
-        inventory: '5',
+        status: 'blocked',
         blockers: 'missing eBay SKU',
         last: 'yesterday',
+        createdAt: 'seed row',
+        description: 'Goods item waiting for eBay category and SKU.',
       },
       {
         id: 'riize',
+        sku: 'RIIZE-LUCKY-TIN',
         product: 'RIIZE Lucky Tin',
-        meta: 'variation · SET must be last · 510g',
-        status: 'blocked',
-        badge: 'amber',
-        sku: 'SPC-RIIZE-LUCKY-TIN',
+        artist: 'RIIZE',
+        kind: 'goods',
+        lifecycle: 'ready_stock',
+        costKrw: 23200,
+        weightG: 510,
+        inventory: 12,
+        ebayCategoryId: '108857',
+        ebaySku: 'SPC-RIIZE-LUCKY-TIN',
         offer: 'draft',
+        itemId: '-',
         current: '-',
-        next: '37.99 USD',
-        delta: '-',
-        deltaClass: '',
-        inventory: '12',
+        status: 'blocked',
         blockers: 'option image missing',
         last: '2 days ago',
+        createdAt: 'seed row',
+        description: 'Variation goods item with missing option image.',
       },
     ];
 
@@ -1173,7 +1423,11 @@ Content-Language: en-US</textarea></div>
     };
     const variantKeys = Object.keys(variantNames);
     let activeStatus = 'all';
-    let searchTerm = '';
+    let searchTerm = new URLSearchParams(location.search).get('q') || '';
+    let activeMasterStatus = 'all';
+    let masterSearchTerm = '';
+    let selectedMasterId = masterProducts[0]?.id || '';
+    let activeView = new URLSearchParams(location.search).get('view') || 'master';
 
     function qs(selector, root = document) {
       return root.querySelector(selector);
@@ -1191,6 +1445,82 @@ Content-Language: en-US</textarea></div>
         '"': '&quot;',
         "'": '&#39;',
       }[char]));
+    }
+
+    function badgeForStatus(status) {
+      if (status === 'ready') return 'green';
+      if (status === 'mapped') return 'blue';
+      if (status === 'blocked') return 'red';
+      return 'amber';
+    }
+
+    function masterMeta(master) {
+      return `${master.kind === 'goods' ? 'goods' : 'album'} · ${master.lifecycle === 'ready_stock' ? 'READY STOCK' : 'PRE ORDER'} · ${Number(master.weightG || 0).toLocaleString()}g`;
+    }
+
+    function computeMockEbayPrice(master) {
+      const cost = Number(master.costKrw || 0);
+      const weight = Number(master.weightG || 0);
+      if (!(cost > 0) || !(weight > 0)) return '-';
+      const shipping = weight <= 500 ? 8200 : (weight <= 800 ? 10600 : 13200);
+      const usd = Math.ceil(((cost + shipping) / 1380 / 0.82) * 100) / 100;
+      return `${usd.toFixed(2)} USD`;
+    }
+
+    function priceDelta(current, next) {
+      const currentNum = Number(String(current || '').replace(/[^0-9.]/g, ''));
+      const nextNum = Number(String(next || '').replace(/[^0-9.]/g, ''));
+      if (!(currentNum > 0) || !(nextNum > 0)) return { text: '-', className: '' };
+      const pct = ((nextNum - currentNum) / currentNum) * 100;
+      return {
+        text: `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%`,
+        className: pct >= 0 ? 'up' : 'down',
+      };
+    }
+
+    function masterToEbayRow(master) {
+      const next = computeMockEbayPrice(master);
+      const delta = priceDelta(master.current, next);
+      return {
+        id: master.id,
+        masterSku: master.sku,
+        product: master.product,
+        meta: masterMeta(master),
+        status: master.status,
+        badge: badgeForStatus(master.status),
+        sku: master.ebaySku || '-',
+        offer: master.offer || '-',
+        itemId: master.itemId || '-',
+        current: master.current || '-',
+        next,
+        delta: delta.text,
+        deltaClass: delta.className,
+        inventory: String(master.inventory ?? '-'),
+        blockers: master.blockers || 'none',
+        last: master.last || '-',
+        category: master.ebayCategoryId || '-',
+        master,
+      };
+    }
+
+    function ebayRows() {
+      return masterProducts.map(masterToEbayRow);
+    }
+
+    function renderToast(message) {
+      let toast = qs('[data-toast]');
+      if (!toast) {
+        toast = document.createElement('div');
+        toast.className = 'toast';
+        toast.dataset.toast = '1';
+        document.body.appendChild(toast);
+      }
+      toast.textContent = message;
+      toast.hidden = false;
+      window.clearTimeout(renderToast.timer);
+      renderToast.timer = window.setTimeout(() => {
+        toast.hidden = true;
+      }, 2200);
     }
 
     function currentVariant() {
@@ -1220,15 +1550,220 @@ Content-Language: en-US</textarea></div>
       setVariant(next);
     }
 
+    function setView(view, options = {}) {
+      activeView = view === 'ebay' ? 'ebay' : 'master';
+      qsa('[data-view-panel]').forEach((panel) => {
+        panel.hidden = panel.dataset.viewPanel !== activeView;
+      });
+      qsa('[data-view-nav]').forEach((button) => {
+        button.classList.toggle('active', button.dataset.viewNav === activeView);
+      });
+      qs('[data-page-title]').textContent = activeView === 'ebay' ? 'eBay 운영 탭' : '마스터 상품';
+      const url = new URL(location.href);
+      url.searchParams.set('view', activeView);
+      if (options.search) url.searchParams.set('q', options.search);
+      history.replaceState(null, '', url);
+      if (activeView === 'ebay') {
+        if (options.search) {
+          searchTerm = options.search;
+          qsa('[data-search]').forEach((input) => { input.value = searchTerm; });
+        }
+        renderRows();
+      } else {
+        renderMasterProducts();
+      }
+    }
+
+    function openEbayForMaster(master) {
+      const query = master?.ebaySku || master?.sku || master?.product || '';
+      activeStatus = 'all';
+      qsa('[data-status-tabs] button').forEach((button) => {
+        button.classList.toggle('active', button.dataset.status === 'all');
+      });
+      setView('ebay', { search: query });
+      renderToast(`${master.product} 상품을 eBay 탭에서 조회했습니다.`);
+    }
+
+    function renderMasterMetrics() {
+      const total = masterProducts.length;
+      const ready = masterProducts.filter((master) => master.status === 'ready' || master.status === 'mapped').length;
+      const blocked = masterProducts.filter((master) => master.status === 'blocked').length;
+      const lastCreated = masterProducts.find((master) => master.createdAt === 'created in prototype');
+      qs('[data-master-total]').textContent = String(total);
+      qs('[data-master-ebay-ready]').textContent = String(ready);
+      qs('[data-master-blocked]').textContent = String(blocked);
+      qs('[data-master-last-created]').textContent = lastCreated ? lastCreated.sku : '-';
+      qs('[data-master-ready-pill]').textContent = `${ready} eBay ready`;
+      qs('[data-master-total-pill]').textContent = `${total} masters`;
+    }
+
+    function filteredMasters() {
+      const term = masterSearchTerm.trim().toLowerCase();
+      return masterProducts.filter((master) => {
+        const byStatus = activeMasterStatus === 'all'
+          || (activeMasterStatus === 'ready' && (master.status === 'ready' || master.status === 'mapped'))
+          || master.status === activeMasterStatus;
+        const haystack = `${master.sku} ${master.product} ${master.artist} ${master.ebaySku} ${master.ebayCategoryId}`.toLowerCase();
+        return byStatus && (!term || haystack.includes(term));
+      });
+    }
+
+    function renderMasterProducts() {
+      renderMasterMetrics();
+      const host = qs('[data-master-row-host]');
+      if (!host) return;
+      const rows = filteredMasters();
+      host.innerHTML = rows.map((master) => {
+        const row = masterToEbayRow(master);
+        return `
+          <tr data-master-id="${esc(master.id)}">
+            <td class="mono">${esc(master.sku)}</td>
+            <td>
+              <div class="product-cell">
+                <div class="thumb">IMG</div>
+                <div class="product-main">
+                  <div class="product-name">${esc(master.product)}</div>
+                  <div class="product-meta">${esc(master.artist)} · ${esc(masterMeta(master))}</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="badge ${master.kind === 'goods' ? 'violet' : 'blue'}">${esc(master.kind)}</span></td>
+            <td>${Number(master.costKrw || 0).toLocaleString()} KRW<br><span class="muted">${Number(master.weightG || 0).toLocaleString()}g / ${esc(master.inventory)} pcs</span></td>
+            <td><span class="badge ${esc(row.badge)}">${esc(master.status)}</span><br><span class="muted">${esc(master.blockers === 'none' ? 'searchable in eBay tab' : master.blockers)}</span></td>
+            <td class="mono">${esc(master.ebaySku || '-')}</td>
+            <td>${esc(master.createdAt)}</td>
+          </tr>
+        `;
+      }).join('');
+      qsa('[data-master-id]', host).forEach((tr) => {
+        tr.addEventListener('click', () => {
+          selectedMasterId = tr.dataset.masterId;
+          renderMasterDetail(selectedMasterId);
+        });
+      });
+      renderMasterDetail(rows[0]?.id || selectedMasterId || masterProducts[0]?.id);
+    }
+
+    function renderMasterDetail(id) {
+      const master = masterProducts.find((item) => item.id === id) || masterProducts[0];
+      const host = qs('[data-master-detail-body]');
+      if (!host || !master) return;
+      const row = masterToEbayRow(master);
+      host.innerHTML = `
+        <div class="detail-list">
+          <div class="detail-row"><label>Product</label><div><strong>${esc(master.product)}</strong><br><span class="muted">${esc(master.artist)} · ${esc(masterMeta(master))}</span></div></div>
+          <div class="detail-row"><label>Master SKU</label><div class="mono">${esc(master.sku)}</div></div>
+          <div class="detail-row"><label>eBay SKU</label><div class="mono">${esc(master.ebaySku || '-')}</div></div>
+          <div class="detail-row"><label>Category</label><div>${esc(master.ebayCategoryId || '-')}</div></div>
+          <div class="detail-row"><label>Computed price</label><div><strong>${esc(row.next)}</strong> <span class="delta ${esc(row.deltaClass)}">${esc(row.delta)}</span></div></div>
+        </div>
+        <div class="check-list">
+          <div class="check-item"><span class="check-dot ${master.ebaySku ? 'ok' : 'fail'}">${master.ebaySku ? '✓' : '!'}</span><div><strong>eBay SKU</strong><br><span class="muted">${esc(master.ebaySku || 'missing')}</span></div></div>
+          <div class="check-item"><span class="check-dot ${master.ebayCategoryId ? 'ok' : 'fail'}">${master.ebayCategoryId ? '✓' : '!'}</span><div><strong>Category</strong><br><span class="muted">${esc(master.ebayCategoryId || 'missing')}</span></div></div>
+          <div class="check-item"><span class="check-dot ${master.blockers === 'none' ? 'ok' : 'warn'}">${master.blockers === 'none' ? '✓' : '!'}</span><div><strong>eBay tab lookup</strong><br><span class="muted">${esc(master.blockers === 'none' ? 'ready to query' : master.blockers)}</span></div></div>
+        </div>
+        <div class="actions">
+          <button type="button" class="primary" data-open-master-in-ebay="${esc(master.id)}">eBay 탭에서 조회</button>
+        </div>
+      `;
+      const openButton = qs('[data-open-master-in-ebay]', host);
+      if (openButton) openButton.addEventListener('click', () => openEbayForMaster(master));
+    }
+
+    function sampleMasterInput() {
+      return {
+        name: SAMPLE_MASTER.product,
+        sku: SAMPLE_MASTER.sku,
+        artist: SAMPLE_MASTER.artist,
+        kind: SAMPLE_MASTER.kind,
+        lifecycle: SAMPLE_MASTER.lifecycle,
+        costKrw: SAMPLE_MASTER.costKrw,
+        weightG: SAMPLE_MASTER.weightG,
+        inventory: SAMPLE_MASTER.inventory,
+        ebayCategoryId: SAMPLE_MASTER.ebayCategoryId,
+        description: SAMPLE_MASTER.description,
+      };
+    }
+
+    function fillMasterForm(values = sampleMasterInput()) {
+      const form = qs('[data-master-form]');
+      if (!form) return;
+      Object.entries(values).forEach(([key, value]) => {
+        const field = form.elements[key];
+        if (field) field.value = value;
+      });
+    }
+
+    function masterFromForm() {
+      const form = qs('[data-master-form]');
+      const data = new FormData(form);
+      const sku = String(data.get('sku') || '').trim();
+      const name = String(data.get('name') || '').trim();
+      const artist = String(data.get('artist') || '').trim();
+      const kind = String(data.get('kind') || 'album');
+      const ebayCategoryId = String(data.get('ebayCategoryId') || '').trim();
+      const ebaySku = sku ? `SPC-${sku.replace(/^HM-/, 'HM-').toUpperCase()}` : '';
+      const blockedReason = !ebaySku ? 'missing eBay SKU' : (!ebayCategoryId ? 'missing eBay category' : 'none');
+      return {
+        id: sku.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `master-${Date.now()}`,
+        sku,
+        product: name,
+        artist,
+        kind,
+        lifecycle: String(data.get('lifecycle') || 'pre_order'),
+        costKrw: Number(data.get('costKrw') || 0),
+        weightG: Number(data.get('weightG') || 0),
+        inventory: Number(data.get('inventory') || 0),
+        ebayCategoryId,
+        ebaySku,
+        offer: 'draft',
+        itemId: '-',
+        current: '-',
+        status: blockedReason === 'none' ? 'ready' : 'blocked',
+        blockers: blockedReason,
+        last: 'just now',
+        createdAt: 'created in prototype',
+        description: String(data.get('description') || ''),
+      };
+    }
+
+    function upsertMaster(master) {
+      const existingIndex = masterProducts.findIndex((item) => item.id === master.id || item.sku === master.sku);
+      if (existingIndex >= 0) {
+        masterProducts[existingIndex] = Object.assign({}, masterProducts[existingIndex], master);
+      } else {
+        masterProducts.unshift(master);
+      }
+      selectedMasterId = master.id;
+      renderMasterProducts();
+      renderRows();
+      renderPriceRows();
+      renderMappingRows();
+      return master;
+    }
+
+    function createSampleMaster({ openEbay = false } = {}) {
+      fillMasterForm(sampleMasterInput());
+      const master = upsertMaster(Object.assign({}, SAMPLE_MASTER));
+      renderToast('샘플 마스터 상품을 생성했습니다.');
+      if (openEbay) openEbayForMaster(master);
+      return master;
+    }
+
     function renderRows() {
       const host = qs('[data-row-host]');
       if (!host) return;
       const term = searchTerm.trim().toLowerCase();
-      const filtered = rows.filter((row) => {
+      const filtered = ebayRows().filter((row) => {
         const byStatus = activeStatus === 'all' || row.status === activeStatus;
-        const haystack = `${row.product} ${row.meta} ${row.sku} ${row.offer}`.toLowerCase();
+        const haystack = `${row.product} ${row.meta} ${row.masterSku} ${row.sku} ${row.offer}`.toLowerCase();
         return byStatus && (!term || haystack.includes(term));
       });
+      if (!filtered.length) {
+        host.innerHTML = '<tr><td colspan="8" class="muted">조회 결과가 없습니다.</td></tr>';
+        qs('[data-detail-body]').innerHTML = '<span class="muted">eBay 조회 결과가 없습니다.</span>';
+        return;
+      }
       host.innerHTML = filtered.map((row, index) => `
         <tr data-detail-id="${esc(row.id)}">
           <td><input type="checkbox" data-row-check></td>
@@ -1255,15 +1790,18 @@ Content-Language: en-US</textarea></div>
           renderDetail(tr.dataset.detailId);
         });
       });
-      renderDetail(filtered[0]?.id || rows[0].id);
+      renderDetail(filtered[0]?.id || ebayRows()[0].id);
       updateSelection();
+      renderPriceRows();
+      renderMappingRows();
     }
 
     function renderDetail(id) {
-      const row = rows.find((item) => item.id === id) || rows[0];
+      const row = ebayRows().find((item) => item.id === id) || ebayRows()[0];
       qs('[data-detail-body]').innerHTML = `
         <div class="detail-list">
           <div class="detail-row"><label>Product</label><div><strong>${esc(row.product)}</strong><br><span class="muted">${esc(row.meta)}</span></div></div>
+          <div class="detail-row"><label>Master SKU</label><div class="mono">${esc(row.masterSku)}</div></div>
           <div class="detail-row"><label>eBay SKU</label><div class="mono">${esc(row.sku)}</div></div>
           <div class="detail-row"><label>Offer</label><div class="mono">${esc(row.offer)}</div></div>
           <div class="detail-row"><label>Price</label><div><strong>${esc(row.next)}</strong> <span class="delta ${esc(row.deltaClass)}">${esc(row.delta)}</span></div></div>
@@ -1274,6 +1812,36 @@ Content-Language: en-US</textarea></div>
           <div class="check-item"><span class="check-dot ${row.id === 'riize' ? 'warn' : 'ok'}">${row.id === 'riize' ? '!' : '✓'}</span><div><strong>Images</strong><br><span class="muted">${row.id === 'riize' ? 'option image missing' : 'main and detail images ready'}</span></div></div>
         </div>
       `;
+    }
+
+    function renderPriceRows() {
+      const host = qs('[data-price-row-host]');
+      if (!host) return;
+      host.innerHTML = ebayRows().map((row) => `
+        <tr>
+          <td>${esc(row.product)}</td>
+          <td class="mono">${esc(row.sku)}</td>
+          <td>${esc(row.current)}</td>
+          <td>${esc(row.next)}</td>
+          <td class="delta ${esc(row.deltaClass)}">${esc(row.delta)}</td>
+          <td><span class="badge ${row.status === 'blocked' ? 'red' : 'green'}">${esc(row.status === 'blocked' ? row.blockers : 'ready')}</span></td>
+        </tr>
+      `).join('');
+    }
+
+    function renderMappingRows() {
+      const host = qs('[data-mapping-row-host]');
+      if (!host) return;
+      host.innerHTML = ebayRows().map((row) => `
+        <tr>
+          <td class="mono">${esc(row.masterSku)}</td>
+          <td class="mono">${esc(row.sku)}</td>
+          <td>${esc(row.itemId)}</td>
+          <td>${esc(row.offer)}</td>
+          <td>EBAY_US</td>
+          <td><span class="badge ${esc(row.badge)}">${esc(row.status === 'blocked' ? row.blockers : row.status)}</span></td>
+        </tr>
+      `).join('');
     }
 
     function updateSelection() {
@@ -1302,9 +1870,25 @@ Content-Language: en-US</textarea></div>
     });
 
     qsa('[data-search]').forEach((input) => {
+      input.value = searchTerm;
       input.addEventListener('input', () => {
         searchTerm = input.value;
         renderRows();
+      });
+    });
+
+    qsa('[data-master-search]').forEach((input) => {
+      input.addEventListener('input', () => {
+        masterSearchTerm = input.value;
+        renderMasterProducts();
+      });
+    });
+
+    qsa('[data-master-status-tabs] button').forEach((button) => {
+      button.addEventListener('click', () => {
+        activeMasterStatus = button.dataset.masterStatus;
+        qsa('[data-master-status-tabs] button').forEach((node) => node.classList.toggle('active', node === button));
+        renderMasterProducts();
       });
     });
 
@@ -1330,6 +1914,42 @@ Content-Language: en-US</textarea></div>
       if (event.target && event.target.matches('[data-row-check]')) updateSelection();
     });
 
+    qsa('[data-view-nav]').forEach((button) => {
+      button.addEventListener('click', () => setView(button.dataset.viewNav));
+    });
+
+    qsa('[data-fill-sample]').forEach((button) => {
+      button.addEventListener('click', () => {
+        fillMasterForm();
+        renderToast('샘플 입력값을 채웠습니다.');
+      });
+    });
+
+    qsa('[data-create-sample], [data-create-sample-top]').forEach((button) => {
+      button.addEventListener('click', () => createSampleMaster());
+    });
+
+    qsa('[data-create-and-open-ebay]').forEach((button) => {
+      button.addEventListener('click', () => createSampleMaster({ openEbay: true }));
+    });
+
+    const masterForm = qs('[data-master-form]');
+    if (masterForm) {
+      masterForm.addEventListener('submit', (event) => {
+        event.preventDefault();
+        if (!masterForm.reportValidity()) return;
+        const master = upsertMaster(masterFromForm());
+        renderToast(`${master.product} 마스터 상품을 생성했습니다.`);
+      });
+    }
+
+    qsa('[data-open-ebay-selected]').forEach((button) => {
+      button.addEventListener('click', () => {
+        const master = masterProducts.find((item) => item.id === selectedMasterId) || masterProducts[0];
+        openEbayForMaster(master);
+      });
+    });
+
     qs('[data-prev]').addEventListener('click', () => cycleVariant(-1));
     qs('[data-next]').addEventListener('click', () => cycleVariant(1));
     document.addEventListener('keydown', (event) => {
@@ -1340,10 +1960,19 @@ Content-Language: en-US</textarea></div>
       if (event.key === 'ArrowRight') cycleVariant(1);
     });
 
-    window.addEventListener('popstate', renderVariant);
+    window.addEventListener('popstate', () => {
+      activeView = new URLSearchParams(location.search).get('view') || 'master';
+      searchTerm = new URLSearchParams(location.search).get('q') || '';
+      renderVariant();
+      setView(activeView, { search: searchTerm });
+    });
 
     renderVariant();
+    renderMasterProducts();
     renderRows();
+    renderPriceRows();
+    renderMappingRows();
+    setView(activeView === 'ebay' ? 'ebay' : 'master', { search: searchTerm });
   </script>
 </body>
 </html>

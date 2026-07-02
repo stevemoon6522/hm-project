@@ -4,6 +4,7 @@
 // Local docs:
 //   C:\dev\api-refs\marketplaces\shopify\product-create.graphql.md
 //   C:\dev\api-refs\marketplaces\shopify\product-variants-bulk-create.graphql.md
+//   C:\dev\api-refs\marketplaces\shopify\product-variants-bulk-update.graphql.md
 //   C:\dev\api-refs\marketplaces\shopify\inventory-item-update.graphql.md
 //   C:\dev\api-refs\marketplaces\shopify\inventory-set-quantities.graphql.md
 //   C:\dev\api-refs\marketplaces\shopify\publishable-publish.graphql.md
@@ -238,6 +239,56 @@ function variantsFrom(body: any) {
     if (variant.inventoryPolicy) out.inventoryPolicy = norm(variant.inventoryPolicy).toUpperCase();
     return out;
   }).filter((variant: any) => norm(variant.inventoryItem?.sku));
+}
+
+function normalizeVariantMediaRows(rows: any) {
+  const valid = [];
+  const invalid = [];
+  for (const [index, row] of (Array.isArray(rows) ? rows : []).entries()) {
+    const sku = norm(row?.sku || row?.external_sku);
+    const variantId = shopifyVariantGid(row?.variant_id || row?.variantId || row?.external_variant_id || row?.externalVariantId);
+    const rawMedia = Array.isArray(row?.mediaSrc)
+      ? row.mediaSrc
+      : [row?.mediaSrc || row?.image || row?.imageUrl || row?.option_image_url || row?.optionImageUrl];
+    const mediaSrc = rawMedia.map((url: any) => norm(url)).filter((url: string) => /^https:\/\//i.test(url)).slice(0, 10);
+    const errors = [];
+    if (!sku && !variantId) errors.push('sku_or_variant_id_required');
+    if (!mediaSrc.length) errors.push('media_src_required');
+    if (errors.length) invalid.push({ index, sku: sku || null, variant_id: variantId || null, errors });
+    else valid.push({ index, sku, variantId, mediaSrc });
+  }
+  return { valid, invalid };
+}
+
+function resolveRepairVariantTargets(shopifyVariants, rows) {
+  const repairVariants = [];
+  const missing = [];
+  const duplicates = [];
+  for (const row of rows) {
+    let target = row.variantId
+      ? shopifyVariants.find((variant: any) => norm(variant?.id) === row.variantId)
+      : null;
+    if (!target && row.sku) {
+      const exactSkuMatches = shopifyVariants.filter((variant: any) => norm(variant?.sku) === row.sku || norm(variant?.inventoryItem?.sku) === row.sku);
+      if (exactSkuMatches.length > 1) {
+        duplicates.push({
+          index: row.index,
+          sku: row.sku,
+          product_ids: [...new Set(exactSkuMatches.map((variant: any) => variant?.product?.id).filter(Boolean))],
+          variant_ids: exactSkuMatches.map((variant: any) => variant?.id).filter(Boolean),
+        });
+        continue;
+      }
+      target = exactSkuMatches[0] || null;
+    }
+    if (!target) {
+      missing.push({ index: row.index, sku: row.sku || null, variant_id: row.variantId || null, mediaSrc: row.mediaSrc });
+      continue;
+    }
+    const mediaSrc = row.mediaSrc;
+    repairVariants.push({ id: target.id, mediaSrc: mediaSrc });
+  }
+  return { repairVariants, missing, duplicates };
 }
 
 async function handleHealthz(): Promise<Response> {
@@ -688,6 +739,54 @@ async function bulkUpdateVariantInventoryItemSku(shop: any, productId: string, v
   };
 }
 
+async function bulkRepairVariantMedia(shop: any, productId: string, variants: Record<string, unknown>[]) {
+  const query = `
+    mutation ShopifyBridgeVariantMediaRepair($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        product {
+          id
+          title
+          status
+          handle
+          publishedAt
+        }
+        productVariants {
+          id
+          title
+          sku
+          price
+          selectedOptions { name value }
+          inventoryItem { id sku tracked }
+          media(first: 10) {
+            nodes {
+              id
+              alt
+              mediaContentType
+              preview { status }
+            }
+          }
+        }
+        userErrors {
+          field
+          message
+          code
+        }
+      }
+    }
+  `;
+  const { status, raw } = await shopifyGraphql(shop, query, { productId, variants });
+  if (status < 200 || status >= 300 || raw?.errors?.length || graphUserErrors(raw, 'productVariantsBulkUpdate').length) {
+    return { ok: false, status, raw, error: graphErrorMessage(raw, 'productVariantsBulkUpdate') };
+  }
+  return {
+    ok: true,
+    status,
+    raw,
+    product: raw?.data?.productVariantsBulkUpdate?.product || null,
+    variants: raw?.data?.productVariantsBulkUpdate?.productVariants || [],
+  };
+}
+
 async function handleArchiveProduct(req: Request): Promise<Response> {
   const denied = await requireBridgeTokenOrAuthenticatedUser(req);
   if (denied) return denied;
@@ -987,6 +1086,83 @@ async function handleSetSku(req: Request): Promise<Response> {
   });
 }
 
+async function handleRepairOptionImages(req: Request): Promise<Response> {
+  const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+  if (denied) return denied;
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== 'object') return jsonResp({ ok: false, error: 'JSON body required' }, 400);
+
+  const productId = shopifyProductGid(body.product_id || body.productId || body.platform_item_id || body.platformItemId);
+  if (!productId) return jsonResp({ ok: false, error: 'valid Shopify product_id required' }, 400);
+
+  const shopDomain = normalizeShopDomain(body.shop_domain || body.shop);
+  const shop = await configuredShop(shopDomain);
+  const scopeSet = shopScopeSet(shop);
+  if (!scopeSet.has('write_products')) {
+    return jsonResp({
+      ok: false,
+      error: 'missing_scopes',
+      missing_scopes: ['write_products'],
+      message: 'Shopify option image repair requires write_products scope',
+      shop_domain: shop.shop_domain,
+    }, 403);
+  }
+
+  const normalized = normalizeVariantMediaRows(Array.isArray(body.variants) ? body.variants : body.option_images);
+  if (normalized.invalid.length) return jsonResp({ ok: false, error: 'invalid_media_rows', invalid: normalized.invalid }, 400);
+  const rows = normalized.valid;
+  if (!rows.length) return jsonResp({ ok: false, error: 'variants or option_images with public HTTPS media URL required' }, 400);
+
+  const read = await readProductSkuTargets(shop, productId);
+  if (!read.ok) return jsonResp({ ok: false, error: read.error || 'product lookup failed', product_id: productId, raw: read.raw }, read.status || 502);
+  const product = read.product;
+  const shopifyVariants = Array.isArray(read.variants) ? read.variants : [];
+  const variantSummaries = shopifyVariants.map(summarizeSkuVariant);
+  const { repairVariants, missing, duplicates } = resolveRepairVariantTargets(shopifyVariants, rows);
+
+  if (duplicates.length) {
+    return jsonResp({
+      ok: false,
+      error: 'duplicate_sku',
+      shop_domain: shop.shop_domain,
+      product_id: product.id,
+      duplicates,
+      variants: variantSummaries,
+    }, 409);
+  }
+
+  if (missing.length) {
+    return jsonResp({
+      ok: false,
+      error: 'variant_not_found',
+      shop_domain: shop.shop_domain,
+      product_id: product.id,
+      missing,
+      variants: variantSummaries,
+    }, 404);
+  }
+
+  if (body.dry_run === true) {
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      shop_domain: shop.shop_domain,
+      product_id: product.id,
+      variants: repairVariants,
+    });
+  }
+
+  const repaired = await bulkRepairVariantMedia(shop, product.id, repairVariants);
+  if (!repaired.ok) return jsonResp({ ok: false, error: repaired.error || 'productVariantsBulkUpdate media repair failed', raw: repaired.raw }, repaired.status || 502);
+  return jsonResp({
+    ok: true,
+    shop_domain: shop.shop_domain,
+    product_id: product.id,
+    variants: repaired.variants,
+    raw: repaired.raw,
+  });
+}
+
 async function handleLookupSku(req: Request): Promise<Response> {
   const denied = await requireBridgeTokenOrAuthenticatedUser(req);
   if (denied) return denied;
@@ -1069,6 +1245,7 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === 'create-product' && req.method === 'POST') return await handleCreateProduct(req);
     if (action === 'archive-product' && req.method === 'POST') return await handleArchiveProduct(req);
     if (action === 'set-sku' && req.method === 'POST') return await handleSetSku(req);
+    if (action === 'repair-option-images' && req.method === 'POST') return await handleRepairOptionImages(req);
     if (action === 'lookup-sku' && req.method === 'GET') return await handleLookupSku(req);
     if (action === 'internal-check' && req.method === 'GET') {
       const denied = requireInternalBridge(req);

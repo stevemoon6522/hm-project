@@ -39,6 +39,8 @@ assert.match(variantsBulkRef, /option image/i, 'variant bulk create doc must rec
 assert.match(variantsBulkUpdateRef, /write_products/, 'variant bulk update doc must record write_products scope');
 assert.match(variantsBulkUpdateRef, /ProductVariantsBulkInput\.inventoryItem/, 'variant bulk update doc must record inventory item update fallback');
 assert.match(variantsBulkUpdateRef, /inventoryItem:\s*\{\s*sku\s*\}/, 'variant bulk update doc must record SKU repair fallback payload');
+assert.match(variantsBulkUpdateRef, /Variant media repair/, 'variant bulk update doc must record variant media repair usage');
+assert.match(variantsBulkUpdateRef, /mediaSrc\s*\(\[String!\]\)/, 'variant bulk update doc must record mediaSrc repair support');
 assert.match(inventoryItemUpdateRef, /inventoryItemUpdate/, 'inventoryItemUpdate doc must record the SKU repair mutation');
 assert.match(inventoryItemUpdateRef, /write_inventory/, 'inventoryItemUpdate doc must record write_inventory scope');
 assert.match(inventoryItemUpdateRef, /sku\s*\(String\)/, 'InventoryItemInput doc notes must record the SKU field');
@@ -65,6 +67,7 @@ function extractFunction(source, name) {
 function stripTinyTs(block) {
   return block
     .replace(/export\s+/g, '')
+    .replace(/\)\s*:\s*Record<[^>]+>\[\]\s*\{/g, ') {')
     .replace(/\)\s*:\s*[A-Za-z0-9_<>\[\]\s|]+\s*\{/g, ') {')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*Record<[^>]+>\[\]/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*Record<[^>]+>/g, '$1')
@@ -222,6 +225,66 @@ const bridgedVariants = bridgeVariantsFrom({
 });
 assert.deepEqual(bridgedVariants[0].mediaSrc, ['https://cdn.example.com/vol1.jpg'], 'Shopify bridge must forward only public HTTPS mediaSrc URLs');
 
+const shopifyBridgeRepairHelpers = [
+  'norm',
+  'shopifyGid',
+  'shopifyVariantGid',
+  'normalizeVariantMediaRows',
+  'resolveRepairVariantTargets',
+].map((name) => stripTinyTs(extractFunction(shopifyBridge, name))).join('\n');
+const bridgeRepairFns = new Function(`${shopifyBridgeRepairHelpers}\nreturn { normalizeVariantMediaRows, resolveRepairVariantTargets };`)();
+const normalizedMediaRows = bridgeRepairFns.normalizeVariantMediaRows([{
+  sku: 'PUREFLOW-VOL1',
+  mediaSrc: ['https://cdn.example.com/vol1.jpg', 'http://cdn.example.com/bad.jpg', 'https://cdn.example.com/vol1b.jpg'],
+}]);
+assert.deepEqual(
+  normalizedMediaRows.valid[0].mediaSrc,
+  ['https://cdn.example.com/vol1.jpg', 'https://cdn.example.com/vol1b.jpg'],
+  'Shopify option image repair normalization must preserve HTTPS mediaSrc arrays',
+);
+assert.deepEqual(
+  bridgeRepairFns.normalizeVariantMediaRows([
+    { sku: 'PUREFLOW-VOL1', mediaSrc: 'https://cdn.example.com/vol1.jpg' },
+    { sku: '', mediaSrc: 'http://cdn.example.com/bad.jpg' },
+  ]).invalid,
+  [{ index: 1, sku: null, variant_id: null, errors: ['sku_or_variant_id_required', 'media_src_required'] }],
+  'Shopify option image repair normalization must return invalid row diagnostics',
+);
+const resolvedSkuFallback = bridgeRepairFns.resolveRepairVariantTargets(
+  [{ id: 'gid://shopify/ProductVariant/100', sku: 'PUREFLOW-VOL1', inventoryItem: { sku: '' } }],
+  [{ index: 0, sku: 'PUREFLOW-VOL1', variantId: 'gid://shopify/ProductVariant/999', mediaSrc: ['https://cdn.example.com/vol1.jpg'] }],
+);
+assert.deepEqual(
+  resolvedSkuFallback.repairVariants,
+  [{ id: 'gid://shopify/ProductVariant/100', mediaSrc: ['https://cdn.example.com/vol1.jpg'] }],
+  'Shopify option image repair must fall back from unmatched variant_id to one exact SKU match',
+);
+const resolvedDuplicateSku = bridgeRepairFns.resolveRepairVariantTargets(
+  [
+    { id: 'gid://shopify/ProductVariant/100', sku: 'PUREFLOW-VOL1', product: { id: 'gid://shopify/Product/1' }, inventoryItem: { sku: '' } },
+    { id: 'gid://shopify/ProductVariant/101', sku: '', product: { id: 'gid://shopify/Product/1' }, inventoryItem: { sku: 'PUREFLOW-VOL1' } },
+  ],
+  [{ index: 0, sku: 'PUREFLOW-VOL1', variantId: '', mediaSrc: ['https://cdn.example.com/vol1.jpg'] }],
+);
+assert.deepEqual(resolvedDuplicateSku.repairVariants, [], 'Shopify option image repair must not choose the first duplicate SKU variant');
+assert.deepEqual(
+  resolvedDuplicateSku.duplicates,
+  [{
+    index: 0,
+    sku: 'PUREFLOW-VOL1',
+    product_ids: ['gid://shopify/Product/1'],
+    variant_ids: ['gid://shopify/ProductVariant/100', 'gid://shopify/ProductVariant/101'],
+  }],
+  'Shopify option image repair must report duplicate exact SKU diagnostics',
+);
+
+const resolveRepairVariantTargetsBlock = extractFunction(shopifyBridge, 'resolveRepairVariantTargets');
+assert.match(
+  resolveRepairVariantTargetsBlock,
+  /let target = row\.variantId[\s\S]*\? shopifyVariants\.find\(\(variant: any\) => norm\(variant\?\.id\) === row\.variantId\)[\s\S]*: null;[\s\S]*if \(!target && row\.sku\) \{[\s\S]*const exactSkuMatches = shopifyVariants\.filter\(\(variant: any\) => norm\(variant\?\.sku\) === row\.sku \|\| norm\(variant\?\.inventoryItem\?\.sku\) === row\.sku\);[\s\S]*exactSkuMatches\.length > 1[\s\S]*duplicates\.push/,
+  'Shopify option image repair must fall back from unmatched variant_id to exact SKU matching without choosing duplicate SKUs',
+);
+
 for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edgeShopifyBridge]]) {
   assert.match(source, /SHOPIFY_API_VERSION/, `${label} Shopify bridge must pin an Admin API version`);
   assert.match(source, /authorization-code grant/, `${label} Shopify bridge must document OAuth source`);
@@ -254,10 +317,13 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   assert.match(source, /cleanup_action:\s*'archive_product'/, `${label} Shopify variant failure response must report archive cleanup`);
   assert.match(source, /action === 'archive-product'/, `${label} Shopify bridge must expose archive-product for manual cleanup`);
   assert.match(source, /action === 'set-sku'/, `${label} Shopify bridge must expose an internal SKU repair endpoint`);
+  assert.match(source, /action === 'repair-option-images'/, `${label} Shopify bridge must expose an option image repair endpoint`);
   assert.match(source, /async function handleSetSku/, `${label} Shopify bridge must implement a SKU repair handler`);
+  assert.match(source, /async function handleRepairOptionImages/, `${label} Shopify bridge must implement an option image repair handler`);
   assert.match(source, /inventoryItemUpdate\(id: \$id, input: \$input\)/, `${label} Shopify SKU repair must write SKU through inventoryItemUpdate`);
   assert.match(source, /input:\s*\{\s*sku\s*\}/, `${label} Shopify SKU repair must set InventoryItemInput.sku`);
   assert.match(source, /productVariantsBulkUpdate\(productId: \$productId, variants: \$variants\)/, `${label} Shopify SKU repair must support write_products fallback`);
+  assert.match(source, /mediaSrc:\s*mediaSrc/, `${label} Shopify option image repair must set ProductVariantsBulkInput.mediaSrc`);
   assert.match(source, /inventoryItem:\s*\{\s*sku\s*\}/, `${label} Shopify SKU fallback must set ProductVariantsBulkInput.inventoryItem.sku`);
   assert.match(source, /variant_count[\s\S]*ambiguous_variant/, `${label} Shopify SKU repair must refuse ambiguous multi-variant products`);
   assert.match(source, /inventorySetQuantities/, `${label} Shopify bridge must include gated inventory support`);

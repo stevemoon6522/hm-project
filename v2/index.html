@@ -8953,7 +8953,7 @@ LEGACY END -->
         </select>
         <div class="platform-status-tabs" role="group" aria-label="${text((PLATFORM_LABELS[platform] || platform) + ' 등록 상태 필터')}">${statusTabs}</div>
       </div>
-      <div class="platform-actions">${buttons.join('')}</div>
+      <div class="platform-actions" data-platform-actions>${buttons.join('')}</div>
     </div>`;
   }
 
@@ -9081,7 +9081,7 @@ LEGACY END -->
                 <label>삭제할 기존 Joom 상품</label>
                 <input type="search" data-joom-remote-search value="${text(cleanup.search || '')}" placeholder="기존 SKU, 상품명, product id, variant SKU 검색" style="margin-bottom:6px;">
                 <select data-joom-remote-select size="7" style="width:100%;font-size:12px;" ${cleanup.loading || cleanup.running ? 'disabled' : ''}>${remoteOptions}</select>
-                <div class="muted" style="font-size:11px;margin-top:4px;">불러온 원격 상품 ${text((cleanup.items || []).length)}개, 검색 결과 ${text(filteredItems.length)}개</div>
+                <div class="muted" data-joom-remote-count style="font-size:11px;margin-top:4px;">불러온 원격 상품 ${text((cleanup.items || []).length)}개, 검색 결과 ${text(filteredItems.length)}개</div>
               </div>
               <div class="field" style="grid-column:span 6;">
                 <label>재등록할 현재 대시보드 마스터</label>
@@ -9108,6 +9108,21 @@ Current SKU(s): ${text(currentSkuLine)}</div>
           </div>
         </div>
       </div>`;
+  }
+
+  function joomRemoteCleanupRefreshSearchResults(root) {
+    const modal = root.querySelector('#joom-remote-cleanup-modal');
+    if (!modal) return;
+    const cleanup = joomRemoteCleanupState();
+    const filteredItems = joomRemoteCleanupFilteredItems();
+    const select = modal.querySelector('[data-joom-remote-select]');
+    if (select) {
+      select.innerHTML = filteredItems.length
+        ? filteredItems.map((item) => `<option value="${text(item.id || '')}"${String(item.id || '') === String(cleanup.selectedRemoteId || '') ? ' selected' : ''}>${text(joomRemoteCleanupRemoteLabel(item))}</option>`).join('')
+        : '<option value="">Joom 상품을 불러오거나 검색하세요</option>';
+    }
+    const count = modal.querySelector('[data-joom-remote-count]');
+    if (count) count.textContent = `불러온 원격 상품 ${(cleanup.items || []).length}개, 검색 결과 ${filteredItems.length}개`;
   }
 
   async function joomRemoteCleanupLoadProducts(loadMore = false) {
@@ -9634,7 +9649,7 @@ Current SKU(s): ${text(currentSkuLine)}</div>
             <input type="search" data-platform-search value="${text(filter.search || '')}" placeholder="상품명 / SKU / 옵션 검색">
             <div class="platform-status-tabs" role="group" aria-label="${text(label)} 등록 상태 필터">${statusTabs}</div>
           </div>
-          <div class="platform-actions platform-shopee-actions">
+          <div class="platform-actions platform-shopee-actions" data-platform-actions>
             <span class="platform-selection-meter" aria-label="선택된 상품 수">
               <span>선택</span>
               <span class="platform-selected-count">${text(selectedCount)}개</span>
@@ -9665,7 +9680,7 @@ Current SKU(s): ${text(currentSkuLine)}</div>
             <div class="platform-status-tabs" role="group" aria-label="${text(label)} 등록 상태 필터">${statusTabs}</div>
             ${platformRegionControls(platform)}
           </div>
-          <div class="platform-actions">
+          <div class="platform-actions" data-platform-actions>
             <button type="button" data-platform-select-visible>표시 항목 선택</button>
             <button type="button" data-platform-clear-selection ${selectedCount ? '' : 'disabled'}>선택 해제</button>
             <button type="button" data-platform-preview="register" class="primary" ${canRunSelectionAction ? '' : 'disabled'}>${text(registerActionLabel)}</button>
@@ -9713,10 +9728,176 @@ Current SKU(s): ${text(currentSkuLine)}</div>
     PLATFORM_TABS.forEach(renderPlatformWorkbench);
   }
 
+  function platformWorkbenchActionState(platform) {
+    const selectedCount = platformSelection(platform).size;
+    const isAlibaba = platform === 'alibaba';
+    const visibleGroups = platformVisibleGroups(platform);
+    const canUseVisibleSingle = !isAlibaba && selectedCount === 0 && visibleGroups.length === 1;
+    const canRunSelectionAction = selectedCount > 0 || canUseVisibleSingle;
+    return {
+      selectedCount,
+      canRunSelectionAction,
+      needsUpdateMasterSyncCount: platformNeedsUpdateKeys(platform).length,
+      shopeeActionEnabled: platform === 'shopee' ? selectedCount > 0 : canRunSelectionAction,
+    };
+  }
+
+  function htmlFirstElement(html) {
+    const template = document.createElement('template');
+    template.innerHTML = String(html || '').trim();
+    return template.content.firstElementChild;
+  }
+
+  function platformRefreshToolbarActions(root, platform) {
+    const actions = root.querySelector('[data-platform-actions]') || root.querySelector('.platform-toolbar > .platform-actions');
+    if (!actions) return false;
+    const actionState = platformWorkbenchActionState(platform);
+    if (platform === 'shopee') {
+      const selectedCountEl = actions.querySelector('.platform-selected-count');
+      if (selectedCountEl) selectedCountEl.textContent = `${actionState.selectedCount}개`;
+      actions.querySelectorAll('[data-platform-preview], [data-platform-sync], [data-shopee-name-sync], [data-shopee-english-restore]').forEach((btn) => {
+        btn.disabled = !actionState.shopeeActionEnabled;
+      });
+      const needed = actions.querySelector('[data-platform-master-sync-needed]');
+      if (needed) needed.disabled = !actionState.needsUpdateMasterSyncCount;
+      return false;
+    }
+
+    const nextToolbar = htmlFirstElement(platformQueueToolbarHtml(
+      platform,
+      platformFilter(platform),
+      '',
+      actionState.selectedCount,
+      actionState.canRunSelectionAction,
+      actionState.needsUpdateMasterSyncCount,
+    ));
+    const nextActions = nextToolbar?.querySelector('[data-platform-actions]') || nextToolbar?.querySelector('.platform-actions');
+    if (!nextActions) return false;
+    actions.innerHTML = nextActions.innerHTML;
+    return true;
+  }
+
+  function platformRefreshTable(root, platform) {
+    const table = root.querySelector('table.platform-table, table.platform-table-shopee');
+    if (!table) return;
+    const currentHead = table.querySelector('thead');
+    const nextHead = htmlFirstElement(platformTableHeadHtml(platform));
+    if (currentHead && nextHead) currentHead.replaceWith(nextHead);
+    const body = table.querySelector('tbody');
+    if (body) body.innerHTML = platformTableRows(platform);
+    const checkAll = root.querySelector('[data-platform-check-all]');
+    if (checkAll) checkAll.indeterminate = checkAll.dataset.platformIndeterminate === '1';
+  }
+
+  function platformRefreshSearchResults(root, platform) {
+    const actionsReplaced = platformRefreshToolbarActions(root, platform);
+    platformRefreshTable(root, platform);
+    if (actionsReplaced) bindPlatformToolbarControls(root, platform);
+    bindPlatformTableControls(root, platform);
+  }
+
+  function bindPlatformTableControls(root, platform) {
+    const checkAll = root.querySelector('[data-platform-check-all]');
+    if (checkAll) {
+      checkAll.indeterminate = checkAll.dataset.platformIndeterminate === '1';
+      checkAll.addEventListener('change', () => {
+        const sel = platformSelection(platform);
+        platformMarkSelectionManual(platform);
+        platformVisibleGroups(platform).forEach((group) => {
+          const key = platformGroupKey(group);
+          if (checkAll.checked) sel.add(key);
+          else sel.delete(key);
+        });
+        if (!sel.size && state.platformPreview?.platform === platform) state.platformPreview = null;
+        renderPlatformWorkbench(platform);
+      });
+    }
+    root.querySelectorAll('.platform-master-check').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const sel = platformSelection(platform);
+        const key = cb.dataset.platformKey || '';
+        platformMarkSelectionManual(platform);
+        if (cb.checked) sel.add(key);
+        else sel.delete(key);
+        renderPlatformWorkbench(platform);
+      });
+    });
+    root.querySelectorAll('[data-platform-toggle]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const key = `${platform}:${btn.dataset.platformToggle || ''}`;
+        if (state.platformExpandedGroups.has(key)) state.platformExpandedGroups.delete(key);
+        else state.platformExpandedGroups.add(key);
+        renderPlatformWorkbench(platform);
+      });
+    });
+    root.querySelectorAll('[data-platform-quick]').forEach((btn) => {
+      btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformQuick || 'register', [btn.dataset.platformKey || '']));
+    });
+    root.querySelectorAll('[data-platform-master-delete]').forEach((btn) => {
+      btn.addEventListener('click', () => deleteOneMasterProduct(btn));
+    });
+  }
+
+  function bindPlatformToolbarControls(root, platform) {
+    root.querySelector('[data-platform-select-visible]')?.addEventListener('click', () => {
+      const sel = platformSelection(platform);
+      platformMarkSelectionManual(platform);
+      platformVisibleGroups(platform).forEach((group) => sel.add(platformGroupKey(group)));
+      renderPlatformWorkbench(platform);
+    });
+    root.querySelector('[data-platform-clear-selection]')?.addEventListener('click', () => {
+      if (state.platformBatchRegistration?.platform === platform && state.platformBatchRegistration.running) {
+        showToast('진행 중인 일괄 등록을 먼저 완료하세요.', 'err');
+        return;
+      }
+      platformMarkSelectionManual(platform);
+      platformSelection(platform).clear();
+      if (state.platformPreview?.platform === platform) state.platformPreview = null;
+      if (state.platformBatchRegistration?.platform === platform) state.platformBatchRegistration = null;
+      renderPlatformWorkbench(platform);
+    });
+    root.querySelector('[data-platform-master-sync-needed]')?.addEventListener('click', () => {
+      const keys = platformNeedsUpdateKeys(platform);
+      if (!keys.length) {
+        showToast('마스터 변경이 필요한 상품이 없습니다.', 'warn');
+        renderPlatformWorkbench(platform);
+        return;
+      }
+      platformOpenMasterSyncDialog(platform, keys);
+    });
+    root.querySelectorAll('[data-platform-preview]').forEach((btn) => {
+      btn.addEventListener('click', () => platformOpenAction(platform, btn.dataset.platformPreview || 'register'));
+    });
+    root.querySelector('[data-shopee-name-sync]')?.addEventListener('click', () => openShopeeNameSyncPanel());
+    root.querySelector('[data-shopee-english-restore]')?.addEventListener('click', () => openShopeeEnglishRestorePanel());
+    root.querySelector('[data-platform-sync]')?.addEventListener('click', (event) => platformSyncSelected(platform, event.currentTarget));
+    root.querySelector('[data-shopee-more-toggle]')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const toggle = event.currentTarget;
+      const menu = root.querySelector('[data-shopee-more-menu]');
+      if (!menu) return;
+      const willOpen = menu.hasAttribute('hidden');
+      menu.toggleAttribute('hidden', !willOpen);
+      toggle.setAttribute('aria-expanded', willOpen ? 'true' : 'false');
+    });
+    root.querySelector('[data-shopee-more-menu]')?.addEventListener('click', (event) => {
+      event.stopPropagation();
+    });
+    if (platform === 'joom') {
+      root.querySelector('[data-joom-remote-open]')?.addEventListener('click', () => {
+        const cleanup = joomRemoteCleanupState();
+        cleanup.open = true;
+        cleanup.error = '';
+        cleanup.result = null;
+        renderPlatformWorkbench('joom');
+      });
+    }
+  }
+
   function bindPlatformWorkbench(root, platform) {
     root.querySelector('[data-platform-search]')?.addEventListener('input', (e) => {
       platformFilter(platform).search = e.target.value || '';
-      renderPlatformWorkbench(platform);
+      platformRefreshSearchResults(root, platform);
     });
     root.querySelector('[data-platform-lifecycle]')?.addEventListener('change', (e) => {
       platformFilter(platform).lifecycle = e.target.value || 'all';
@@ -9854,7 +10035,7 @@ Current SKU(s): ${text(currentSkuLine)}</div>
         const cleanup = joomRemoteCleanupState();
         cleanup.search = event.target?.value || '';
         cleanup.result = null;
-        renderPlatformWorkbench('joom');
+        joomRemoteCleanupRefreshSearchResults(root);
       });
       root.querySelector('[data-joom-remote-select]')?.addEventListener('change', (event) => {
         const cleanup = joomRemoteCleanupState();

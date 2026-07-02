@@ -1,0 +1,1349 @@
+<!doctype html>
+<!--
+  PROTOTYPE - eBay tab UI only, no API calls.
+  Question: which eBay operations layout should be promoted into the V2 dashboard?
+  Variants are switchable with ?variant=A, ?variant=B, ?variant=C.
+-->
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>H&M eBay Tab UI Prototype</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --surface-2: #f9fafb;
+      --line: #d8dee8;
+      --line-strong: #bcc7d6;
+      --ink: #172033;
+      --muted: #647086;
+      --blue: #2563eb;
+      --blue-soft: #dbeafe;
+      --green: #15803d;
+      --green-soft: #dcfce7;
+      --amber: #b45309;
+      --amber-soft: #fef3c7;
+      --red: #b91c1c;
+      --red-soft: #fee2e2;
+      --violet: #6d28d9;
+      --violet-soft: #ede9fe;
+      --shadow: 0 14px 38px rgba(23, 32, 51, .10);
+      font-family: Inter, "Segoe UI", Arial, "Noto Sans KR", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: var(--bg);
+      color: var(--ink);
+      font-size: 13px;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+      letter-spacing: 0;
+    }
+
+    button {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 7px 10px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    button:hover {
+      border-color: var(--line-strong);
+      background: #f8fafc;
+    }
+
+    button.primary {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #fff;
+      font-weight: 700;
+    }
+
+    button.danger {
+      color: var(--red);
+      border-color: #fecaca;
+      background: #fffafa;
+    }
+
+    button.icon {
+      width: 34px;
+      padding: 0;
+      font-weight: 800;
+    }
+
+    input,
+    select,
+    textarea {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 7px 9px;
+    }
+
+    textarea {
+      min-height: 92px;
+      width: 100%;
+      resize: vertical;
+      line-height: 1.45;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th,
+    td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      background: #f8fafc;
+      text-transform: uppercase;
+    }
+
+    tr:hover td {
+      background: #fbfdff;
+    }
+
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 236px minmax(0, 1fr);
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      background: #101828;
+      color: #dbe5f4;
+      padding: 18px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .brand {
+      display: grid;
+      gap: 4px;
+    }
+
+    .brand-title {
+      font-size: 15px;
+      font-weight: 850;
+      color: #fff;
+    }
+
+    .brand-subtitle {
+      color: #9fb0c7;
+      font-size: 12px;
+    }
+
+    .side-nav {
+      display: grid;
+      gap: 5px;
+    }
+
+    .side-nav button {
+      width: 100%;
+      justify-content: flex-start;
+      border-color: transparent;
+      background: transparent;
+      color: #cbd5e1;
+      min-height: 36px;
+      padding: 8px 10px;
+    }
+
+    .side-nav button.active {
+      background: #ffffff;
+      color: #111827;
+      font-weight: 800;
+    }
+
+    .side-nav button:not(.active):hover {
+      background: rgba(255, 255, 255, .07);
+      color: #fff;
+    }
+
+    .side-foot {
+      margin-top: auto;
+      display: grid;
+      gap: 8px;
+      color: #a9b8cf;
+      font-size: 12px;
+    }
+
+    .main {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .topbar {
+      min-height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, .92);
+      padding: 10px 18px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      backdrop-filter: blur(10px);
+    }
+
+    .topbar-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+
+    .topbar-title h1 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+      overflow-wrap: anywhere;
+    }
+
+    .ebay-mark {
+      display: inline-grid;
+      grid-template-columns: repeat(4, auto);
+      gap: 1px;
+      align-items: baseline;
+      font-size: 18px;
+      font-weight: 900;
+      line-height: 1;
+    }
+
+    .ebay-mark span:nth-child(1) { color: #e53238; }
+    .ebay-mark span:nth-child(2) { color: #0064d2; }
+    .ebay-mark span:nth-child(3) { color: #f5af02; }
+    .ebay-mark span:nth-child(4) { color: #86b817; }
+
+    .topbar-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .content {
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .content > * {
+      min-width: 0;
+    }
+
+    .page-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .page-title {
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .page-title h2 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.2;
+    }
+
+    .page-title p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.45;
+      max-width: 820px;
+    }
+
+    .metric-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(130px, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 11px 12px;
+      display: grid;
+      gap: 5px;
+      min-width: 0;
+    }
+
+    .metric label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .metric strong {
+      font-size: 21px;
+      line-height: 1;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .tabs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      border-bottom: 1px solid var(--line);
+      overflow-x: auto;
+      background: var(--surface);
+      border-radius: 8px 8px 0 0;
+      padding: 8px 10px 0;
+    }
+
+    .tab {
+      min-height: 36px;
+      border: 0;
+      border-bottom: 3px solid transparent;
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      padding: 8px 10px 9px;
+      font-weight: 800;
+    }
+
+    .tab.active {
+      color: var(--blue);
+      border-bottom-color: var(--blue);
+    }
+
+    .workbench {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 3px 12px rgba(23, 32, 51, .04);
+      min-width: 0;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+      padding: 12px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+
+    .filters,
+    .actions,
+    .segmented {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      align-items: center;
+    }
+
+    .filters input[type="search"] {
+      min-width: min(280px, 100%);
+    }
+
+    .segmented {
+      gap: 3px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px;
+      background: var(--surface);
+    }
+
+    .segmented button {
+      border: 0;
+      min-height: 28px;
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: var(--muted);
+      background: transparent;
+      box-shadow: none;
+      font-size: 12px;
+    }
+
+    .segmented button.active {
+      background: var(--ink);
+      color: #fff;
+      font-weight: 800;
+    }
+
+    .table-scroll {
+      overflow-x: auto;
+    }
+
+    .queue-table {
+      min-width: 1040px;
+    }
+
+    .queue-table th:nth-child(1),
+    .queue-table td:nth-child(1) {
+      width: 42px;
+      text-align: center;
+    }
+
+    .product-cell {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      gap: 9px;
+      align-items: start;
+      min-width: 0;
+    }
+
+    .thumb {
+      width: 44px;
+      aspect-ratio: 1;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      background:
+        linear-gradient(135deg, rgba(37, 99, 235, .14), rgba(21, 128, 61, .12)),
+        #fff;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .product-main {
+      display: grid;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .product-name {
+      font-weight: 850;
+      line-height: 1.35;
+      overflow-wrap: anywhere;
+    }
+
+    .product-meta,
+    .muted {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .mono {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      letter-spacing: 0;
+    }
+
+    .badge,
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 22px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+
+    .badge.green { color: var(--green); background: var(--green-soft); border-color: #bbf7d0; }
+    .badge.blue { color: #1d4ed8; background: var(--blue-soft); border-color: #bfdbfe; }
+    .badge.amber { color: var(--amber); background: var(--amber-soft); border-color: #fde68a; }
+    .badge.red { color: var(--red); background: var(--red-soft); border-color: #fecaca; }
+    .badge.violet { color: var(--violet); background: var(--violet-soft); border-color: #ddd6fe; }
+
+    .delta.up { color: var(--red); font-weight: 850; }
+    .delta.down { color: var(--green); font-weight: 850; }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.42fr) minmax(320px, .58fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .side-panel,
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      min-width: 0;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      min-height: 44px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+
+    .panel-head h3 {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.25;
+      overflow-wrap: anywhere;
+    }
+
+    .panel-body {
+      padding: 12px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .detail-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .detail-row {
+      display: grid;
+      grid-template-columns: 124px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+    }
+
+    .detail-row label {
+      color: var(--muted);
+      font-weight: 800;
+      font-size: 12px;
+    }
+
+    .check-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .check-item {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+    }
+
+    .check-dot {
+      width: 20px;
+      aspect-ratio: 1;
+      border-radius: 999px;
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 900;
+    }
+
+    .check-dot.ok { background: var(--green); }
+    .check-dot.warn { background: var(--amber); }
+    .check-dot.fail { background: var(--red); }
+
+    .tab-pane[hidden],
+    .variant[hidden] {
+      display: none !important;
+    }
+
+    .price-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .price-box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      display: grid;
+      gap: 5px;
+      background: var(--surface);
+    }
+
+    .price-box label {
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .price-box strong {
+      font-size: 20px;
+    }
+
+    .kanban {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(220px, 1fr));
+      gap: 10px;
+      overflow-x: auto;
+      padding: 12px;
+    }
+
+    .lane {
+      min-width: 220px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfcfe;
+      overflow: hidden;
+    }
+
+    .lane h3 {
+      margin: 0;
+      padding: 10px;
+      font-size: 13px;
+      border-bottom: 1px solid var(--line);
+      background: var(--surface);
+    }
+
+    .lane-body {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+    }
+
+    .task-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      box-shadow: 0 2px 8px rgba(23, 32, 51, .05);
+    }
+
+    .task-title {
+      font-weight: 850;
+      line-height: 1.35;
+    }
+
+    .mini-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      align-items: center;
+    }
+
+    .bottom-switcher {
+      position: fixed;
+      z-index: 30;
+      left: 50%;
+      bottom: 18px;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid rgba(15, 23, 42, .18);
+      border-radius: 999px;
+      background: #0f172a;
+      color: #fff;
+      box-shadow: var(--shadow);
+    }
+
+    .bottom-switcher button {
+      border-color: rgba(255, 255, 255, .18);
+      background: rgba(255, 255, 255, .08);
+      color: #fff;
+    }
+
+    .switch-label {
+      min-width: 174px;
+      text-align: center;
+      font-weight: 850;
+      font-size: 12px;
+    }
+
+    @media (max-width: 1100px) {
+      .app-shell {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        display: none;
+      }
+
+      .split {
+        grid-template-columns: 1fr;
+      }
+
+      .metric-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 720px) {
+      .topbar,
+      .page-head,
+      .toolbar {
+        align-items: stretch;
+        grid-template-columns: 1fr;
+        flex-direction: column;
+      }
+
+      .content {
+        padding: 12px;
+      }
+
+      .panel-head {
+        align-items: stretch;
+        flex-direction: column;
+      }
+
+      .panel-head .mini-row {
+        width: 100%;
+      }
+
+      .panel-head .mini-row button {
+        flex: 1 1 0;
+      }
+
+      .metric-strip,
+      .price-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .filters input[type="search"],
+      .filters select,
+      .actions button {
+        width: 100%;
+      }
+
+      .segmented {
+        width: 100%;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+      }
+
+      .bottom-switcher {
+        width: calc(100% - 24px);
+        justify-content: space-between;
+      }
+
+      .kanban {
+        grid-template-columns: repeat(4, minmax(220px, 260px));
+        max-width: 100%;
+      }
+
+      .switch-label {
+        min-width: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Platform navigation">
+      <div class="brand">
+        <div class="brand-title">H&M Project</div>
+        <div class="brand-subtitle">Marketplace Console</div>
+      </div>
+      <nav class="side-nav">
+        <button type="button">Overview</button>
+        <button type="button">Shopee</button>
+        <button type="button">Joom</button>
+        <button type="button">Qoo10</button>
+        <button type="button" class="active">eBay</button>
+        <button type="button">Shopify</button>
+      </nav>
+      <div class="side-foot">
+        <span>EBAY_US</span>
+        <span>Business Policies: ready</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="topbar-title">
+          <span class="ebay-mark" aria-label="eBay"><span>e</span><span>B</span><span>a</span><span>y</span></span>
+          <h1>eBay 운영 탭</h1>
+        </div>
+        <div class="topbar-actions">
+          <button type="button">정책 새로고침</button>
+          <button type="button">수수료 확인</button>
+          <button type="button" class="primary">등록 검증</button>
+        </div>
+      </header>
+
+      <section class="content">
+        <div class="page-head">
+          <div class="page-title">
+            <h2>eBay US 작업 큐</h2>
+            <p>등록 전 검증, live offer 가격, SKU 매핑, 종료 대상을 한 화면에서 확인합니다.</p>
+          </div>
+          <div class="mini-row">
+            <span class="badge green">Business Policy OK</span>
+            <span class="badge blue">Category 176984</span>
+            <span class="badge amber">2 blockers</span>
+          </div>
+        </div>
+
+        <div class="metric-strip" aria-label="eBay metrics">
+          <div class="metric">
+            <label>Publish queue</label>
+            <strong>18</strong>
+            <span>single 11 / variation 7</span>
+          </div>
+          <div class="metric">
+            <label>Mapped offers</label>
+            <strong>42</strong>
+            <span>38 published / 4 needs check</span>
+          </div>
+          <div class="metric">
+            <label>Price delta</label>
+            <strong>+6.8%</strong>
+            <span>largest selected SKU</span>
+          </div>
+          <div class="metric">
+            <label>Image readiness</label>
+            <strong>91%</strong>
+            <span>option image gaps: 3</span>
+          </div>
+        </div>
+
+        <section class="variant" data-variant="A">
+          <div class="workbench">
+            <div class="tabs" role="tablist" aria-label="eBay work tabs">
+              <button type="button" class="tab active" data-tab="queue">등록 큐</button>
+              <button type="button" class="tab" data-tab="price">가격 동기화</button>
+              <button type="button" class="tab" data-tab="mapping">라이브 매핑</button>
+              <button type="button" class="tab" data-tab="policy">정책·배송</button>
+            </div>
+
+            <div class="tab-pane" data-pane="queue">
+              <div class="toolbar">
+                <div class="filters">
+                  <input type="search" data-search placeholder="SKU / 상품명 / artist">
+                  <select>
+                    <option>전체 lifecycle</option>
+                    <option>PRE ORDER</option>
+                    <option>READY STOCK</option>
+                  </select>
+                  <div class="segmented" data-status-tabs>
+                    <button type="button" class="active" data-status="all">전체</button>
+                    <button type="button" data-status="ready">검증 가능</button>
+                    <button type="button" data-status="blocked">차단</button>
+                    <button type="button" data-status="mapped">등록됨</button>
+                  </div>
+                </div>
+                <div class="actions">
+                  <button type="button" data-select-visible>표시 선택</button>
+                  <button type="button" data-clear-selection>선택 해제</button>
+                  <button type="button" class="primary">등록 검증</button>
+                  <button type="button">마스터 변경 적용</button>
+                  <button type="button" class="danger">Withdraw</button>
+                </div>
+              </div>
+              <div class="split">
+                <div class="table-scroll">
+                  <table class="queue-table" aria-label="eBay publish queue">
+                    <thead>
+                      <tr>
+                        <th><input type="checkbox" data-master-check></th>
+                        <th>Product</th>
+                        <th>Status</th>
+                        <th>SKU / Offer</th>
+                        <th>Price</th>
+                        <th>Inventory</th>
+                        <th>Blockers</th>
+                        <th>Last check</th>
+                      </tr>
+                    </thead>
+                    <tbody data-row-host></tbody>
+                  </table>
+                </div>
+                <aside class="side-panel" data-detail-panel>
+                  <div class="panel-head">
+                    <h3>검증 상세</h3>
+                    <span class="badge blue">EBAY_US</span>
+                  </div>
+                  <div class="panel-body" data-detail-body></div>
+                </aside>
+              </div>
+            </div>
+
+            <div class="tab-pane" data-pane="price" hidden>
+              <div class="panel-body">
+                <div class="price-grid">
+                  <div class="price-box">
+                    <label>Current</label>
+                    <strong>31.99 USD</strong>
+                    <span class="muted">published offer median</span>
+                  </div>
+                  <div class="price-box">
+                    <label>Computed</label>
+                    <strong>34.49 USD</strong>
+                    <span class="delta up">+7.8% after weight update</span>
+                  </div>
+                  <div class="price-box">
+                    <label>Fee check</label>
+                    <strong>pending</strong>
+                    <span class="muted">getListingFees before live sync</span>
+                  </div>
+                </div>
+                <div class="table-scroll">
+                  <table class="queue-table">
+                    <thead>
+                      <tr>
+                        <th>Product</th>
+                        <th>eBay SKU</th>
+                        <th>Current</th>
+                        <th>New</th>
+                        <th>Delta</th>
+                        <th>Sync state</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr><td>TXT BEOMGYU PANIC</td><td class="mono">SPC-TXT-BG-PANIC</td><td>32.99 USD</td><td>34.49 USD</td><td class="delta up">+4.5%</td><td><span class="badge amber">confirm</span></td></tr>
+                      <tr><td>IVE SWITCH SET</td><td class="mono">SPC-IVE-SWITCH-SET</td><td>48.50 USD</td><td>47.99 USD</td><td class="delta down">-1.1%</td><td><span class="badge green">ready</span></td></tr>
+                      <tr><td>aespa ARMAGEDDON Zine</td><td class="mono">SPC-AES-ARM-ZINE</td><td>-</td><td>29.99 USD</td><td>-</td><td><span class="badge red">unmapped</span></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="tab-pane" data-pane="mapping" hidden>
+              <div class="panel-body">
+                <div class="table-scroll">
+                  <table class="queue-table">
+                    <thead>
+                      <tr>
+                        <th>Master SKU</th>
+                        <th>eBay SKU</th>
+                        <th>Item ID</th>
+                        <th>Offer ID</th>
+                        <th>Marketplace</th>
+                        <th>State</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr><td class="mono">TXT-BG-PANIC</td><td class="mono">SPC-TXT-BG-PANIC</td><td>286513755306</td><td>110090441021</td><td>EBAY_US</td><td><span class="badge green">mapped</span></td></tr>
+                      <tr><td class="mono">IVE-SWITCH-SET</td><td class="mono">SPC-IVE-SWITCH-SET</td><td>286622814905</td><td>110090551447</td><td>EBAY_US</td><td><span class="badge green">mapped</span></td></tr>
+                      <tr><td class="mono">AES-ARM-ZINE</td><td class="mono">-</td><td>-</td><td>-</td><td>EBAY_US</td><td><span class="badge red">missing SKU</span></td></tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            <div class="tab-pane" data-pane="policy" hidden>
+              <div class="panel-body">
+                <div class="detail-list">
+                  <div class="detail-row"><label>Fulfillment</label><div><strong>253030471025</strong> / ALBUM PRE-ORDER / KR ship-from</div></div>
+                  <div class="detail-row"><label>Return</label><div>30 days buyer-paid returns</div></div>
+                  <div class="detail-row"><label>Payment</label><div>Managed payments default</div></div>
+                  <div class="detail-row"><label>Location</label><div class="mono">STARONE-SUWON-B105</div></div>
+                  <div class="detail-row"><label>Category</label><div>176984 Music &gt; CDs / 108857 K-Pop Memorabilia</div></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="variant" data-variant="B" hidden>
+          <div class="split">
+            <div class="panel">
+              <div class="panel-head">
+                <h3>eBay 등록 상세 중심</h3>
+                <div class="mini-row"><span class="badge green">3 ready</span><span class="badge red">2 blocked</span></div>
+              </div>
+              <div class="panel-body">
+                <div class="detail-list">
+                  <div class="detail-row"><label>Product</label><div><strong>TXT BEOMGYU PANIC</strong><br><span class="muted">single SKU / Music &gt; CDs / Brand New</span></div></div>
+                  <div class="detail-row"><label>Title</label><div>TXT BEOMGYU PANIC Official KPOP Album CD Photocard Gift</div></div>
+                  <div class="detail-row"><label>Images</label><div><span class="badge green">main layered</span> <span class="badge green">8 detail</span> <span class="badge amber">1 option missing</span></div></div>
+                  <div class="detail-row"><label>Price</label><div><strong>34.49 USD</strong> <span class="muted">cost 24,700 KRW / 620g</span></div></div>
+                  <div class="detail-row"><label>Payload</label><textarea readonly>PUT /inventory_item/SPC-TXT-BG-PANIC
+POST /offer
+POST /offer/{offerId}/publish
+Content-Language: en-US</textarea></div>
+                </div>
+              </div>
+            </div>
+            <div class="side-panel">
+              <div class="panel-head">
+                <h3>Preflight</h3>
+                <span class="badge amber">review</span>
+              </div>
+              <div class="panel-body">
+                <div class="check-list">
+                  <div class="check-item"><span class="check-dot ok">✓</span><div><strong>SKU length</strong><br><span class="muted">under 50 chars</span></div></div>
+                  <div class="check-item"><span class="check-dot ok">✓</span><div><strong>Required specifics</strong><br><span class="muted">Artist, Release Title, Format, Genre</span></div></div>
+                  <div class="check-item"><span class="check-dot warn">!</span><div><strong>Variation image</strong><br><span class="muted">SET option image not confirmed</span></div></div>
+                  <div class="check-item"><span class="check-dot ok">✓</span><div><strong>Business policies</strong><br><span class="muted">fulfillment / payment / return resolved</span></div></div>
+                </div>
+                <button type="button" class="primary">이 상품 등록 검증</button>
+                <button type="button">마스터 필드 보정</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="variant" data-variant="C" hidden>
+          <div class="workbench">
+            <div class="panel-head">
+              <h3>eBay 작업 상태 보드</h3>
+              <div class="mini-row"><button type="button">표시 선택</button><button type="button" class="primary">선택 실행</button></div>
+            </div>
+            <div class="kanban">
+              <div class="lane">
+                <h3>등록 준비</h3>
+                <div class="lane-body">
+                  <div class="task-card">
+                    <div class="task-title">TXT BEOMGYU PANIC</div>
+                    <div class="mini-row"><span class="badge blue">single</span><span class="badge green">34.49 USD</span></div>
+                    <span class="muted mono">SPC-TXT-BG-PANIC</span>
+                  </div>
+                  <div class="task-card">
+                    <div class="task-title">IVE SWITCH SET</div>
+                    <div class="mini-row"><span class="badge violet">variation</span><span class="badge green">47.99 USD</span></div>
+                    <span class="muted mono">SPC-IVE-SWITCH-SET</span>
+                  </div>
+                </div>
+              </div>
+              <div class="lane">
+                <h3>차단</h3>
+                <div class="lane-body">
+                  <div class="task-card">
+                    <div class="task-title">aespa ARMAGEDDON Zine</div>
+                    <div class="mini-row"><span class="badge red">missing SKU</span><span class="badge amber">category</span></div>
+                    <span class="muted">Goods 상품 category ID 필요</span>
+                  </div>
+                  <div class="task-card">
+                    <div class="task-title">RIIZE Lucky Tin</div>
+                    <div class="mini-row"><span class="badge amber">image</span></div>
+                    <span class="muted">option image 2개 미확정</span>
+                  </div>
+                </div>
+              </div>
+              <div class="lane">
+                <h3>라이브 확인</h3>
+                <div class="lane-body">
+                  <div class="task-card">
+                    <div class="task-title">NCT DREAM Photobook</div>
+                    <div class="mini-row"><span class="badge green">published</span><span class="badge blue">286622814905</span></div>
+                    <span class="muted">price sync needed +2.1%</span>
+                  </div>
+                </div>
+              </div>
+              <div class="lane">
+                <h3>종료 후보</h3>
+                <div class="lane-body">
+                  <div class="task-card">
+                    <div class="task-title">OLD STOCK Album Random</div>
+                    <div class="mini-row"><span class="badge red">sold out</span><span class="badge amber">withdraw</span></div>
+                    <span class="muted">last seen 9 days ago</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <div class="bottom-switcher" role="group" aria-label="Prototype variant switcher">
+    <button type="button" class="icon" data-prev title="Previous variant">‹</button>
+    <span class="switch-label" data-variant-label></span>
+    <button type="button" class="icon" data-next title="Next variant">›</button>
+  </div>
+
+  <script>
+    const rows = [
+      {
+        id: 'txt',
+        product: 'TXT BEOMGYU PANIC',
+        meta: 'single SKU · Music > CDs · 620g',
+        status: 'ready',
+        badge: 'green',
+        sku: 'SPC-TXT-BG-PANIC',
+        offer: '110090441021',
+        current: '32.99 USD',
+        next: '34.49 USD',
+        delta: '+4.5%',
+        deltaClass: 'up',
+        inventory: '3',
+        blockers: 'none',
+        last: 'today 10:42',
+      },
+      {
+        id: 'ive',
+        product: 'IVE SWITCH SET',
+        meta: 'variation · Version axis · 840g',
+        status: 'mapped',
+        badge: 'blue',
+        sku: 'SPC-IVE-SWITCH-SET',
+        offer: '110090551447',
+        current: '48.50 USD',
+        next: '47.99 USD',
+        delta: '-1.1%',
+        deltaClass: 'down',
+        inventory: '8',
+        blockers: 'none',
+        last: 'today 09:11',
+      },
+      {
+        id: 'aes',
+        product: 'aespa ARMAGEDDON Zine',
+        meta: 'goods · category 108857 required · 410g',
+        status: 'blocked',
+        badge: 'red',
+        sku: '-',
+        offer: '-',
+        current: '-',
+        next: '29.99 USD',
+        delta: '-',
+        deltaClass: '',
+        inventory: '5',
+        blockers: 'missing eBay SKU',
+        last: 'yesterday',
+      },
+      {
+        id: 'riize',
+        product: 'RIIZE Lucky Tin',
+        meta: 'variation · SET must be last · 510g',
+        status: 'blocked',
+        badge: 'amber',
+        sku: 'SPC-RIIZE-LUCKY-TIN',
+        offer: 'draft',
+        current: '-',
+        next: '37.99 USD',
+        delta: '-',
+        deltaClass: '',
+        inventory: '12',
+        blockers: 'option image missing',
+        last: '2 days ago',
+      },
+    ];
+
+    const variantNames = {
+      A: 'A · Table operations',
+      B: 'B · Detail-first',
+      C: 'C · Workflow board',
+    };
+    const variantKeys = Object.keys(variantNames);
+    let activeStatus = 'all';
+    let searchTerm = '';
+
+    function qs(selector, root = document) {
+      return root.querySelector(selector);
+    }
+
+    function qsa(selector, root = document) {
+      return Array.from(root.querySelectorAll(selector));
+    }
+
+    function esc(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;',
+      }[char]));
+    }
+
+    function currentVariant() {
+      const param = new URLSearchParams(location.search).get('variant');
+      return variantKeys.includes(param) ? param : 'A';
+    }
+
+    function setVariant(next) {
+      const url = new URL(location.href);
+      url.searchParams.set('variant', next);
+      history.replaceState(null, '', url);
+      renderVariant();
+    }
+
+    function renderVariant() {
+      const current = currentVariant();
+      qsa('[data-variant]').forEach((node) => {
+        node.hidden = node.dataset.variant !== current;
+      });
+      qs('[data-variant-label]').textContent = variantNames[current];
+    }
+
+    function cycleVariant(direction) {
+      const current = currentVariant();
+      const index = variantKeys.indexOf(current);
+      const next = variantKeys[(index + direction + variantKeys.length) % variantKeys.length];
+      setVariant(next);
+    }
+
+    function renderRows() {
+      const host = qs('[data-row-host]');
+      if (!host) return;
+      const term = searchTerm.trim().toLowerCase();
+      const filtered = rows.filter((row) => {
+        const byStatus = activeStatus === 'all' || row.status === activeStatus;
+        const haystack = `${row.product} ${row.meta} ${row.sku} ${row.offer}`.toLowerCase();
+        return byStatus && (!term || haystack.includes(term));
+      });
+      host.innerHTML = filtered.map((row, index) => `
+        <tr data-detail-id="${esc(row.id)}">
+          <td><input type="checkbox" data-row-check></td>
+          <td>
+            <div class="product-cell">
+              <div class="thumb">IMG</div>
+              <div class="product-main">
+                <div class="product-name">${esc(row.product)}</div>
+                <div class="product-meta">${esc(row.meta)}</div>
+              </div>
+            </div>
+          </td>
+          <td><span class="badge ${esc(row.badge)}">${esc(row.status)}</span></td>
+          <td><div class="mono">${esc(row.sku)}</div><div class="muted">${esc(row.offer)}</div></td>
+          <td><strong>${esc(row.next)}</strong><br><span class="muted">current ${esc(row.current)}</span><br><span class="delta ${esc(row.deltaClass)}">${esc(row.delta)}</span></td>
+          <td>${esc(row.inventory)} pcs</td>
+          <td>${row.blockers === 'none' ? '<span class="badge green">clear</span>' : `<span class="badge ${row.badge}">${esc(row.blockers)}</span>`}</td>
+          <td>${esc(row.last)}</td>
+        </tr>
+      `).join('');
+      qsa('[data-detail-id]', host).forEach((tr) => {
+        tr.addEventListener('click', (event) => {
+          if (event.target && event.target.matches('input')) return;
+          renderDetail(tr.dataset.detailId);
+        });
+      });
+      renderDetail(filtered[0]?.id || rows[0].id);
+      updateSelection();
+    }
+
+    function renderDetail(id) {
+      const row = rows.find((item) => item.id === id) || rows[0];
+      qs('[data-detail-body]').innerHTML = `
+        <div class="detail-list">
+          <div class="detail-row"><label>Product</label><div><strong>${esc(row.product)}</strong><br><span class="muted">${esc(row.meta)}</span></div></div>
+          <div class="detail-row"><label>eBay SKU</label><div class="mono">${esc(row.sku)}</div></div>
+          <div class="detail-row"><label>Offer</label><div class="mono">${esc(row.offer)}</div></div>
+          <div class="detail-row"><label>Price</label><div><strong>${esc(row.next)}</strong> <span class="delta ${esc(row.deltaClass)}">${esc(row.delta)}</span></div></div>
+        </div>
+        <div class="check-list">
+          <div class="check-item"><span class="check-dot ${row.status === 'blocked' ? 'fail' : 'ok'}">${row.status === 'blocked' ? '!' : '✓'}</span><div><strong>Preflight</strong><br><span class="muted">${esc(row.blockers === 'none' ? 'ready for validation' : row.blockers)}</span></div></div>
+          <div class="check-item"><span class="check-dot ok">✓</span><div><strong>Policy set</strong><br><span class="muted">fulfillment, payment, return resolved</span></div></div>
+          <div class="check-item"><span class="check-dot ${row.id === 'riize' ? 'warn' : 'ok'}">${row.id === 'riize' ? '!' : '✓'}</span><div><strong>Images</strong><br><span class="muted">${row.id === 'riize' ? 'option image missing' : 'main and detail images ready'}</span></div></div>
+        </div>
+      `;
+    }
+
+    function updateSelection() {
+      const selected = qsa('[data-row-check]').filter((input) => input.checked).length;
+      qsa('[data-clear-selection]').forEach((button) => {
+        button.disabled = selected === 0;
+      });
+    }
+
+    qsa('.tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        const target = tab.dataset.tab;
+        qsa('.tab').forEach((node) => node.classList.toggle('active', node.dataset.tab === target));
+        qsa('.tab-pane').forEach((pane) => {
+          pane.hidden = pane.dataset.pane !== target;
+        });
+      });
+    });
+
+    qsa('[data-status-tabs] button').forEach((button) => {
+      button.addEventListener('click', () => {
+        activeStatus = button.dataset.status;
+        qsa('[data-status-tabs] button').forEach((node) => node.classList.toggle('active', node === button));
+        renderRows();
+      });
+    });
+
+    qsa('[data-search]').forEach((input) => {
+      input.addEventListener('input', () => {
+        searchTerm = input.value;
+        renderRows();
+      });
+    });
+
+    qsa('[data-select-visible]').forEach((button) => {
+      button.addEventListener('click', () => {
+        qsa('[data-row-check]').forEach((input) => {
+          input.checked = true;
+        });
+        updateSelection();
+      });
+    });
+
+    qsa('[data-clear-selection]').forEach((button) => {
+      button.addEventListener('click', () => {
+        qsa('[data-row-check]').forEach((input) => {
+          input.checked = false;
+        });
+        updateSelection();
+      });
+    });
+
+    document.addEventListener('change', (event) => {
+      if (event.target && event.target.matches('[data-row-check]')) updateSelection();
+    });
+
+    qs('[data-prev]').addEventListener('click', () => cycleVariant(-1));
+    qs('[data-next]').addEventListener('click', () => cycleVariant(1));
+    document.addEventListener('keydown', (event) => {
+      const active = document.activeElement;
+      const typing = active && (active.matches('input, textarea, select') || active.isContentEditable);
+      if (typing) return;
+      if (event.key === 'ArrowLeft') cycleVariant(-1);
+      if (event.key === 'ArrowRight') cycleVariant(1);
+    });
+
+    window.addEventListener('popstate', renderVariant);
+
+    renderVariant();
+    renderRows();
+  </script>
+</body>
+</html>

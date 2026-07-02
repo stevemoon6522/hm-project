@@ -75,5 +75,12 @@ assert(
     && repairScript.includes('write_to_source_records: false'),
   'repair script must default to dry-run and require --apply plus --confirm before DB writes',
 );
+assert(
+  repairScript.includes('fetchDirectStaronemallImages')
+    && repairScript.includes('direct_staronemall_fetch')
+    && repairScript.includes('crawl.skipped_reason')
+    && repairScript.includes('detail_image_count: detailImages.length'),
+  'repair script must fall back to direct StarOneMall fetch when the authenticated crawl endpoint is unavailable',
+);
 
 console.log('v2 eBay detail image source backfill checks passed');

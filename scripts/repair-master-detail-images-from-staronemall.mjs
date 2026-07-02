@@ -152,6 +152,91 @@ function normalizeImageList(values, baseUrl = '') {
   return out;
 }
 
+function isStaronemallBannerImageUrl(url) {
+  const raw = String(url || '').trim();
+  if (!raw) return false;
+  let haystack = raw.toLowerCase();
+  try {
+    const parsed = new URL(raw, 'https://www.staronemall.com');
+    haystack = decodeURIComponent(`${parsed.hostname}${parsed.pathname}${parsed.search}`).toLowerCase();
+  } catch {
+    try { haystack = decodeURIComponent(raw).toLowerCase(); } catch { haystack = raw.toLowerCase(); }
+  }
+  return [
+    /(?:^|[\/_.-])banner(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])bnr(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])event(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])notice(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])guide(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])order(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])process(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])common(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])footer(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])top(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])bottom(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])delivery(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])shipping(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])exchange(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])refund(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])return(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])cs(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])blank(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])spacer(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])transparent(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])pixel(?:[\/_.-]|$)/,
+    /(?:^|[\/_.-])empty(?:[\/_.-]|$)/,
+    /a1533f8be6b07bff4669533902948b19/,
+  ].some((re) => re.test(haystack));
+}
+
+function isLikelyDetailImageUrl(url) {
+  const u = String(url || '').toLowerCase();
+  if (!u || !/\.(jpe?g|png|webp)(?:\?|$)/i.test(u)) return false;
+  if (!(u.includes('wisacdn.com') || u.includes('staronemall.com'))) return false;
+  return (
+    u.includes('/attach/')
+    || u.includes('/editor/')
+    || u.includes('/detail')
+    || u.includes('/contents/')
+    || u.includes('/goods/')
+  );
+}
+
+function extractImageUrlsFromHtml(html, baseUrl) {
+  const urls = [];
+  const attrPattern = /\b(?:src|data-src|data-original|data-lazy-src)=["']([^"']+)["']/gi;
+  for (const match of html.matchAll(attrPattern)) urls.push(match[1]);
+  const absolutePattern = /https?:\/\/[^"'<>\\\s]+\.(?:jpg|jpeg|png|webp)(?:\?[^"'<>\\\s]*)?/gi;
+  for (const match of html.matchAll(absolutePattern)) urls.push(match[0]);
+  return normalizeImageList(urls, baseUrl);
+}
+
+async function fetchDirectStaronemallImages(sourceUrl) {
+  if (!sourceUrl) return { ok: false, skipped_reason: 'source URL is empty' };
+  try {
+    const resp = await fetch(sourceUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8',
+        Referer: 'https://www.staronemall.com',
+      },
+    });
+    if (!resp.ok) return { ok: false, error: `direct_fetch_http_${resp.status}` };
+    const html = await resp.text();
+    const images = extractImageUrlsFromHtml(html, sourceUrl);
+    const detailImages = images.filter((url) => isLikelyDetailImageUrl(url) && !isStaronemallBannerImageUrl(url));
+    return {
+      ok: detailImages.length > 0,
+      crawl_source: 'direct_staronemall_fetch',
+      detail_image_count: detailImages.length,
+      observed_values: { detail_image_urls: detailImages },
+    };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error), crawl_source: 'direct_staronemall_fetch' };
+  }
+}
+
 function restUrl(table, params) {
   const qs = params instanceof URLSearchParams ? params.toString() : new URLSearchParams(params).toString();
   return `${SUPABASE_URL}/rest/v1/${table}${qs ? `?${qs}` : ''}`;
@@ -324,8 +409,28 @@ async function main() {
   const { rows, source } = await fetchGroupRows();
   const firstRow = rows[0] || {};
   const sourceUrl = String(firstRow.staronemall_url || rows.find((row) => row.staronemall_url)?.staronemall_url || '').trim();
-  const crawl = await crawlStaronemall(sourceUrl);
-  const detailImages = normalizeImageList(crawl.observed_values?.detail_image_urls || [], sourceUrl);
+  let crawl = await crawlStaronemall(sourceUrl);
+  let detailImages = normalizeImageList(crawl.observed_values?.detail_image_urls || [], sourceUrl);
+  if (!detailImages.length && (crawl.skipped_reason || crawl.error || crawl.ok === false)) {
+    const direct = await fetchDirectStaronemallImages(sourceUrl);
+    const directDetails = normalizeImageList(direct.observed_values?.detail_image_urls || [], sourceUrl);
+    if (directDetails.length) {
+      crawl = {
+        ...crawl,
+        fallback_reason: crawl.skipped_reason || crawl.error || 'no detail images from authenticated crawl',
+        direct_staronemall_fetch: direct,
+        ok: true,
+        crawl_source: direct.crawl_source,
+        observed_values: {
+          ...(crawl.observed_values || {}),
+          detail_image_urls: directDetails,
+        },
+      };
+      detailImages = directDetails;
+    } else {
+      crawl = { ...crawl, direct_staronemall_fetch: direct };
+    }
+  }
   const missingRows = rows.filter((row) => normalizeImageList(row.extra_images || []).length === 0);
 
   const summary = {
@@ -342,6 +447,14 @@ async function main() {
       skipped_reason: crawl.skipped_reason || undefined,
       error: crawl.error || undefined,
       raw_error: crawl.raw_error || undefined,
+      fallback_reason: crawl.fallback_reason || undefined,
+      crawl_source: crawl.crawl_source || undefined,
+      direct_staronemall_fetch: crawl.direct_staronemall_fetch ? {
+        ok: crawl.direct_staronemall_fetch.ok,
+        error: crawl.direct_staronemall_fetch.error || undefined,
+        skipped_reason: crawl.direct_staronemall_fetch.skipped_reason || undefined,
+        detail_image_count: crawl.direct_staronemall_fetch.detail_image_count || 0,
+      } : undefined,
       main_image_count: crawl.main_image_count || 0,
       detail_image_count: detailImages.length,
     },

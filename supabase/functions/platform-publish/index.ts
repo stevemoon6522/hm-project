@@ -431,7 +431,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     const { data: rows } = await svc.rpc('select_platform_listing_for_update', {
       p_master_product_id: master_product_id,
       p_platform: platform,
-      p_shop_id: shop_id ?? null,
+      p_shop_id: platformLookupShopId(platform, raw, shop_id),
       p_country: country ?? null,
     });
     if (rows && rows.length > 0) {
@@ -837,7 +837,7 @@ Deno.serve(async (req: Request): Promise<Response> => {
     let rpcArgs: Record<string, unknown> = {
       p_master_product_id: master_product_id,
       p_platform: platform,
-      p_shop_id: shop_id ?? null,
+      p_shop_id: platformLookupShopId(platform, raw, shop_id),
       p_country: country ?? null,
       p_platform_item_id: adapterResult.platformItemId ?? existingListing?.platform_item_id ?? null,
       p_listing_status: adapterResult.listingStatus,

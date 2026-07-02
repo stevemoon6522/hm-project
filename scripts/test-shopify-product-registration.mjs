@@ -98,9 +98,11 @@ for (const token of [
   assert.match(dispatcher, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `platform-publish must wire Shopify token: ${token}`);
 }
 
-assert.match(shopifyAdapter, /supports: new Set\(\['create_listing', 'sync'\]\)/, 'Shopify adapter must expose MVP create_listing and sync only');
+assert.match(shopifyAdapter, /supports: new Set\(\['create_listing', 'sync', 'update_price_qty'\]\)/, 'Shopify adapter must expose create_listing, sync, and selected price updates');
 assert.match(shopifyAdapter, /bridgePost\('create-product'/, 'Shopify adapter must route creates through shopify-bridge create-product');
 assert.match(shopifyAdapter, /bridgeGet\('lookup-sku'/, 'Shopify adapter must sync by SKU through shopify-bridge');
+assert.match(shopifyAdapter, /bridgePost\('reprice-products'/, 'Shopify adapter must route selected price updates through shopify-bridge reprice-products');
+assert.match(shopifyAdapter, /master_product_ids/, 'Shopify price updates must be scoped to selected master_product_ids');
 assert.match(shopifyAdapter, /async function preflightShopifyDuplicateSkus/, 'Shopify adapter must preflight duplicate SKUs before live creates');
 assert.match(shopifyAdapter, /duplicate_sku_preflight:\s*true/, 'Shopify dry-run payload must declare duplicate SKU preflight coverage');
 assert.match(shopifyAdapter, /preflightShopifyDuplicateSkus\(payload, userToken\)/, 'Shopify live create must run duplicate SKU preflight before mutation');

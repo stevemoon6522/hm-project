@@ -6166,7 +6166,7 @@ LEGACY END -->
     qoo10: ['price', 'stock', 'images'],
     ebay: ['price', 'inventory', 'images'],
     alibaba: [],
-    shopify: [],
+    shopify: ['price'],
   });
   const PLATFORM_QUEUE_COPY = Object.freeze({
     joom: Object.freeze({
@@ -6209,8 +6209,8 @@ LEGACY END -->
       description: 'Shopify Active products, variant SKU mappings, and sync status. Inventory push stays disabled; shipping is handled outside product price.',
       primaryAction: 'Shopify Active',
       registerLabel: 'Shopify Active',
-      editLabel: '',
-      deleteLabel: '',
+      editLabel: 'Price sync',
+      deleteLabel: 'Archive',
       syncLabel: 'SKU sync',
       summaryLabel: 'Active queue',
     },
@@ -10652,6 +10652,10 @@ Current SKU(s): ${text(currentSkuLine)}</div>
         showToast('선택한 마스터 상품이 없습니다.', 'err');
         return;
       }
+      if (platform === 'shopify' && groups.length > 3) {
+        showToast('Shopify Active registration is limited to 3 selected products at a time.', 'err');
+        return;
+      }
       if (platformCanUseDispatcher(platform, action, groups[0])) {
         platformOpenPreview(platform, action, explicitKeys);
         return;
@@ -11171,6 +11175,18 @@ Current SKU(s): ${text(currentSkuLine)}</div>
           };
         })
         .filter((target) => target.product_id || target.sku);
+    }
+
+    if (platform === 'shopify') {
+      const productGids = platformUniqueValues(details.map((detail) => detail.platform_item_id || detail.shopify_product_id || detail.product_gid));
+      return productGids.map((productGid) => {
+        const detail = details.find((row) => String(row.platform_item_id || row.shopify_product_id || row.product_gid || '') === String(productGid)) || {};
+        return {
+          product_gid: productGid,
+          shop_domain: detail.shop_id || detail.shop_domain || '',
+          product_ids: productIds,
+        };
+      });
     }
 
     return [];
@@ -12235,6 +12251,7 @@ Current SKU(s): ${text(currentSkuLine)}</div>
       joom: SHOPEE_BRIDGE.replace('/shopee-bridge', '/joom-bridge'),
       qoo10: QOO10_BRIDGE,
       ebay: SHOPEE_BRIDGE.replace('/shopee-bridge', '/ebay-bridge'),
+      shopify: SHOPEE_BRIDGE.replace('/shopee-bridge', '/shopify-bridge'),
     };
     const results = [];
 
@@ -12275,6 +12292,15 @@ Current SKU(s): ${text(currentSkuLine)}</div>
           product_ids: target.product_ids || [],
           marketplace_id: 'EBAY_US',
         };
+      } else if (platform === 'shopify') {
+        url = `${bridgeUrls.shopify}/archive-product`;
+        body = {
+          ...body,
+          product_id: target.product_gid,
+          shop_domain: target.shop_domain || undefined,
+          cleanup_action: 'archive_product',
+          product_ids: target.product_ids || [],
+        };
       }
 
       const resp = await fetch(url, {
@@ -12290,6 +12316,13 @@ Current SKU(s): ${text(currentSkuLine)}</div>
     }
 
     const label = PLATFORM_LABELS[platform] || platform;
+    if (platform === 'shopify') {
+      return {
+        ok: true,
+        results,
+        message: `Shopify archive complete (${results.length})`,
+      };
+    }
     return {
       ok: true,
       results,
@@ -12344,7 +12377,7 @@ Current SKU(s): ${text(currentSkuLine)}</div>
   }
 
   async function platformOpenEditFlow(platform, productIds = []) {
-    if (['shopee', 'joom', 'qoo10', 'ebay'].includes(platform)) {
+    if (['shopee', 'joom', 'qoo10', 'ebay', 'shopify'].includes(platform)) {
       const ids = Array.from(new Set((productIds || []).map((id) => String(id || '').trim()).filter(Boolean)));
       if (ids.length) state.pendingPriceSyncSelectedIds = ids;
       try { _catActivePlatform = platform; } catch (_) {}
@@ -25448,6 +25481,16 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   // country_settings fetched once and normalized by region for the V1 engine.
   let _catCountrySettingsByRegion = new Map();
+  const CAT_SHOPIFY_PRICE_POLICY_DEFAULTS = Object.freeze({
+    currency: 'USD',
+    krw_per_usd: 1460,
+    target_margin_pct: 0,
+    payment_fee_pct: 1,
+    transaction_fee_pct: 10,
+    fixed_operation_fee_pct: 0,
+    include_shipping_in_price: false,
+  });
+  let _catShopifyPricePolicy = CAT_SHOPIFY_PRICE_POLICY_DEFAULTS;
   let _feeSettingsFlushNow = null;
 
   // ── Price calculation
@@ -25498,6 +25541,36 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return rows;
   }
 
+  function catNormalizeShopifyPricePolicy(row) {
+    const fallback = CAT_SHOPIFY_PRICE_POLICY_DEFAULTS;
+    const out = Object.assign({}, fallback);
+    if (!row || typeof row !== 'object') return out;
+    ['krw_per_usd', 'target_margin_pct', 'payment_fee_pct', 'transaction_fee_pct', 'fixed_operation_fee_pct'].forEach(function(key) {
+      const value = Number(row[key]);
+      if (Number.isFinite(value)) out[key] = value;
+    });
+    out.currency = String(row.currency || fallback.currency).trim().toUpperCase() || fallback.currency;
+    out.include_shipping_in_price = row.include_shipping_in_price === true;
+    if (!(out.krw_per_usd > 0)) out.krw_per_usd = fallback.krw_per_usd;
+    return out;
+  }
+
+  async function catReloadShopifyPricePolicy() {
+    try {
+      const { data, error } = await db
+        .from('shopify_price_policy')
+        .select('currency,krw_per_usd,target_margin_pct,payment_fee_pct,transaction_fee_pct,fixed_operation_fee_pct,include_shipping_in_price')
+        .eq('id', 'default')
+        .maybeSingle();
+      if (error) throw error;
+      _catShopifyPricePolicy = catNormalizeShopifyPricePolicy(data);
+    } catch (e) {
+      console.warn('[CAT shopify] price policy load failed; using defaults', e);
+      _catShopifyPricePolicy = CAT_SHOPIFY_PRICE_POLICY_DEFAULTS;
+    }
+    return _catShopifyPricePolicy;
+  }
+
   async function catFlushPendingFeeSettings() {
     if (typeof _feeSettingsFlushNow === 'function') {
       await _feeSettingsFlushNow();
@@ -25544,6 +25617,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       countrySettings: catCountrySettings('Q10'),
     });
     return calc.qoo10Price;
+  }
+
+  function catComputeShopifyPrice(costKrw) {
+    const policy = _catShopifyPricePolicy || CAT_SHOPIFY_PRICE_POLICY_DEFAULTS;
+    const cost = Number(costKrw || 0);
+    const krwPerUsd = Number(policy.krw_per_usd || CAT_SHOPIFY_PRICE_POLICY_DEFAULTS.krw_per_usd);
+    const feePct = Number(policy.target_margin_pct || 0)
+      + Number(policy.payment_fee_pct || 0)
+      + Number(policy.transaction_fee_pct || 0)
+      + Number(policy.fixed_operation_fee_pct || 0);
+    const denominator = 1 - feePct / 100;
+    if (!(cost > 0) || !(krwPerUsd > 0) || !(denominator > 0)) return null;
+    return Math.ceil((cost / krwPerUsd / denominator) * 100) / 100;
   }
 
   function catFormatJoomPrice(value, currency) {
@@ -25611,6 +25697,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       product._ebayPlatformListing = rows.find(function(row) {
         return String(row?.platform || '').toLowerCase() === 'ebay';
       }) || null;
+      product._shopifyPlatformListing = rows.find(function(row) {
+        return String(row?.platform || '').toLowerCase() === 'shopify';
+      }) || null;
     });
   }
 
@@ -25652,6 +25741,33 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   function catEbayIsMapped(product) {
     return catEbayMapping(product).isMapped;
+  }
+
+  function catShopifyMapping(product) {
+    const listing = catFirstPlatformListing(product, 'shopify');
+    const productGid = String(listing?.platform_item_id || '').trim();
+    const variantGid = String(listing?.external_variant_id || '').trim();
+    const status = String(listing?.listing_status || '').toLowerCase();
+    const mappingStatus = String(listing?.mapping_status || '').toLowerCase();
+    const archived = status === 'paused' || status === 'archived';
+    const isMapped = !!(
+      productGid.startsWith('gid://shopify/Product/')
+      && variantGid.startsWith('gid://shopify/ProductVariant/')
+      && !archived
+      && !['error', 'rejected', 'banned'].includes(status)
+      && (!mappingStatus || ['mapped', 'needs_review'].includes(mappingStatus))
+    );
+    return {
+      listing,
+      productGid,
+      variantGid,
+      sku: String(listing?.external_sku || product?.sku || '').trim(),
+      shopDomain: String(listing?.shop_id || '').trim(),
+      remotePrice: listing?.remote_price == null ? null : Number(listing.remote_price),
+      currency: String(listing?.currency || 'USD').trim() || 'USD',
+      isMapped,
+      statusLabel: archived ? 'archived' : (isMapped ? 'mapped' : (status || mappingStatus || '미매핑')),
+    };
   }
 
   /** Relative date string: "3일 전", "오늘" */
@@ -25757,25 +25873,30 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     }
 
     // Fetch generic marketplace mappings used by non-Shopee price tabs.
-    // eBay legacy Trading listings are absorbed into platform_listings even
-    // when products.ebay_offer_id is empty, so the price tab must read this.
+    // eBay legacy Trading listings and Shopify variant GIDs are absorbed into
+    // platform_listings, so the price tab must read these rows directly.
     let platformListings = [];
     if (products.length > 0) {
       const productIds = products.map(function(p) { return String(p.id || '').trim(); }).filter(Boolean);
       for (let i = 0; i < productIds.length; i += 80) {
         const chunk = productIds.slice(i, i + 80);
-        const plUrl = SUPABASE_URL + '/rest/v1/platform_listings'
-          + '?select=master_product_id,platform,shop_id,country,platform_item_id,external_sku,external_variant_id,listing_status,mapping_status,last_sync_at,error_msg,deleted_at'
-          + '&platform=eq.ebay'
-          + '&deleted_at=is.null'
-          + '&master_product_id=in.(' + chunk.map(encodeURIComponent).join(',') + ')';
-        const plRes = await fetch(plUrl, { headers: AUTH_HEADERS });
-        if (!plRes.ok) continue;
-        const plPage = await plRes.json();
-        if (Array.isArray(plPage)) platformListings = platformListings.concat(plPage);
+        // Keep both explicit marketplace rows available to the price editor:
+        // platform=eq.ebay and platform=eq.shopify.
+        for (const listingPlatform of ['ebay', 'shopify']) {
+          const plUrl = SUPABASE_URL + '/rest/v1/platform_listings'
+            + '?select=master_product_id,platform,shop_id,country,platform_item_id,external_sku,external_variant_id,listing_status,mapping_status,remote_price,currency,last_sync_at,last_seen_at,error_msg,deleted_at'
+            + '&platform=eq.' + listingPlatform
+            + '&deleted_at=is.null'
+            + '&master_product_id=in.(' + chunk.map(encodeURIComponent).join(',') + ')';
+          const plRes = await fetch(plUrl, { headers: AUTH_HEADERS });
+          if (!plRes.ok) continue;
+          const plPage = await plRes.json();
+          if (Array.isArray(plPage)) platformListings = platformListings.concat(plPage);
+        }
       }
     }
     catAttachPlatformListingsToProducts(products, platformListings);
+    await catReloadShopifyPricePolicy();
 
     // Fetch country_settings once for the V1 pricing engine.
     let countrySettings = [];
@@ -25935,6 +26056,23 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         syncTitle: '선택한 행의 eBay US 가격을 동기화',
         syncNote: 'mapped offer/item update-price',
       },
+      shopify: {
+        label: 'Shopify',
+        filterLabel: 'Shopify price',
+        chips: ['Global', 'USD'],
+        summary: 'Shopify mapped variant USD price preview',
+        banner: 'Shopify price sync uses platform-publish update_price_qty, then shopify-bridge productVariantsBulkUpdate for selected mapped variants only.',
+        priceHeading: 'Shopify Price',
+        syncHeading: 'Sync Note',
+        baseWidth: 460,
+        priceWidth: 270,
+        syncWidth: 180,
+        cardLabel: 'Shopify USD',
+        dryRunDisabled: true,
+        dryRunTitle: 'Shopify price sync runs through platform-publish for selected mapped variants.',
+        syncTitle: 'Sync selected Shopify mapped variant prices',
+        syncNote: 'platform-publish + productVariantsBulkUpdate',
+      },
     };
     return map[key] || {
       label: fallbackLabel,
@@ -26036,6 +26174,19 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         status,
         mapped: status !== '미매핑',
         statusTitle: '',
+      }, catPriceDeltaInfo(currentPrice, newPrice));
+    }
+    if (key === 'shopify') {
+      const mapping = catShopifyMapping(product);
+      const currentPrice = mapping.remotePrice;
+      const newPrice = catComputeShopifyPrice(cost);
+      return Object.assign({
+        currentPrice,
+        newPrice,
+        currency: mapping.currency || 'USD',
+        status: mapping.statusLabel,
+        mapped: mapping.isMapped,
+        statusTitle: mapping.productGid ? `${mapping.productGid} / ${mapping.variantGid || '-'}` : '',
       }, catPriceDeltaInfo(currentPrice, newPrice));
     }
     return {
@@ -26264,6 +26415,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     if (_catActivePlatform === 'joom') return catBuildJoomHeaders();
     if (_catActivePlatform === 'ebay') return catBuildEbayHeaders();
     if (_catActivePlatform === 'qoo10') return catBuildQoo10Headers();
+    if (_catActivePlatform === 'shopify') return catBuildShopifyHeaders();
     let html = '';
     CAT_REGIONS.forEach(function(r) {
       const dimStyle = _catRegionVisible.has(r) ? '' : 'opacity:0.35;';
@@ -26293,6 +26445,11 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       + '<th data-cat-qoo10-status="1" style="min-width:135px;">Qoo10 매핑</th>';
   }
 
+  function catBuildShopifyHeaders() {
+    return '<th data-cat-shopify-price="1" style="min-width:270px;">Shopify Price</th>'
+      + '<th data-cat-shopify-sync="1" style="min-width:180px;">Shopify Sync</th>';
+  }
+
   /**
    * Build region price cells for a product row.
    * listingByRegion: Map<region, listing>
@@ -26300,7 +26457,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
    * Returns HTML string of <td> pairs (current + new).
    */
   function catBuildRegionCells(listingByRegion, effectiveCost, weightG, product) {
-    if (['shopee', 'joom', 'ebay', 'qoo10'].includes(_catActivePlatform)) {
+    if (['shopee', 'joom', 'ebay', 'qoo10', 'shopify'].includes(_catActivePlatform)) {
       return catMarketCellsForProduct(product, listingByRegion, effectiveCost, weightG);
     }
     let html = '';
@@ -26483,7 +26640,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const product = _catCache.products.find(function(p) { return String(p.id) === pid; });
     const weightG = product ? catEffectiveWeight(product) : 0;
 
-    if (product && ['shopee', 'joom', 'ebay', 'qoo10'].includes(_catActivePlatform)) {
+    if (product && ['shopee', 'joom', 'ebay', 'qoo10', 'shopify'].includes(_catActivePlatform)) {
       const marketResult = catMarketCellsForProduct(product, listingByRegion, newCost, weightG);
       const temp = document.createElement('tbody');
       temp.innerHTML = '<tr>' + marketResult.html + '</tr>';
@@ -26680,7 +26837,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   }
 
   function catRegionSummaryCells(rows, listingIdx) {
-    if (['shopee', 'joom', 'ebay', 'qoo10'].includes(_catActivePlatform)) {
+    if (['shopee', 'joom', 'ebay', 'qoo10', 'shopify'].includes(_catActivePlatform)) {
       return catMarketCellsForRows(rows, listingIdx);
     }
     let html = '';
@@ -29452,6 +29609,94 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   // Single "동기화" button routes to the active platform's live sync.
   // SAFETY: explicit switch — unknown platform never falls through to Shopee.
+  async function catExecuteShopifySync() {
+    catSuppressNextWeightBlurSave = false;
+    await catFlushSelectedInlineEdits({ persistWeight: false });
+    const products = catSelectedProducts();
+    if (!products.length) {
+      showToast('Select Shopify price sync targets first.', 'err');
+      return;
+    }
+    if (!confirm('Sync Shopify USD prices for selected mapped variants?\n\nTargets: ' + products.length + '\nThis uses platform-publish update_price_qty and does not push inventory.')) return;
+
+    const session = (await db.auth.getSession()).data.session;
+    if (!session) {
+      showToast('Login is required for Shopify price sync.', 'err');
+      return;
+    }
+
+    const btn = document.getElementById('cat-sync-btn');
+    const oldText = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Shopify syncing...'; }
+
+    const now = new Date().toISOString();
+    let okCount = 0;
+    const errors = [];
+
+    try {
+      for (const product of products) {
+        const mapping = catShopifyMapping(product);
+        const sku = mapping.sku || product.sku || product.id;
+        if (!mapping.isMapped) {
+          errors.push(sku + ': Shopify mapped Product/Variant GID missing');
+          continue;
+        }
+
+        const newCost = catEffectiveCost(product);
+        const persisted = await catPersistProductCost(product.id, newCost, now);
+        if (!persisted.ok) {
+          errors.push(sku + ': cost update ' + persisted.error);
+          continue;
+        }
+
+        let json = null;
+        let ok = false;
+        try {
+          const resp = await fetch(PLATFORM_PUBLISH, {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${session.access_token}`,
+              apikey: SUPABASE_ANON,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              platform: 'shopify',
+              capability: 'update_price_qty',
+              master_product_id: product.id,
+              publish_request_id: crypto.randomUUID(),
+              dry_run: false,
+              shop_id: mapping.shopDomain || undefined,
+              shopify: {
+                shop_domain: mapping.shopDomain || undefined,
+              },
+            }),
+          });
+          json = await resp.json().catch(function() { return { ok: false, error_msg: 'HTTP ' + resp.status }; });
+          ok = resp.ok && json && json.ok !== false;
+        } catch (e) {
+          json = { ok: false, error_msg: e.message || String(e) };
+        }
+
+        if (!ok) {
+          errors.push(sku + ': ' + (json?.error_msg || json?.message || json?.error || 'Shopify price sync failed'));
+          continue;
+        }
+        okCount++;
+      }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = oldText; }
+    }
+
+    _catCache = null;
+    try { await renderCatalogView(true); } catch (_) { applyAndRenderCatalog(); }
+    if (errors.length) {
+      console.warn('[CAT shopify] errors:', errors);
+      showToast('Shopify partial failure: ' + errors[0], 'err');
+    } else {
+      showToast('Shopify price sync complete (' + okCount + ')', 'ok');
+    }
+  }
+
   function catExecuteSelectedSync() {
     switch (_catActivePlatform) {
       case 'joom':
@@ -29465,6 +29710,9 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
         break;
       case 'qoo10':
         catExecuteQoo10Sync();
+        break;
+      case 'shopify':
+        catExecuteShopifySync();
         break;
       default:
         showToast('알 수 없는 플랫폼 — 동기화를 실행할 수 없습니다.', '');

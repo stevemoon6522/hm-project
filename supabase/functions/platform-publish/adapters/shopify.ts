@@ -669,12 +669,73 @@ async function syncListing(ctx: BridgeContext): Promise<AdapterResult> {
   };
 }
 
+function selectedMasterProductIds(ctx: BridgeContext): string[] {
+  const ids = [
+    (ctx.masterProduct as Record<string, unknown>)?.id,
+    ...(((ctx as any).groupProducts || []).map((row: Record<string, unknown>) => row?.id)),
+  ].map((value) => cleanText(value)).filter(Boolean);
+  return Array.from(new Set(ids));
+}
+
+async function updatePriceQty(ctx: BridgeContext): Promise<AdapterResult> {
+  const userToken = cleanText(ctx.userAuthToken);
+  if (!userToken) return { ok: false, listingStatus: 'error', errorCode: 'PLATFORM_AUTH_FAILED', errorMsg: 'Authenticated user token is required for Shopify price sync' };
+  const shopify = ((ctx as any).shopify || {}) as Record<string, any>;
+  const masterProductIds = selectedMasterProductIds(ctx);
+  if (!masterProductIds.length) {
+    return {
+      ok: false,
+      listingStatus: 'not_listed',
+      errorCode: 'PLATFORM_VALIDATION_ERROR',
+      errorMsg: 'Shopify update_price_qty requires at least one selected master product',
+    };
+  }
+  const body: Record<string, unknown> = {
+    dry_run: ctx.dryRun,
+    master_product_ids: masterProductIds,
+  };
+  const shopDomain = cleanText(shopify.shop_domain || shopify.shop || ctx.shopId);
+  if (shopDomain) body.shop_domain = shopDomain;
+  if (shopify.target_margin_pct !== undefined) body.target_margin_pct = n(shopify.target_margin_pct, 0);
+
+  const { status, raw } = await bridgePost('reprice-products', body, userToken);
+  if (status >= 200 && status < 300 && raw?.ok !== false) {
+    const counts = raw?.counts || {};
+    const candidateCount = n(counts.candidates, 0);
+    const changedCount = ctx.dryRun ? n(counts.planned, 0) : n(counts.updated, 0);
+    if (candidateCount <= 0 && changedCount <= 0) {
+      return {
+        ok: false,
+        listingStatus: 'not_listed',
+        errorCode: 'PLATFORM_NOT_FOUND',
+        errorMsg: 'Shopify update_price_qty found no mapped Shopify variant rows',
+        rawResponse: raw,
+      };
+    }
+    const first = Array.isArray(raw?.updated) ? raw.updated[0] : null;
+    return {
+      ok: true,
+      platformItemId: cleanText(first?.product_id || first?.platform_item_id || raw?.product_id),
+      listingStatus: 'listed',
+      rawResponse: raw,
+    };
+  }
+  return {
+    ok: false,
+    listingStatus: status === 404 ? 'not_listed' : 'error',
+    errorCode: mapBridgeError(status, raw),
+    errorMsg: cleanText(raw?.error || raw?.message || `shopify-bridge reprice-products failed (${status})`),
+    rawResponse: raw,
+  };
+}
+
 export const shopifyAdapter: PlatformAdapter = {
-  supports: new Set(['create_listing', 'sync']),
+  supports: new Set(['create_listing', 'sync', 'update_price_qty']),
   async execute(ctx: AdapterContext): Promise<AdapterResult> {
     const bridgeCtx = ctx as BridgeContext;
     if (ctx.capability === 'create_listing') return createListing(bridgeCtx);
     if (ctx.capability === 'sync') return syncListing(bridgeCtx);
+    if (ctx.capability === 'update_price_qty') return updatePriceQty(bridgeCtx);
     return { ok: false, listingStatus: 'not_listed', errorCode: 'CAPABILITY_UNSUPPORTED', errorMsg: `Shopify adapter does not support ${ctx.capability}` };
   },
 };

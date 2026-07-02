@@ -30,6 +30,13 @@
 // input: { sku }
 // productVariantsBulkUpdate(productId: $productId, variants: $variants)
 // inventoryItem: { sku }
+// async function handleRepriceProducts
+// action === 'reprice-products'
+// function normalizeIdList
+// masterProductIds
+// listingIds
+// .in('master_product_id', masterProductIds)
+// .in('id', listingIds)
 // variant_count ambiguous_variant
 // status: 'ARCHIVED'
 // cleanup_on_variant_failure !== false

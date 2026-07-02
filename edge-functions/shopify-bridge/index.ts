@@ -12,6 +12,7 @@
 // action === 'oauth-callback'
 // action === 'create-product'
 // action === 'archive-product'
+// action === 'set-sku'
 // action === 'lookup-sku'
 // function shopifySearchString
 // const queryText = `sku:"${escapedSku}"`
@@ -22,6 +23,12 @@
 // productCreate
 // productUpdate
 // async function archiveProduct
+// async function handleSetSku
+// inventoryItemUpdate(id: $id, input: $input)
+// input: { sku }
+// productVariantsBulkUpdate(productId: $productId, variants: $variants)
+// inventoryItem: { sku }
+// variant_count ambiguous_variant
 // status: 'ARCHIVED'
 // cleanup_on_variant_failure !== false
 // cleanup_action: 'archive_product'

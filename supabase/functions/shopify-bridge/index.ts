@@ -4,6 +4,7 @@
 // Local docs:
 //   C:\dev\api-refs\marketplaces\shopify\product-create.graphql.md
 //   C:\dev\api-refs\marketplaces\shopify\product-variants-bulk-create.graphql.md
+//   C:\dev\api-refs\marketplaces\shopify\inventory-item-update.graphql.md
 //   C:\dev\api-refs\marketplaces\shopify\inventory-set-quantities.graphql.md
 //   C:\dev\api-refs\marketplaces\shopify\publishable-publish.graphql.md
 //
@@ -17,7 +18,7 @@ const SHOPIFY_API_VERSION = (Deno as any).env.get('SHOPIFY_API_VERSION') || '202
 const SHOPIFY_CLIENT_ID = (Deno as any).env.get('SHOPIFY_CLIENT_ID') || '';
 const SHOPIFY_CLIENT_SECRET = (Deno as any).env.get('SHOPIFY_CLIENT_SECRET') || '';
 const SHOPIFY_REDIRECT_URI = (Deno as any).env.get('SHOPIFY_REDIRECT_URI') || '';
-const SHOPIFY_SCOPES = ((Deno as any).env.get('SHOPIFY_SCOPES') || 'read_products,write_products,write_shipping').split(',').map((s: string) => s.trim()).filter(Boolean).join(',');
+const SHOPIFY_SCOPES = ((Deno as any).env.get('SHOPIFY_SCOPES') || 'read_products,write_products,write_inventory,write_shipping').split(',').map((s: string) => s.trim()).filter(Boolean).join(',');
 const SHOPIFY_CARRIER_CALLBACK_URL = (Deno as any).env.get('SHOPIFY_CARRIER_CALLBACK_URL') || 'https://shopee-dashboard-kohl.vercel.app/api/shopify-shipping-rates';
 const PLATFORM_BRIDGE_INTERNAL_TOKEN = (Deno as any).env.get('PLATFORM_BRIDGE_INTERNAL_TOKEN') || '';
 
@@ -153,6 +154,25 @@ function shopifyProductStatus(value: unknown): string {
 
 function shopifySearchString(value: unknown): string {
   return norm(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
+function shopifyGid(kind: string, value: unknown): string {
+  const text = norm(value);
+  if (new RegExp(`^gid://shopify/${kind}/\\d+$`).test(text)) return text;
+  if (/^\d+$/.test(text)) return `gid://shopify/${kind}/${text}`;
+  return '';
+}
+
+function shopifyProductGid(value: unknown): string {
+  return shopifyGid('Product', value);
+}
+
+function shopifyVariantGid(value: unknown): string {
+  return shopifyGid('ProductVariant', value);
+}
+
+function shopifyInventoryItemGid(value: unknown): string {
+  return shopifyGid('InventoryItem', value);
 }
 
 function shopScopeSet(shop: any): Set<string> {
@@ -341,7 +361,7 @@ async function handleOAuthCallback(req: Request): Promise<Response> {
     default_location_gid: defaults.default_location_gid,
     default_publication_gid: defaults.default_publication_gid,
     product_auth_verified: productAuthVerified,
-    missing_scopes: ['write_products', 'read_products', 'write_shipping'].filter((scope) => !scopeSet.has(scope)),
+    missing_scopes: ['write_products', 'read_products', 'write_inventory', 'write_shipping'].filter((scope) => !scopeSet.has(scope)),
   });
 }
 
@@ -542,6 +562,115 @@ async function archiveProduct(shop: any, productId: string) {
   return { ok: true, status, raw, product: raw?.data?.productUpdate?.product || null };
 }
 
+async function readProductSkuTargets(shop: any, productId: string) {
+  const query = `
+    query ShopifyBridgeProductSkuTargets($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        status
+        handle
+        publishedAt
+        variants(first: 100) {
+          nodes {
+            id
+            title
+            sku
+            price
+            selectedOptions { name value }
+            inventoryItem { id sku tracked }
+          }
+        }
+      }
+    }
+  `;
+  const { status, raw } = await shopifyGraphql(shop, query, { id: productId });
+  if (status < 200 || status >= 300 || raw?.errors?.length) {
+    return { ok: false, status, raw, error: graphErrorMessage(raw) };
+  }
+  const product = raw?.data?.product || null;
+  if (!product?.id) return { ok: false, status: 404, raw, error: 'product_not_found' };
+  return { ok: true, status, raw, product, variants: product?.variants?.nodes || [] };
+}
+
+function summarizeSkuVariant(variant: any): Record<string, unknown> {
+  return {
+    variant_id: variant?.id || null,
+    title: variant?.title || null,
+    sku: norm(variant?.sku || variant?.inventoryItem?.sku) || null,
+    variant_sku: norm(variant?.sku) || null,
+    inventory_item_id: variant?.inventoryItem?.id || null,
+    inventory_item_sku: norm(variant?.inventoryItem?.sku) || null,
+    selected_options: variant?.selectedOptions || [],
+  };
+}
+
+async function updateInventoryItemSku(shop: any, inventoryItemId: string, sku: string) {
+  const query = `
+    mutation ShopifyBridgeInventoryItemSkuUpdate($id: ID!, $input: InventoryItemInput!) {
+      inventoryItemUpdate(id: $id, input: $input) {
+        inventoryItem {
+          id
+          sku
+          tracked
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+  const { status, raw } = await shopifyGraphql(shop, query, { id: inventoryItemId, input: { sku } });
+  if (status < 200 || status >= 300 || raw?.errors?.length || graphUserErrors(raw, 'inventoryItemUpdate').length) {
+    return { ok: false, status, raw, error: graphErrorMessage(raw, 'inventoryItemUpdate') };
+  }
+  return { ok: true, status, raw, inventoryItem: raw?.data?.inventoryItemUpdate?.inventoryItem || null };
+}
+
+async function bulkUpdateVariantInventoryItemSku(shop: any, productId: string, variantId: string, sku: string) {
+  const query = `
+    mutation ShopifyBridgeVariantSkuUpdate($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
+      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
+        product {
+          id
+          title
+          status
+          handle
+          publishedAt
+        }
+        productVariants {
+          id
+          title
+          sku
+          price
+          selectedOptions { name value }
+          inventoryItem { id sku tracked }
+        }
+        userErrors {
+          field
+          message
+          code
+        }
+      }
+    }
+  `;
+  const variables = { productId, variants: [{ id: variantId, inventoryItem: { sku } }] };
+  const { status, raw } = await shopifyGraphql(shop, query, variables);
+  if (status < 200 || status >= 300 || raw?.errors?.length || graphUserErrors(raw, 'productVariantsBulkUpdate').length) {
+    return { ok: false, status, raw, error: graphErrorMessage(raw, 'productVariantsBulkUpdate') };
+  }
+  const variant = raw?.data?.productVariantsBulkUpdate?.productVariants?.[0] || null;
+  return {
+    ok: true,
+    status,
+    raw,
+    product: raw?.data?.productVariantsBulkUpdate?.product || null,
+    variant,
+    inventoryItem: variant?.inventoryItem || null,
+  };
+}
+
 async function handleArchiveProduct(req: Request): Promise<Response> {
   const denied = await requireBridgeTokenOrAuthenticatedUser(req);
   if (denied) return denied;
@@ -671,6 +800,176 @@ async function handleCreateProduct(req: Request): Promise<Response> {
   });
 }
 
+async function handleSetSku(req: Request): Promise<Response> {
+  const denied = await requireBridgeTokenOrAuthenticatedUser(req);
+  if (denied) return denied;
+  const body = await req.json().catch(() => null);
+  if (!body || typeof body !== 'object') return jsonResp({ ok: false, error: 'JSON body required' }, 400);
+
+  const sku = norm(body.sku);
+  if (!sku) return jsonResp({ ok: false, error: 'sku required' }, 400);
+  const productId = shopifyProductGid(body.product_id || body.productId || body.platform_item_id || body.platformItemId);
+  if (!productId) return jsonResp({ ok: false, error: 'valid Shopify product_id required' }, 400);
+
+  const shopDomain = normalizeShopDomain(body.shop_domain || body.shop);
+  const shop = await configuredShop(shopDomain);
+  const scopeSet = shopScopeSet(shop);
+  const canInventoryItemUpdate = scopeSet.has('write_inventory');
+  const canVariantBulkUpdate = scopeSet.has('write_products');
+  if (!canInventoryItemUpdate && !canVariantBulkUpdate) {
+    return jsonResp({
+      ok: false,
+      error: 'missing_scopes',
+      missing_scopes: ['write_inventory', 'write_products'],
+      message: 'Shopify SKU repair requires write_inventory or write_products scope',
+      shop_domain: shop.shop_domain,
+    }, 403);
+  }
+
+  const read = await readProductSkuTargets(shop, productId);
+  if (!read.ok) return jsonResp({ ok: false, error: read.error || 'product lookup failed', product_id: productId, raw: read.raw }, read.status || 502);
+  const product = read.product;
+  const variants = Array.isArray(read.variants) ? read.variants : [];
+  const requestedVariantId = shopifyVariantGid(body.variant_id || body.variantId || body.external_variant_id || body.externalVariantId);
+  let target = requestedVariantId ? variants.find((variant: any) => norm(variant?.id) === requestedVariantId) : null;
+  if (requestedVariantId && !target) {
+    return jsonResp({
+      ok: false,
+      error: 'variant_not_found',
+      product_id: product.id,
+      variant_id: requestedVariantId,
+      variants: variants.map(summarizeSkuVariant),
+    }, 404);
+  }
+  if (!target && variants.length === 1) target = variants[0];
+  if (!target) {
+    const blankSkuVariants = variants.filter((variant: any) => !norm(variant?.sku) && !norm(variant?.inventoryItem?.sku));
+    if (blankSkuVariants.length === 1) target = blankSkuVariants[0];
+  }
+  if (!target) {
+    return jsonResp({
+      ok: false,
+      product_id: product.id,
+      variant_count: variants.length,
+      error: 'ambiguous_variant',
+      message: 'Multiple Shopify variants require an explicit variant_id before SKU repair',
+      variants: variants.map(summarizeSkuVariant),
+    }, 409);
+  }
+
+  const bodyInventoryItemId = shopifyInventoryItemGid(body.inventory_item_id || body.inventoryItemId);
+  const targetInventoryItemId = shopifyInventoryItemGid(target?.inventoryItem?.id);
+  if (bodyInventoryItemId && targetInventoryItemId && bodyInventoryItemId !== targetInventoryItemId) {
+    return jsonResp({
+      ok: false,
+      error: 'inventory_item_mismatch',
+      product_id: product.id,
+      variant_id: target.id,
+      inventory_item_id: bodyInventoryItemId,
+      target_inventory_item_id: targetInventoryItemId,
+    }, 409);
+  }
+  const inventoryItemId = bodyInventoryItemId || targetInventoryItemId;
+  if (!inventoryItemId) {
+    return jsonResp({
+      ok: false,
+      error: 'inventory_item_not_found',
+      product_id: product.id,
+      variant_id: target.id,
+    }, 404);
+  }
+
+  const escapedSku = shopifySearchString(sku);
+  const queryText = `sku:"${escapedSku}"`;
+  const duplicateQuery = `
+    query ShopifyBridgeProductVariantBySku($query: String!) {
+      productVariants(first: 10, query: $query) {
+        nodes {
+          id
+          sku
+          inventoryItem { id sku }
+          product { id title status handle publishedAt }
+        }
+      }
+    }
+  `;
+  const duplicateRead = await shopifyGraphql(shop, duplicateQuery, { query: queryText });
+  if (duplicateRead.status < 200 || duplicateRead.status >= 300 || duplicateRead.raw?.errors?.length) {
+    return jsonResp({ ok: false, error: graphErrorMessage(duplicateRead.raw), raw: duplicateRead.raw }, duplicateRead.status || 502);
+  }
+  const nodes = duplicateRead.raw?.data?.productVariants?.nodes || [];
+  const exactMatches = nodes.filter((node: any) => norm(node?.sku) === sku || norm(node?.inventoryItem?.sku) === sku);
+  const conflicts = exactMatches.filter((node: any) => norm(node?.id) !== norm(target?.id) && norm(node?.inventoryItem?.id) !== inventoryItemId);
+  if (conflicts.length) {
+    return jsonResp({
+      ok: false,
+      error: 'duplicate_sku',
+      message: `Shopify SKU already exists on another variant: ${sku}`,
+      sku,
+      product_id: product.id,
+      variant_id: target.id,
+      product_ids: conflicts.map((node: any) => node?.product?.id).filter(Boolean),
+      variant_ids: conflicts.map((node: any) => node?.id).filter(Boolean),
+      exact_match_count: exactMatches.length,
+      raw: duplicateRead.raw,
+    }, 409);
+  }
+
+  const oldSku = norm(target?.inventoryItem?.sku || target?.sku);
+  const responseBase = {
+    shop_domain: shop.shop_domain,
+    product_id: product.id,
+    platform_item_id: product.id,
+    variant_id: target.id,
+    external_variant_id: target.id,
+    inventory_item_id: inventoryItemId,
+    old_sku: oldSku || null,
+    sku,
+    listing_status: mapShopifyListingStatus(product),
+    status: product.status || null,
+    title: product.title || target.title || null,
+    price: target.price || null,
+    selected_options: target.selectedOptions || [],
+  };
+
+  if (body.dry_run === true) {
+    const payload = canInventoryItemUpdate
+      ? { inventoryItemUpdate: { id: inventoryItemId, input: { sku } } }
+      : { productVariantsBulkUpdate: { productId: product.id, variants: [{ id: target.id, inventoryItem: { sku } }] } };
+    return jsonResp({
+      ok: true,
+      dry_run: true,
+      ...responseBase,
+      mutation_used: canInventoryItemUpdate ? 'inventoryItemUpdate' : 'productVariantsBulkUpdate',
+      target: summarizeSkuVariant(target),
+      payload,
+    });
+  }
+  if (oldSku === sku) {
+    return jsonResp({
+      ok: true,
+      idempotent: true,
+      ...responseBase,
+      raw: { skipped: true, reason: 'sku_already_set' },
+    });
+  }
+
+  const mutationUsed = canInventoryItemUpdate ? 'inventoryItemUpdate' : 'productVariantsBulkUpdate';
+  const updated = canInventoryItemUpdate
+    ? await updateInventoryItemSku(shop, inventoryItemId, sku)
+    : await bulkUpdateVariantInventoryItemSku(shop, product.id, target.id, sku);
+  if (!updated.ok) return jsonResp({ ok: false, error: updated.error || `${mutationUsed} failed`, mutation_used: mutationUsed, raw: updated.raw }, updated.status || 502);
+  return jsonResp({
+    ok: true,
+    ...responseBase,
+    sku: updated.inventoryItem?.sku || sku,
+    mutation_used: mutationUsed,
+    variant: updated.variant || null,
+    inventory_item: updated.inventoryItem,
+    raw: updated.raw,
+  });
+}
+
 async function handleLookupSku(req: Request): Promise<Response> {
   const denied = await requireBridgeTokenOrAuthenticatedUser(req);
   if (denied) return denied;
@@ -752,6 +1051,7 @@ async function handleRequest(req: Request): Promise<Response> {
     if ((action === 'carrier-service' || action === 'shipping-carrier-service') && req.method === 'POST') return await handleCarrierService(req);
     if (action === 'create-product' && req.method === 'POST') return await handleCreateProduct(req);
     if (action === 'archive-product' && req.method === 'POST') return await handleArchiveProduct(req);
+    if (action === 'set-sku' && req.method === 'POST') return await handleSetSku(req);
     if (action === 'lookup-sku' && req.method === 'GET') return await handleLookupSku(req);
     if (action === 'internal-check' && req.method === 'GET') {
       const denied = requireInternalBridge(req);

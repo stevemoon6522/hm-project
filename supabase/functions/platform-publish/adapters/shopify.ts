@@ -340,7 +340,14 @@ function shopifyPublicImageUrl(value: unknown): string {
   return /^https:\/\//i.test(url) ? url : '';
 }
 
+function shopifyImageCandidatesFrom(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined || value === '') return [];
+  return [value];
+}
+
 function shopifyVariantImageUrlFrom(row: Record<string, unknown>): string {
+  const observed = row.observed && typeof row.observed === 'object' ? row.observed : {};
   for (const value of [
     row.shopee_option_image_url,
     row._custom_option_image_url,
@@ -349,6 +356,10 @@ function shopifyVariantImageUrlFrom(row: Record<string, unknown>): string {
     row._wms_image_url,
     row.image_url,
     row.ebay_variation_image_url,
+    ...shopifyImageCandidatesFrom(row.extra_images),
+    ...shopifyImageCandidatesFrom(row._extra_images),
+    ...shopifyImageCandidatesFrom(row._detail_image_urls),
+    ...shopifyImageCandidatesFrom(observed.detail_image_urls),
   ]) {
     const url = shopifyPublicImageUrl(value);
     if (url) return url;

@@ -184,6 +184,7 @@ assert(cortisTags.includes('Album'), 'Shopify tags must keep the smart-collectio
 const shopifyImageHelpers = [
   'cleanText',
   'shopifyPublicImageUrl',
+  'shopifyImageCandidatesFrom',
   'shopifyVariantImageUrlFrom',
   'imagesFrom',
 ].map((name) => stripTinyTs(extractFunction(shopifyAdapter, name))).join('\n');
@@ -198,6 +199,28 @@ assert.equal(
   }),
   'https://cdn.example.com/vol1.jpg',
   'Shopify option image mapping must prefer shopee_option_image_url',
+);
+assert.equal(
+  shopifyImageFns.shopifyVariantImageUrlFrom({
+    extra_images: ['https://cdn.example.com/extra-option.jpg'],
+    main_image: 'https://cdn.example.com/main.jpg',
+  }),
+  'https://cdn.example.com/main.jpg',
+  'Shopify option image mapping must prefer main_image before extra_images',
+);
+assert.equal(
+  shopifyImageFns.shopifyVariantImageUrlFrom({
+    extra_images: ['notaurl', 'https://cdn.example.com/extra-option.jpg'],
+  }),
+  'https://cdn.example.com/extra-option.jpg',
+  'Shopify option image mapping must skip invalid extra_images entries before using the first public URL',
+);
+assert.equal(
+  shopifyImageFns.shopifyVariantImageUrlFrom({
+    observed: { detail_image_urls: ['https://cdn.example.com/detail-option.jpg'] },
+  }),
+  'https://cdn.example.com/detail-option.jpg',
+  'Shopify option image mapping must use observed detail_image_urls when earlier sources are missing',
 );
 assert.deepEqual(
   shopifyImageFns.imagesFrom(

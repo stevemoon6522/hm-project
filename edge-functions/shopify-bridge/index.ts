@@ -22,8 +22,14 @@
 // exactMatches.length > 1 duplicate_sku
 // exact_match_count
 // if (Array.isArray(variant.mediaSrc)
-// out.mediaSrc = variant.mediaSrc
+// out.mediaId = mediaId
+// out.mediaSrc = mediaSrc
 // productCreate
+// async function createProductMedia
+// productCreateMedia(media: $media, productId: $productId)
+// await createProduct
+// await createProductMedia
+// await createVariants
 // productUpdate
 // async function archiveProduct
 // async function handleSetSku
@@ -31,7 +37,10 @@
 // inventoryItemUpdate(id: $id, input: $input)
 // input: { sku }
 // productVariantsBulkUpdate(productId: $productId, variants: $variants)
-// mediaSrc: mediaSrc
+// mediaId: row.mediaId
+// resolveRepairVariantTargets
+// await createProductMedia(shop, product.id
+// await bulkRepairVariantMedia
 // inventoryItem: { sku }
 // variant_count ambiguous_variant
 // status: 'ARCHIVED'

@@ -37,12 +37,16 @@ assert.match(productCreateInputRef, /collectionsToJoin/, 'ProductCreateInput doc
 assert.match(variantsBulkRef, /REMOVE_STANDALONE_VARIANT/, 'variant doc must record standalone variant removal strategy');
 assert.match(variantsBulkRef, /mediaSrc\s*\(\[String!\]\)/, 'variant bulk create doc must record mediaSrc option image support');
 assert.match(variantsBulkRef, /mediaId\s*\(ID\)/, 'variant bulk create doc must record existing media attachment support');
+assert.match(variantsBulkRef, /productCreateMedia/i, 'variant bulk create doc must record product media creation before variant mediaId attachment');
+assert.match(variantsBulkRef, /mediaSrc-only[\s\S]*empty variant media/i, 'variant bulk create doc must record the live mediaSrc-only failure');
 assert.match(variantsBulkRef, /option image/i, 'variant bulk create doc must record V2 option image mapping policy');
 assert.match(variantsBulkUpdateRef, /write_products/, 'variant bulk update doc must record write_products scope');
 assert.match(variantsBulkUpdateRef, /ProductVariantsBulkInput\.inventoryItem/, 'variant bulk update doc must record inventory item update fallback');
 assert.match(variantsBulkUpdateRef, /inventoryItem:\s*\{\s*sku\s*\}/, 'variant bulk update doc must record SKU repair fallback payload');
 assert.match(variantsBulkUpdateRef, /Variant media repair/, 'variant bulk update doc must record variant media repair usage');
 assert.match(variantsBulkUpdateRef, /mediaSrc\s*\(\[String!\]\)/, 'variant bulk update doc must record mediaSrc repair support');
+assert.match(variantsBulkUpdateRef, /productCreateMedia/i, 'variant bulk update doc must record URL-only repair media creation');
+assert.match(variantsBulkUpdateRef, /mediaId/i, 'variant bulk update doc must record mediaId-based repair');
 assert.match(inventoryItemUpdateRef, /inventoryItemUpdate/, 'inventoryItemUpdate doc must record the SKU repair mutation');
 assert.match(inventoryItemUpdateRef, /write_inventory/, 'inventoryItemUpdate doc must record write_inventory scope');
 assert.match(inventoryItemUpdateRef, /sku\s*\(String\)/, 'InventoryItemInput doc notes must record the SKU field');
@@ -56,6 +60,7 @@ assert.match(fixtureScript, /function assertLiveCreate[\s\S]*const productId = n
 assert.doesNotMatch(fixtureScript, /function assertLiveCreate[\s\S]*result\.product_id\s*\|\|\s*result\.platform_item_id[\s\S]*function run/, 'Shopify option image fixture live success must not accept platform_item_id fallback');
 assert.match(fixtureScript, /\}\s*finally\s*\{[\s\S]*if \(!args\.dryRun && productId\) \{[\s\S]*if \(args\.keep\) \{[\s\S]*action:\s*'archive-product'/, 'Shopify option image fixture cleanup must run from finally, skip dry-run, honor --keep, and archive otherwise');
 assert.match(fixtureScript, /variants\.map\(\(variant\) => variantMediaNodes\(variant\)\.length\)/, 'Shopify option image fixture must assert variant media.nodes counts via variantMediaNodes');
+assert.match(fixtureScript, /Array\.isArray\(result\.variant_media_counts\)[\s\S]*variantMediaNodes/, 'Shopify option image fixture must prefer bridge variant_media_counts and fall back to variant media.nodes');
 
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -329,6 +334,9 @@ assert.deepEqual(
 
 const shopifyBridgeVariantHelpers = [
   'norm',
+  'mediaSourceKey',
+  'variantMediaSrcs',
+  'firstMappedMediaId',
   'variantsFrom',
 ].map((name) => stripTinyTs(extractFunction(shopifyBridge, name))).join('\n');
 const bridgeVariantsFrom = new Function(`${shopifyBridgeVariantHelpers}\nreturn variantsFrom;`)();
@@ -340,6 +348,18 @@ const bridgedVariants = bridgeVariantsFrom({
   }],
 });
 assert.deepEqual(bridgedVariants[0].mediaSrc, ['https://cdn.example.com/vol1.jpg'], 'Shopify bridge must forward only public HTTPS mediaSrc URLs');
+const bridgedVariantsWithMediaIds = bridgeVariantsFrom(
+  {
+    variants: [{
+      sku: 'PUREFLOW-VOL1',
+      price: '12.34',
+      mediaSrc: ['https://cdn.example.com/vol1.jpg'],
+    }],
+  },
+  { 'https://cdn.example.com/vol1.jpg': 'gid://shopify/MediaImage/123' },
+);
+assert.equal(bridgedVariantsWithMediaIds[0].mediaId, 'gid://shopify/MediaImage/123', 'Shopify bridge variantsFrom must convert mapped mediaSrc to mediaId');
+assert.equal('mediaSrc' in bridgedVariantsWithMediaIds[0], false, 'Shopify bridge variantsFrom must avoid mediaSrc when mediaId is resolved');
 
 const shopifyBridgeRepairHelpers = [
   'norm',
@@ -358,13 +378,18 @@ assert.deepEqual(
   ['https://cdn.example.com/vol1.jpg', 'https://cdn.example.com/vol1b.jpg'],
   'Shopify option image repair normalization must preserve HTTPS mediaSrc arrays',
 );
+const normalizedMediaIdRows = bridgeRepairFns.normalizeVariantMediaRows([{
+  sku: 'PUREFLOW-VOL1',
+  mediaId: 'gid://shopify/MediaImage/123',
+}]);
+assert.equal(normalizedMediaIdRows.valid[0].mediaId, 'gid://shopify/MediaImage/123', 'Shopify option image repair normalization must accept mediaId without mediaSrc');
 assert.deepEqual(
   bridgeRepairFns.normalizeVariantMediaRows([
     { sku: 'PUREFLOW-VOL1', mediaSrc: 'https://cdn.example.com/vol1.jpg' },
     { sku: '', mediaSrc: 'http://cdn.example.com/bad.jpg' },
   ]).invalid,
-  [{ index: 1, sku: null, variant_id: null, errors: ['sku_or_variant_id_required', 'media_src_required'] }],
-  'Shopify option image repair normalization must return invalid row diagnostics',
+  [{ index: 1, sku: null, variant_id: null, errors: ['sku_or_variant_id_required', 'media_id_or_media_src_required'] }],
+  'Shopify option image repair normalization must require mediaSrc or mediaId',
 );
 const resolvedSkuFallback = bridgeRepairFns.resolveRepairVariantTargets(
   [{ id: 'gid://shopify/ProductVariant/100', sku: 'PUREFLOW-VOL1', inventoryItem: { sku: '' } }],
@@ -374,6 +399,15 @@ assert.deepEqual(
   resolvedSkuFallback.repairVariants,
   [{ id: 'gid://shopify/ProductVariant/100', mediaSrc: ['https://cdn.example.com/vol1.jpg'] }],
   'Shopify option image repair must fall back from unmatched variant_id to one exact SKU match',
+);
+const resolvedMediaIdRepair = bridgeRepairFns.resolveRepairVariantTargets(
+  [{ id: 'gid://shopify/ProductVariant/100', sku: 'PUREFLOW-VOL1', inventoryItem: { sku: '' } }],
+  [{ index: 0, sku: 'PUREFLOW-VOL1', variantId: '', mediaId: 'gid://shopify/MediaImage/123', mediaSrc: [] }],
+);
+assert.deepEqual(
+  resolvedMediaIdRepair.repairVariants,
+  [{ id: 'gid://shopify/ProductVariant/100', mediaId: 'gid://shopify/MediaImage/123' }],
+  'Shopify option image repair must send mediaId when available',
 );
 const resolvedDuplicateSku = bridgeRepairFns.resolveRepairVariantTargets(
   [
@@ -423,9 +457,17 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   assert.match(source, /status:\s*shopifyProductStatus\(product\.status\)/, `${label} Shopify productCreate must honor the adapter status`);
   const createProductBlock = source.slice(source.indexOf('async function createProduct'), source.indexOf('async function createVariants'));
   assert.doesNotMatch(createProductBlock, /userErrors\s*\{\s*field\s+message\s+code\s*\}/, `${label} Shopify productCreate must not request unsupported UserError.code`);
+  assert.match(source, /async function createProductMedia/, `${label} Shopify bridge must include a productCreateMedia helper`);
+  assert.match(source, /productCreateMedia\(media: \$media, productId: \$productId\)/, `${label} Shopify bridge must create product media separately`);
+  assert(
+    source.indexOf('await createProductMedia') > source.indexOf('await createProduct')
+    && source.indexOf('await createProductMedia') < source.indexOf('await createVariants'),
+    `${label} Shopify create path must call productCreateMedia before createVariants`,
+  );
   assert.match(source, /productVariantsBulkCreate/, `${label} Shopify bridge must call productVariantsBulkCreate`);
   assert.match(source, /if \(Array\.isArray\(variant\.mediaSrc\)/, `${label} Shopify bridge must preserve variant mediaSrc`);
-  assert.match(source, /out\.mediaSrc = variant\.mediaSrc/, `${label} Shopify bridge must forward option images to ProductVariantsBulkInput.mediaSrc`);
+  assert.match(source, /out\.mediaId = mediaId/, `${label} Shopify bridge must prefer ProductVariantsBulkInput.mediaId for option images`);
+  assert.match(source, /out\.mediaSrc = mediaSrc/, `${label} Shopify bridge must keep mediaSrc fallback when no mediaId is resolved`);
   assert.match(source, /async function archiveProduct/, `${label} Shopify bridge must include a product archive cleanup helper`);
   assert.match(source, /productUpdate/, `${label} Shopify bridge must archive failed creates with productUpdate`);
   assert.match(source, /status:\s*'ARCHIVED'/, `${label} Shopify cleanup must set product status to ARCHIVED`);
@@ -439,7 +481,12 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   assert.match(source, /inventoryItemUpdate\(id: \$id, input: \$input\)/, `${label} Shopify SKU repair must write SKU through inventoryItemUpdate`);
   assert.match(source, /input:\s*\{\s*sku\s*\}/, `${label} Shopify SKU repair must set InventoryItemInput.sku`);
   assert.match(source, /productVariantsBulkUpdate\(productId: \$productId, variants: \$variants\)/, `${label} Shopify SKU repair must support write_products fallback`);
-  assert.match(source, /mediaSrc:\s*mediaSrc/, `${label} Shopify option image repair must set ProductVariantsBulkInput.mediaSrc`);
+  assert.match(source, /mediaId:\s*row\.mediaId/, `${label} Shopify option image repair must set ProductVariantsBulkInput.mediaId`);
+  assert(
+    source.indexOf('await createProductMedia(shop, product.id') > source.indexOf('resolveRepairVariantTargets')
+    && source.indexOf('await createProductMedia(shop, product.id') < source.indexOf('await bulkRepairVariantMedia'),
+    `${label} Shopify repair path must create product media for URL-only rows before bulkRepairVariantMedia`,
+  );
   assert.match(source, /inventoryItem:\s*\{\s*sku\s*\}/, `${label} Shopify SKU fallback must set ProductVariantsBulkInput.inventoryItem.sku`);
   assert.match(source, /variant_count[\s\S]*ambiguous_variant/, `${label} Shopify SKU repair must refuse ambiguous multi-variant products`);
   assert.match(source, /inventorySetQuantities/, `${label} Shopify bridge must include gated inventory support`);

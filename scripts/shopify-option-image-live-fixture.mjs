@@ -243,7 +243,10 @@ function assertLiveCreate(result) {
   if (!productId) throw new Error('create-product response is missing product_id');
   const variants = Array.isArray(result.variants) ? result.variants : [];
   if (variants.length !== 2) throw new Error(`Expected two created variants, received ${variants.length}`);
-  const mediaCounts = variants.map((variant) => variantMediaNodes(variant).length);
+  const bridgeMediaCounts = Array.isArray(result.variant_media_counts) ? result.variant_media_counts : null;
+  const mediaCounts = bridgeMediaCounts && bridgeMediaCounts.length
+    ? bridgeMediaCounts
+    : variants.map((variant) => variantMediaNodes(variant).length);
   if (mediaCounts.some((count) => count < 1)) {
     throw new Error(`Every variant must include non-empty media.nodes; counts=${JSON.stringify(mediaCounts)}`);
   }

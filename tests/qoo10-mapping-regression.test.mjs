@@ -33,6 +33,31 @@ function extractFunctionBody(source, functionName, label) {
   assert.fail(`${label} ${functionName} body must close`);
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function assertObjectFieldUsesHelper(body, fieldName, helperName, label) {
+  if (new RegExp(`${escapeRegExp(fieldName)}:${escapeRegExp(helperName)}\\(`).test(body)) return;
+  const helperVar = body.match(new RegExp(`(?:const|let|var)([A-Za-z_$][\\w$]*)=${escapeRegExp(helperName)}\\(`));
+  assert.ok(helperVar, `${label} must derive ${fieldName} from ${helperName}`);
+  assert.match(
+    body,
+    new RegExp(`${escapeRegExp(fieldName)}:(?:Number\\()?${escapeRegExp(helperVar[1])}(?:\\))?(?:[,}])`),
+    `${label} must wire ${fieldName} to the ${helperName} result`
+  );
+}
+
+function assertBridgeFunctionNormalizesPositiveWeight(body, label) {
+  const guard = body.match(/if\(([A-Za-z_$][\w$]*)>0\)\{?params\.Weight=\1\.toFixed\(1\);/);
+  assert.ok(guard, `${label} must only set params.Weight when normalized kg is positive`);
+  assert.match(
+    body,
+    new RegExp(`(?:const|let|var)${escapeRegExp(guard[1])}=normalizeQoo10WeightKg\\(`),
+    `${label} must derive params.Weight from normalizeQoo10WeightKg`
+  );
+}
+
 test('Qoo10 option lookup only trusts seller option code fields, not internal OptionCode', () => {
   assert.doesNotMatch(
     bridge,
@@ -75,6 +100,34 @@ test('Qoo10 adapter sends an existing item code as a verification hint when pres
     /item_code=\$\{encodeURIComponent\(itemCode\)\}/,
     'lookup URL should include item_code when available'
   );
+});
+
+test('Qoo10 adapter create payload derives rounded kg weight from grams', () => {
+  const helperBody = extractFunctionBody(adapter, 'qoo10WeightKgFromGrams', 'platform-publish adapter');
+  assert.match(helperBody, /Math\.ceil\(/, 'Qoo10 adapter should round weight up');
+  assert.match(helperBody, /\/1000/, 'Qoo10 adapter should convert grams to kg');
+  assert.match(helperBody, /\*10/, 'Qoo10 adapter should round to one decimal kg');
+  assert.match(helperBody, /\/10/, 'Qoo10 adapter should return one decimal kg');
+
+  assertObjectFieldUsesHelper(
+    extractFunctionBody(adapter, 'executeCreate', 'platform-publish adapter'),
+    'weight_kg',
+    'qoo10WeightKgFromGrams',
+    'Qoo10 adapter create payload'
+  );
+  const createBody = extractFunctionBody(adapter, 'executeCreate', 'platform-publish adapter');
+  assert.match(createBody, /Object\.prototype\.hasOwnProperty\.call\(qoo10,'weight_kg'\)/, 'Qoo10 adapter must treat weight_kg: 0 as an explicit value');
+  assert.doesNotMatch(createBody, /qoo10\.weight_kg\|\|qoo10\.Weight/, 'Qoo10 adapter must not revive Weight fallback when weight_kg is explicitly 0');
+});
+
+test('Qoo10 bridge create and update payloads normalize positive Weight only', () => {
+  extractFunctionBody(bridge, 'normalizeQoo10WeightKg', 'qoo10-bridge');
+  const createBody = extractFunctionBody(bridge, 'handleCreateListing', 'qoo10-bridge');
+  const updateBody = extractFunctionBody(bridge, 'updateGoodsBasic', 'qoo10-bridge');
+  assertBridgeFunctionNormalizesPositiveWeight(createBody, 'Qoo10 bridge create listing');
+  assertBridgeFunctionNormalizesPositiveWeight(updateBody, 'Qoo10 bridge update goods');
+  assert.doesNotMatch(createBody, /body\.weight_kg\|\|body\.Weight/, 'Qoo10 bridge create must not revive Weight fallback when weight_kg is explicitly 0');
+  assert.doesNotMatch(updateBody, /body\.weight_kg\|\|body\.Weight/, 'Qoo10 bridge update must not revive Weight fallback when weight_kg is explicitly 0');
 });
 
 test('Qoo10 create listing contract includes official registration side fields', () => {
@@ -135,7 +188,10 @@ test('Qoo10 V2 modal defaults match lifecycle-aware listing policy', () => {
   assert.match(html, /mrQoo10BuildDescription\(descriptionTemplateHtml,\s*first\)/, 'Qoo10 description should combine template HTML with detail images');
   assert.match(html, /sdv2:qoo10:description_template_html/, 'Qoo10 description template should be persisted for reuse');
   assert.match(html, /function\s+mrQoo10MainImageSource\s*\(/, 'Qoo10 modal should derive the representative image source before registration');
+  assert.match(html, /function\s+mrQoo10RepresentativeImageRef\s*\(/, 'Qoo10 modal should centralize one automatic master representative image');
   assert.match(html, /function\s+mrQoo10SelectedMainImageUrl\s*\(/, 'Qoo10 modal should track the operator-selected representative image');
+  assert.doesNotMatch(html, /mrQoo10AddImageRef\(refs,\s*seen,\s*row\._main_image/, 'Qoo10 representative candidates must not include per-option source images');
+  assert.match(html, /function\s+mrQoo10WeightKgFromRows\s*\(/, 'Qoo10 modal should convert master weight_g to Qoo10 kg');
   assert.match(html, /allRows:\s*\[\]/, 'Qoo10 modal should keep the complete product group for image sourcing');
   assert.match(html, /mainImages:\s*\[\]/, 'Qoo10 modal should keep StarOneMall main images separate from detail images');
   assert.match(html, /function\s+mrQoo10ImageRows\s*\(/, 'Qoo10 image sourcing should preserve master/root rows even when option rows drive inventory');
@@ -152,6 +208,7 @@ test('Qoo10 V2 modal defaults match lifecycle-aware listing policy', () => {
   assert.match(html, /id="mr-qoo10-detail-preview"/, 'Qoo10 modal should preview detail images that will be appended to the description');
   assert.match(html, /id="mr-qoo10-manual-image-url"/, 'Qoo10 modal should offer a manual image URL fallback');
   assert.match(html, /main_image:\s*mrQoo10SelectedMainImageUrl\(mrQoo10ImageRows\(rows\)\)/, 'Qoo10 create payload should use the selected representative image from master image rows');
+  assert.match(html, /weight_kg:\s*mrQoo10WeightKgFromRows\s*\(/, 'Qoo10 create and repair payload should include converted master weight_kg');
   assert.match(html, /function\s+mrQoo10BuildLayeredMainImageUrl\s*\(/, 'Qoo10 modal should build a layered representative image URL');
   assert.match(html, /platformBuildLayerAwareCoverDataUrl\(sourceUrl\)/, 'Qoo10 representative image should reuse the platform idempotent shop-layer composition logic');
   assert.match(html, /mrQoo10SelectedMainImageUrl\(sortedRows\)/, 'Qoo10 layered image builder should respect the selected representative image');

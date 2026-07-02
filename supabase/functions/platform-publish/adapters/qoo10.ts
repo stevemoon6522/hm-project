@@ -206,10 +206,18 @@ function availableDateFrom(ctx: AdapterContext, qoo10: Record<string, any>) {
   return resolveQoo10AvailableDate(lifecycle, releaseDate);
 }
 
-function weightKg(ctx: AdapterContext): number {
-  const grams = Number(ctx.masterProduct?.weight_g || 0);
-  if (!grams || grams <= 0) return 0;
-  return Math.max(0.1, Math.round((grams / 1000) * 10) / 10);
+function qoo10WeightKgFromGrams(weightG: unknown): number {
+  const grams = Number(weightG || 0);
+  if (!Number.isFinite(grams) || grams <= 0) return 0;
+  return Math.min(30, Math.max(0.1, Math.ceil((grams / 1000) * 10) / 10));
+}
+
+function qoo10MaxWeightG(ctx: AdapterContext): number {
+  const rows = [ctx.masterProduct, ...(((ctx as any).groupProducts || []) as any[])].filter(Boolean);
+  const weights = rows
+    .map((row: any) => Number(row?.weight_g || 0))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  return weights.length ? Math.max(...weights) : 0;
 }
 
 function defaultDescription(ctx: AdapterContext, qoo10: Record<string, any>): string {
@@ -361,6 +369,13 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
   const options = reconciledPricing.options;
   const userAuthToken = norm((ctx as any).userAuthToken);
   const mainImage = norm(qoo10.main_image);
+  const hasExplicitWeightKg = Object.prototype.hasOwnProperty.call(qoo10, 'weight_kg')
+    || Object.prototype.hasOwnProperty.call(qoo10, 'Weight');
+  const explicitWeightKg = Number(Object.prototype.hasOwnProperty.call(qoo10, 'weight_kg') ? qoo10.weight_kg : qoo10.Weight);
+  const weightGForPayload = hasExplicitWeightKg
+    ? (explicitWeightKg > 0 ? explicitWeightKg * 1000 : 0)
+    : qoo10MaxWeightG(ctx);
+  const resolvedWeightKg = qoo10WeightKgFromGrams(weightGForPayload);
 
   if (!userAuthToken) return { ok: false, listingStatus: 'not_listed', errorCode: 'AUTH_NOT_VERIFIED', errorMsg: 'Missing authenticated user token for qoo10-bridge create-listing' };
   if (!categoryId) return { ok: false, listingStatus: 'not_listed', errorCode: 'QOO10_CATEGORY_UNMAPPED', errorMsg: 'Qoo10 category_id is required' };
@@ -388,7 +403,7 @@ async function executeCreate(ctx: AdapterContext): Promise<AdapterResult> {
     description: defaultDescription(ctx, qoo10),
     base_price_jpy: basePrice,
     stock: Math.max(0, options.reduce((sum, row) => sum + Number(row.stock || 0), 0)),
-    weight_kg: Number(qoo10.weight_kg || weightKg(ctx) || 0),
+    weight_kg: resolvedWeightKg,
     available_date_type: available.type,
     available_date_value: available.value,
     production_place: norm(qoo10.production_place || 'KR'),

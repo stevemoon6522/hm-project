@@ -507,6 +507,12 @@ function normalizeQoo10PriceEnding90(value: unknown): number {
   return whole <= sameHundred90 ? sameHundred90 : sameHundred90 + 100;
 }
 
+function normalizeQoo10WeightKg(value: unknown): number {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(30, Math.max(0.1, Math.ceil(n * 10) / 10));
+}
+
 function normalizeAvailableDate(type: unknown, value: unknown) {
   const t = String(type || "0").trim();
   if (t === "2") {
@@ -690,7 +696,7 @@ async function updateGoodsBasic(body: any) {
   const sellerCode = clampString(body.seller_code || body.SellerCode, 100);
   const brandNo = clampString(body.brand_no || body.BrandNo, 10).replace(/\D/g, "");
   const shippingNo = clampString(body.shipping_no || body.ShippingNo, 10);
-  const weightKg = Math.max(0, Number(body.weight_kg || body.Weight || 0) || 0);
+  const weightKg = normalizeQoo10WeightKg(Object.prototype.hasOwnProperty.call(body, "weight_kg") ? body.weight_kg : body.Weight);
   const available = normalizeAvailableDate(body.available_date_type || body.AvailableDateType, body.available_date_value || body.AvailableDateValue);
 
   if (!itemCode) throw new Error("ItemCode/item_code required");
@@ -952,7 +958,7 @@ async function handleCreateListing(req: Request): Promise<Response> {
   const optionStock = itemTypeResult.options.reduce((sum, option) => sum + option.stock, 0);
   const stockProvided = body.stock != null || body.ItemQty != null || itemTypeResult.options.length > 0;
   const stock = Math.max(0, Math.floor(Number(body.stock ?? body.ItemQty ?? optionStock) || 0));
-  const weightKg = Math.max(0, Number(body.weight_kg || body.Weight || 0) || 0);
+  const weightKg = normalizeQoo10WeightKg(Object.prototype.hasOwnProperty.call(body, "weight_kg") ? body.weight_kg : body.Weight);
   const available = normalizeAvailableDate(body.available_date_type || body.AvailableDateType, body.available_date_value || body.AvailableDateValue);
   const expireDate = normalizeQoo10DashDate(body.expire_date || body.ExpireDate);
 

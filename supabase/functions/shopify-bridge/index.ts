@@ -225,6 +225,15 @@ function variantsFrom(body: any) {
       inventoryItem: { sku, tracked: variant.tracked === true },
     };
     if (price) out.price = price;
+    if (Array.isArray(variant.mediaSrc)) {
+      variant.mediaSrc = variant.mediaSrc.map((url: unknown) => norm(url)).filter((url: string) => /^https:\/\//i.test(url)).slice(0, 10);
+      if (variant.mediaSrc.length) out.mediaSrc = variant.mediaSrc;
+    } else {
+      const mediaSrc = norm(variant.mediaSrc || variant.image || variant.imageUrl || variant.option_image_url);
+      if (/^https:\/\//i.test(mediaSrc)) out.mediaSrc = [mediaSrc];
+    }
+    const mediaId = norm(variant.mediaId || variant.media_id);
+    if (mediaId) out.mediaId = mediaId;
     if (variant.compareAtPrice) out.compareAtPrice = norm(variant.compareAtPrice);
     if (variant.inventoryPolicy) out.inventoryPolicy = norm(variant.inventoryPolicy).toUpperCase();
     return out;
@@ -501,6 +510,14 @@ async function createVariants(shop: any, productId: string, body: any) {
           price
           selectedOptions { name value }
           inventoryItem { id sku tracked }
+          media(first: 10) {
+            nodes {
+              id
+              alt
+              mediaContentType
+              preview { status }
+            }
+          }
         }
         userErrors { field message code }
       }

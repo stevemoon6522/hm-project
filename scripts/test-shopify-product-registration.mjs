@@ -33,6 +33,9 @@ assert.match(productCreateRef, /USD/, 'productCreate doc must record Shopify USD
 assert.match(productCreateInputRef, /tags/, 'ProductCreateInput doc must cover initial product tags');
 assert.match(productCreateInputRef, /collectionsToJoin/, 'ProductCreateInput doc must record optional collection joins');
 assert.match(variantsBulkRef, /REMOVE_STANDALONE_VARIANT/, 'variant doc must record standalone variant removal strategy');
+assert.match(variantsBulkRef, /mediaSrc\s*\(\[String!\]\)/, 'variant bulk create doc must record mediaSrc option image support');
+assert.match(variantsBulkRef, /mediaId\s*\(ID\)/, 'variant bulk create doc must record existing media attachment support');
+assert.match(variantsBulkRef, /option image/i, 'variant bulk create doc must record V2 option image mapping policy');
 assert.match(variantsBulkUpdateRef, /write_products/, 'variant bulk update doc must record write_products scope');
 assert.match(variantsBulkUpdateRef, /ProductVariantsBulkInput\.inventoryItem/, 'variant bulk update doc must record inventory item update fallback');
 assert.match(variantsBulkUpdateRef, /inventoryItem:\s*\{\s*sku\s*\}/, 'variant bulk update doc must record SKU repair fallback payload');
@@ -63,12 +66,14 @@ function stripTinyTs(block) {
   return block
     .replace(/export\s+/g, '')
     .replace(/\)\s*:\s*[A-Za-z0-9_<>\[\]\s|]+\s*\{/g, ') {')
+    .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*Record<[^>]+>\[\]/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*Record<[^>]+>/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*unknown/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string\[\]\[\]/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string\[\]/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*any/g, '$1')
+    .replace(/const ([A-Za-z_$][\w$]*)\s*:\s*Record<[^>]+>\s*=/g, 'const $1 =')
     .replace(/const ([A-Za-z_$][\w$]*)\s*:\s*string\[\]\s*=/g, 'const $1 =')
     .replace(/new Set<string>\(\)/g, 'new Set()');
 }
@@ -103,6 +108,8 @@ assert.match(shopifyAdapter, /SHOPIFY_DUPLICATE_SKU/, 'Shopify duplicate SKU pre
 assert.match(shopifyAdapter, /status === 409[\s\S]*duplicate_sku[\s\S]*PLATFORM_VALIDATION_ERROR/, 'Shopify sync must report duplicate SKU lookup as a validation error');
 assert.match(shopifyAdapter, /publishableGroupRows\(ctx\.masterProduct/, 'Shopify adapter must support grouped master variants');
 assert.match(shopifyAdapter, /productVariantsBulkCreate/, 'Shopify adapter dry-run payload must expose variant bulk intent');
+assert.match(shopifyAdapter, /function shopifyVariantImageUrlFrom/, 'Shopify adapter must isolate option image URL selection');
+assert.match(shopifyAdapter, /mediaSrc:\s*\[optionImageUrl\]/, 'Shopify adapter must send option image URLs as variant mediaSrc');
 assert.match(shopifyAdapter, /option_products/, 'Shopify adapter must return option mapping hints for grouped creates');
 assert.match(shopifyAdapter, /SHOPIFY_DEFAULT_PRICE_POLICY[\s\S]*currency:\s*'USD'[\s\S]*krwPerUsd:\s*1460[\s\S]*targetMarginPct:\s*30[\s\S]*paymentFeePct:\s*1[\s\S]*transactionFeePct:\s*10[\s\S]*includeShippingInPrice:\s*false[\s\S]*defaultStatus:\s*'ACTIVE'[\s\S]*setInventory:\s*false/, 'Shopify adapter must keep the approved USD active-first price policy as the fallback');
 assert.match(shopifyAdapter, /async function loadShopifyPricePolicy[\s\S]*\.from\('shopify_price_policy'\)/, 'Shopify adapter must load the approved price policy from DB before creation');
@@ -171,6 +178,50 @@ assert(!cortisTags.includes('WEVERSE'), 'Shopify tags must not include derived v
 assert(!cortisTags.includes('HYBE'), 'Shopify tags must prefer parsed artist over label-like brand fallback');
 assert(cortisTags.includes('Album'), 'Shopify tags must keep the smart-collection product-kind tag');
 
+const shopifyImageHelpers = [
+  'cleanText',
+  'shopifyPublicImageUrl',
+  'shopifyVariantImageUrlFrom',
+  'imagesFrom',
+].map((name) => stripTinyTs(extractFunction(shopifyAdapter, name))).join('\n');
+const shopifyImageFns = new Function(
+  `function s(value, fallback = '') { return value == null ? fallback : String(value); }\n`
+  + `${shopifyImageHelpers}\nreturn { shopifyVariantImageUrlFrom, imagesFrom };`,
+)();
+assert.equal(
+  shopifyImageFns.shopifyVariantImageUrlFrom({
+    shopee_option_image_url: 'https://cdn.example.com/vol1.jpg',
+    main_image: 'https://cdn.example.com/fallback.jpg',
+  }),
+  'https://cdn.example.com/vol1.jpg',
+  'Shopify option image mapping must prefer shopee_option_image_url',
+);
+assert.deepEqual(
+  shopifyImageFns.imagesFrom(
+    { product_name: 'PUREFLOW', main_image: 'https://cdn.example.com/main.jpg' },
+    [
+      { shopee_option_image_url: 'https://cdn.example.com/vol1.jpg' },
+      { _custom_option_image_url: 'https://cdn.example.com/vol2.jpg' },
+    ],
+  ).map((row) => row.originalSource),
+  ['https://cdn.example.com/main.jpg', 'https://cdn.example.com/vol1.jpg', 'https://cdn.example.com/vol2.jpg'],
+  'Shopify product media list must include option images so variant mediaSrc URLs are present in the gallery',
+);
+
+const shopifyBridgeVariantHelpers = [
+  'norm',
+  'variantsFrom',
+].map((name) => stripTinyTs(extractFunction(shopifyBridge, name))).join('\n');
+const bridgeVariantsFrom = new Function(`${shopifyBridgeVariantHelpers}\nreturn variantsFrom;`)();
+const bridgedVariants = bridgeVariantsFrom({
+  variants: [{
+    sku: 'PUREFLOW-VOL1',
+    price: '12.34',
+    mediaSrc: ['https://cdn.example.com/vol1.jpg', 'http://not-public.example.com/bad.jpg'],
+  }],
+});
+assert.deepEqual(bridgedVariants[0].mediaSrc, ['https://cdn.example.com/vol1.jpg'], 'Shopify bridge must forward only public HTTPS mediaSrc URLs');
+
 for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edgeShopifyBridge]]) {
   assert.match(source, /SHOPIFY_API_VERSION/, `${label} Shopify bridge must pin an Admin API version`);
   assert.match(source, /authorization-code grant/, `${label} Shopify bridge must document OAuth source`);
@@ -194,6 +245,8 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   const createProductBlock = source.slice(source.indexOf('async function createProduct'), source.indexOf('async function createVariants'));
   assert.doesNotMatch(createProductBlock, /userErrors\s*\{\s*field\s+message\s+code\s*\}/, `${label} Shopify productCreate must not request unsupported UserError.code`);
   assert.match(source, /productVariantsBulkCreate/, `${label} Shopify bridge must call productVariantsBulkCreate`);
+  assert.match(source, /if \(Array\.isArray\(variant\.mediaSrc\)/, `${label} Shopify bridge must preserve variant mediaSrc`);
+  assert.match(source, /out\.mediaSrc = variant\.mediaSrc/, `${label} Shopify bridge must forward option images to ProductVariantsBulkInput.mediaSrc`);
   assert.match(source, /async function archiveProduct/, `${label} Shopify bridge must include a product archive cleanup helper`);
   assert.match(source, /productUpdate/, `${label} Shopify bridge must archive failed creates with productUpdate`);
   assert.match(source, /status:\s*'ARCHIVED'/, `${label} Shopify cleanup must set product status to ARCHIVED`);

@@ -335,12 +335,33 @@ function tagsFrom(master: Record<string, unknown>, shopify: Record<string, any>)
   return out.slice(0, 50);
 }
 
+function shopifyPublicImageUrl(value: unknown): string {
+  const url = cleanText(value);
+  return /^https:\/\//i.test(url) ? url : '';
+}
+
+function shopifyVariantImageUrlFrom(row: Record<string, unknown>): string {
+  for (const value of [
+    row.shopee_option_image_url,
+    row._custom_option_image_url,
+    row._main_image,
+    row.main_image,
+    row._wms_image_url,
+    row.image_url,
+    row.ebay_variation_image_url,
+  ]) {
+    const url = shopifyPublicImageUrl(value);
+    if (url) return url;
+  }
+  return '';
+}
+
 function imagesFrom(master: Record<string, unknown>, groupRows: Record<string, unknown>[] = []): any[] {
   const urls = [
-    cleanText(master.main_image),
-    ...(Array.isArray(master.extra_images) ? master.extra_images.map((v) => cleanText(v)) : []),
-    ...groupRows.map((row) => cleanText(row.shopee_option_image_url || row.main_image)),
-  ].filter((url) => /^https:\/\//i.test(url));
+    shopifyPublicImageUrl(master.main_image),
+    ...(Array.isArray(master.extra_images) ? master.extra_images.map((v) => shopifyPublicImageUrl(v)) : []),
+    ...groupRows.map((row) => shopifyVariantImageUrlFrom(row)),
+  ].filter(Boolean);
   const unique: string[] = [];
   const seen = new Set<string>();
   for (const url of urls) {
@@ -418,6 +439,7 @@ async function buildShopifyPayload(ctx: BridgeContext) {
     const row = item.row || {};
     const sku = cleanText(row.shopify_sku || row.sku);
     const price = priceFrom(row, shopify, policy);
+    const optionImageUrl = shopifyVariantImageUrlFrom(row);
     const variant: Record<string, any> = {
       product_id: row.id || null,
       sku,
@@ -425,6 +447,7 @@ async function buildShopifyPayload(ctx: BridgeContext) {
       optionValues: variantOptionValues(item, variationBundle, master),
       quantity: stockFrom(row),
       tracked: shopify.tracked === true,
+      ...(optionImageUrl ? { mediaSrc: [optionImageUrl], option_image_url: optionImageUrl } : {}),
     };
     if (price) variant.price = price;
     return variant;

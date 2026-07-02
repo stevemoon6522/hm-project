@@ -20,6 +20,8 @@
 // norm(node?.sku) === sku || norm(node?.inventoryItem?.sku) === sku
 // exactMatches.length > 1 duplicate_sku
 // exact_match_count
+// if (Array.isArray(variant.mediaSrc)
+// out.mediaSrc = variant.mediaSrc
 // productCreate
 // productUpdate
 // async function archiveProduct

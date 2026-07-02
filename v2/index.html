@@ -32361,6 +32361,25 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       }
     }
 
+    async function mrEnsureEbaySourceImages(group) {
+      const firstRow = group?.rows?.[0];
+      if (!firstRow) return;
+      const sourceUrl = mrJoomSourceUrl(group);
+      const observed = firstRow.observed || {};
+      const storedDetails = [
+        ...(firstRow._extra_images || []),
+        ...(firstRow.extra_images || []),
+        ...(firstRow._detail_image_urls || []),
+        ...(observed.detail_image_urls || []),
+      ];
+      const hasDetail = mrJoomNormalizeImageList(storedDetails, sourceUrl).length > 0;
+      if (hasDetail || !sourceUrl) return;
+      const nextObserved = await mrJoomFetchSourceImages(group);
+      if (nextObserved && Object.keys(nextObserved).length) {
+        mrJoomApplyObservedImages(group, nextObserved);
+      }
+    }
+
     async function mrJoomLoadDetailImages(group) {
       await mrEnsureJoomSourceImages(group);
       return mrJoomDetailImageCandidates(group, mrMasterRepresentativeImage(group));
@@ -36131,7 +36150,6 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
                 row._main_image = imageUrl;
                 row.shopee_option_image_url = imageUrl;
                 row._main_image_file_name = file.name;
-                row._extra_images = [];
               }
               paintPreview();
               mrRenderPreviewCards();
@@ -39304,6 +39322,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
       return { errors, warnings };
     }
 
+      await mrEnsureEbaySourceImages(group);
     async function mrBuildEbayDraft(group) {
       const firstRow = group?.rows?.[0] || {};
       const activeRows = mrEbayActiveRows(group);

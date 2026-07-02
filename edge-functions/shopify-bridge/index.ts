@@ -14,6 +14,7 @@
 // action === 'archive-product'
 // action === 'set-sku'
 // action === 'repair-option-images'
+// action === 'repair-existing-products'
 // action === 'lookup-sku'
 // function shopifySearchString
 // const queryText = `sku:"${escapedSku}"`
@@ -32,8 +33,17 @@
 // await createVariants
 // productUpdate
 // async function archiveProduct
+// async function updateProductDescriptionHtml
+// descriptionHtml
+// async function fetchExistingShopifyRepairTargets
+// .from('platform_listings') platform shopify
+// function shopifyExistingVariantImageUrlFrom
+// function shopifyExistingDescriptionHtmlFrom
 // async function handleSetSku
 // async function handleRepairOptionImages
+// async function handleRepairExistingProducts
+// requireInternalBridge(req)
+// repairOptionImagesForProduct
 // inventoryItemUpdate(id: $id, input: $input)
 // input: { sku }
 // productVariantsBulkUpdate(productId: $productId, variants: $variants)

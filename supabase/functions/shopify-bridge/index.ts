@@ -392,6 +392,193 @@ function resolveRepairVariantTargets(shopifyVariants, rows) {
   return { repairVariants, missing, duplicates };
 }
 
+function shopifyPublicImageUrl(value: unknown): string {
+  const url = norm(value);
+  if (!/^https:\/\//i.test(url) || /\s/.test(url)) return '';
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && !!parsed.hostname ? url : '';
+  } catch {
+    return '';
+  }
+}
+
+function shopifyImageCandidatesFrom(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined || value === '') return [];
+  return [value];
+}
+
+function shopifyExistingVariantImageUrlFrom(row: Record<string, unknown>): string {
+  const observed = row.observed && typeof row.observed === 'object' ? row.observed : {};
+  for (const value of [
+    row.shopee_option_image_url,
+    row._custom_option_image_url,
+    row._main_image,
+    row.main_image,
+    row._wms_image_url,
+    row.image_url,
+    row.ebay_variation_image_url,
+    ...shopifyImageCandidatesFrom(row.extra_images),
+    ...shopifyImageCandidatesFrom(row._extra_images),
+    ...shopifyImageCandidatesFrom(row._detail_image_urls),
+    ...shopifyImageCandidatesFrom((observed as any).detail_image_urls),
+  ]) {
+    const url = shopifyPublicImageUrl(value);
+    if (url) return url;
+  }
+  return '';
+}
+
+function shopifyHtmlEscape(value: unknown): string {
+  return norm(value).replace(/[&<>"']/g, (ch) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }[ch] || ch));
+}
+
+function shopifyTextDescriptionFrom(value: unknown): string {
+  return String(value ?? '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => shopifyHtmlEscape(line))
+    .join('<br>');
+}
+
+function shopifySplitTopLevelComponents(value: string): string[] {
+  const out: string[] = [];
+  let current = '';
+  let depth = 0;
+  for (const ch of String(value || '')) {
+    if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+    if ((ch === ')' || ch === ']' || ch === '}') && depth > 0) depth -= 1;
+    if ((ch === ',' || ch === ';') && depth === 0) {
+      if (current.trim()) out.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += ch;
+  }
+  if (current.trim()) out.push(current.trim());
+  return out;
+}
+
+function shopifyComponentLines(components: unknown): string[] {
+  const normalized = String(components ?? '')
+    .replace(/\r\n?/g, '\n')
+    .replace(/<\s*br\s*\/?>/gi, '\n')
+    .replace(/<\/\s*(div|p|li|tr|h[1-6])\s*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/\s+\|\s+/g, '\n');
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const segment of normalized.split(/\n+/)) {
+    for (const piece of shopifySplitTopLevelComponents(segment)) {
+      const value = piece
+        .replace(/^[\s\-*]+/, '')
+        .replace(/^\d+[.)]\s*/, '')
+        .trim();
+      const key = value.toLowerCase();
+      if (!value || seen.has(key)) continue;
+      seen.add(key);
+      out.push(value.slice(0, 260));
+    }
+  }
+  return out.slice(0, 12);
+}
+
+function shopifyDetailImageUrlsFrom(row: Record<string, unknown>, groupRows: Record<string, unknown>[] = []): string[] {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const sourceRow of [row, ...groupRows]) {
+    const observed = sourceRow.observed && typeof sourceRow.observed === 'object' ? sourceRow.observed : {};
+    for (const value of [
+      ...shopifyImageCandidatesFrom(sourceRow._detail_image_urls),
+      ...shopifyImageCandidatesFrom(sourceRow.detail_image_urls),
+      ...shopifyImageCandidatesFrom((observed as any).detail_image_urls),
+      ...shopifyImageCandidatesFrom(sourceRow._extra_images),
+      ...shopifyImageCandidatesFrom(sourceRow.extra_images),
+    ]) {
+      const url = shopifyPublicImageUrl(value);
+      if (!url || seen.has(url)) continue;
+      seen.add(url);
+      urls.push(url);
+    }
+  }
+  return urls.slice(0, 20);
+}
+
+function shopifyDetailImagesHtmlFrom(row: Record<string, unknown>, groupRows: Record<string, unknown>[] = [], maxLength = 1800): string {
+  const urls = shopifyDetailImageUrlsFrom(row, groupRows);
+  if (!urls.length) return '';
+  const baseAlt = (norm(row.product_name || row.sku) || 'Product').slice(0, 120);
+  let html = '<h3>Detail Images</h3>\n';
+  let added = 0;
+  urls.forEach((url, index) => {
+    const imageHtml = `<img src="${shopifyHtmlEscape(url)}" alt="${shopifyHtmlEscape(`${baseAlt} detail ${index + 1}`)}" style="max-width:100%;height:auto;">`;
+    const prefix = added ? '<br>\n' : '';
+    if (added && html.length + prefix.length + imageHtml.length > maxLength) return;
+    html += `${prefix}${imageHtml}`;
+    added += 1;
+  });
+  return added ? html : '';
+}
+
+function lifecycleOfProduct(row: Record<string, unknown>): string {
+  return norm(row.lifecycle_state || row.lifecycle || '').toLowerCase();
+}
+
+function stripLifecycleTags(value: unknown): string {
+  return norm(value).replace(/\[(?:READY STOCK|PRE[-\s]?ORDER|예약|재고)\]\s*/gi, '').trim();
+}
+
+function shopifyExistingDescriptionHtmlFrom(master: Record<string, unknown>, groupRows: Record<string, unknown>[] = []): string {
+  const componentLines = shopifyComponentLines(
+    master.components_extracted_en || master.components_en || master.components || master.included_components,
+  );
+  const lifecycle = lifecycleOfProduct(master);
+  const stockLine = lifecycle === 'ready_stock'
+    ? 'Ready stock ships in about 1 business day, excluding weekends and Korean holidays.'
+    : 'Pre-order ships after official release and warehouse arrival; distributor delays may change the schedule.';
+  const productTitle = stripLifecycleTags(master.product_name) || norm(master.sku) || 'K-pop item';
+  const componentText = (componentLines.length
+    ? componentLines
+    : ['Each option includes 1 album. Random inclusions follow the official manufacturer policy.'])
+    .map((line) => `- ${line}`)
+    .join('\n');
+  const textSections = [
+    `<p>${shopifyTextDescriptionFrom(`Hello, K-pop collector.\nOfficial K-pop goods from Korea, packed carefully.\n${productTitle}`)}</p>`,
+    '<h3>Product Details</h3>',
+    `<p>${shopifyTextDescriptionFrom(`Product: ${productTitle}\nAvailability: ${stockLine}\nComponents:\n${componentText}`)}</p>`,
+    '<h3>Shipping & Handling</h3>',
+    `<p>${shopifyTextDescriptionFrom([
+      "Ships only to the buyer's Shopify checkout address. Confirm name, address, and phone before payment.",
+      'Tracking uploads after dispatch; the first scan may take 24-48 hours.',
+      'International delivery estimates exclude handling, weekends, holidays, customs, and local delays.',
+      'Local duties, VAT, GST, brokerage, or handling charges may be collected by the carrier unless Shopify collects them at checkout.',
+    ].join('\n'))}</p>`,
+    '<h3>Important Notice</h3>',
+    `<p>${shopifyTextDescriptionFrom([
+      'Outer packaging may have small marks from production or shipping.',
+      'Random inclusions cannot be selected unless the option title says so.',
+      'Returns follow store policy; items must be unused, unopened, and complete.',
+    ].join('\n'))}</p>`,
+  ];
+  const textHtml = textSections.filter(Boolean).join('\n');
+  const imageHtml = shopifyDetailImagesHtmlFrom(master, groupRows);
+  if (!imageHtml) return textHtml.slice(0, 4000);
+  const maxTextLength = Math.max(0, 4000 - imageHtml.length - 1);
+  const cappedTextHtml = textHtml.length > maxTextLength ? textHtml.slice(0, maxTextLength).trimEnd() : textHtml;
+  return [cappedTextHtml, imageHtml].filter(Boolean).join('\n');
+}
+
 async function handleHealthz(): Promise<Response> {
   return jsonResp({
     ok: true,
@@ -803,6 +990,26 @@ async function archiveProduct(shop: any, productId: string) {
     }
   `;
   const { status, raw } = await shopifyGraphql(shop, query, { product: { id, status: 'ARCHIVED' } });
+  if (status < 200 || status >= 300 || raw?.errors?.length || graphUserErrors(raw, 'productUpdate').length) {
+    return { ok: false, status, raw, error: graphErrorMessage(raw, 'productUpdate') };
+  }
+  return { ok: true, status, raw, product: raw?.data?.productUpdate?.product || null };
+}
+
+async function updateProductDescriptionHtml(shop: any, productId: string, descriptionHtml: string) {
+  const id = shopifyProductGid(productId);
+  const html = String(descriptionHtml ?? '');
+  if (!id) return { ok: false, status: 400, raw: { error: 'product_id required' }, error: 'product_id required' };
+  if (!html.trim()) return { ok: false, status: 400, raw: { error: 'descriptionHtml required' }, error: 'descriptionHtml required' };
+  const query = `
+    mutation ShopifyBridgeProductDescriptionUpdate($product: ProductUpdateInput!) {
+      productUpdate(product: $product) {
+        product { id title status handle publishedAt descriptionHtml }
+        userErrors { field message }
+      }
+    }
+  `;
+  const { status, raw } = await shopifyGraphql(shop, query, { product: { id, descriptionHtml: html } });
   if (status < 200 || status >= 300 || raw?.errors?.length || graphUserErrors(raw, 'productUpdate').length) {
     return { ok: false, status, raw, error: graphErrorMessage(raw, 'productUpdate') };
   }
@@ -1299,6 +1506,112 @@ async function handleSetSku(req: Request): Promise<Response> {
   });
 }
 
+async function repairOptionImagesForProduct(shop: any, productId: string, requestedRows: any, dryRun = false) {
+  const normalized = normalizeVariantMediaRows(requestedRows);
+  if (normalized.invalid.length) return { ok: false, status: 400, error: 'invalid_media_rows', invalid: normalized.invalid };
+  const rows = normalized.valid;
+  if (!rows.length) return { ok: false, status: 400, error: 'variants or option_images with public HTTPS media URL required' };
+
+  const read = await readProductSkuTargets(shop, productId);
+  if (!read.ok) return { ok: false, status: read.status || 502, error: read.error || 'product lookup failed', product_id: productId, raw: read.raw };
+  const product = read.product;
+  const shopifyVariants = Array.isArray(read.variants) ? read.variants : [];
+  const variantSummaries = shopifyVariants.map(summarizeSkuVariant);
+  const { repairVariants, missing, duplicates } = resolveRepairVariantTargets(shopifyVariants, rows);
+  const repairMedia = mediaInputsFromVariantRows(rows, product?.title || '');
+
+  if (duplicates.length) {
+    return {
+      ok: false,
+      status: 409,
+      error: 'duplicate_sku',
+      shop_domain: shop.shop_domain,
+      product_id: product.id,
+      duplicates,
+      variants: variantSummaries,
+    };
+  }
+  if (missing.length) {
+    return {
+      ok: false,
+      status: 404,
+      error: 'variant_not_found',
+      shop_domain: shop.shop_domain,
+      product_id: product.id,
+      missing,
+      variants: variantSummaries,
+    };
+  }
+
+  if (dryRun) {
+    const dryRunRepair = applyMediaIdsToRepairVariants(repairVariants, {});
+    return {
+      ok: true,
+      dry_run: true,
+      shop_domain: shop.shop_domain,
+      product_id: product.id,
+      productCreateMedia: { media: repairMedia },
+      variants: dryRunRepair.variants,
+      product_media_created: { requested_count: repairMedia.length, created_count: 0 },
+      media_id_mapping: { requested_count: repairMedia.length, unique_source_count: new Set(repairMedia.map((row: any) => mediaSourceKey(row.originalSource)).filter(Boolean)).size, created_count: 0, mapped_count: 0, mapped_by_alt: 0, mapped_by_index: 0, unresolved_count: repairMedia.length },
+      variant_media_payload: dryRunRepair.diagnostics,
+    };
+  }
+
+  const repairMediaCreated = await createProductMedia(shop, product.id, repairMedia);
+  if (!repairMediaCreated.ok) {
+    return {
+      ok: false,
+      status: repairMediaCreated.status || 502,
+      error: repairMediaCreated.error || 'productCreateMedia media repair failed',
+      shop_domain: shop.shop_domain,
+      product_id: product.id,
+      product_media_created: repairMediaCreated.product_media_created || { requested_count: repairMedia.length, created_count: 0 },
+      raw: repairMediaCreated.raw,
+    };
+  }
+  const repairMediaMapping = mediaIdMappingFrom(repairMedia, repairMediaCreated.media);
+  const repairPayload = applyMediaIdsToRepairVariants(repairVariants, repairMediaMapping.sourceToMediaId);
+  if (repairMedia.length && repairPayload.diagnostics.media_src_fallback_count > 0) {
+    return {
+      ok: false,
+      status: 502,
+      error: 'product_media_id_mapping_failed',
+      shop_domain: shop.shop_domain,
+      product_id: product.id,
+      product_media_created: repairMediaCreated.product_media_created,
+      media_id_mapping: repairMediaMapping.diagnostics,
+      raw: repairMediaCreated.raw,
+    };
+  }
+
+  const repaired = await bulkRepairVariantMedia(shop, product.id, repairPayload.variants);
+  if (!repaired.ok) {
+    return {
+      ok: false,
+      status: repaired.status || 502,
+      error: repaired.error || 'productVariantsBulkUpdate media repair failed',
+      shop_domain: shop.shop_domain,
+      product_id: product.id,
+      product_media_created: repairMediaCreated.product_media_created,
+      media_id_mapping: repairMediaMapping.diagnostics,
+      variant_media_payload: repairPayload.diagnostics,
+      raw: repaired.raw,
+    };
+  }
+  return {
+    ok: true,
+    shop_domain: shop.shop_domain,
+    product_id: product.id,
+    variants: repaired.variants,
+    product_media_created: repairMediaCreated.product_media_created,
+    media_id_mapping: repairMediaMapping.diagnostics,
+    variant_media_payload: repairPayload.diagnostics,
+    variant_media_counts: variantMediaCounts(repaired.variants),
+    raw: repaired.raw,
+  };
+}
+
 async function handleRepairOptionImages(req: Request): Promise<Response> {
   const denied = await requireBridgeTokenOrAuthenticatedUser(req);
   if (denied) return denied;
@@ -1320,106 +1633,204 @@ async function handleRepairOptionImages(req: Request): Promise<Response> {
       shop_domain: shop.shop_domain,
     }, 403);
   }
+  const result = await repairOptionImagesForProduct(
+    shop,
+    productId,
+    Array.isArray(body.variants) ? body.variants : body.option_images,
+    body.dry_run === true,
+  );
+  return jsonResp(result, result.ok ? 200 : (result.status || 502));
+}
 
-  const normalized = normalizeVariantMediaRows(Array.isArray(body.variants) ? body.variants : body.option_images);
-  if (normalized.invalid.length) return jsonResp({ ok: false, error: 'invalid_media_rows', invalid: normalized.invalid }, 400);
-  const rows = normalized.valid;
-  if (!rows.length) return jsonResp({ ok: false, error: 'variants or option_images with public HTTPS media URL required' }, 400);
+async function fetchExistingShopifyRepairTargets(filters: Record<string, unknown>) {
+  const limit = Math.min(250, Math.max(1, Math.floor(Number(filters.limit) || 25)));
+  const productId = shopifyProductGid(filters.product_id || filters.productId || filters.platform_item_id || filters.platformItemId);
+  const sku = norm(filters.sku);
+  const masterProductId = norm(filters.master_product_id || filters.masterProductId);
+  let q = supabase
+    .from('platform_listings')
+    .select('*')
+    .eq('platform', 'shopify')
+    .is('deleted_at', null)
+    .not('platform_item_id', 'is', null)
+    .order('updated_at', { ascending: false })
+    .limit(Math.min(1000, limit * 20));
+  if (productId) q = q.eq('platform_item_id', productId);
+  if (sku) q = q.eq('external_sku', sku);
+  if (masterProductId) q = q.eq('master_product_id', masterProductId);
+  const { data: listings, error } = await q;
+  if (error) return { ok: false, error: error.message, status: 502, groups: [] };
 
-  const read = await readProductSkuTargets(shop, productId);
-  if (!read.ok) return jsonResp({ ok: false, error: read.error || 'product lookup failed', product_id: productId, raw: read.raw }, read.status || 502);
-  const product = read.product;
-  const shopifyVariants = Array.isArray(read.variants) ? read.variants : [];
-  const variantSummaries = shopifyVariants.map(summarizeSkuVariant);
-  const { repairVariants, missing, duplicates } = resolveRepairVariantTargets(shopifyVariants, rows);
-  const repairMedia = mediaInputsFromVariantRows(rows, product?.title || '');
+  const rows = Array.isArray(listings) ? listings : [];
+  const masterIds = uniq(rows.map((row: any) => row.master_product_id).filter(Boolean));
+  const { data: products, error: productError } = masterIds.length
+    ? await supabase.from('products').select('*').in('id', masterIds)
+    : { data: [], error: null };
+  if (productError) return { ok: false, error: productError.message, status: 502, groups: [] };
 
-  if (duplicates.length) {
-    return jsonResp({
-      ok: false,
-      error: 'duplicate_sku',
-      shop_domain: shop.shop_domain,
-      product_id: product.id,
-      duplicates,
-      variants: variantSummaries,
-    }, 409);
+  const directProducts = Array.isArray(products) ? products : [];
+  const groupIds = uniq(directProducts.map((row: any) => row.product_group_id).filter(Boolean));
+  const { data: groupProducts, error: groupError } = groupIds.length
+    ? await supabase.from('products').select('*').in('product_group_id', groupIds)
+    : { data: [], error: null };
+  if (groupError) return { ok: false, error: groupError.message, status: 502, groups: [] };
+
+  const allProducts = [...directProducts, ...(Array.isArray(groupProducts) ? groupProducts : [])];
+  const productById = new Map(allProducts.map((row: any) => [String(row.id), row]));
+  const groupsByProduct = new Map<string, any>();
+  for (const listing of rows) {
+    const remoteProductId = norm(listing.platform_item_id);
+    if (!remoteProductId) continue;
+    const key = `${norm(listing.shop_id)}|${remoteProductId}`;
+    if (!groupsByProduct.has(key)) {
+      groupsByProduct.set(key, {
+        shop_id: norm(listing.shop_id),
+        product_id: remoteProductId,
+        listings: [],
+        product_rows: [],
+      });
+    }
+    const group = groupsByProduct.get(key);
+    group.listings.push(listing);
+    const product = productById.get(String(listing.master_product_id));
+    if (product && !group.product_rows.some((row: any) => String(row.id) === String(product.id))) group.product_rows.push(product);
   }
 
-  if (missing.length) {
-    return jsonResp({
-      ok: false,
-      error: 'variant_not_found',
-      shop_domain: shop.shop_domain,
-      product_id: product.id,
-      missing,
-      variants: variantSummaries,
-    }, 404);
-  }
+  const groups = [...groupsByProduct.values()].slice(0, limit).map((group: any) => {
+    const direct = group.product_rows;
+    const productGroupIds = new Set(direct.map((row: any) => norm(row.product_group_id)).filter(Boolean));
+    const relatedProducts = allProducts
+      .filter((row: any) => productGroupIds.has(norm(row.product_group_id)) || direct.some((directRow: any) => String(directRow.id) === String(row.id)));
+    const masterProduct = direct[0] || relatedProducts[0] || {};
+    return {
+      ...group,
+      master_product: masterProduct,
+      group_products: relatedProducts.length ? relatedProducts : direct,
+    };
+  });
+  return { ok: true, groups, listing_count: rows.length, product_count: allProducts.length };
+}
 
-  if (body.dry_run === true) {
-    const dryRunRepair = applyMediaIdsToRepairVariants(repairVariants, {});
-    return jsonResp({
-      ok: true,
-      dry_run: true,
-      shop_domain: shop.shop_domain,
-      product_id: product.id,
-      productCreateMedia: { media: repairMedia },
-      variants: dryRunRepair.variants,
-      product_media_created: { requested_count: repairMedia.length, created_count: 0 },
-      media_id_mapping: { requested_count: repairMedia.length, unique_source_count: new Set(repairMedia.map((row: any) => mediaSourceKey(row.originalSource)).filter(Boolean)).size, created_count: 0, mapped_count: 0, mapped_by_alt: 0, mapped_by_index: 0, unresolved_count: repairMedia.length },
-      variant_media_payload: dryRunRepair.diagnostics,
+function existingRepairOptionRowsForTarget(target: any): any[] {
+  const productById = new Map((target.group_products || []).map((row: any) => [String(row.id), row]));
+  const out = [];
+  for (const listing of (target.listings || [])) {
+    const product = productById.get(String(listing.master_product_id)) || {};
+    const mediaUrl = shopifyExistingVariantImageUrlFrom(product);
+    const sku = norm(listing.external_sku || product.sku);
+    if (!sku || !mediaUrl) continue;
+    out.push({
+      sku,
+      variant_id: listing.external_variant_id || null,
+      mediaSrc: [mediaUrl],
+      alt: norm(product.product_name || product.sku || sku).slice(0, 512),
     });
   }
+  return out;
+}
 
-  const repairMediaCreated = await createProductMedia(shop, product.id, repairMedia);
-  if (!repairMediaCreated.ok) {
+async function handleRepairExistingProducts(req: Request): Promise<Response> {
+  const denied = requireInternalBridge(req);
+  if (denied) return denied;
+  const body = await req.json().catch(() => ({}));
+  if (!body || typeof body !== 'object') return jsonResp({ ok: false, error: 'JSON body required' }, 400);
+  const dryRun = body.apply === true ? false : true;
+  const includeDescription = body.include_description !== false;
+  const includeOptionImages = body.include_option_images !== false;
+  const shopDomain = normalizeShopDomain(body.shop_domain || body.shop);
+  const shop = await configuredShop(shopDomain);
+  const scopeSet = shopScopeSet(shop);
+  if (!scopeSet.has('write_products')) {
     return jsonResp({
       ok: false,
-      error: repairMediaCreated.error || 'productCreateMedia media repair failed',
+      error: 'missing_scopes',
+      missing_scopes: ['write_products'],
+      message: 'Shopify existing product repair requires write_products scope',
       shop_domain: shop.shop_domain,
-      product_id: product.id,
-      product_media_created: repairMediaCreated.product_media_created || { requested_count: repairMedia.length, created_count: 0 },
-      raw: repairMediaCreated.raw,
-    }, repairMediaCreated.status || 502);
-  }
-  const repairMediaMapping = mediaIdMappingFrom(repairMedia, repairMediaCreated.media);
-  const repairPayload = applyMediaIdsToRepairVariants(repairVariants, repairMediaMapping.sourceToMediaId);
-  if (repairMedia.length && repairPayload.diagnostics.media_src_fallback_count > 0) {
-    return jsonResp({
-      ok: false,
-      error: 'product_media_id_mapping_failed',
-      shop_domain: shop.shop_domain,
-      product_id: product.id,
-      product_media_created: repairMediaCreated.product_media_created,
-      media_id_mapping: repairMediaMapping.diagnostics,
-      raw: repairMediaCreated.raw,
-    }, 502);
+    }, 403);
   }
 
-  const repaired = await bulkRepairVariantMedia(shop, product.id, repairPayload.variants);
-  if (!repaired.ok) {
-    return jsonResp({
-      ok: false,
-      error: repaired.error || 'productVariantsBulkUpdate media repair failed',
-      shop_domain: shop.shop_domain,
-      product_id: product.id,
-      product_media_created: repairMediaCreated.product_media_created,
-      media_id_mapping: repairMediaMapping.diagnostics,
-      variant_media_payload: repairPayload.diagnostics,
-      raw: repaired.raw,
-    }, repaired.status || 502);
+  const fetched = await fetchExistingShopifyRepairTargets(body);
+  if (!fetched.ok) return jsonResp({ ok: false, error: fetched.error || 'repair target fetch failed' }, fetched.status || 502);
+
+  const results = [];
+  const totals = {
+    targets: 0,
+    description_planned: 0,
+    description_updated: 0,
+    option_image_rows: 0,
+    option_image_repaired: 0,
+    skipped_no_images: 0,
+    errors: 0,
+  };
+  for (const target of fetched.groups) {
+    totals.targets += 1;
+    const master = target.master_product || {};
+    const groupProducts = Array.isArray(target.group_products) ? target.group_products : [];
+    const result: any = {
+      product_id: target.product_id,
+      shop_id: target.shop_id || null,
+      master_product_ids: uniq((target.listings || []).map((row: any) => row.master_product_id).filter(Boolean)),
+      listing_count: (target.listings || []).length,
+    };
+    try {
+      if (includeDescription) {
+        const descriptionHtml = shopifyExistingDescriptionHtmlFrom(master, groupProducts);
+        result.description = {
+          planned: Boolean(descriptionHtml),
+          length: descriptionHtml.length,
+          has_detail_images: descriptionHtml.includes('Detail Images'),
+        };
+        if (descriptionHtml) totals.description_planned += 1;
+        if (!dryRun && descriptionHtml) {
+          const updated = await updateProductDescriptionHtml(shop, target.product_id, descriptionHtml);
+          result.description.updated = updated.ok === true;
+          result.description.error = updated.ok ? null : (updated.error || 'productUpdate failed');
+          if (!updated.ok) throw new Error(result.description.error);
+          totals.description_updated += 1;
+        }
+      }
+      if (includeOptionImages) {
+        const optionRows = existingRepairOptionRowsForTarget(target);
+        totals.option_image_rows += optionRows.length;
+        result.option_images = {
+          planned_rows: optionRows.length,
+          missing_rows: Math.max(0, (target.listings || []).length - optionRows.length),
+        };
+        if (optionRows.length) {
+          const repaired = await repairOptionImagesForProduct(shop, target.product_id, optionRows, dryRun);
+          result.option_images.result = {
+            ok: repaired.ok === true,
+            error: repaired.ok ? null : repaired.error,
+            variant_media_counts: repaired.variant_media_counts || [],
+            product_media_created: repaired.product_media_created || null,
+            media_id_mapping: repaired.media_id_mapping || null,
+          };
+          if (!repaired.ok) throw new Error(repaired.error || 'option image repair failed');
+          totals.option_image_repaired += 1;
+        } else {
+          totals.skipped_no_images += 1;
+        }
+      }
+    } catch (error) {
+      totals.errors += 1;
+      result.error = String(error?.message || error);
+    }
+    results.push(result);
   }
+
   return jsonResp({
-    ok: true,
+    ok: totals.errors === 0,
+    dry_run: dryRun,
+    apply: !dryRun,
     shop_domain: shop.shop_domain,
-    product_id: product.id,
-    variants: repaired.variants,
-    product_media_created: repairMediaCreated.product_media_created,
-    media_id_mapping: repairMediaMapping.diagnostics,
-    variant_media_payload: repairPayload.diagnostics,
-    variant_media_counts: variantMediaCounts(repaired.variants),
-    raw: repaired.raw,
-  });
+    fetched: {
+      listing_count: fetched.listing_count || 0,
+      product_count: fetched.product_count || 0,
+    },
+    totals,
+    results,
+  }, totals.errors === 0 ? 200 : 207);
 }
 
 async function handleLookupSku(req: Request): Promise<Response> {
@@ -1505,6 +1916,7 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === 'archive-product' && req.method === 'POST') return await handleArchiveProduct(req);
     if (action === 'set-sku' && req.method === 'POST') return await handleSetSku(req);
     if (action === 'repair-option-images' && req.method === 'POST') return await handleRepairOptionImages(req);
+    if (action === 'repair-existing-products' && req.method === 'POST') return await handleRepairExistingProducts(req);
     if (action === 'lookup-sku' && req.method === 'GET') return await handleLookupSku(req);
     if (action === 'internal-check' && req.method === 'GET') {
       const denied = requireInternalBridge(req);

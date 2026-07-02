@@ -15,6 +15,7 @@ function readApiRef(file) {
 const docsReadme = readApiRef('README.md');
 const productCreateRef = readApiRef('product-create.graphql.md');
 const productCreateInputRef = readApiRef('product-create-input.graphql.md');
+const productUpdateRef = readApiRef('product-update.graphql.md');
 const variantsBulkRef = readApiRef('product-variants-bulk-create.graphql.md');
 const variantsBulkUpdateRef = readApiRef('product-variants-bulk-update.graphql.md');
 const inventoryItemUpdateRef = readApiRef('inventory-item-update.graphql.md');
@@ -24,8 +25,11 @@ const collectionRef = readApiRef('collection.graphql.md');
 const tagsAddRef = readApiRef('tags-add.graphql.md');
 const fixturePath = join(root, 'scripts', 'shopify-option-image-live-fixture.mjs');
 const fixtureScript = existsSync(fixturePath) ? readFileSync(fixturePath, 'utf8') : '';
+const bulkRepairPath = join(root, 'scripts', 'shopify-repair-existing-products.mjs');
+const bulkRepairScript = existsSync(bulkRepairPath) ? readFileSync(bulkRepairPath, 'utf8') : '';
 
 assert.match(docsReadme, /product-create\.graphql\.md/, 'Shopify README must index productCreate local docs');
+assert.match(docsReadme, /product-update\.graphql\.md/, 'Shopify README must index productUpdate local docs');
 assert.match(docsReadme, /product-variants-bulk-create\.graphql\.md/, 'Shopify README must index variant bulk create local docs');
 assert.match(docsReadme, /product-variants-bulk-update\.graphql\.md/, 'Shopify README must index variant bulk update local docs');
 assert.match(docsReadme, /inventory-item-update\.graphql\.md/, 'Shopify README must index inventory item SKU update local docs');
@@ -34,6 +38,9 @@ assert.match(productCreateRef, /status:\s*ACTIVE/, 'productCreate doc must recor
 assert.match(productCreateRef, /USD/, 'productCreate doc must record Shopify USD pricing policy');
 assert.match(productCreateInputRef, /tags/, 'ProductCreateInput doc must cover initial product tags');
 assert.match(productCreateInputRef, /collectionsToJoin/, 'ProductCreateInput doc must record optional collection joins');
+assert.match(productUpdateRef, /productUpdate/, 'productUpdate doc must record the existing-product content mutation');
+assert.match(productUpdateRef, /descriptionHtml/, 'productUpdate doc must record descriptionHtml repair usage');
+assert.match(productUpdateRef, /write_products/, 'productUpdate doc must record write_products scope');
 assert.match(variantsBulkRef, /REMOVE_STANDALONE_VARIANT/, 'variant doc must record standalone variant removal strategy');
 assert.match(variantsBulkRef, /mediaSrc\s*\(\[String!\]\)/, 'variant bulk create doc must record mediaSrc option image support');
 assert.match(variantsBulkRef, /mediaId\s*\(ID\)/, 'variant bulk create doc must record existing media attachment support');
@@ -61,6 +68,10 @@ assert.doesNotMatch(fixtureScript, /function assertLiveCreate[\s\S]*result\.prod
 assert.match(fixtureScript, /\}\s*finally\s*\{[\s\S]*if \(!args\.dryRun && productId\) \{[\s\S]*if \(args\.keep\) \{[\s\S]*action:\s*'archive-product'/, 'Shopify option image fixture cleanup must run from finally, skip dry-run, honor --keep, and archive otherwise');
 assert.match(fixtureScript, /variants\.map\(\(variant\) => variantMediaNodes\(variant\)\.length\)/, 'Shopify option image fixture must assert variant media.nodes counts via variantMediaNodes');
 assert.match(fixtureScript, /Array\.isArray\(result\.variant_media_counts\)[\s\S]*variantMediaNodes/, 'Shopify option image fixture must prefer bridge variant_media_counts and fall back to variant media.nodes');
+assert.equal(existsSync(bulkRepairPath), true, 'Shopify existing product bulk repair script must exist');
+assert.match(bulkRepairScript, /repair-existing-products/, 'Shopify existing product bulk repair script must call the bridge repair-existing-products endpoint');
+assert.match(bulkRepairScript, /--apply/, 'Shopify existing product bulk repair script must require an explicit --apply flag for live mutations');
+assert.match(bulkRepairScript, /--limit/, 'Shopify existing product bulk repair script must support a --limit safety flag');
 
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -487,6 +498,16 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
     && source.indexOf('await createProductMedia(shop, product.id') < source.indexOf('await bulkRepairVariantMedia'),
     `${label} Shopify repair path must create product media for URL-only rows before bulkRepairVariantMedia`,
   );
+  assert.match(source, /async function updateProductDescriptionHtml/, `${label} Shopify bridge must expose a product description update helper`);
+  assert.match(source, /descriptionHtml/, `${label} Shopify existing repair must update Shopify Product.descriptionHtml`);
+  assert.match(source, /async function fetchExistingShopifyRepairTargets/, `${label} Shopify bridge must collect existing V2 Shopify platform_listings through service-role context`);
+  assert.match(source, /\.from\('platform_listings'\)[\s\S]*platform[\s\S]*shopify/, `${label} Shopify repair target fetch must read platform_listings where platform is shopify`);
+  assert.match(source, /function shopifyExistingVariantImageUrlFrom/, `${label} Shopify existing repair must derive option image URLs from V2 product rows`);
+  assert.match(source, /function shopifyExistingDescriptionHtmlFrom/, `${label} Shopify existing repair must generate the text-first description for already-created products`);
+  assert.match(source, /async function handleRepairExistingProducts/, `${label} Shopify bridge must expose a bulk repair handler for existing products`);
+  assert.match(source, /requireInternalBridge\(req\)/, `${label} Shopify existing bulk repair must require the internal bridge token`);
+  assert.match(source, /repairOptionImagesForProduct/, `${label} Shopify existing repair must reuse the mediaId option image repair flow`);
+  assert.match(source, /action === 'repair-existing-products'/, `${label} Shopify bridge must route repair-existing-products`);
   assert.match(source, /inventoryItem:\s*\{\s*sku\s*\}/, `${label} Shopify SKU fallback must set ProductVariantsBulkInput.inventoryItem.sku`);
   assert.match(source, /variant_count[\s\S]*ambiguous_variant/, `${label} Shopify SKU repair must refuse ambiguous multi-variant products`);
   assert.match(source, /inventorySetQuantities/, `${label} Shopify bridge must include gated inventory support`);

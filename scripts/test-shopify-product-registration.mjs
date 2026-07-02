@@ -100,6 +100,11 @@ for (const token of [
 ]) {
   assert.match(dispatcher, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), `platform-publish must wire Shopify token: ${token}`);
 }
+const productSelect = dispatcher.match(/const PRODUCT_SELECT = '([^']+)'/)?.[1] || '';
+assert(!productSelect.split(',').map((value) => value.trim()).includes('components_extracted_en'), 'platform-publish shared PRODUCT_SELECT must not request schema-guarded components_extracted_en');
+assert.match(dispatcher, /const SHOPIFY_COMPONENT_SELECT = 'id, components_extracted_en'/, 'platform-publish must define a Shopify component projection');
+assert.match(dispatcher, /select\(SHOPIFY_COMPONENT_SELECT\)/, 'platform-publish must query Shopify component fields before adapter dispatch');
+assert.match(dispatcher, /platform === 'shopify'[\s\S]*hydrateShopifyComponentFields\(svc, product, groupProducts\)/, 'platform-publish must hydrate Shopify component fields before buildShopifyPayload runs');
 
 assert.match(shopifyAdapter, /supports: new Set\(\['create_listing', 'sync'\]\)/, 'Shopify adapter must expose MVP create_listing and sync only');
 assert.match(shopifyAdapter, /bridgePost\('create-product'/, 'Shopify adapter must route creates through shopify-bridge create-product');
@@ -120,7 +125,8 @@ assert.match(shopifyAdapter, /function shopifyPriceFromCostKrw[\s\S]*feePct = po
 assert.match(shopifyAdapter, /status:\s*shopifyProductStatus\(shopify, policy\)/, 'Shopify adapter must create products with the DB-backed default status');
 assert.match(shopifyAdapter, /set_inventory:\s*shopify\.set_inventory === true && policy\.setInventory === true/, 'Shopify adapter must keep Shopify inventory push disabled unless the DB policy enables it');
 assert.doesNotMatch(shopifyAdapter, /shopeeSellerCenterDescription/, 'Shopify adapter must not use the Shopee description template');
-assert.match(shopifyAdapter, /function shopifyEbayDescriptionHtmlFrom/, 'Shopify adapter must build the default eBay-style Shopify description');
+assert.match(shopifyAdapter, /function shopifyDefaultDescriptionHtmlFrom/, 'Shopify adapter must build the default text-first Shopify description');
+assert.doesNotMatch(shopifyAdapter, /function shopify(?:EbayDescriptionHtmlFrom|DescriptionCard|DescriptionList|DescriptionTable)/, 'Shopify adapter must not keep dead eBay/table/list description helpers');
 assert.match(shopifyAdapter, /deriveKpopFromTitle/, 'Shopify adapter must reuse the shared K-pop parser for artist/album tags');
 assert.match(shopifyAdapter, /function shopifyArtistAlbumTagsFrom/, 'Shopify adapter must isolate artist/album tag derivation');
 assert.doesNotMatch(shopifyAdapter, /collectionsToJoin|collectionAddProducts|collectionUpdate/, 'Shopify adapter must not manage collection membership for smart collections');
@@ -130,12 +136,16 @@ const shopifyDescriptionHelpers = [
   'stripLifecycleTags',
   'lifecycleOf',
   'shopifyHtmlEscape',
+  'shopifyTextEscape',
+  'shopifyPublicImageUrl',
+  'shopifyImageCandidatesFrom',
   'shopifySplitTopLevelComponents',
   'shopifyComponentLines',
-  'shopifyDescriptionCard',
-  'shopifyDescriptionList',
-  'shopifyDescriptionTable',
-  'shopifyEbayDescriptionHtmlFrom',
+  'shopifyDetailImageUrlsFrom',
+  'shopifyDetailImagesHtmlFrom',
+  'shopifyTextDescriptionFrom',
+  'shopifyLooksLikeHtml',
+  'shopifyDefaultDescriptionHtmlFrom',
   'descriptionHtmlFrom',
 ].map((name) => stripTinyTs(extractFunction(shopifyAdapter, name))).join('\n');
 const descriptionHtmlFrom = new Function(
@@ -146,14 +156,89 @@ const shopifyDescription = descriptionHtmlFrom({
   product_name: '[READY STOCK] CORTIS - [ GREENGREEN ] 2ND EP (WEVERSE Ver.)',
   sku: 'RS-CORTIS-GREENGREEN',
   lifecycle_state: 'ready_stock',
-  components_extracted_en: 'Photobook, CD, Photocard',
+  components_extracted_en: ['Outbox', 'Photocard'],
+  _detail_image_urls: ['notaurl', 'https://', 'https://bad host/detail.jpg', 'https://cdn.example.com/has space.jpg', 'https://cdn.example.com/detail-1.jpg'],
 }, {});
-assert(shopifyDescription.includes('Album product information'), 'Shopify description must include eBay-style album card');
-assert(shopifyDescription.includes('<li>Photobook</li>'), 'Shopify description must split Photobook into its own Contents item');
-assert(shopifyDescription.includes('<li>CD</li>'), 'Shopify description must split CD into its own Contents item');
-assert(shopifyDescription.includes('<li>Photocard</li>'), 'Shopify description must split Photocard into its own Contents item');
+assert(shopifyDescription.includes('Product Details'), 'Shopify description must include Product Details');
+assert(shopifyDescription.includes('- Outbox'), 'Shopify description must include Outbox component as a text bullet');
+assert(shopifyDescription.includes('- Photocard'), 'Shopify description must include Photocard component as a text bullet');
+assert(shopifyDescription.includes('Detail Images'), 'Shopify description must include Detail Images below the text content');
+assert(
+  shopifyDescription.indexOf('Detail Images') > shopifyDescription.indexOf('Product Details'),
+  'Shopify detail images must appear after Product Details text',
+);
+assert(shopifyDescription.includes('<img src="https://cdn.example.com/detail-1.jpg"'), 'Shopify description must render valid public detail image URLs');
+assert(!shopifyDescription.includes('notaurl'), 'Shopify description must exclude invalid detail image URLs');
+assert(!shopifyDescription.includes('<img src="https://"'), 'Shopify description must exclude incomplete https URLs');
+assert(!shopifyDescription.includes('bad host'), 'Shopify description must exclude malformed https URLs');
+assert(!shopifyDescription.includes('has space.jpg'), 'Shopify description must exclude unencoded whitespace URLs');
+assert(!shopifyDescription.includes('<table'), 'Shopify default description must not use tables');
+assert(!shopifyDescription.includes('<ul'), 'Shopify default description must not use unordered lists');
+assert(!shopifyDescription.includes('<li'), 'Shopify default description must not use list items');
 assert(!shopifyDescription.includes('100% Official & Authentic K-POP item'), 'Shopify description must remove the official/authentic album bullet');
 assert(!shopifyDescription.includes('Eligible albums may support Hanteo'), 'Shopify description must remove the chart-count album bullet');
+assert.equal(
+  descriptionHtmlFrom({}, { description: 'Line <one>\nLine & two' }),
+  'Line &lt;one&gt;<br>Line &amp; two',
+  'Shopify plain-text description override must be escaped and preserve newlines with br tags',
+);
+assert.equal(
+  descriptionHtmlFrom({}, { description_html: '<p><strong>Custom</strong> HTML</p>' }),
+  '<p><strong>Custom</strong> HTML</p>',
+  'Shopify HTML description override must remain unchanged',
+);
+assert.equal(
+  descriptionHtmlFrom({}, { description_html: '  <p><strong>Custom</strong> HTML</p>\n' }),
+  '  <p><strong>Custom</strong> HTML</p>\n',
+  'Shopify HTML description override must preserve leading and trailing whitespace exactly',
+);
+assert.equal(
+  descriptionHtmlFrom({}, { description_html: '  <figure><img src="https://cdn.example.com/custom.jpg"></figure>\n' }),
+  '  <figure><img src="https://cdn.example.com/custom.jpg"></figure>\n',
+  'Shopify HTML description override must preserve non-whitelisted HTML tags exactly',
+);
+assert.equal(
+  descriptionHtmlFrom({}, { description_html: '  <figure>Custom caption</figure>\n' }),
+  '  <figure>Custom caption</figure>\n',
+  'Shopify HTML description override must detect tag pairs outside the legacy whitelist',
+);
+assert.equal(
+  descriptionHtmlFrom({}, { description: 'Line <one>' }),
+  'Line &lt;one&gt;',
+  'Shopify plain-text angle bracket prose must still be escaped as text',
+);
+
+for (const [field, source] of [
+  ['_detail_image_urls', { _detail_image_urls: ['https://cdn.example.com/from-private-detail.jpg'] }],
+  ['detail_image_urls', { detail_image_urls: ['https://cdn.example.com/from-detail.jpg'] }],
+  ['observed.detail_image_urls', { observed: { detail_image_urls: ['https://cdn.example.com/from-observed.jpg'] } }],
+  ['extra_images', { extra_images: ['https://cdn.example.com/from-extra.jpg'] }],
+]) {
+  const html = descriptionHtmlFrom({
+    product_name: 'Image source fixture',
+    sku: 'IMAGE-SOURCE',
+    lifecycle_state: 'ready_stock',
+    components_extracted_en: 'Outbox',
+    ...source,
+  }, {});
+  assert.match(html, /<img src="https:\/\/cdn\.example\.com\/from-[^"]+\.jpg"/, `Shopify detail images must use ${field}`);
+}
+
+const longDescription = descriptionHtmlFrom({
+  product_name: `Long description fixture ${'text '.repeat(1200)}`,
+  sku: 'LONG-DESC',
+  lifecycle_state: 'ready_stock',
+  components_extracted_en: Array.from({ length: 200 }, (_, index) => `Component ${index + 1}`).join(', '),
+  _detail_image_urls: [
+    'https://cdn.example.com/detail-long-1.jpg',
+    'https://cdn.example.com/detail-long-2.jpg',
+  ],
+}, {});
+assert(longDescription.includes('<h3>Detail Images</h3>'), 'Shopify long default description must keep the Detail Images heading');
+assert(longDescription.includes('<img src="https://cdn.example.com/detail-long-1.jpg"'), 'Shopify long default description must preserve the first complete detail image tag');
+assert(longDescription.includes('<img src="https://cdn.example.com/detail-long-2.jpg"'), 'Shopify long default description must preserve the second complete detail image tag');
+assert(longDescription.length <= 4000, 'Shopify long default description must cap text before appending detail images');
+assert(!/<img[^>]*$/.test(longDescription), 'Shopify long default description must not cut an img tag');
 
 const shopifyTagHelpers = [
   'cleanText',

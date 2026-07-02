@@ -131,6 +131,10 @@ function shopifyHtmlEscape(value: unknown): string {
   }[ch] || ch));
 }
 
+function shopifyTextEscape(value: unknown): string {
+  return shopifyHtmlEscape(value);
+}
+
 function shopifySplitTopLevelComponents(value: string): string[] {
   const out: string[] = [];
   let current = '';
@@ -178,108 +182,109 @@ function shopifyComponentLines(components: unknown): string[] {
   return out.slice(0, 12);
 }
 
-function shopifyDescriptionCard(title: string, bodyHtml: string, bgColor = '#fff7fb'): string {
-  return `<table width="100%" bgcolor="${bgColor}"><tr><td><b>${shopifyHtmlEscape(title)}</b><br>${bodyHtml}</td></tr></table>`;
+function shopifyDetailImageUrlsFrom(row: Record<string, unknown>): string[] {
+  const observed = row.observed && typeof row.observed === 'object' ? row.observed : {};
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const value of [
+    ...shopifyImageCandidatesFrom(row._detail_image_urls),
+    ...shopifyImageCandidatesFrom(row.detail_image_urls),
+    ...shopifyImageCandidatesFrom(observed.detail_image_urls),
+    ...shopifyImageCandidatesFrom(row._extra_images),
+    ...shopifyImageCandidatesFrom(row.extra_images),
+  ]) {
+    const url = shopifyPublicImageUrl(value);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    urls.push(url);
+  }
+  return urls.slice(0, 20);
 }
 
-function shopifyDescriptionList(items: string[]): string {
-  const html = items
-    .map((value) => cleanText(value))
-    .filter(Boolean)
-    .map((value) => `<li>${shopifyHtmlEscape(value.slice(0, 260))}</li>`)
-    .join('');
-  return html ? `<ul>${html}</ul>` : '';
+function shopifyDetailImagesHtmlFrom(row: Record<string, unknown>, maxLength = 1800): string {
+  const urls = shopifyDetailImageUrlsFrom(row);
+  if (!urls.length) return '';
+  const baseAlt = (cleanText(row.product_name || row.sku) || 'Product').slice(0, 120);
+  let html = '<h3>Detail Images</h3>\n';
+  let added = 0;
+  urls.forEach((url, index) => {
+    const imageHtml = `<img src="${shopifyTextEscape(url)}" alt="${shopifyTextEscape(`${baseAlt} detail ${index + 1}`)}" style="max-width:100%;height:auto;">`;
+    const prefix = added ? '<br>\n' : '';
+    if (added && html.length + prefix.length + imageHtml.length > maxLength) return;
+    html += `${prefix}${imageHtml}`;
+    added += 1;
+  });
+  return added ? html : '';
 }
 
-function shopifyDescriptionTable(headers: string[], rows: string[][]): string {
-  const head = `<tr>${(headers || [])
-    .map((value) => `<td><b>${shopifyHtmlEscape(s(value).slice(0, 80))}</b></td>`)
-    .join('')}</tr>`;
-  const body = (rows || [])
-    .map((row) => `<tr>${(row || [])
-      .map((value) => `<td>${shopifyHtmlEscape(s(value).slice(0, 220))}</td>`)
-      .join('')}</tr>`)
-    .join('');
-  return `<table width="100%" border="1">${head}${body}</table>`;
+function shopifyTextDescriptionFrom(value: unknown): string {
+  return s(value)
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => shopifyTextEscape(line))
+    .join('<br>');
 }
 
-function shopifyEbayDescriptionHtmlFrom(master: Record<string, unknown>, title: string, lifecycleState: string): string {
-  const componentLines = shopifyComponentLines(master.components_extracted_en);
+function shopifyLooksLikeHtml(value: string): boolean {
+  const tag = '[A-Za-z][A-Za-z0-9:-]*';
+  return new RegExp(`<(${tag})(?:\\s[^<>]*)?>[\\s\\S]*<\\/\\1>`, 'i').test(value)
+    || new RegExp(`<${tag}(?:\\s[^<>]*)?\\s*\\/>`, 'i').test(value)
+    || new RegExp(`<${tag}\\s+[^<>]*>`, 'i').test(value)
+    || /<(?:area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)\s*>/i.test(value);
+}
+
+function shopifyDefaultDescriptionHtmlFrom(master: Record<string, unknown>, title: string, lifecycleState: string): string {
+  const componentLines = shopifyComponentLines(
+    master.components_extracted_en || master.components_en || master.components || master.included_components,
+  );
   const stockLine = lifecycleState === 'ready_stock'
     ? 'Ready stock ships in about 1 business day, excluding weekends and Korean holidays.'
     : 'Pre-order ships after official release and warehouse arrival; distributor delays may change the schedule.';
-  const shippingTable = shopifyDescriptionTable(
-    ['Service', 'Destination area', 'Estimated transit after dispatch'],
-    [
-      ['Economy / Standard', 'US, CA, AU, JP, SG, HK, Asia', 'Usually 5-20 business days; delayed parcels may take 20-30.'],
-      ['Economy / Standard', 'UK, DE, FR, ES, most Europe', 'Usually 10-30 business days; customs or local backlog may add days.'],
-      ['Economy / Standard', 'Brazil, Italy, South America, Africa, remote regions', 'Usually 20-50 business days; slower customs is common.'],
-      ['Expedited', 'US/CA/MX 2-5 days; Asia/AU 3-7; UK/EU 4-8; South America/Africa/remote 5-10+', 'Used when selected, upgraded, or required for a destination.'],
-    ],
-  );
   const productTitle = title || cleanText(master.sku) || 'K-pop item';
-  const cards = [
-    shopifyDescriptionCard(
-      'Album product information',
-      `Hello, K-pop collector. Official K-pop goods from Korea, packed carefully.<br><br><strong>${shopifyHtmlEscape(productTitle)}</strong>`,
-      '#fff7fb',
-    ),
-    shopifyDescriptionCard(
-      'What is included / Handling before shipment',
-      shopifyDescriptionList((componentLines.length ? componentLines : ['Each option includes 1 album. Random inclusions follow the official manufacturer policy.']).concat([
-        stockLine,
-        "Ships only to the buyer's Shopify checkout address. Confirm name, address, and phone before payment.",
-        'Tracking uploads after dispatch; the first scan may take 24-48 hours.',
-      ])),
-      '#f8fbff',
-    ),
-    shopifyDescriptionCard(
-      'International shipping time guide',
-      `Estimates exclude handling, weekends, holidays, customs, and local delays.<br>${shippingTable}`,
-      '#fffaf0',
-    ),
-    shopifyDescriptionCard(
-      'Customs, Duties & Taxes',
-      `<strong>For buyers in the United States (DDP Service)</strong>${
-        shopifyDescriptionList([
-          'Guaranteed Landed Cost: For standard US DDP orders, applicable import duties and customs taxes are handled in advance through our logistics solution. Checkout price is final for covered orders.',
-          'Zero Hidden Fees: Customs costs are prepaid, so the courier should not request extra brokerage or delivery customs fees on arrival.',
-          'Optimization Promise: Specialized logistics consolidation helps keep customs clearance compliant and administrative costs low.',
-        ])
-      }<strong>For international buyers (Europe, Asia, Australia, Canada & More)</strong>${
-        shopifyDescriptionList([
-          'Transparent Pricing: Listing prices generally do not include destination import duties or VAT unless Shopify collects them at checkout.',
-          'Payment of Taxes: Local duties, VAT, GST, brokerage, or handling charges are government taxes, not shipping fees, and may be collected by the carrier before delivery.',
-          'Our Promise: We prepare customs documents carefully. If documents are needed, contact us and we will respond quickly.',
-          'Delivery Cooperation: Please check local customs rules. If returned because customs charges are unpaid, return shipping costs may be deducted from the refund.',
-        ])
-      }`,
-      '#f8fafc',
-    ),
-    shopifyDescriptionCard(
-      'Important notice and friendly support',
-      shopifyDescriptionList([
-        'Outer packaging may have small marks from production or shipping. Random inclusions cannot be selected unless the option title says so.',
-        'Please contact us first. Returns follow store policy; items must be unused, unopened, and complete. Address errors, refusal, or unpaid fees may reduce the refund.',
-      ]),
-      '#fff7fb',
-    ),
+  const componentText = (componentLines.length
+    ? componentLines
+    : ['Each option includes 1 album. Random inclusions follow the official manufacturer policy.'])
+    .map((line) => `- ${line}`)
+    .join('\n');
+  const textSections = [
+    `<p>${shopifyTextDescriptionFrom(`Hello, K-pop collector.\nOfficial K-pop goods from Korea, packed carefully.\n${productTitle}`)}</p>`,
+    '<h3>Product Details</h3>',
+    `<p>${shopifyTextDescriptionFrom(`Product: ${productTitle}\nAvailability: ${stockLine}\nComponents:\n${componentText}`)}</p>`,
+    '<h3>Shipping & Handling</h3>',
+    `<p>${shopifyTextDescriptionFrom([
+      "Ships only to the buyer's Shopify checkout address. Confirm name, address, and phone before payment.",
+      'Tracking uploads after dispatch; the first scan may take 24-48 hours.',
+      'International delivery estimates exclude handling, weekends, holidays, customs, and local delays.',
+      'Local duties, VAT, GST, brokerage, or handling charges may be collected by the carrier unless Shopify collects them at checkout.',
+    ].join('\n'))}</p>`,
+    '<h3>Important Notice</h3>',
+    `<p>${shopifyTextDescriptionFrom([
+      'Outer packaging may have small marks from production or shipping.',
+      'Random inclusions cannot be selected unless the option title says so.',
+      'Returns follow store policy; items must be unused, unopened, and complete.',
+    ].join('\n'))}</p>`,
   ];
-  return cards.join('<br>\n').slice(0, 4000);
+  const textHtml = textSections.filter(Boolean).join('\n');
+  const imageHtml = shopifyDetailImagesHtmlFrom(master);
+  if (!imageHtml) return textHtml.slice(0, 4000);
+  const maxTextLength = Math.max(0, 4000 - imageHtml.length - 1);
+  const cappedTextHtml = textHtml.length > maxTextLength ? textHtml.slice(0, maxTextLength).trimEnd() : textHtml;
+  return [cappedTextHtml, imageHtml].filter(Boolean).join('\n');
 }
 
 function descriptionHtmlFrom(master: Record<string, unknown>, shopify: Record<string, any>): string {
-  const override = shopify.description_html || shopify.description;
-  const raw = s(override).trim();
+  const override = shopify.description_html || shopify.custom_description_html || shopify.description || shopify.custom_description;
+  const overrideText = s(override);
+  const raw = overrideText.trim();
   if (!raw) {
-    return shopifyEbayDescriptionHtmlFrom(
+    return shopifyDefaultDescriptionHtmlFrom(
       master,
       stripLifecycleTags(master.product_name) || cleanText(master.sku),
       lifecycleOf(master),
     );
   }
-  if (/<[a-z][\s\S]*>/i.test(raw)) return raw;
-  return raw.split(/\n{2,}/).map((para) => `<p>${para.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))}</p>`).join('');
+  if (shopifyLooksLikeHtml(raw)) return overrideText;
+  return shopifyTextDescriptionFrom(overrideText);
 }
 
 function vendorFrom(master: Record<string, unknown>, shopify: Record<string, any>): string {
@@ -337,7 +342,13 @@ function tagsFrom(master: Record<string, unknown>, shopify: Record<string, any>)
 
 function shopifyPublicImageUrl(value: unknown): string {
   const url = cleanText(value);
-  return /^https:\/\//i.test(url) ? url : '';
+  if (!/^https:\/\//i.test(url) || /\s/.test(url)) return '';
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === 'https:' && !!parsed.hostname ? url : '';
+  } catch {
+    return '';
+  }
 }
 
 function shopifyImageCandidatesFrom(value: unknown): unknown[] {

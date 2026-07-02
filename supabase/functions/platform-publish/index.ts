@@ -59,6 +59,7 @@ const ALERT_HMAC_SECRET = (Deno as any)['env']['get']('ALERT_HMAC_SECRET') || ''
 const VALID_PLATFORMS = new Set(['shopee', 'joom', 'qoo10', 'ebay', 'alibaba', 'shopify']);
 const QOO10_GOODS_CATEGORY_ID = '300002855';
 const PRODUCT_SELECT = 'id, sku, product_name, option_name, description, main_image, extra_images, sourcing_price, cost_krw, weight_g, inventory, lifecycle_state, product_group_id, variation_tier_names, variation_option_names, variation_tier_index, shopee_option_image_url, joom_product_id, joom_variant_id, joom_currency, joom_variant_grouping, ebay_category_id, qoo10_category_id, shopee_category_id, shopee_brand_id, shopee_brand_name, shopee_image_id, shopee_extra_image_ids, shopee_description, shopee_extra_attributes, shopee_days_to_ship, shopee_global_item_sku, shopee_global_model_sku';
+const SHOPIFY_COMPONENT_SELECT = 'id, components_extracted_en';
 
 // §A.2 gate 6: banned Shopee shop IDs.
 // 1002269093 = legacy BR shop permanently banned 2026-05.
@@ -92,6 +93,24 @@ function audit(event: string, extra: Record<string, unknown> = {}): void {
   console.log(
     JSON.stringify({ service: 'platform-publish', event, ts: new Date().toISOString(), ...extra }),
   );
+}
+
+async function hydrateShopifyComponentFields(svc: any, product: any, groupProducts: any[]): Promise<void> {
+  const ids = [product?.id, ...(groupProducts || []).map((row) => row?.id)].filter(Boolean);
+  if (!ids.length) return;
+  const { data, error } = await svc
+    .from('products')
+    .select(SHOPIFY_COMPONENT_SELECT)
+    .in('id', ids);
+  if (error) {
+    audit('shopify_components_fetch_failed', { error: error.message });
+    return;
+  }
+  const byId = new Map((Array.isArray(data) ? data : []).map((row: any) => [String(row.id), row]));
+  for (const row of [product, ...(groupProducts || [])]) {
+    const fields = byId.get(String(row?.id));
+    if (fields) Object.assign(row, fields);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -571,6 +590,9 @@ Deno.serve(async (req: Request): Promise<Response> => {
     } else {
       groupProducts = Array.isArray(groupRows) ? groupRows : [];
     }
+  }
+  if (platform === 'shopify') {
+    await hydrateShopifyComponentFields(svc, product, groupProducts);
   }
 
   // SKU_ASCII_ONLY — all platforms.

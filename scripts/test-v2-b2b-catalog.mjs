@@ -118,6 +118,9 @@ for (const token of [
   'id="b2b-sync-selected-master"',
   'id="b2b-bulk-edit"',
   'id="b2b-bulk-delete"',
+  'id="b2b-catalog-search"',
+  'id="b2b-catalog-search-apply"',
+  'id="b2b-catalog-search-clear"',
   'id="b2b-conflict-modal"',
   'id="b2b-catalog-edit-modal"',
   'id="b2b-catalog-bulk-modal"',
@@ -141,6 +144,10 @@ for (const token of [
   'function b2bApplyBulkEdit',
   'function b2bDeleteCatalogRows',
   'function b2bSyncSelectedMasterMatches',
+  'function b2bCatalogSearchTokens',
+  'function b2bCatalogRowMatchesSearch',
+  'function b2bVisibleCatalogRows',
+  'function b2bApplyCatalogSearch',
   'function b2bProductPnoFilter',
   '.or(filters.join(\',\'))',
   'b2bFetchProductsPnos(b2bCatalogPnos(b2bCatalogState.catalogRows))',
@@ -157,6 +164,18 @@ for (const token of [
   "if (viewId === 'view-b2b-catalog') renderB2bCatalogView(false)",
 ]) {
   assert(html.includes(token), `V2 B2B catalog UI missing token: ${token}`);
+}
+
+for (const token of [
+  'catalogSearch: \'\'',
+  "['artist', 'release_title', 'edition', 'category', 'availability_status', 'supply_note', 'raw_title', 'staronemall_pno', 'source_option_key', 'wms_sku']",
+  'const rows = b2bVisibleCatalogRows()',
+  "b2bEl('b2b-catalog-search-apply')?.addEventListener('click', b2bApplyCatalogSearch)",
+  "b2bEl('b2b-catalog-search-clear')?.addEventListener('click'",
+  "b2bEl('b2b-catalog-search')?.addEventListener('keydown'",
+  '(b2bVisibleCatalogRows() || []).forEach(function(row)',
+]) {
+  assert(html.includes(token), `B2B stored catalog search behavior missing token: ${token}`);
 }
 
 assert(

@@ -4802,6 +4802,9 @@
         <div class="b2b-toolbar" style="justify-content:space-between;">
           <div class="b2b-toolbar" style="margin-bottom:0;">
             <strong>Stored catalog</strong>
+            <input type="search" id="b2b-catalog-search" placeholder="Artist / title / edition / SKU / note">
+            <button type="button" id="b2b-catalog-search-apply">Search</button>
+            <button type="button" id="b2b-catalog-search-clear">Clear</button>
             <button type="button" id="b2b-sync-selected-master" disabled>Sync selected master</button>
             <button type="button" id="b2b-bulk-edit" disabled>Bulk edit selected</button>
             <button type="button" id="b2b-bulk-delete" style="background:#fee2e2;color:#991b1b;" disabled>Delete selected</button>
@@ -29524,6 +29527,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
   const b2bCatalogState = {
     loaded: false,
     loading: false,
+    catalogSearch: '',
     previewRows: [],
     catalogRows: [],
     catalogSelectedIds: new Set(),
@@ -29974,9 +29978,32 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     return (b2bCatalogState.catalogRows || []).find(function(row) { return String(row.id || '') === String(id || ''); }) || null;
   }
 
+  function b2bCatalogSearchTokens(value) {
+    return String(value || '').trim().split(/\s+/).map(b2bNormalize).filter(Boolean);
+  }
+
+  function b2bCatalogRowMatchesSearch(row, tokens) {
+    const activeTokens = Array.isArray(tokens) ? tokens : b2bCatalogSearchTokens(b2bCatalogState.catalogSearch);
+    if (!activeTokens.length) return true;
+    const fields = ['artist', 'release_title', 'edition', 'category', 'availability_status', 'supply_note', 'raw_title', 'staronemall_pno', 'source_option_key', 'wms_sku'];
+    const haystack = b2bNormalize(fields.map(function(field) { return row?.[field] || ''; }).join(' '));
+    return activeTokens.every(function(token) { return haystack.includes(token); });
+  }
+
+  function b2bVisibleCatalogRows() {
+    const rows = b2bCatalogState.catalogRows || [];
+    const tokens = b2bCatalogSearchTokens(b2bCatalogState.catalogSearch);
+    return tokens.length ? rows.filter(function(row) { return b2bCatalogRowMatchesSearch(row, tokens); }) : rows;
+  }
+
   function b2bSelectedCatalogRows() {
     const selected = b2bCatalogState.catalogSelectedIds || new Set();
-    return (b2bCatalogState.catalogRows || []).filter(function(row) { return selected.has(String(row.id || '')); });
+    return b2bVisibleCatalogRows().filter(function(row) { return selected.has(String(row.id || '')); });
+  }
+
+  function b2bApplyCatalogSearch() {
+    b2bCatalogState.catalogSearch = String(b2bEl('b2b-catalog-search')?.value || '').trim();
+    b2bRenderCatalogRows();
   }
 
   function b2bSetModalError(id, message) {
@@ -30155,7 +30182,7 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
 
   function b2bUpdateCatalogSelectionUi() {
     const selected = b2bCatalogState.catalogSelectedIds || new Set();
-    const rows = b2bCatalogState.catalogRows || [];
+    const rows = b2bVisibleCatalogRows();
     const selectedCount = rows.filter(function(row) { return selected.has(String(row.id || '')); }).length;
     const syncSelectedMaster = b2bEl('b2b-sync-selected-master');
     const bulkEdit = b2bEl('b2b-bulk-edit');
@@ -30410,14 +30437,18 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     const body = b2bEl('b2b-catalog-body');
     const summary = b2bEl('b2b-catalog-summary');
     if (!body) return;
-    const rows = b2bCatalogState.catalogRows || [];
+    const allRows = b2bCatalogState.catalogRows || [];
+    const rows = b2bVisibleCatalogRows();
+    const searchInput = b2bEl('b2b-catalog-search');
+    if (searchInput && searchInput.value !== b2bCatalogState.catalogSearch) searchInput.value = b2bCatalogState.catalogSearch;
     if (summary) {
       const masterMissing = rows.filter(function(row) { return b2bMasterStatus(row) === 'Missing'; }).length;
       const wmsMissing = rows.filter(function(row) { return b2bWmsStatus(row) === 'Missing'; }).length;
-      summary.textContent = rows.length + ' rows | Master missing ' + masterMissing + ' | WMS missing ' + wmsMissing;
+      const countText = b2bCatalogState.catalogSearch ? rows.length + ' / ' + allRows.length + ' rows' : rows.length + ' rows';
+      summary.textContent = countText + ' | Master missing ' + masterMissing + ' | WMS missing ' + wmsMissing;
     }
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="12" class="cat-empty">No stored catalog rows.</td></tr>';
+      body.innerHTML = '<tr><td colspan="12" class="cat-empty">' + (allRows.length ? 'No stored catalog rows match this search.' : 'No stored catalog rows.') + '</td></tr>';
       b2bUpdateCatalogSelectionUi();
       return;
     }
@@ -30543,18 +30574,35 @@ Cash on Delivery (COD) is available only for buyers with: 10 or more completed r
     b2bEl('b2b-sync-sheet')?.addEventListener('click', b2bSyncGoogleSheet);
     b2bEl('b2b-catalog-check-all')?.addEventListener('change', function(e) {
       const checked = !!e.currentTarget.checked;
-      b2bCatalogState.catalogSelectedIds = new Set();
+      if (!b2bCatalogState.catalogSelectedIds) b2bCatalogState.catalogSelectedIds = new Set();
       if (checked) {
-        (b2bCatalogState.catalogRows || []).forEach(function(row) {
+        (b2bVisibleCatalogRows() || []).forEach(function(row) {
           if (row.id) b2bCatalogState.catalogSelectedIds.add(String(row.id));
+        });
+      } else {
+        (b2bVisibleCatalogRows() || []).forEach(function(row) {
+          if (row.id) b2bCatalogState.catalogSelectedIds.delete(String(row.id));
         });
       }
       b2bRenderCatalogRows();
     });
+    b2bEl('b2b-catalog-search-apply')?.addEventListener('click', b2bApplyCatalogSearch);
+    b2bEl('b2b-catalog-search-clear')?.addEventListener('click', function() {
+      b2bCatalogState.catalogSearch = '';
+      const input = b2bEl('b2b-catalog-search');
+      if (input) input.value = '';
+      b2bRenderCatalogRows();
+    });
+    b2bEl('b2b-catalog-search')?.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        b2bApplyCatalogSearch();
+      }
+    });
     b2bEl('b2b-sync-selected-master')?.addEventListener('click', b2bSyncSelectedMasterMatches);
     b2bEl('b2b-bulk-edit')?.addEventListener('click', b2bOpenBulkEditModal);
     b2bEl('b2b-bulk-delete')?.addEventListener('click', function() {
-      b2bDeleteCatalogRows(Array.from(b2bCatalogState.catalogSelectedIds || []));
+      b2bDeleteCatalogRows(b2bSelectedCatalogRows().map(function(row) { return row.id; }));
     });
     b2bEl('b2b-catalog-edit-close')?.addEventListener('click', b2bCloseCatalogEditModal);
     b2bEl('b2b-catalog-edit-cancel')?.addEventListener('click', b2bCloseCatalogEditModal);

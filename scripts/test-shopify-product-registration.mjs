@@ -16,6 +16,7 @@ const docsReadme = readApiRef('README.md');
 const productCreateRef = readApiRef('product-create.graphql.md');
 const productCreateInputRef = readApiRef('product-create-input.graphql.md');
 const productUpdateRef = readApiRef('product-update.graphql.md');
+const productDeleteMediaRef = readApiRef('product-delete-media.graphql.md');
 const variantsBulkRef = readApiRef('product-variants-bulk-create.graphql.md');
 const variantsBulkUpdateRef = readApiRef('product-variants-bulk-update.graphql.md');
 const inventoryItemUpdateRef = readApiRef('inventory-item-update.graphql.md');
@@ -27,9 +28,12 @@ const fixturePath = join(root, 'scripts', 'shopify-option-image-live-fixture.mjs
 const fixtureScript = existsSync(fixturePath) ? readFileSync(fixturePath, 'utf8') : '';
 const bulkRepairPath = join(root, 'scripts', 'shopify-repair-existing-products.mjs');
 const bulkRepairScript = existsSync(bulkRepairPath) ? readFileSync(bulkRepairPath, 'utf8') : '';
+const mediaCleanupPath = join(root, 'scripts', 'shopify-clean-product-media.mjs');
+const mediaCleanupScript = existsSync(mediaCleanupPath) ? readFileSync(mediaCleanupPath, 'utf8') : '';
 
 assert.match(docsReadme, /product-create\.graphql\.md/, 'Shopify README must index productCreate local docs');
 assert.match(docsReadme, /product-update\.graphql\.md/, 'Shopify README must index productUpdate local docs');
+assert.match(docsReadme, /product-delete-media\.graphql\.md/, 'Shopify README must index productDeleteMedia local docs');
 assert.match(docsReadme, /product-variants-bulk-create\.graphql\.md/, 'Shopify README must index variant bulk create local docs');
 assert.match(docsReadme, /product-variants-bulk-update\.graphql\.md/, 'Shopify README must index variant bulk update local docs');
 assert.match(docsReadme, /inventory-item-update\.graphql\.md/, 'Shopify README must index inventory item SKU update local docs');
@@ -41,6 +45,9 @@ assert.match(productCreateInputRef, /collectionsToJoin/, 'ProductCreateInput doc
 assert.match(productUpdateRef, /productUpdate/, 'productUpdate doc must record the existing-product content mutation');
 assert.match(productUpdateRef, /descriptionHtml/, 'productUpdate doc must record descriptionHtml repair usage');
 assert.match(productUpdateRef, /write_products/, 'productUpdate doc must record write_products scope');
+assert.match(productDeleteMediaRef, /productDeleteMedia/, 'productDeleteMedia doc must record the product gallery cleanup mutation');
+assert.match(productDeleteMediaRef, /mediaIds\s*\(\[ID!\]!\)/, 'productDeleteMedia doc must record required mediaIds input');
+assert.match(productDeleteMediaRef, /irreversible/i, 'productDeleteMedia doc must record irreversible deletion risk');
 assert.match(variantsBulkRef, /REMOVE_STANDALONE_VARIANT/, 'variant doc must record standalone variant removal strategy');
 assert.match(variantsBulkRef, /mediaSrc\s*\(\[String!\]\)/, 'variant bulk create doc must record mediaSrc option image support');
 assert.match(variantsBulkRef, /mediaId\s*\(ID\)/, 'variant bulk create doc must record existing media attachment support');
@@ -72,6 +79,10 @@ assert.equal(existsSync(bulkRepairPath), true, 'Shopify existing product bulk re
 assert.match(bulkRepairScript, /repair-existing-products/, 'Shopify existing product bulk repair script must call the bridge repair-existing-products endpoint');
 assert.match(bulkRepairScript, /--apply/, 'Shopify existing product bulk repair script must require an explicit --apply flag for live mutations');
 assert.match(bulkRepairScript, /--limit/, 'Shopify existing product bulk repair script must support a --limit safety flag');
+assert.equal(existsSync(mediaCleanupPath), true, 'Shopify product media cleanup script must exist');
+assert.match(mediaCleanupScript, /cleanup-product-media/, 'Shopify product media cleanup script must call the bridge cleanup-product-media endpoint');
+assert.match(mediaCleanupScript, /--apply/, 'Shopify product media cleanup script must require an explicit --apply flag for live deletions');
+assert.match(mediaCleanupScript, /--limit/, 'Shopify product media cleanup script must support a --limit safety flag');
 
 function extractFunction(source, name) {
   const start = source.indexOf(`function ${name}`);
@@ -100,6 +111,7 @@ function stripTinyTs(block) {
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string\[\]/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*string/g, '$1')
     .replace(/([,(]\s*[A-Za-z_$][\w$]*)\s*:\s*any/g, '$1')
+    .replace(/\s+as\s+any/g, '')
     .replace(/const ([A-Za-z_$][\w$]*)\s*:\s*Record<[^>]+>\s*=/g, 'const $1 =')
     .replace(/const ([A-Za-z_$][\w$]*)\s*:\s*string\[\]\s*=/g, 'const $1 =')
     .replace(/new Set<string>\(\)/g, 'new Set()');
@@ -446,6 +458,98 @@ assert.match(
   'Shopify option image repair must fall back from unmatched variant_id to exact SKU matching without choosing duplicate SKUs',
 );
 
+const shopifyMediaCleanupHelpers = [
+  'norm',
+  'shopifyPublicImageUrl',
+  'shopifyMediaImageUrlFrom',
+  'shopifyMediaImageUrlKey',
+  'shopifyProductMediaDuplicateKey',
+  'variantAttachedMediaIdsFrom',
+  'mediaNodeCleanupSummary',
+  'planDuplicateProductMediaCleanup',
+].map((name) => stripTinyTs(extractFunction(shopifyBridge, name))).join('\n');
+const mediaCleanupFns = new Function(`${shopifyMediaCleanupHelpers}\nreturn { planDuplicateProductMediaCleanup, shopifyMediaImageUrlKey };`)();
+assert.equal(
+  mediaCleanupFns.shopifyMediaImageUrlKey('https://cdn.shopify.com/s/files/1/abc/products/Vol1.jpg?v=123'),
+  'cdn.shopify.com/s/files/1/abc/products/vol1.jpg',
+  'Shopify media cleanup must normalize URL query strings before duplicate grouping',
+);
+const mediaCleanupPlan = mediaCleanupFns.planDuplicateProductMediaCleanup({
+  media: {
+    nodes: [
+      { id: 'gid://shopify/MediaImage/1', alt: 'VOL1', mediaContentType: 'IMAGE', image: { url: 'https://cdn.shopify.com/s/files/1/abc/products/Vol1.jpg?v=111' } },
+      { id: 'gid://shopify/MediaImage/2', alt: 'VOL1', mediaContentType: 'IMAGE', image: { url: 'https://cdn.shopify.com/s/files/1/abc/products/Vol1.jpg?v=222' } },
+      { id: 'gid://shopify/MediaImage/3', alt: 'VOL2', mediaContentType: 'IMAGE', image: { url: 'https://cdn.shopify.com/s/files/1/abc/products/Vol2.jpg?v=111' } },
+      { id: 'gid://shopify/Video/9', alt: 'VOL1 video', mediaContentType: 'VIDEO' },
+    ],
+  },
+  variants: {
+    nodes: [
+      { id: 'gid://shopify/ProductVariant/1', media: { nodes: [{ id: 'gid://shopify/MediaImage/2' }] } },
+    ],
+  },
+});
+assert.deepEqual(
+  mediaCleanupPlan.delete_media_ids,
+  ['gid://shopify/MediaImage/1'],
+  'Shopify media cleanup must keep the variant-attached duplicate and delete only detached duplicates',
+);
+assert.equal(mediaCleanupPlan.duplicate_group_count, 1, 'Shopify media cleanup must report duplicate image groups');
+assert.equal(mediaCleanupPlan.variant_attached_media_count, 1, 'Shopify media cleanup must report variant-attached protected media');
+const staleOptionMediaCleanupPlan = mediaCleanupFns.planDuplicateProductMediaCleanup({
+  media: {
+    nodes: [
+      { id: 'gid://shopify/MediaImage/10', alt: 'PUREFLOW 1', mediaContentType: 'IMAGE', image: { url: 'https://cdn.shopify.com/s/files/1/abc/products/main.jpg?v=111' } },
+      { id: 'gid://shopify/MediaImage/11', alt: 'PUREFLOW 2', mediaContentType: 'IMAGE', image: { url: 'https://cdn.shopify.com/s/files/1/abc/products/vol1-original.jpg?v=111' } },
+      { id: 'gid://shopify/MediaImage/12', alt: 'VOL1', mediaContentType: 'IMAGE', image: { url: 'https://cdn.shopify.com/s/files/1/abc/products/vol1-attached.jpg?v=111' } },
+    ],
+  },
+  variants: {
+    nodes: [
+      { id: 'gid://shopify/ProductVariant/10', media: { nodes: [{ id: 'gid://shopify/MediaImage/12' }] } },
+    ],
+  },
+}, [{ alt: 'PUREFLOW 2', originalSource: 'https://source.example.com/vol1.jpg' }]);
+assert.deepEqual(
+  staleOptionMediaCleanupPlan.delete_media_ids,
+  ['gid://shopify/MediaImage/11'],
+  'Shopify media cleanup must delete detached stale option-gallery media generated before variant media repair',
+);
+assert.equal(staleOptionMediaCleanupPlan.stale_option_media_count, 1, 'Shopify media cleanup must report stale option-gallery media separately');
+
+const shopifyMediaCleanupTargetHelpers = [
+  'norm',
+  'shopifyPublicImageUrl',
+  'shopifyImageCandidatesFrom',
+  'shopifyExistingVariantImageUrlFrom',
+  'existingRepairOptionRowsForTarget',
+  'shopifyExistingGalleryMediaRowsForTarget',
+  'staleOptionGalleryMediaForTarget',
+].map((name) => stripTinyTs(extractFunction(shopifyBridge, name))).join('\n');
+const mediaCleanupTargetFns = new Function(`${shopifyMediaCleanupTargetHelpers}\nreturn { staleOptionGalleryMediaForTarget };`)();
+assert.deepEqual(
+  mediaCleanupTargetFns.staleOptionGalleryMediaForTarget({
+    master_product: {
+      product_name: 'PUREFLOW',
+      main_image: 'https://source.example.com/main.jpg',
+      extra_images: ['https://source.example.com/extra.jpg'],
+    },
+    listings: [
+      { external_sku: 'PUREFLOW-VOL1', master_product_id: 'vol1' },
+      { external_sku: 'PUREFLOW-VOL2', master_product_id: 'vol2' },
+    ],
+    group_products: [
+      { id: 'vol1', product_name: 'VOL1', shopee_option_image_url: 'https://source.example.com/vol1.jpg' },
+      { id: 'vol2', product_name: 'VOL2', shopee_option_image_url: 'https://source.example.com/vol2.jpg' },
+    ],
+  }),
+  [
+    { originalSource: 'https://source.example.com/vol1.jpg', alt: 'PUREFLOW 3' },
+    { originalSource: 'https://source.example.com/vol2.jpg', alt: 'PUREFLOW 4' },
+  ],
+  'Shopify media cleanup must derive stale option-gallery alts from the original V2 gallery media order',
+);
+
 for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edgeShopifyBridge]]) {
   assert.match(source, /SHOPIFY_API_VERSION/, `${label} Shopify bridge must pin an Admin API version`);
   assert.match(source, /authorization-code grant/, `${label} Shopify bridge must document OAuth source`);
@@ -508,6 +612,13 @@ for (const [label, source] of [['Supabase', shopifyBridge], ['edge mirror', edge
   assert.match(source, /requireInternalBridge\(req\)/, `${label} Shopify existing bulk repair must require the internal bridge token`);
   assert.match(source, /repairOptionImagesForProduct/, `${label} Shopify existing repair must reuse the mediaId option image repair flow`);
   assert.match(source, /action === 'repair-existing-products'/, `${label} Shopify bridge must route repair-existing-products`);
+  assert.match(source, /async function deleteProductMedia/, `${label} Shopify bridge must expose a productDeleteMedia helper`);
+  assert.match(source, /productDeleteMedia\(mediaIds: \$mediaIds, productId: \$productId\)/, `${label} Shopify bridge must delete duplicate product media by ID`);
+  assert.match(source, /function planDuplicateProductMediaCleanup/, `${label} Shopify bridge must plan duplicate gallery media cleanup before deleting`);
+  assert.match(source, /function staleOptionGalleryMediaForTarget/, `${label} Shopify bridge must derive stale option gallery media from V2 target rows`);
+  assert.match(source, /planDuplicateProductMediaCleanup\(read\.product,\s*staleOptionMedia\)/, `${label} Shopify bridge cleanup must pass target-aware stale option media to the planner`);
+  assert.match(source, /async function handleCleanupProductMedia/, `${label} Shopify bridge must expose product media cleanup handler`);
+  assert.match(source, /action === 'cleanup-product-media'/, `${label} Shopify bridge must route cleanup-product-media`);
   assert.match(source, /inventoryItem:\s*\{\s*sku\s*\}/, `${label} Shopify SKU fallback must set ProductVariantsBulkInput.inventoryItem.sku`);
   assert.match(source, /variant_count[\s\S]*ambiguous_variant/, `${label} Shopify SKU repair must refuse ambiguous multi-variant products`);
   assert.match(source, /inventorySetQuantities/, `${label} Shopify bridge must include gated inventory support`);

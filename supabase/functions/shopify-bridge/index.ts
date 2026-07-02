@@ -403,6 +403,147 @@ function shopifyPublicImageUrl(value: unknown): string {
   }
 }
 
+function shopifyMediaImageUrlFrom(node: any): string {
+  for (const value of [
+    node?.image?.url,
+    node?.preview?.image?.url,
+    node?.originalSource?.url,
+  ]) {
+    const url = shopifyPublicImageUrl(value);
+    if (url) return url;
+  }
+  return '';
+}
+
+function shopifyMediaImageUrlKey(value: unknown): string {
+  const url = shopifyPublicImageUrl(value);
+  if (!url) return '';
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    parsed.search = '';
+    return `${parsed.hostname.toLowerCase()}${parsed.pathname.replace(/\/+/g, '/').toLowerCase()}`;
+  } catch {
+    return '';
+  }
+}
+
+function shopifyProductMediaDuplicateKey(node: any): string {
+  if (norm(node?.mediaContentType).toUpperCase() !== 'IMAGE') return '';
+  const urlKey = shopifyMediaImageUrlKey(shopifyMediaImageUrlFrom(node));
+  return urlKey ? `image:${urlKey}` : '';
+}
+
+function variantAttachedMediaIdsFrom(product: any) {
+  const variants = Array.isArray(product?.variants?.nodes)
+    ? product.variants.nodes
+    : (Array.isArray(product?.variants) ? product.variants : []);
+  const ids = new Set();
+  for (const variant of variants) {
+    const nodes = Array.isArray(variant?.media?.nodes) ? variant.media.nodes : [];
+    for (const media of nodes) {
+      const id = norm(media?.id);
+      if (id) ids.add(id);
+    }
+  }
+  return ids;
+}
+
+function mediaNodeCleanupSummary(node: any, attachedIds: any) {
+  const id = norm(node?.id);
+  return {
+    id,
+    alt: norm(node?.alt || node?.image?.altText || node?.preview?.image?.altText) || null,
+    mediaContentType: norm(node?.mediaContentType) || null,
+    status: norm(node?.status) || null,
+    url: shopifyMediaImageUrlFrom(node) || null,
+    attached_to_variant: attachedIds.has(id),
+  };
+}
+
+function planDuplicateProductMediaCleanup(product: any, staleOptionMedia: any = []) {
+  const media = Array.isArray(product?.media?.nodes) ? product.media.nodes : [];
+  const attachedIds = variantAttachedMediaIdsFrom(product);
+  const staleAltKeys = new Set((Array.isArray(staleOptionMedia) ? staleOptionMedia : [])
+    .map((row: any) => norm(row?.alt).toLowerCase())
+    .filter(Boolean));
+  const groups = new Map();
+  for (const [index, node] of media.entries()) {
+    const id = norm(node?.id);
+    const key = shopifyProductMediaDuplicateKey(node);
+    if (!id || !key) continue;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push({ node, index });
+  }
+
+  const duplicateGroups = [];
+  const deleteMediaIds = [];
+  const deleteMediaIdSet = new Set();
+  for (const [key, entries] of groups.entries()) {
+    if (!Array.isArray(entries) || entries.length < 2) continue;
+    const attached = entries.filter((entry: any) => attachedIds.has(norm(entry.node?.id)));
+    const ordered = [...entries].sort((a: any, b: any) => {
+      const aTime = Date.parse(norm(a.node?.createdAt)) || 0;
+      const bTime = Date.parse(norm(b.node?.createdAt)) || 0;
+      if (aTime !== bTime) return aTime - bTime;
+      return a.index - b.index;
+    });
+    const keep = attached[0] || ordered[0];
+    const keepId = norm(keep?.node?.id);
+    const deleteNodes = entries
+      .filter((entry: any) => {
+        const id = norm(entry.node?.id);
+        return id && id !== keepId && !attachedIds.has(id);
+      })
+      .map((entry: any) => entry.node);
+    const protectedIds = attached
+      .map((entry: any) => norm(entry.node?.id))
+      .filter((id: string) => id && id !== keepId);
+    const groupDeleteIds = deleteNodes.map((node: any) => norm(node?.id)).filter(Boolean);
+    for (const id of groupDeleteIds) {
+      if (deleteMediaIdSet.has(id)) continue;
+      deleteMediaIdSet.add(id);
+      deleteMediaIds.push(id);
+    }
+    duplicateGroups.push({
+      key,
+      media_count: entries.length,
+      keep_id: keepId || null,
+      attached_ids: attached.map((entry: any) => norm(entry.node?.id)).filter(Boolean),
+      protected_attached_ids: protectedIds,
+      delete_ids: groupDeleteIds,
+      media: entries.map((entry: any) => mediaNodeCleanupSummary(entry.node, attachedIds)),
+    });
+  }
+  const staleOptionMediaNodes = [];
+  if (staleAltKeys.size) {
+    for (const node of media) {
+      const id = norm(node?.id);
+      const altKey = norm(node?.alt || node?.image?.altText || node?.preview?.image?.altText).toLowerCase();
+      if (!id || !altKey || !staleAltKeys.has(altKey)) continue;
+      if (attachedIds.has(id) || deleteMediaIdSet.has(id)) continue;
+      if (norm(node?.mediaContentType).toUpperCase() !== 'IMAGE') continue;
+      staleOptionMediaNodes.push(node);
+      deleteMediaIdSet.add(id);
+      deleteMediaIds.push(id);
+    }
+  }
+
+  return {
+    media_count: media.length,
+    variant_attached_media_count: attachedIds.size,
+    duplicate_group_count: duplicateGroups.length,
+    duplicate_media_count: duplicateGroups.reduce((sum, group) => sum + Math.max(0, group.media_count - 1), 0),
+    stale_option_media_count: staleOptionMediaNodes.length,
+    stale_option_media: staleOptionMediaNodes.map((node: any) => mediaNodeCleanupSummary(node, attachedIds)),
+    delete_count: deleteMediaIds.length,
+    delete_media_ids: deleteMediaIds,
+    duplicate_groups: duplicateGroups,
+    media_page_has_next: Boolean(product?.media?.pageInfo?.hasNextPage),
+    variant_page_has_next: Boolean(product?.variants?.pageInfo?.hasNextPage),
+  };
+}
+
 function shopifyImageCandidatesFrom(value: unknown): unknown[] {
   if (Array.isArray(value)) return value;
   if (value === null || value === undefined || value === '') return [];
@@ -1014,6 +1155,98 @@ async function updateProductDescriptionHtml(shop: any, productId: string, descri
     return { ok: false, status, raw, error: graphErrorMessage(raw, 'productUpdate') };
   }
   return { ok: true, status, raw, product: raw?.data?.productUpdate?.product || null };
+}
+
+async function readProductMediaForCleanup(shop: any, productId: string) {
+  const id = shopifyProductGid(productId);
+  if (!id) return { ok: false, status: 400, raw: { error: 'product_id required' }, error: 'product_id required' };
+  const query = `
+    query ShopifyBridgeProductMediaCleanupRead($id: ID!) {
+      product(id: $id) {
+        id
+        title
+        handle
+        status
+        media(first: 250) {
+          pageInfo { hasNextPage }
+          nodes {
+            id
+            alt
+            mediaContentType
+            status
+            preview {
+              status
+              image { url altText width height }
+            }
+            ... on MediaImage {
+              createdAt
+              updatedAt
+              image { url altText width height }
+              originalSource { url }
+            }
+          }
+        }
+        variants(first: 100) {
+          pageInfo { hasNextPage }
+          nodes {
+            id
+            title
+            sku
+            media(first: 10) {
+              nodes { id alt mediaContentType }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const { status, raw } = await shopifyGraphql(shop, query, { id });
+  if (status < 200 || status >= 300 || raw?.errors?.length) {
+    return { ok: false, status, raw, error: graphErrorMessage(raw) };
+  }
+  const product = raw?.data?.product || null;
+  if (!product?.id) return { ok: false, status: 404, raw, error: 'product_not_found' };
+  return { ok: true, status, raw, product };
+}
+
+async function deleteProductMedia(shop: any, productId: string, mediaIds: string[]) {
+  const id = shopifyProductGid(productId);
+  const ids = uniq((Array.isArray(mediaIds) ? mediaIds : []).map((mediaId: any) => norm(mediaId)).filter(Boolean));
+  if (!id) return { ok: false, status: 400, raw: { error: 'product_id required' }, error: 'product_id required' };
+  if (!ids.length) {
+    return {
+      ok: true,
+      status: 200,
+      raw: { skipped: true },
+      deleted_media_ids: [],
+      deleted_product_image_ids: [],
+      product: null,
+    };
+  }
+  const query = `
+    mutation ShopifyBridgeProductDeleteMedia($productId: ID!, $mediaIds: [ID!]!) {
+      productDeleteMedia(mediaIds: $mediaIds, productId: $productId) {
+        deletedMediaIds
+        deletedProductImageIds
+        mediaUserErrors { field message }
+        userErrors { field message }
+        product { id title }
+      }
+    }
+  `;
+  const { status, raw } = await shopifyGraphql(shop, query, { productId: id, mediaIds: ids });
+  if (status < 200 || status >= 300 || raw?.errors?.length || graphUserErrors(raw, 'productDeleteMedia').length) {
+    return { ok: false, status, raw, error: graphErrorMessage(raw, 'productDeleteMedia') };
+  }
+  const payload = raw?.data?.productDeleteMedia || {};
+  return {
+    ok: true,
+    status,
+    raw,
+    deleted_media_ids: Array.isArray(payload.deletedMediaIds) ? payload.deletedMediaIds : [],
+    deleted_product_image_ids: Array.isArray(payload.deletedProductImageIds) ? payload.deletedProductImageIds : [],
+    product: payload.product || null,
+  };
 }
 
 async function readProductSkuTargets(shop: any, productId: string) {
@@ -1729,6 +1962,43 @@ function existingRepairOptionRowsForTarget(target: any): any[] {
   return out;
 }
 
+function shopifyExistingGalleryMediaRowsForTarget(target: any): any[] {
+  const master = target.master_product || {};
+  const groupProducts = Array.isArray(target.group_products) ? target.group_products : [];
+  const urls = [
+    shopifyPublicImageUrl(master.main_image),
+    ...shopifyImageCandidatesFrom(master.extra_images).map((value: any) => shopifyPublicImageUrl(value)),
+    ...groupProducts.map((row: any) => shopifyExistingVariantImageUrlFrom(row)),
+  ].filter(Boolean);
+  const unique = [];
+  const seen = new Set();
+  for (const url of urls) {
+    const key = norm(url);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(key);
+  }
+  const base = norm(master.product_name || master.sku) || 'Product';
+  return unique.slice(0, 10).map((url, index) => ({
+    originalSource: url,
+    alt: `${base} ${index + 1}`,
+  }));
+}
+
+function staleOptionGalleryMediaForTarget(target: any): any[] {
+  const master = target.master_product || {};
+  const optionUrls = new Set(existingRepairOptionRowsForTarget(target)
+    .flatMap((row: any) => Array.isArray(row.mediaSrc) ? row.mediaSrc : [])
+    .map((url: any) => norm(url))
+    .filter(Boolean));
+  const protectedUrls = new Set([
+    shopifyPublicImageUrl(master.main_image),
+    ...shopifyImageCandidatesFrom(master.extra_images).map((value: any) => shopifyPublicImageUrl(value)),
+  ].filter(Boolean));
+  return shopifyExistingGalleryMediaRowsForTarget(target)
+    .filter((row: any) => optionUrls.has(norm(row.originalSource)) && !protectedUrls.has(norm(row.originalSource)));
+}
+
 async function handleRepairExistingProducts(req: Request): Promise<Response> {
   const denied = requireInternalBridge(req);
   if (denied) return denied;
@@ -1833,6 +2103,102 @@ async function handleRepairExistingProducts(req: Request): Promise<Response> {
   }, totals.errors === 0 ? 200 : 207);
 }
 
+async function handleCleanupProductMedia(req: Request): Promise<Response> {
+  const denied = requireInternalBridge(req);
+  if (denied) return denied;
+  const body = await req.json().catch(() => ({}));
+  if (!body || typeof body !== 'object') return jsonResp({ ok: false, error: 'JSON body required' }, 400);
+  const dryRun = body.apply === true ? false : true;
+  const maxDeletePerProduct = Math.max(0, Math.floor(Number(body.max_delete_per_product ?? body.maxDeletePerProduct ?? 50) || 50));
+  const shopDomain = normalizeShopDomain(body.shop_domain || body.shop);
+  const shop = await configuredShop(shopDomain);
+  const scopeSet = shopScopeSet(shop);
+  if (!scopeSet.has('write_products')) {
+    return jsonResp({
+      ok: false,
+      error: 'missing_scopes',
+      missing_scopes: ['write_products'],
+      message: 'Shopify product media cleanup requires write_products scope',
+      shop_domain: shop.shop_domain,
+    }, 403);
+  }
+
+  const fetched = await fetchExistingShopifyRepairTargets(body);
+  if (!fetched.ok) return jsonResp({ ok: false, error: fetched.error || 'cleanup target fetch failed' }, fetched.status || 502);
+
+  const totals = {
+    targets: 0,
+    media_count: 0,
+    duplicate_group_count: 0,
+    planned_delete_count: 0,
+    deleted_media_count: 0,
+    skipped_no_duplicates: 0,
+    errors: 0,
+  };
+  const results = [];
+  for (const target of fetched.groups) {
+    totals.targets += 1;
+    const result: any = {
+      product_id: target.product_id,
+      shop_id: target.shop_id || null,
+      master_product_ids: uniq((target.listings || []).map((row: any) => row.master_product_id).filter(Boolean)),
+      listing_count: (target.listings || []).length,
+    };
+    try {
+      const read = await readProductMediaForCleanup(shop, target.product_id);
+      if (!read.ok) throw new Error(read.error || 'product media lookup failed');
+      const staleOptionMedia = staleOptionGalleryMediaForTarget(target);
+      const plan = planDuplicateProductMediaCleanup(read.product, staleOptionMedia);
+      result.title = read.product?.title || null;
+      result.expected_stale_option_media = staleOptionMedia;
+      result.cleanup = plan;
+      totals.media_count += plan.media_count;
+      totals.duplicate_group_count += plan.duplicate_group_count;
+      totals.planned_delete_count += plan.delete_count;
+      if (plan.delete_count === 0) {
+        totals.skipped_no_duplicates += 1;
+        results.push(result);
+        continue;
+      }
+      if (plan.media_page_has_next || plan.variant_page_has_next) {
+        throw new Error('cleanup_page_truncated');
+      }
+      if (plan.delete_count > maxDeletePerProduct) {
+        throw new Error(`delete_limit_exceeded:${plan.delete_count}>${maxDeletePerProduct}`);
+      }
+      if (!dryRun) {
+        const deleted = await deleteProductMedia(shop, read.product.id, plan.delete_media_ids);
+        result.cleanup.deleted = {
+          ok: deleted.ok === true,
+          error: deleted.ok ? null : (deleted.error || 'productDeleteMedia failed'),
+          deleted_media_ids: deleted.deleted_media_ids || [],
+          deleted_product_image_ids: deleted.deleted_product_image_ids || [],
+        };
+        if (!deleted.ok) throw new Error(result.cleanup.deleted.error);
+        totals.deleted_media_count += (deleted.deleted_media_ids || []).length;
+      }
+    } catch (error) {
+      totals.errors += 1;
+      result.error = String(error?.message || error);
+    }
+    results.push(result);
+  }
+
+  return jsonResp({
+    ok: totals.errors === 0,
+    dry_run: dryRun,
+    apply: !dryRun,
+    shop_domain: shop.shop_domain,
+    max_delete_per_product: maxDeletePerProduct,
+    fetched: {
+      listing_count: fetched.listing_count || 0,
+      product_count: fetched.product_count || 0,
+    },
+    totals,
+    results,
+  }, totals.errors === 0 ? 200 : 207);
+}
+
 async function handleLookupSku(req: Request): Promise<Response> {
   const denied = await requireBridgeTokenOrAuthenticatedUser(req);
   if (denied) return denied;
@@ -1917,6 +2283,7 @@ async function handleRequest(req: Request): Promise<Response> {
     if (action === 'set-sku' && req.method === 'POST') return await handleSetSku(req);
     if (action === 'repair-option-images' && req.method === 'POST') return await handleRepairOptionImages(req);
     if (action === 'repair-existing-products' && req.method === 'POST') return await handleRepairExistingProducts(req);
+    if (action === 'cleanup-product-media' && req.method === 'POST') return await handleCleanupProductMedia(req);
     if (action === 'lookup-sku' && req.method === 'GET') return await handleLookupSku(req);
     if (action === 'internal-check' && req.method === 'GET') {
       const denied = requireInternalBridge(req);

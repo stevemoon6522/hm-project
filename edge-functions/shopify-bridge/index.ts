@@ -15,6 +15,7 @@
 // action === 'set-sku'
 // action === 'repair-option-images'
 // action === 'repair-existing-products'
+// action === 'cleanup-product-media'
 // action === 'lookup-sku'
 // function shopifySearchString
 // const queryText = `sku:"${escapedSku}"`
@@ -42,6 +43,12 @@
 // async function handleSetSku
 // async function handleRepairOptionImages
 // async function handleRepairExistingProducts
+// async function deleteProductMedia
+// productDeleteMedia(mediaIds: $mediaIds, productId: $productId)
+// function planDuplicateProductMediaCleanup
+// function staleOptionGalleryMediaForTarget
+// planDuplicateProductMediaCleanup(read.product, staleOptionMedia)
+// async function handleCleanupProductMedia
 // requireInternalBridge(req)
 // repairOptionImagesForProduct
 // inventoryItemUpdate(id: $id, input: $input)

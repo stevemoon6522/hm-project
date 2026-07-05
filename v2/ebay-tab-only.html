@@ -460,6 +460,129 @@
 
     .panel[hidden] { display: none; }
 
+
+
+    .category-picker {
+      display: grid;
+      gap: 10px;
+    }
+
+    .category-options {
+      display: grid;
+      gap: 8px;
+      max-height: 260px;
+      overflow: auto;
+      padding-right: 2px;
+    }
+
+    .category-option {
+      width: 100%;
+      min-height: 0;
+      justify-content: flex-start;
+      align-items: flex-start;
+      text-align: left;
+      padding: 11px 12px;
+      border-radius: 14px;
+      background: #fff;
+      display: grid;
+      gap: 6px;
+    }
+
+    .category-option[aria-selected="true"] {
+      border-color: #93c5fd;
+      background: #eff6ff;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, .10);
+    }
+
+    .category-option-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-weight: 850;
+      width: 100%;
+    }
+
+    .category-option-path {
+      color: var(--muted);
+      line-height: 1.45;
+      white-space: normal;
+    }
+
+    .category-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .specifics-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .specifics-summary {
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1e3a8a;
+      border-radius: 14px;
+      padding: 11px 12px;
+      line-height: 1.5;
+    }
+
+    .aspect-field {
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: #fff;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .aspect-field.required {
+      border-color: #bfdbfe;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+    }
+
+    .aspect-label-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .aspect-label-row strong {
+      font-size: 13px;
+    }
+
+    .aspect-help {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .aspect-values {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .chip {
+      min-height: 24px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--surface-soft);
+      color: #334155;
+      font-size: 11px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .chip:hover {
+      border-color: #93c5fd;
+      background: #eff6ff;
+    }
+
     .preview-box {
       margin-top: 12px;
       border: 1px solid var(--line);
@@ -649,7 +772,7 @@
         <div class="topbar-actions">
           <button type="button" data-action="validate-all">필수값 일괄검사</button>
           <button type="button" data-action="preview">Dry-run Preview</button>
-          <button class="primary" type="button" data-action="open-drawer">선택 상품 등록 준비</button>
+          <button class="primary" type="button" data-action="open-drawer">상품 등록 테스트</button>
         </div>
       </header>
 
@@ -732,13 +855,13 @@
                 <input id="title" data-title value="LE SSERAFIM EASY 3 Ver SET Official Album Photobook KPOP SEALED" maxlength="80" />
                 <div class="field-hint"><span data-title-count>69</span>/80자 · eBay title limit 기준</div>
               </div>
-              <div class="field">
-                <label for="category">eBay Category</label>
-                <select id="category" data-form-category>
-                  <option>Music &gt; CDs</option>
-                  <option>Entertainment Memorabilia &gt; Music Memorabilia</option>
-                  <option>Collectibles &gt; Photographic Images</option>
-                </select>
+              <div class="field full">
+                <label for="categorySearch">eBay Category 선택</label>
+                <div class="category-picker">
+                  <input id="categorySearch" data-category-search placeholder="예: album, photocard, k-pop, memorabilia" />
+                  <div class="category-options" data-category-list role="listbox" aria-label="eBay category candidates"></div>
+                  <div class="field-hint" data-category-meta>카테고리를 선택하면 해당 leaf category의 Item specifics 입력칸이 자동으로 표시됩니다.</div>
+                </div>
               </div>
               <div class="field">
                 <label for="condition">Condition</label>
@@ -770,12 +893,8 @@
                 <input id="qty" data-qty type="number" min="1" step="1" value="12" />
               </div>
               <div class="field full">
-                <label for="specifics">Item specifics</label>
-                <textarea id="specifics" data-specifics>Artist=LE SSERAFIM
-Format=CD
-Genre=K-POP
-Country/Region of Manufacture=Korea, Republic of
-Release Title=EASY</textarea>
+                <label>Item specifics 자동 표시</label>
+                <div class="specifics-grid" data-specifics-fields></div>
               </div>
             </div>
             <div class="preview-box" data-preview>{
@@ -840,7 +959,7 @@ Release Title=EASY</textarea>
     <section class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
       <div class="drawer-head">
         <div>
-          <h2 id="drawer-title">eBay 등록 준비</h2>
+          <h2 id="drawer-title">eBay 상품 등록 테스트</h2>
           <p class="subtle" data-drawer-subtitle>선택한 상품의 전송 전 최종 확인</p>
         </div>
         <button class="ghost" type="button" data-action="close-drawer">✕</button>
@@ -878,6 +997,94 @@ Release Title=EASY</textarea>
       { sku: 'RIIZE-LUCKY-PC', title: 'RIIZE Lucky Photocard Random Pack', artist: 'RIIZE', category: 'photocard', policy: 'standard', status: 'review', price: 18.20, margin: 19.8, stock: 11, images: 1, note: '이미지 추가 권장' }
     ];
 
+    // Prototype metadata shaped after eBay Taxonomy API getItemAspectsForCategory.
+    // In production this list should come from ebay-bridge → Taxonomy API.
+    const ebayCategories = [
+      {
+        id: '176984',
+        label: 'Music > CDs',
+        shortLabel: 'Music CDs',
+        kind: 'album',
+        leaf: true,
+        usage: 'K-POP album / CD 기본 후보',
+        keywords: 'album cd music kpop photobook sealed',
+        aspects: [
+          { name: 'Artist', required: true, mode: 'FREE_TEXT', cardinality: 'SINGLE', auto: 'artist', help: '그룹/아티스트명', values: ['IVE', 'LE SSERAFIM', 'BTS', 'Stray Kids', 'NewJeans'] },
+          { name: 'Release Title', required: true, mode: 'FREE_TEXT', cardinality: 'SINGLE', auto: 'releaseTitle', help: '앨범명 또는 대표 상품명' },
+          { name: 'Format', required: false, recommended: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'CD', values: ['CD', 'Photobook', 'Box Set', 'Album'] },
+          { name: 'Genre', required: false, recommended: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'K-Pop', values: ['K-Pop', 'Pop', 'Rock', 'Dance & Electronica'] },
+          { name: 'Country/Region of Manufacture', required: false, recommended: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'Korea, Republic of', values: ['Korea, Republic of', 'Japan', 'United States'] },
+          { name: 'Release Year', required: false, mode: 'FREE_TEXT', cardinality: 'SINGLE', placeholder: '2026' }
+        ]
+      },
+      {
+        id: '108857',
+        label: 'Entertainment Memorabilia > Music Memorabilia > K-Pop Memorabilia',
+        shortLabel: 'K-Pop Memorabilia',
+        kind: 'merch',
+        leaf: true,
+        usage: '공식 굿즈, 티셔츠, 응원봉, MD 후보',
+        keywords: 'kpop memorabilia merch goods lightstick tshirt official',
+        aspects: [
+          { name: 'Industry', required: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'Music', values: ['Music', 'Movies', 'Television'] },
+          { name: 'Artist/Band', required: true, mode: 'FREE_TEXT', cardinality: 'SINGLE', auto: 'artist', help: '굿즈 대상 아티스트/그룹' },
+          { name: 'Original/Reproduction', required: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'Original', values: ['Original', 'Reproduction'] },
+          { name: 'Country/Region of Manufacture', required: false, recommended: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'Korea, Republic of', values: ['Korea, Republic of', 'Japan', 'China'] },
+          { name: 'Modified Item', required: false, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'No', values: ['No', 'Yes'] }
+        ]
+      },
+      {
+        id: '183050',
+        label: 'Collectibles > Non-Sport Trading Cards > Trading Card Singles',
+        shortLabel: 'Photocard / Trading Card Singles',
+        kind: 'photocard',
+        leaf: true,
+        usage: '포토카드 단품/랜덤팩 후보',
+        keywords: 'photocard trading card collectibles single random pc',
+        aspects: [
+          { name: 'Franchise', required: true, mode: 'FREE_TEXT', cardinality: 'SINGLE', auto: 'artist', help: '예: NewJeans, RIIZE, IVE' },
+          { name: 'Type', required: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'Photocard', values: ['Photocard', 'Trading Card', 'Postcard'] },
+          { name: 'Autographed', required: false, recommended: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'No', values: ['No', 'Yes'] },
+          { name: 'Original/Licensed Reprint', required: false, recommended: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'Original', values: ['Original', 'Licensed Reprint'] },
+          { name: 'Country/Region of Manufacture', required: false, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'Korea, Republic of', values: ['Korea, Republic of', 'Japan', 'United States'] }
+        ]
+      },
+      {
+        id: '176985',
+        label: 'Music > Vinyl Records',
+        shortLabel: 'Vinyl Records',
+        kind: 'album',
+        leaf: true,
+        usage: 'LP / Vinyl 상품 후보',
+        keywords: 'vinyl lp record music kpop',
+        aspects: [
+          { name: 'Artist', required: true, mode: 'FREE_TEXT', cardinality: 'SINGLE', auto: 'artist' },
+          { name: 'Release Title', required: true, mode: 'FREE_TEXT', cardinality: 'SINGLE', auto: 'releaseTitle' },
+          { name: 'Format', required: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'Record', values: ['Record', 'LP', 'Vinyl'] },
+          { name: 'Genre', required: false, recommended: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'K-Pop', values: ['K-Pop', 'Pop', 'Rock'] },
+          { name: 'Record Size', required: false, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', values: ['12"', '10"', '7"'] }
+        ]
+      },
+      {
+        id: '155344',
+        label: 'Clothing, Shoes & Accessories > Men > Men\'s Clothing > Shirts',
+        shortLabel: 'Official Apparel',
+        kind: 'merch',
+        leaf: true,
+        usage: '공식 티셔츠/의류 굿즈 후보',
+        keywords: 'shirt tshirt clothing apparel merch official',
+        aspects: [
+          { name: 'Brand', required: true, mode: 'FREE_TEXT', cardinality: 'SINGLE', auto: 'artist', help: '브랜드가 없으면 아티스트 또는 Official Merchandise' },
+          { name: 'Type', required: true, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'T-Shirt', values: ['T-Shirt', 'Hoodie', 'Sweatshirt'] },
+          { name: 'Size', required: true, mode: 'FREE_TEXT', cardinality: 'SINGLE', placeholder: 'M / L / XL 또는 옵션별 입력' },
+          { name: 'Color', required: false, recommended: true, mode: 'FREE_TEXT', cardinality: 'SINGLE', placeholder: 'Black' },
+          { name: 'Department', required: false, mode: 'SELECTION_ONLY', cardinality: 'SINGLE', defaultValue: 'Unisex Adults', values: ['Unisex Adults', 'Men', 'Women'] }
+        ]
+      }
+    ];
+
+    let selectedCategory = ebayCategories[0];
+
     const statusMap = {
       ready: ['Ready', 'green'],
       review: ['Review', 'amber'],
@@ -901,7 +1108,10 @@ Release Title=EASY</textarea>
     const priceInput = document.querySelector('[data-price]');
     const qtyInput = document.querySelector('[data-qty]');
     const fulfillmentInput = document.querySelector('[data-fulfillment]');
-    const specificsInput = document.querySelector('[data-specifics]');
+    const categorySearch = document.querySelector('[data-category-search]');
+    const categoryList = document.querySelector('[data-category-list]');
+    const categoryMeta = document.querySelector('[data-category-meta]');
+    const specificsFields = document.querySelector('[data-specifics-fields]');
     const marginLabel = document.querySelector('[data-margin-label]');
     let activeStatus = 'all';
     let selected = products[0];
@@ -953,12 +1163,113 @@ Release Title=EASY</textarea>
           </div>
           <div class="queue-actions">
             <button class="small" type="button" data-select="${product.sku}">선택</button>
-            <button class="small primary" type="button" data-open="${product.sku}">등록 준비</button>
+            <button class="small primary" type="button" data-open="${product.sku}">상품 등록</button>
           </div>
         </article>
       `).join('');
 
       empty.classList.toggle('show', rows.length === 0);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    }
+
+    function inferCategoryForProduct(product) {
+      return ebayCategories.find((cat) => cat.kind === product.category) || ebayCategories[0];
+    }
+
+    function releaseTitleFor(product) {
+      return String(product.title || product.sku || '').replace(/\bOfficial\b.*$/i, '').trim() || product.sku;
+    }
+
+    function defaultAspectValue(aspect, product) {
+      if (aspect.auto === 'artist') return product.artist || '';
+      if (aspect.auto === 'releaseTitle') return releaseTitleFor(product);
+      if (aspect.defaultValue) return aspect.defaultValue;
+      return '';
+    }
+
+    function renderCategoryList() {
+      const query = categorySearch.value.trim().toLowerCase();
+      const rows = ebayCategories.filter((cat) => {
+        if (!query) return true;
+        return [cat.id, cat.label, cat.shortLabel, cat.usage, cat.keywords].join(' ').toLowerCase().includes(query);
+      });
+      categoryList.innerHTML = rows.map((cat) => `
+        <button class="category-option" type="button" role="option" data-category-pick="${cat.id}" aria-selected="${cat.id === selectedCategory.id}">
+          <span class="category-option-title">
+            <span>${escapeHtml(cat.shortLabel)}</span>
+            <span class="badge ${cat.leaf ? 'green' : 'amber'}">${cat.leaf ? 'leaf' : 'parent'}</span>
+          </span>
+          <span class="category-option-path">${escapeHtml(cat.label)}</span>
+          <span class="category-meta">
+            <span class="badge blue">ID ${cat.id}</span>
+            <span class="badge gray">${cat.aspects.filter((a) => a.required).length} required</span>
+            <span class="badge violet">${cat.aspects.length} aspects</span>
+          </span>
+        </button>
+      `).join('');
+      if (!rows.length) {
+        categoryList.innerHTML = '<div class="empty show">검색어에 맞는 카테고리가 없습니다.</div>';
+      }
+    }
+
+    function renderSpecifics() {
+      categoryMeta.innerHTML = `<strong>${escapeHtml(selectedCategory.shortLabel)}</strong> · ${escapeHtml(selectedCategory.label)} · category_id=${selectedCategory.id}<br>${escapeHtml(selectedCategory.usage)}`;
+      const requiredCount = selectedCategory.aspects.filter((a) => a.required).length;
+      specificsFields.innerHTML = `
+        <div class="specifics-summary">
+          선택한 카테고리의 Taxonomy metadata 예시입니다. 필수 ${requiredCount}개 / 전체 ${selectedCategory.aspects.length}개 Item specifics가 자동 표시됩니다.
+        </div>
+        ${selectedCategory.aspects.map((aspect, index) => {
+          const value = escapeHtml(defaultAspectValue(aspect, selected));
+          const commonAttrs = `data-aspect-name="${escapeHtml(aspect.name)}" data-aspect-required="${aspect.required ? 'true' : 'false'}"`;
+          const control = aspect.mode === 'SELECTION_ONLY'
+            ? `<select ${commonAttrs} data-aspect-input>
+                <option value="">선택</option>
+                ${(aspect.values || []).map((v) => `<option value="${escapeHtml(v)}" ${v === defaultAspectValue(aspect, selected) ? 'selected' : ''}>${escapeHtml(v)}</option>`).join('')}
+              </select>`
+            : `<input ${commonAttrs} data-aspect-input value="${value}" placeholder="${escapeHtml(aspect.placeholder || aspect.name)}" />`;
+          const chips = (aspect.values || []).slice(0, 6).map((v) => `<button class="chip" type="button" data-aspect-chip="${index}" data-chip-value="${escapeHtml(v)}">${escapeHtml(v)}</button>`).join('');
+          return `
+            <div class="aspect-field ${aspect.required ? 'required' : ''}">
+              <div class="aspect-label-row">
+                <strong>${escapeHtml(aspect.name)}</strong>
+                <span class="badge ${aspect.required ? 'blue' : aspect.recommended ? 'violet' : 'gray'}">${aspect.required ? 'required' : aspect.recommended ? 'recommended' : 'optional'}</span>
+              </div>
+              ${control}
+              <div class="aspect-help">${aspect.mode} · ${aspect.cardinality}${aspect.help ? ' · ' + escapeHtml(aspect.help) : ''}</div>
+              ${chips ? `<div class="aspect-values">${chips}</div>` : ''}
+            </div>`;
+        }).join('')}
+      `;
+    }
+
+    function selectCategory(categoryId, notify = true) {
+      const next = ebayCategories.find((cat) => cat.id === categoryId) || selectedCategory;
+      selectedCategory = next;
+      renderCategoryList();
+      renderSpecifics();
+      buildPreview(false);
+      if (notify) showToast(`${next.shortLabel} 카테고리 선택됨`);
+    }
+
+    function collectAspects() {
+      const aspects = {};
+      document.querySelectorAll('[data-aspect-input]').forEach((input) => {
+        const name = input.dataset.aspectName;
+        const value = String(input.value || '').trim();
+        if (name && value) aspects[name] = [value];
+      });
+      return aspects;
+    }
+
+    function validateSpecifics() {
+      const missing = [...document.querySelectorAll('[data-aspect-input][data-aspect-required="true"]')]
+        .filter((input) => !String(input.value || '').trim())
+        .map((input) => input.dataset.aspectName);
+      return missing;
     }
 
     function selectProduct(product) {
@@ -969,15 +1280,11 @@ Release Title=EASY</textarea>
       qtyInput.value = Math.max(product.stock, 1);
       fulfillmentInput.value = product.policy;
       marginLabel.textContent = `${product.margin}%`;
-      specificsInput.value = [
-        `Artist=${product.artist}`,
-        product.category === 'photocard' ? 'Format=Photocard' : product.category === 'merch' ? 'Type=Official Merchandise' : 'Format=CD',
-        'Genre=K-POP',
-        'Country/Region of Manufacture=Korea, Republic of',
-        `Release Title=${product.title.split(' Official')[0]}`
-      ].join('\n');
+      selectedCategory = inferCategoryForProduct(product);
       drawerSubtitle.textContent = `${product.sku} · ${product.artist} · ${product.status.toUpperCase()}`;
       updateTitleCount();
+      renderCategoryList();
+      renderSpecifics();
       buildPreview(false);
       showToast(`${product.sku} 선택됨`);
     }
@@ -989,7 +1296,8 @@ Release Title=EASY</textarea>
         marketplace_id: 'EBAY_US',
         sku: selected.sku,
         title: titleInput.value,
-        category: document.querySelector('[data-form-category]').value,
+        categoryId: selectedCategory.id,
+        categoryPath: selectedCategory.label,
         condition: document.getElementById('condition').value,
         quantity: Number(qtyInput.value),
         price: { currency: 'USD', value: Number(priceInput.value) },
@@ -998,8 +1306,9 @@ Release Title=EASY</textarea>
           fulfillment: fulfillmentInput.options[fulfillmentInput.selectedIndex].text,
           returns: '30 day returns, buyer pays return shipping'
         },
-        specifics: Object.fromEntries(specificsInput.value.split('\n').map((line) => line.split('=')).filter((pair) => pair.length === 2)),
-        validation: selected.status === 'blocked' ? 'blocked_by_stock' : selected.status === 'review' ? 'operator_review_required' : 'ready_to_submit'
+        aspects: collectAspects(),
+        missingRequiredAspects: validateSpecifics(),
+        validation: validateSpecifics().length ? 'missing_required_item_specifics' : selected.status === 'blocked' ? 'blocked_by_stock' : selected.status === 'review' ? 'operator_review_required' : 'ready_to_submit'
       };
     }
 
@@ -1037,12 +1346,23 @@ Release Title=EASY</textarea>
 
     [search, category, policy, margin].forEach((control) => control.addEventListener('input', renderList));
     titleInput.addEventListener('input', updateTitleCount);
-    [priceInput, qtyInput, fulfillmentInput, specificsInput].forEach((control) => control.addEventListener('input', () => buildPreview(false)));
+    [priceInput, qtyInput, fulfillmentInput].forEach((control) => control.addEventListener('input', () => buildPreview(false)));
+    categorySearch.addEventListener('input', renderCategoryList);
+    specificsFields.addEventListener('input', () => buildPreview(false));
 
     document.addEventListener('click', (event) => {
       const selectSku = event.target.closest('[data-select]')?.dataset.select;
       const openSku = event.target.closest('[data-open]')?.dataset.open;
       const action = event.target.closest('[data-action]')?.dataset.action;
+      const categoryPick = event.target.closest('[data-category-pick]')?.dataset.categoryPick;
+      const chip = event.target.closest('[data-aspect-chip]');
+
+      if (categoryPick) selectCategory(categoryPick);
+      if (chip) {
+        const field = chip.closest('.aspect-field');
+        const input = field?.querySelector('[data-aspect-input]');
+        if (input) { input.value = chip.dataset.chipValue || ''; buildPreview(false); }
+      }
 
       if (selectSku) {
         const product = products.find((p) => p.sku === selectSku);

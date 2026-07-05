@@ -1,0 +1,1100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>eBay 탭 단독 HTML 프로토타입</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f6fb;
+      --surface: #ffffff;
+      --surface-soft: #f8fafc;
+      --surface-blue: #eff6ff;
+      --line: #d9e1ee;
+      --line-strong: #b7c4d8;
+      --ink: #111827;
+      --muted: #64748b;
+      --muted-2: #94a3b8;
+      --blue: #2563eb;
+      --blue-2: #1d4ed8;
+      --red: #dc2626;
+      --red-soft: #fee2e2;
+      --green: #15803d;
+      --green-soft: #dcfce7;
+      --amber: #b45309;
+      --amber-soft: #fef3c7;
+      --violet: #6d28d9;
+      --violet-soft: #ede9fe;
+      --shadow: 0 18px 50px rgba(15, 23, 42, .12);
+      font-family: Inter, "Segoe UI", "Noto Sans KR", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 320px;
+      background:
+        radial-gradient(circle at top left, rgba(37, 99, 235, .12), transparent 34rem),
+        linear-gradient(180deg, #f8fbff 0%, var(--bg) 46%, #eef2f7 100%);
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    button,
+    input,
+    select,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      min-height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 8px 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: transform .14s ease, border-color .14s ease, background .14s ease, box-shadow .14s ease;
+    }
+
+    button:hover {
+      transform: translateY(-1px);
+      border-color: var(--line-strong);
+      box-shadow: 0 8px 18px rgba(15, 23, 42, .08);
+    }
+
+    button.primary {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: white;
+      font-weight: 800;
+    }
+
+    button.primary:hover { background: var(--blue-2); }
+
+    button.ghost {
+      background: transparent;
+      border-color: transparent;
+      box-shadow: none;
+    }
+
+    button.danger {
+      color: var(--red);
+      border-color: #fecaca;
+      background: #fffafa;
+    }
+
+    button.small {
+      min-height: 28px;
+      padding: 5px 9px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    input,
+    select,
+    textarea {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 8px 10px;
+      outline: none;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, .13);
+    }
+
+    textarea {
+      min-height: 96px;
+      resize: vertical;
+      line-height: 1.45;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      background: #f8fafc;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    tr:hover td { background: #fbfdff; }
+
+    .app-shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-columns: 252px minmax(0, 1fr);
+    }
+
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 20px 16px;
+      border-right: 1px solid rgba(255,255,255,.12);
+      background: #101828;
+      color: #dbe5f4;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .brand {
+      display: grid;
+      gap: 4px;
+      padding: 4px 2px 12px;
+      border-bottom: 1px solid rgba(255,255,255,.12);
+    }
+
+    .brand strong {
+      color: #fff;
+      font-size: 16px;
+    }
+
+    .brand span {
+      color: #9fb0c7;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .ebay-logo {
+      display: inline-grid;
+      grid-template-columns: repeat(4, auto);
+      gap: 0;
+      align-items: baseline;
+      font-weight: 900;
+      letter-spacing: -.08em;
+      font-size: 21px;
+      line-height: 1;
+    }
+    .ebay-logo span:nth-child(1) { color: #e53238; }
+    .ebay-logo span:nth-child(2) { color: #0064d2; }
+    .ebay-logo span:nth-child(3) { color: #f5af02; }
+    .ebay-logo span:nth-child(4) { color: #86b817; }
+
+    .side-nav {
+      display: grid;
+      gap: 6px;
+    }
+
+    .side-nav button {
+      width: 100%;
+      justify-content: flex-start;
+      border-color: transparent;
+      background: transparent;
+      color: #cbd5e1;
+      min-height: 38px;
+      box-shadow: none;
+    }
+
+    .side-nav button.active,
+    .side-nav button:hover {
+      background: rgba(255,255,255,.11);
+      color: #fff;
+      transform: none;
+    }
+
+    .side-card {
+      margin-top: auto;
+      padding: 13px;
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: 16px;
+      background: rgba(255,255,255,.07);
+      display: grid;
+      gap: 8px;
+      color: #cbd5e1;
+      line-height: 1.45;
+    }
+
+    .main {
+      min-width: 0;
+      padding: 22px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 20px;
+      border: 1px solid rgba(217, 225, 238, .9);
+      border-radius: 22px;
+      background: rgba(255,255,255,.82);
+      backdrop-filter: blur(16px);
+      box-shadow: var(--shadow);
+    }
+
+    .topbar h1 {
+      margin: 0;
+      font-size: 22px;
+      letter-spacing: -.03em;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .topbar p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .topbar-actions {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .grid {
+      display: grid;
+      gap: 16px;
+    }
+
+    .metrics {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+
+    .two-col {
+      grid-template-columns: minmax(0, 1.18fr) minmax(360px, .82fr);
+      align-items: start;
+    }
+
+    .card {
+      border: 1px solid rgba(217, 225, 238, .95);
+      border-radius: 20px;
+      background: rgba(255,255,255,.92);
+      box-shadow: 0 10px 26px rgba(15, 23, 42, .06);
+      overflow: hidden;
+    }
+
+    .card-head {
+      min-height: 56px;
+      padding: 15px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: rgba(248,250,252,.76);
+    }
+
+    .card-head h2,
+    .card-head h3,
+    .metric h3 {
+      margin: 0;
+    }
+
+    .card-head h2 { font-size: 16px; }
+    .card-head h3 { font-size: 14px; }
+
+    .card-head p,
+    .field-hint,
+    .subtle {
+      margin: 5px 0 0;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .card-body { padding: 16px; }
+
+    .metric {
+      padding: 16px;
+      border-radius: 18px;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,.9);
+      display: grid;
+      gap: 9px;
+    }
+
+    .metric span {
+      color: var(--muted);
+      font-weight: 700;
+      font-size: 12px;
+    }
+
+    .metric strong {
+      font-size: 28px;
+      letter-spacing: -.05em;
+    }
+
+    .metric small { color: var(--muted); }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) 160px 150px 170px auto;
+      gap: 9px;
+      align-items: center;
+    }
+
+    .queue-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .queue-card {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 13px;
+      background: #fff;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      transition: border-color .16s ease, transform .16s ease, box-shadow .16s ease;
+    }
+
+    .queue-card:hover {
+      border-color: #bfdbfe;
+      transform: translateY(-1px);
+      box-shadow: 0 8px 22px rgba(15,23,42,.08);
+    }
+
+    .queue-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 6px;
+    }
+
+    .queue-title strong {
+      font-size: 14px;
+    }
+
+    .queue-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px 13px;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .queue-actions {
+      display: flex;
+      align-items: start;
+      gap: 7px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 22px;
+      padding: 3px 8px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .badge.green { color: var(--green); background: var(--green-soft); border-color: #bbf7d0; }
+    .badge.blue { color: #1d4ed8; background: #dbeafe; border-color: #bfdbfe; }
+    .badge.amber { color: var(--amber); background: var(--amber-soft); border-color: #fde68a; }
+    .badge.red { color: var(--red); background: var(--red-soft); border-color: #fecaca; }
+    .badge.violet { color: var(--violet); background: var(--violet-soft); border-color: #ddd6fe; }
+    .badge.gray { color: #475569; background: #f1f5f9; border-color: #e2e8f0; }
+
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .field.full { grid-column: 1 / -1; }
+
+    label {
+      font-weight: 800;
+      font-size: 12px;
+      color: #334155;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+    }
+
+    .tab-button[aria-selected="true"] {
+      background: #111827;
+      color: #fff;
+      border-color: #111827;
+      font-weight: 800;
+    }
+
+    .panel[hidden] { display: none; }
+
+    .preview-box {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 15px;
+      background: #0f172a;
+      color: #dbeafe;
+      padding: 13px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow: auto;
+      max-height: 260px;
+    }
+
+    .check-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .check-item {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 10px;
+      padding: 11px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-top: 5px;
+      background: var(--green);
+      box-shadow: 0 0 0 4px var(--green-soft);
+    }
+
+    .dot.warn {
+      background: var(--amber);
+      box-shadow: 0 0 0 4px var(--amber-soft);
+    }
+
+    .dot.fail {
+      background: var(--red);
+      box-shadow: 0 0 0 4px var(--red-soft);
+    }
+
+    .price-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .price-cell {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 12px;
+      background: #fff;
+      display: grid;
+      gap: 5px;
+    }
+
+    .price-cell span { color: var(--muted); font-size: 12px; font-weight: 700; }
+    .price-cell strong { font-size: 18px; }
+
+    .drawer-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, .38);
+      display: none;
+      align-items: stretch;
+      justify-content: flex-end;
+      z-index: 20;
+    }
+
+    .drawer-backdrop.open { display: flex; }
+
+    .drawer {
+      width: min(560px, 100vw);
+      background: var(--surface);
+      box-shadow: -18px 0 42px rgba(15, 23, 42, .25);
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      animation: slideIn .18s ease-out;
+    }
+
+    @keyframes slideIn {
+      from { transform: translateX(22px); opacity: .72; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+
+    .drawer-head,
+    .drawer-foot {
+      padding: 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .drawer-foot {
+      border-bottom: none;
+      border-top: 1px solid var(--line);
+      justify-content: flex-end;
+    }
+
+    .drawer-head h2 { margin: 0; font-size: 17px; }
+    .drawer-body { padding: 16px; overflow: auto; }
+
+    .toast {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      z-index: 40;
+      display: none;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid #bfdbfe;
+      background: #eff6ff;
+      color: #1e3a8a;
+      box-shadow: var(--shadow);
+      font-weight: 800;
+    }
+
+    .toast.show { display: block; }
+
+    .empty {
+      display: none;
+      padding: 28px;
+      border: 1px dashed var(--line-strong);
+      border-radius: 16px;
+      color: var(--muted);
+      text-align: center;
+      background: #f8fafc;
+    }
+
+    .empty.show { display: block; }
+
+    @media (max-width: 1120px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar { position: relative; height: auto; }
+      .side-card { margin-top: 0; }
+      .two-col, .metrics { grid-template-columns: 1fr; }
+      .toolbar { grid-template-columns: 1fr 1fr; }
+    }
+
+    @media (max-width: 680px) {
+      .main { padding: 12px; }
+      .topbar { align-items: flex-start; flex-direction: column; border-radius: 18px; }
+      .topbar-actions { justify-content: flex-start; }
+      .toolbar, .form-grid, .price-grid { grid-template-columns: 1fr; }
+      .queue-card { grid-template-columns: 1fr; }
+      .queue-actions { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <strong>H&M Marketplace</strong>
+        <span>eBay 탭 단독 HTML 프로토타입<br>API 호출 없이 UI 상태만 시뮬레이션합니다.</span>
+      </div>
+      <nav class="side-nav" aria-label="prototype navigation">
+        <button class="active" type="button">🛒 eBay Workbench</button>
+        <button type="button">📦 Master Data</button>
+        <button type="button">💰 Fee Settings</button>
+        <button type="button">🧾 Batch Logs</button>
+      </nav>
+      <div class="side-card">
+        <span class="badge green">EBAY_US ready</span>
+        <strong>Business policies 연결됨</strong>
+        <span>Payment / Return / Fulfillment policy를 선택하고, dry-run preview 후 등록 큐에 올리는 흐름입니다.</span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1><span class="ebay-logo" aria-label="eBay"><span>e</span><span>B</span><span>a</span><span>y</span></span> 등록 탭</h1>
+          <p>마스터 상품을 eBay listing 후보로 검토하고, 가격·배송정책·필수값을 확인한 뒤 dry-run payload를 만드는 단독 HTML 화면입니다.</p>
+        </div>
+        <div class="topbar-actions">
+          <button type="button" data-action="validate-all">필수값 일괄검사</button>
+          <button type="button" data-action="preview">Dry-run Preview</button>
+          <button class="primary" type="button" data-action="open-drawer">선택 상품 등록 준비</button>
+        </div>
+      </header>
+
+      <section class="grid metrics" aria-label="eBay metrics">
+        <article class="metric">
+          <span>등록 후보</span>
+          <strong data-metric="candidates">8</strong>
+          <small>마스터 상품 중 eBay 미등록</small>
+        </article>
+        <article class="metric">
+          <span>바로 등록 가능</span>
+          <strong data-metric="ready">5</strong>
+          <small>필수 이미지·가격·무게 통과</small>
+        </article>
+        <article class="metric">
+          <span>검토 필요</span>
+          <strong data-metric="review">3</strong>
+          <small>item specifics 또는 치수 누락</small>
+        </article>
+        <article class="metric">
+          <span>예상 평균 마진</span>
+          <strong>24.8%</strong>
+          <small>fee + 배송비 반영</small>
+        </article>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div>
+            <h2>eBay 등록 큐</h2>
+            <p>상품명, SKU, 상태, 마진, 검증 상태로 빠르게 필터링합니다.</p>
+          </div>
+          <div class="tabs" role="tablist" aria-label="queue state filter">
+            <button class="tab-button small" type="button" aria-selected="true" data-status="all">전체</button>
+            <button class="tab-button small" type="button" aria-selected="false" data-status="ready">Ready</button>
+            <button class="tab-button small" type="button" aria-selected="false" data-status="review">Review</button>
+            <button class="tab-button small" type="button" aria-selected="false" data-status="blocked">Blocked</button>
+          </div>
+        </div>
+        <div class="card-body grid">
+          <div class="toolbar">
+            <input type="search" data-search placeholder="상품명 / SKU / artist 검색" aria-label="Search eBay queue" />
+            <select data-category aria-label="Category filter">
+              <option value="all">전체 카테고리</option>
+              <option value="album">Album</option>
+              <option value="photocard">Photocard</option>
+              <option value="merch">Merch</option>
+            </select>
+            <select data-policy aria-label="Policy filter">
+              <option value="all">정책 전체</option>
+              <option value="standard">Standard</option>
+              <option value="expedited">Expedited</option>
+            </select>
+            <select data-margin aria-label="Margin filter">
+              <option value="all">마진 전체</option>
+              <option value="high">25% 이상</option>
+              <option value="low">25% 미만</option>
+            </select>
+            <button type="button" data-action="reset">초기화</button>
+          </div>
+
+          <div class="queue-list" data-queue-list></div>
+          <div class="empty" data-empty>조건에 맞는 eBay 등록 후보가 없습니다.</div>
+        </div>
+      </section>
+
+      <section class="grid two-col">
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h2>등록 설정</h2>
+              <p>선택한 상품의 eBay listing 기본값을 조정합니다.</p>
+            </div>
+            <span class="badge blue" data-selected-sku>SKU: LSF-EASY-SET</span>
+          </div>
+          <div class="card-body">
+            <div class="form-grid">
+              <div class="field full">
+                <label for="title">eBay 제목</label>
+                <input id="title" data-title value="LE SSERAFIM EASY 3 Ver SET Official Album Photobook KPOP SEALED" maxlength="80" />
+                <div class="field-hint"><span data-title-count>69</span>/80자 · eBay title limit 기준</div>
+              </div>
+              <div class="field">
+                <label for="category">eBay Category</label>
+                <select id="category" data-form-category>
+                  <option>Music &gt; CDs</option>
+                  <option>Entertainment Memorabilia &gt; Music Memorabilia</option>
+                  <option>Collectibles &gt; Photographic Images</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="condition">Condition</label>
+                <select id="condition">
+                  <option>Brand New</option>
+                  <option>Like New</option>
+                  <option>New other</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="payment">Payment policy</label>
+                <select id="payment">
+                  <option>eBay Managed Payments</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="fulfillment">Fulfillment policy</label>
+                <select id="fulfillment" data-fulfillment>
+                  <option value="standard">Korea Post / Standard International</option>
+                  <option value="expedited">FedEx / Expedited International</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="price">판매가 USD</label>
+                <input id="price" data-price type="number" min="1" step="0.01" value="54.90" />
+              </div>
+              <div class="field">
+                <label for="qty">등록 수량</label>
+                <input id="qty" data-qty type="number" min="1" step="1" value="12" />
+              </div>
+              <div class="field full">
+                <label for="specifics">Item specifics</label>
+                <textarea id="specifics" data-specifics>Artist=LE SSERAFIM
+Format=CD
+Genre=K-POP
+Country/Region of Manufacture=Korea, Republic of
+Release Title=EASY</textarea>
+              </div>
+            </div>
+            <div class="preview-box" data-preview>{
+  "mode": "dry_run",
+  "message": "Dry-run Preview 버튼을 누르면 선택 상품의 eBay payload가 여기에 표시됩니다."
+}</div>
+          </div>
+        </article>
+
+        <aside class="grid">
+          <article class="card">
+            <div class="card-head">
+              <div>
+                <h3>검증 체크리스트</h3>
+                <p>실등록 전 막아야 할 항목입니다.</p>
+              </div>
+              <button class="small" type="button" data-action="validate-all">다시 검사</button>
+            </div>
+            <div class="card-body check-list" data-check-list>
+              <div class="check-item">
+                <span class="dot"></span>
+                <div><strong>대표 이미지 1장 이상</strong><p class="subtle">1600px 이상 이미지 5장 확인</p></div>
+                <span class="badge green">OK</span>
+              </div>
+              <div class="check-item">
+                <span class="dot"></span>
+                <div><strong>가격/마진</strong><p class="subtle">수수료·배송비 반영 후 27.4%</p></div>
+                <span class="badge green">OK</span>
+              </div>
+              <div class="check-item">
+                <span class="dot warn"></span>
+                <div><strong>Item specifics</strong><p class="subtle">UPC/EAN 값이 비어 있어 Does not apply로 전송 예정</p></div>
+                <span class="badge amber">주의</span>
+              </div>
+              <div class="check-item">
+                <span class="dot"></span>
+                <div><strong>Business policy</strong><p class="subtle">Payment/Return/Fulfillment policy 연결됨</p></div>
+                <span class="badge green">OK</span>
+              </div>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <div>
+                <h3>가격 계산</h3>
+                <p>eBay 수수료와 배송비를 포함한 미리보기입니다.</p>
+              </div>
+            </div>
+            <div class="card-body price-grid">
+              <div class="price-cell"><span>매입가</span><strong>$28.10</strong></div>
+              <div class="price-cell"><span>예상 수수료</span><strong>$7.58</strong></div>
+              <div class="price-cell"><span>예상 마진</span><strong data-margin-label>27.4%</strong></div>
+            </div>
+          </article>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div class="drawer-backdrop" data-drawer aria-hidden="true">
+    <section class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
+      <div class="drawer-head">
+        <div>
+          <h2 id="drawer-title">eBay 등록 준비</h2>
+          <p class="subtle" data-drawer-subtitle>선택한 상품의 전송 전 최종 확인</p>
+        </div>
+        <button class="ghost" type="button" data-action="close-drawer">✕</button>
+      </div>
+      <div class="drawer-body grid">
+        <div class="card">
+          <div class="card-head"><h3>실행 단계</h3></div>
+          <div class="card-body check-list">
+            <div class="check-item"><span class="dot"></span><div><strong>1. Master data snapshot 고정</strong><p class="subtle">현재 제목/옵션/이미지 상태를 batch에 저장</p></div><span class="badge green">ready</span></div>
+            <div class="check-item"><span class="dot warn"></span><div><strong>2. eBay payload dry-run</strong><p class="subtle">실제 API 호출 전 request JSON 확인</p></div><span class="badge amber">required</span></div>
+            <div class="check-item"><span class="dot warn"></span><div><strong>3. 운영자 승인 후 live submit</strong><p class="subtle">이 HTML 프로토타입에서는 live submit 버튼을 비활성 상태로 둠</p></div><span class="badge gray">disabled</span></div>
+          </div>
+        </div>
+        <div class="preview-box" data-drawer-preview>{ "selected": "LSF-EASY-SET", "action": "prepare" }</div>
+      </div>
+      <div class="drawer-foot">
+        <button type="button" data-action="close-drawer">닫기</button>
+        <button type="button" data-action="preview">Dry-run 다시 생성</button>
+        <button class="primary" type="button" disabled title="프로토타입에서는 실제 eBay API 호출을 하지 않습니다.">Live Submit 비활성</button>
+      </div>
+    </section>
+  </div>
+
+  <div class="toast" data-toast>처리되었습니다.</div>
+
+  <script>
+    const products = [
+      { sku: 'LSF-EASY-SET', title: 'LE SSERAFIM EASY 3 Ver SET Official Album Photobook', artist: 'LE SSERAFIM', category: 'album', policy: 'standard', status: 'ready', price: 54.90, margin: 27.4, stock: 12, images: 5, note: 'SET 구성품 3종 표시 완료' },
+      { sku: 'IVE-EMP-PLVE', title: 'IVE EMPATHY PLVE Album Random Ver Official KPOP', artist: 'IVE', category: 'album', policy: 'standard', status: 'review', price: 31.50, margin: 22.1, stock: 8, images: 4, note: 'UPC/EAN 확인 필요' },
+      { sku: 'BTS-LAYOVER-LP', title: 'V Layover Vinyl LP Limited Edition SEALED', artist: 'BTS V', category: 'album', policy: 'expedited', status: 'ready', price: 69.00, margin: 31.2, stock: 6, images: 7, note: 'FedEx 추천' },
+      { sku: 'NJ-BUNNY-PC', title: 'NewJeans Bunny Beach Bag Photocard Official', artist: 'NewJeans', category: 'photocard', policy: 'standard', status: 'blocked', price: 12.90, margin: 11.5, stock: 0, images: 2, note: '재고 없음' },
+      { sku: 'SKZ-ATE-LTD', title: 'Stray Kids ATE Limited Accordion Album Official', artist: 'Stray Kids', category: 'album', policy: 'standard', status: 'ready', price: 28.90, margin: 26.8, stock: 21, images: 6, note: '즉시 등록 가능' },
+      { sku: 'AES-ARM-TSHIRT', title: 'aespa Armageddon Official T-Shirt Black', artist: 'aespa', category: 'merch', policy: 'expedited', status: 'review', price: 44.50, margin: 23.7, stock: 4, images: 5, note: '사이즈 option specifics 필요' },
+      { sku: 'TXT-MINISODE-3', title: 'TXT minisode 3 TOMORROW Album Light Ver', artist: 'TXT', category: 'album', policy: 'standard', status: 'ready', price: 26.90, margin: 25.9, stock: 18, images: 4, note: 'title length 정상' },
+      { sku: 'RIIZE-LUCKY-PC', title: 'RIIZE Lucky Photocard Random Pack', artist: 'RIIZE', category: 'photocard', policy: 'standard', status: 'review', price: 18.20, margin: 19.8, stock: 11, images: 1, note: '이미지 추가 권장' }
+    ];
+
+    const statusMap = {
+      ready: ['Ready', 'green'],
+      review: ['Review', 'amber'],
+      blocked: ['Blocked', 'red']
+    };
+
+    const list = document.querySelector('[data-queue-list]');
+    const empty = document.querySelector('[data-empty]');
+    const search = document.querySelector('[data-search]');
+    const category = document.querySelector('[data-category]');
+    const policy = document.querySelector('[data-policy]');
+    const margin = document.querySelector('[data-margin]');
+    const preview = document.querySelector('[data-preview]');
+    const drawerPreview = document.querySelector('[data-drawer-preview]');
+    const selectedSku = document.querySelector('[data-selected-sku]');
+    const drawerSubtitle = document.querySelector('[data-drawer-subtitle]');
+    const drawer = document.querySelector('[data-drawer]');
+    const toast = document.querySelector('[data-toast]');
+    const titleInput = document.querySelector('[data-title]');
+    const titleCount = document.querySelector('[data-title-count]');
+    const priceInput = document.querySelector('[data-price]');
+    const qtyInput = document.querySelector('[data-qty]');
+    const fulfillmentInput = document.querySelector('[data-fulfillment]');
+    const specificsInput = document.querySelector('[data-specifics]');
+    const marginLabel = document.querySelector('[data-margin-label]');
+    let activeStatus = 'all';
+    let selected = products[0];
+
+    function showToast(message) {
+      toast.textContent = message;
+      toast.classList.add('show');
+      window.clearTimeout(showToast.timer);
+      showToast.timer = window.setTimeout(() => toast.classList.remove('show'), 1800);
+    }
+
+    function badge(status) {
+      const [label, cls] = statusMap[status] || ['Unknown', 'gray'];
+      return `<span class="badge ${cls}">${label}</span>`;
+    }
+
+    function money(value) {
+      return `$${Number(value).toFixed(2)}`;
+    }
+
+    function renderList() {
+      const q = search.value.trim().toLowerCase();
+      const rows = products.filter((product) => {
+        const matchesStatus = activeStatus === 'all' || product.status === activeStatus;
+        const matchesQuery = !q || [product.sku, product.title, product.artist].join(' ').toLowerCase().includes(q);
+        const matchesCategory = category.value === 'all' || product.category === category.value;
+        const matchesPolicy = policy.value === 'all' || product.policy === policy.value;
+        const matchesMargin = margin.value === 'all' || (margin.value === 'high' ? product.margin >= 25 : product.margin < 25);
+        return matchesStatus && matchesQuery && matchesCategory && matchesPolicy && matchesMargin;
+      });
+
+      list.innerHTML = rows.map((product) => `
+        <article class="queue-card" data-sku="${product.sku}">
+          <div>
+            <div class="queue-title">
+              ${badge(product.status)}
+              <strong>${product.title}</strong>
+            </div>
+            <div class="queue-meta">
+              <span>SKU: <strong>${product.sku}</strong></span>
+              <span>Artist: ${product.artist}</span>
+              <span>Category: ${product.category}</span>
+              <span>Price: ${money(product.price)}</span>
+              <span>Margin: ${product.margin}%</span>
+              <span>Stock: ${product.stock}</span>
+              <span>Images: ${product.images}</span>
+              <span>${product.note}</span>
+            </div>
+          </div>
+          <div class="queue-actions">
+            <button class="small" type="button" data-select="${product.sku}">선택</button>
+            <button class="small primary" type="button" data-open="${product.sku}">등록 준비</button>
+          </div>
+        </article>
+      `).join('');
+
+      empty.classList.toggle('show', rows.length === 0);
+    }
+
+    function selectProduct(product) {
+      selected = product;
+      selectedSku.textContent = `SKU: ${product.sku}`;
+      titleInput.value = `${product.title} Official KPOP SEALED`;
+      priceInput.value = product.price.toFixed(2);
+      qtyInput.value = Math.max(product.stock, 1);
+      fulfillmentInput.value = product.policy;
+      marginLabel.textContent = `${product.margin}%`;
+      specificsInput.value = [
+        `Artist=${product.artist}`,
+        product.category === 'photocard' ? 'Format=Photocard' : product.category === 'merch' ? 'Type=Official Merchandise' : 'Format=CD',
+        'Genre=K-POP',
+        'Country/Region of Manufacture=Korea, Republic of',
+        `Release Title=${product.title.split(' Official')[0]}`
+      ].join('\n');
+      drawerSubtitle.textContent = `${product.sku} · ${product.artist} · ${product.status.toUpperCase()}`;
+      updateTitleCount();
+      buildPreview(false);
+      showToast(`${product.sku} 선택됨`);
+    }
+
+    function buildPayload() {
+      return {
+        mode: 'dry_run',
+        platform: 'ebay',
+        marketplace_id: 'EBAY_US',
+        sku: selected.sku,
+        title: titleInput.value,
+        category: document.querySelector('[data-form-category]').value,
+        condition: document.getElementById('condition').value,
+        quantity: Number(qtyInput.value),
+        price: { currency: 'USD', value: Number(priceInput.value) },
+        business_policies: {
+          payment: document.getElementById('payment').value,
+          fulfillment: fulfillmentInput.options[fulfillmentInput.selectedIndex].text,
+          returns: '30 day returns, buyer pays return shipping'
+        },
+        specifics: Object.fromEntries(specificsInput.value.split('\n').map((line) => line.split('=')).filter((pair) => pair.length === 2)),
+        validation: selected.status === 'blocked' ? 'blocked_by_stock' : selected.status === 'review' ? 'operator_review_required' : 'ready_to_submit'
+      };
+    }
+
+    function buildPreview(notify = true) {
+      const payload = buildPayload();
+      const text = JSON.stringify(payload, null, 2);
+      preview.textContent = text;
+      drawerPreview.textContent = text;
+      if (notify) showToast('Dry-run payload를 생성했습니다');
+    }
+
+    function updateTitleCount() {
+      titleCount.textContent = titleInput.value.length;
+      titleCount.style.color = titleInput.value.length > 80 ? 'var(--red)' : 'inherit';
+    }
+
+    function validateAll() {
+      const ready = products.filter((p) => p.status === 'ready').length;
+      const review = products.filter((p) => p.status === 'review').length;
+      const blocked = products.filter((p) => p.status === 'blocked').length;
+      document.querySelector('[data-metric="ready"]').textContent = ready;
+      document.querySelector('[data-metric="review"]').textContent = review;
+      document.querySelector('[data-metric="candidates"]').textContent = products.length;
+      showToast(`검사 완료: ready ${ready}, review ${review}, blocked ${blocked}`);
+    }
+
+    document.querySelectorAll('[data-status]').forEach((button) => {
+      button.addEventListener('click', () => {
+        document.querySelectorAll('[data-status]').forEach((b) => b.setAttribute('aria-selected', 'false'));
+        button.setAttribute('aria-selected', 'true');
+        activeStatus = button.dataset.status;
+        renderList();
+      });
+    });
+
+    [search, category, policy, margin].forEach((control) => control.addEventListener('input', renderList));
+    titleInput.addEventListener('input', updateTitleCount);
+    [priceInput, qtyInput, fulfillmentInput, specificsInput].forEach((control) => control.addEventListener('input', () => buildPreview(false)));
+
+    document.addEventListener('click', (event) => {
+      const selectSku = event.target.closest('[data-select]')?.dataset.select;
+      const openSku = event.target.closest('[data-open]')?.dataset.open;
+      const action = event.target.closest('[data-action]')?.dataset.action;
+
+      if (selectSku) {
+        const product = products.find((p) => p.sku === selectSku);
+        if (product) selectProduct(product);
+      }
+
+      if (openSku) {
+        const product = products.find((p) => p.sku === openSku);
+        if (product) selectProduct(product);
+        drawer.classList.add('open');
+        drawer.setAttribute('aria-hidden', 'false');
+      }
+
+      if (action === 'open-drawer') {
+        drawer.classList.add('open');
+        drawer.setAttribute('aria-hidden', 'false');
+      }
+      if (action === 'close-drawer') {
+        drawer.classList.remove('open');
+        drawer.setAttribute('aria-hidden', 'true');
+      }
+      if (action === 'preview') buildPreview(true);
+      if (action === 'validate-all') validateAll();
+      if (action === 'reset') {
+        search.value = '';
+        category.value = 'all';
+        policy.value = 'all';
+        margin.value = 'all';
+        activeStatus = 'all';
+        document.querySelectorAll('[data-status]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.status === 'all')));
+        renderList();
+        showToast('필터를 초기화했습니다');
+      }
+    });
+
+    drawer.addEventListener('click', (event) => {
+      if (event.target === drawer) {
+        drawer.classList.remove('open');
+        drawer.setAttribute('aria-hidden', 'true');
+      }
+    });
+
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') {
+        drawer.classList.remove('open');
+        drawer.setAttribute('aria-hidden', 'true');
+      }
+    });
+
+    renderList();
+    selectProduct(products[0]);
+    buildPreview(false);
+  </script>
+</body>
+</html>

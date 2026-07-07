@@ -458,7 +458,8 @@
       font-weight: 800;
     }
 
-    .panel[hidden] { display: none; }
+    .panel[hidden],
+    [hidden] { display: none !important; }
 
 
 
@@ -582,6 +583,71 @@
     }
 
     .chip:hover {
+      border-color: #93c5fd;
+      background: #eff6ff;
+    }
+
+
+
+    .fee-settings-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.05fr) minmax(360px, .95fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .fee-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 82px 82px 76px;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .fee-row:last-child { border-bottom: 0; }
+    .fee-row strong { font-size: 13px; }
+    .fee-row > span { text-align: right; font-size: 12px; }
+    .fee-row .fee-note { color: var(--muted); line-height: 1.35; font-size: 12px; overflow-wrap: anywhere; }
+    .fee-negative { color: #dc2626; font-weight: 900; }
+    .fee-positive { color: #15803d; font-weight: 900; }
+
+    .fee-summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .fee-summary-cell {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: #fff;
+      padding: 14px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .fee-summary-cell.wide { grid-column: 1 / -1; }
+    .fee-summary-cell span { color: var(--muted); font-weight: 800; font-size: 12px; }
+    .fee-summary-cell strong { font-size: 24px; letter-spacing: -.04em; }
+
+    .fee-table {
+      display: grid;
+      gap: 8px;
+    }
+
+    .fee-category-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 100px 100px;
+      gap: 8px;
+      align-items: center;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+    }
+
+    .fee-category-row.active {
       border-color: #93c5fd;
       background: #eff6ff;
     }
@@ -781,6 +847,8 @@
       .drawer { width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
       .drawer-backdrop { padding: 8px; }
       .registration-entry { grid-template-columns: 1fr; }
+      .fee-settings-layout { grid-template-columns: 1fr; }
+      .fee-row { grid-template-columns: 1fr 90px 90px 90px; }
     }
 
     @media (max-width: 1120px) {
@@ -809,10 +877,10 @@
         <span>eBay 탭 단독 HTML 프로토타입<br>API 호출 없이 UI 상태만 시뮬레이션합니다.</span>
       </div>
       <nav class="side-nav" aria-label="prototype navigation">
-        <button class="active" type="button">🛒 eBay Workbench</button>
-        <button type="button">📦 Master Data</button>
-        <button type="button">💰 Fee Settings</button>
-        <button type="button">🧾 Batch Logs</button>
+        <button class="active" type="button" data-nav="workbench">🛒 eBay Workbench</button>
+        <button type="button" data-nav="master">📦 Master Data</button>
+        <button type="button" data-nav="fees">💰 Fee Settings</button>
+        <button type="button" data-nav="logs">🧾 Batch Logs</button>
       </nav>
       <div class="side-card">
         <span class="badge green">EBAY_US ready</span>
@@ -822,7 +890,7 @@
     </aside>
 
     <main class="main">
-      <header class="topbar">
+      <header class="topbar" data-panel="workbench">
         <div>
           <h1><span class="ebay-logo" aria-label="eBay"><span>e</span><span>B</span><span>a</span><span>y</span></span> 등록 탭</h1>
           <p>마스터 상품을 eBay listing 후보로 검토하고, 가격·배송정책·필수값을 확인한 뒤 dry-run payload를 만드는 단독 HTML 화면입니다.</p>
@@ -832,7 +900,7 @@
         </div>
       </header>
 
-      <section class="grid metrics" aria-label="eBay metrics">
+      <section class="grid metrics" aria-label="eBay metrics" data-panel="workbench">
         <article class="metric">
           <span>등록 후보</span>
           <strong data-metric="candidates">8</strong>
@@ -855,7 +923,7 @@
         </article>
       </section>
 
-      <section class="card">
+      <section class="card" data-panel="workbench">
         <div class="card-head">
           <div>
             <h2>eBay 등록 큐</h2>
@@ -895,12 +963,97 @@
         </div>
       </section>
 
-      <section class="registration-entry">
+      <section class="registration-entry" data-panel="workbench">
         <div>
           <h3>등록 설정은 상품 등록 버튼 이후에만 표시됩니다.</h3>
           <p>큐에서 상품을 고른 뒤 <strong>상품 등록</strong>을 누르면 카테고리 선택, Item specifics 자동 매칭, 가격 계산, 검증 체크리스트가 하나의 등록 모달 안에서 겹치지 않게 열립니다.</p>
         </div>
         <button class="primary" type="button" data-action="open-drawer">선택 상품 등록</button>
+      </section>
+
+      <section class="grid" data-panel="fees" hidden>
+        <header class="topbar">
+          <div>
+            <h1>💰 Fee Settings</h1>
+            <p>eBay 카테고리별 수수료, International Fee, Final Value Fee 고정 금액, 환율을 기준으로 판매가별 정산가격을 계산합니다.</p>
+          </div>
+          <div class="topbar-actions">
+            <button type="button" data-action="reset-fees">기본값 복원</button>
+          </div>
+        </header>
+
+        <section class="fee-settings-layout">
+          <article class="card">
+            <div class="card-head">
+              <div>
+                <h2>정산가격 계산기</h2>
+                <p>카테고리를 선택하면 미리 데이터화한 카테고리 수수료가 자동 적용됩니다.</p>
+              </div>
+              <span class="badge blue" data-fee-rate-badge>Music CDs · 15.3%</span>
+            </div>
+            <div class="card-body grid">
+              <div class="form-grid">
+                <div class="field full">
+                  <label for="feeCategory">eBay Category fee</label>
+                  <select id="feeCategory" data-fee-category></select>
+                  <div class="field-hint">카테고리별 Final Value Fee percentage는 사전 데이터로 관리합니다.</div>
+                </div>
+                <div class="field">
+                  <label for="feeSaleUsd">판매가 USD</label>
+                  <input id="feeSaleUsd" data-fee-sale-usd type="number" min="0" step="0.01" value="19.79" />
+                </div>
+                <div class="field">
+                  <label for="feeFx">환율 KRW/USD</label>
+                  <input id="feeFx" data-fee-fx type="number" min="1" step="1" value="1460" />
+                </div>
+                <div class="field">
+                  <label for="feeInternational">International Fee %</label>
+                  <input id="feeInternational" data-fee-international type="number" min="0" step="0.01" value="1.45" />
+                </div>
+                <div class="field">
+                  <label for="feeFixed">Final Value Fee 고정액 USD</label>
+                  <input id="feeFixed" data-fee-fixed type="number" min="0" step="0.01" value="0.40" />
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-head">
+                  <div>
+                    <h3>수수료 산식</h3>
+                    <p>첨부 예시처럼 항목별 차감액과 총 수수료를 분리해서 표시합니다.</p>
+                  </div>
+                </div>
+                <div class="card-body" data-fee-breakdown></div>
+              </div>
+            </div>
+          </article>
+
+          <aside class="grid">
+            <article class="card">
+              <div class="card-head">
+                <div>
+                  <h3>정산가격 요약</h3>
+                  <p>판매가에서 eBay 수수료를 제외한 예상 정산액입니다.</p>
+                </div>
+              </div>
+              <div class="card-body fee-summary-grid">
+                <div class="fee-summary-cell"><span>판매가</span><strong data-fee-gross-usd>$19.79</strong><small data-fee-gross-krw>₩28,893</small></div>
+                <div class="fee-summary-cell"><span>총 수수료</span><strong class="fee-negative" data-fee-total-usd>-$3.72</strong><small data-fee-total-krw>-₩5,431</small></div>
+                <div class="fee-summary-cell wide"><span>예상 정산가격</span><strong class="fee-positive" data-fee-net-usd>$16.07</strong><small data-fee-net-krw>₩23,462</small></div>
+              </div>
+            </article>
+
+            <article class="card">
+              <div class="card-head">
+                <div>
+                  <h3>카테고리별 수수료 데이터</h3>
+                  <p>초기값은 HTML 프로토타입 내 데이터이며, 실제 구현 시 DB에서 관리합니다.</p>
+                </div>
+              </div>
+              <div class="card-body fee-table" data-fee-table></div>
+            </article>
+          </aside>
+        </section>
       </section>
     </main>
   </div>
@@ -1155,6 +1308,14 @@
 
     let selectedCategory = ebayCategories[0];
 
+    const ebayFeeCategories = [
+      { id: '176984', label: 'Music > CDs', shortLabel: 'Music CDs', rate: 15.30 },
+      { id: '176985', label: 'Music > Vinyl Records', shortLabel: 'Vinyl Records', rate: 15.30 },
+      { id: '108857', label: 'Entertainment Memorabilia > Music Memorabilia > K-Pop Memorabilia', shortLabel: 'K-Pop Memorabilia', rate: 13.25 },
+      { id: '183050', label: 'Collectibles > Non-Sport Trading Cards > Trading Card Singles', shortLabel: 'Trading Card Singles', rate: 13.25 },
+      { id: '155344', label: "Clothing, Shoes & Accessories > Men's Clothing > Shirts", shortLabel: 'Official Apparel', rate: 15.00 }
+    ];
+
     const statusMap = {
       ready: ['Ready', 'green'],
       review: ['Review', 'amber'],
@@ -1183,6 +1344,11 @@
     const categoryMeta = document.querySelector('[data-category-meta]');
     const specificsFields = document.querySelector('[data-specifics-fields]');
     const marginLabel = document.querySelector('[data-margin-label]');
+    const feeCategoryInput = document.querySelector('[data-fee-category]');
+    const feeSaleUsdInput = document.querySelector('[data-fee-sale-usd]');
+    const feeFxInput = document.querySelector('[data-fee-fx]');
+    const feeInternationalInput = document.querySelector('[data-fee-international]');
+    const feeFixedInput = document.querySelector('[data-fee-fixed]');
     let activeStatus = 'all';
     let selected = products[0];
 
@@ -1200,6 +1366,78 @@
 
     function money(value) {
       return `$${Number(value).toFixed(2)}`;
+    }
+
+    function formatUsd(value) {
+      const prefix = value < 0 ? '-' : '';
+      return `${prefix}$${Math.abs(value).toFixed(2)}`;
+    }
+
+    function formatKrw(value) {
+      const prefix = value < 0 ? '-' : '';
+      return `${prefix}₩${Math.round(Math.abs(value)).toLocaleString('ko-KR')}`;
+    }
+
+    function selectedFeeCategory() {
+      return ebayFeeCategories.find((cat) => cat.id === feeCategoryInput?.value) || ebayFeeCategories[0];
+    }
+
+    function renderFeeSettings() {
+      if (!feeCategoryInput) return;
+      feeCategoryInput.innerHTML = ebayFeeCategories.map((cat) => `<option value="${cat.id}">${escapeHtml(cat.shortLabel)} · ${cat.rate.toFixed(2)}%</option>`).join('');
+      feeCategoryInput.value = selectedCategory?.id || ebayFeeCategories[0].id;
+      renderFeeTable();
+      updateFeeCalculation();
+    }
+
+    function renderFeeTable() {
+      const table = document.querySelector('[data-fee-table]');
+      if (!table) return;
+      table.innerHTML = ebayFeeCategories.map((cat) => `
+        <div class="fee-category-row ${cat.id === feeCategoryInput.value ? 'active' : ''}">
+          <div><strong>${escapeHtml(cat.shortLabel)}</strong><div class="subtle">${escapeHtml(cat.label)}</div></div>
+          <span class="badge blue">${cat.rate.toFixed(2)}%</span>
+          <button class="small" type="button" data-fee-pick="${cat.id}">적용</button>
+        </div>
+      `).join('');
+    }
+
+    function updateFeeCalculation() {
+      if (!feeCategoryInput) return;
+      const cat = selectedFeeCategory();
+      const gross = Number(feeSaleUsdInput.value || 0);
+      const fx = Number(feeFxInput.value || 1460);
+      const roundCents = (value) => Math.round(value * 100) / 100;
+      const categoryFee = roundCents(gross * (cat.rate / 100));
+      const internationalRate = Number(feeInternationalInput.value || 0);
+      const internationalFee = roundCents(gross * (internationalRate / 100));
+      const fixedFee = roundCents(Number(feeFixedInput.value || 0));
+      const totalFee = roundCents(categoryFee + internationalFee + fixedFee);
+      const net = roundCents(gross - totalFee);
+      document.querySelector('[data-fee-rate-badge]').textContent = `${cat.shortLabel} · ${cat.rate.toFixed(2)}%`;
+      document.querySelector('[data-fee-breakdown]').innerHTML = `
+        <div class="fee-row"><div><strong>카테고리별 Final Value Fee</strong><div class="fee-note">${escapeHtml(cat.shortLabel)} category percentage</div></div><span>${formatUsd(gross)}</span><span>× ${cat.rate.toFixed(2)}%</span><span class="fee-negative">${formatUsd(-categoryFee)}</span></div>
+        <div class="fee-row"><div><strong>International Fee</strong><div class="fee-note">해외 배송지 주문 기준 정책값</div></div><span>${formatUsd(gross)}</span><span>× ${internationalRate.toFixed(2)}%</span><span class="fee-negative">${formatUsd(-internationalFee)}</span></div>
+        <div class="fee-row"><div><strong>Final Value Fee fixed</strong><div class="fee-note">Order total $10.01+ 고정 금액</div></div><span>-</span><span>fixed</span><span class="fee-negative">${formatUsd(-fixedFee)}</span></div>
+        <div class="fee-row"><div><strong>Total fees</strong><div class="fee-note">카테고리 수수료 + International Fee + 고정액</div></div><span></span><span></span><span class="fee-negative">${formatUsd(-totalFee)}</span></div>
+      `;
+      document.querySelector('[data-fee-gross-usd]').textContent = formatUsd(gross);
+      document.querySelector('[data-fee-gross-krw]').textContent = formatKrw(gross * fx);
+      document.querySelector('[data-fee-total-usd]').textContent = formatUsd(-totalFee);
+      document.querySelector('[data-fee-total-krw]').textContent = formatKrw(-totalFee * fx);
+      document.querySelector('[data-fee-net-usd]').textContent = formatUsd(net);
+      document.querySelector('[data-fee-net-krw]').textContent = formatKrw(net * fx);
+      renderFeeTable();
+    }
+
+    function showPanel(panel) {
+      document.querySelectorAll('[data-panel]').forEach((node) => {
+        node.hidden = node.dataset.panel !== panel;
+      });
+      document.querySelectorAll('[data-nav]').forEach((button) => {
+        button.classList.toggle('active', button.dataset.nav === panel);
+      });
+      if (panel === 'fees') updateFeeCalculation();
     }
 
     function renderList() {
@@ -1419,6 +1657,8 @@
     [priceInput, qtyInput, fulfillmentInput].forEach((control) => control.addEventListener('input', () => buildPreview(false)));
     categorySearch.addEventListener('input', renderCategoryList);
     specificsFields.addEventListener('input', () => buildPreview(false));
+    [feeCategoryInput, feeSaleUsdInput, feeFxInput, feeInternationalInput, feeFixedInput].filter(Boolean).forEach((control) => control.addEventListener('input', updateFeeCalculation));
+    document.querySelectorAll('[data-nav]').forEach((button) => button.addEventListener('click', () => showPanel(button.dataset.nav === 'fees' ? 'fees' : 'workbench')));
 
     document.addEventListener('click', (event) => {
       const selectSku = event.target.closest('[data-select]')?.dataset.select;
@@ -1426,8 +1666,10 @@
       const action = event.target.closest('[data-action]')?.dataset.action;
       const categoryPick = event.target.closest('[data-category-pick]')?.dataset.categoryPick;
       const chip = event.target.closest('[data-aspect-chip]');
+      const feePick = event.target.closest('[data-fee-pick]')?.dataset.feePick;
 
       if (categoryPick) selectCategory(categoryPick);
+      if (feePick) { feeCategoryInput.value = feePick; updateFeeCalculation(); showToast('카테고리 수수료를 적용했습니다'); }
       if (chip) {
         const field = chip.closest('.aspect-field');
         const input = field?.querySelector('[data-aspect-input]');
@@ -1455,6 +1697,7 @@
         drawer.setAttribute('aria-hidden', 'true');
       }
       if (action === 'preview') buildPreview(true);
+      if (action === 'reset-fees') { feeSaleUsdInput.value = '19.79'; feeFxInput.value = '1460'; feeInternationalInput.value = '1.45'; feeFixedInput.value = '0.40'; feeCategoryInput.value = '176984'; updateFeeCalculation(); showToast('Fee Settings 기본값을 복원했습니다'); }
       if (action === 'validate-all') validateAll();
       if (action === 'reset') {
         search.value = '';
@@ -1484,6 +1727,7 @@
 
     renderList();
     selectProduct(products[0]);
+    renderFeeSettings();
     buildPreview(false);
   </script>
 </body>

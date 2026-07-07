@@ -469,23 +469,26 @@
 
     .category-options {
       display: grid;
-      gap: 8px;
-      max-height: 260px;
+      gap: 10px;
+      max-height: 320px;
       overflow: auto;
       padding-right: 2px;
     }
 
     .category-option {
       width: 100%;
-      min-height: 0;
+      min-height: 86px;
       justify-content: flex-start;
-      align-items: flex-start;
+      align-items: stretch;
       text-align: left;
-      padding: 11px 12px;
+      padding: 12px 14px;
       border-radius: 14px;
       background: #fff;
       display: grid;
-      gap: 6px;
+      grid-template-rows: auto auto auto;
+      gap: 7px;
+      white-space: normal;
+      overflow: visible;
     }
 
     .category-option[aria-selected="true"] {
@@ -651,35 +654,83 @@
     .price-cell span { color: var(--muted); font-size: 12px; font-weight: 700; }
     .price-cell strong { font-size: 18px; }
 
+
+
+    .registration-entry {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 18px;
+      border: 1px dashed var(--line-strong);
+      border-radius: 18px;
+      background: #f8fbff;
+    }
+
+    .registration-entry h3 { margin: 0 0 4px; font-size: 15px; }
+    .registration-entry p { margin: 0; color: var(--muted); line-height: 1.55; }
+
     .drawer-backdrop {
       position: fixed;
       inset: 0;
-      background: rgba(15, 23, 42, .38);
+      background: rgba(15, 23, 42, .46);
       display: none;
-      align-items: stretch;
-      justify-content: flex-end;
+      align-items: center;
+      justify-content: center;
       z-index: 20;
+      padding: 16px;
     }
 
     .drawer-backdrop.open { display: flex; }
 
     .drawer {
-      width: min(560px, 100vw);
+      width: min(1180px, calc(100vw - 32px));
+      max-height: calc(100vh - 32px);
+      border-radius: 22px;
       background: var(--surface);
-      box-shadow: -18px 0 42px rgba(15, 23, 42, .25);
+      box-shadow: 0 26px 80px rgba(15, 23, 42, .35);
       display: grid;
-      grid-template-rows: auto 1fr auto;
-      animation: slideIn .18s ease-out;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      overflow: hidden;
+      animation: modalIn .18s ease-out;
     }
 
-    @keyframes slideIn {
-      from { transform: translateX(22px); opacity: .72; }
-      to { transform: translateX(0); opacity: 1; }
+    @keyframes modalIn {
+      from { transform: translateY(18px) scale(.985); opacity: .72; }
+      to { transform: translateY(0) scale(1); opacity: 1; }
+    }
+
+    .drawer-body {
+      padding: 16px;
+      overflow: auto;
+      background: #f8fafc;
+    }
+
+    .registration-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(320px, .95fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .registration-panel-stack,
+    .registration-side-stack {
+      display: grid;
+      gap: 14px;
+    }
+
+    .drawer .card {
+      box-shadow: none;
+    }
+
+    .drawer .preview-box {
+      max-height: 300px;
+      margin-top: 0;
     }
 
     .drawer-head,
     .drawer-foot {
-      padding: 16px;
+      padding: 16px 18px;
       border-bottom: 1px solid var(--line);
       display: flex;
       align-items: center;
@@ -691,11 +742,10 @@
       border-bottom: none;
       border-top: 1px solid var(--line);
       justify-content: flex-end;
+      background: #fff;
     }
 
     .drawer-head h2 { margin: 0; font-size: 17px; }
-    .drawer-body { padding: 16px; overflow: auto; }
-
     .toast {
       position: fixed;
       right: 22px;
@@ -724,6 +774,14 @@
     }
 
     .empty.show { display: block; }
+
+
+    @media (max-width: 980px) {
+      .registration-layout { grid-template-columns: 1fr; }
+      .drawer { width: calc(100vw - 16px); max-height: calc(100vh - 16px); }
+      .drawer-backdrop { padding: 8px; }
+      .registration-entry { grid-template-columns: 1fr; }
+    }
 
     @media (max-width: 1120px) {
       .app-shell { grid-template-columns: 1fr; }
@@ -770,9 +828,7 @@
           <p>마스터 상품을 eBay listing 후보로 검토하고, 가격·배송정책·필수값을 확인한 뒤 dry-run payload를 만드는 단독 HTML 화면입니다.</p>
         </div>
         <div class="topbar-actions">
-          <button type="button" data-action="validate-all">필수값 일괄검사</button>
-          <button type="button" data-action="preview">Dry-run Preview</button>
-          <button class="primary" type="button" data-action="open-drawer">상품 등록 테스트</button>
+          <button class="primary" type="button" data-action="open-drawer">선택 상품 등록</button>
         </div>
       </header>
 
@@ -839,118 +895,12 @@
         </div>
       </section>
 
-      <section class="grid two-col">
-        <article class="card">
-          <div class="card-head">
-            <div>
-              <h2>등록 설정</h2>
-              <p>선택한 상품의 eBay listing 기본값을 조정합니다.</p>
-            </div>
-            <span class="badge blue" data-selected-sku>SKU: LSF-EASY-SET</span>
-          </div>
-          <div class="card-body">
-            <div class="form-grid">
-              <div class="field full">
-                <label for="title">eBay 제목</label>
-                <input id="title" data-title value="LE SSERAFIM EASY 3 Ver SET Official Album Photobook KPOP SEALED" maxlength="80" />
-                <div class="field-hint"><span data-title-count>69</span>/80자 · eBay title limit 기준</div>
-              </div>
-              <div class="field full">
-                <label for="categorySearch">eBay Category 선택</label>
-                <div class="category-picker">
-                  <input id="categorySearch" data-category-search placeholder="예: album, photocard, k-pop, memorabilia" />
-                  <div class="category-options" data-category-list role="listbox" aria-label="eBay category candidates"></div>
-                  <div class="field-hint" data-category-meta>카테고리를 선택하면 해당 leaf category의 Item specifics 입력칸이 자동으로 표시됩니다.</div>
-                </div>
-              </div>
-              <div class="field">
-                <label for="condition">Condition</label>
-                <select id="condition">
-                  <option>Brand New</option>
-                  <option>Like New</option>
-                  <option>New other</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="payment">Payment policy</label>
-                <select id="payment">
-                  <option>eBay Managed Payments</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="fulfillment">Fulfillment policy</label>
-                <select id="fulfillment" data-fulfillment>
-                  <option value="standard">Korea Post / Standard International</option>
-                  <option value="expedited">FedEx / Expedited International</option>
-                </select>
-              </div>
-              <div class="field">
-                <label for="price">판매가 USD</label>
-                <input id="price" data-price type="number" min="1" step="0.01" value="54.90" />
-              </div>
-              <div class="field">
-                <label for="qty">등록 수량</label>
-                <input id="qty" data-qty type="number" min="1" step="1" value="12" />
-              </div>
-              <div class="field full">
-                <label>Item specifics 자동 표시</label>
-                <div class="specifics-grid" data-specifics-fields></div>
-              </div>
-            </div>
-            <div class="preview-box" data-preview>{
-  "mode": "dry_run",
-  "message": "Dry-run Preview 버튼을 누르면 선택 상품의 eBay payload가 여기에 표시됩니다."
-}</div>
-          </div>
-        </article>
-
-        <aside class="grid">
-          <article class="card">
-            <div class="card-head">
-              <div>
-                <h3>검증 체크리스트</h3>
-                <p>실등록 전 막아야 할 항목입니다.</p>
-              </div>
-              <button class="small" type="button" data-action="validate-all">다시 검사</button>
-            </div>
-            <div class="card-body check-list" data-check-list>
-              <div class="check-item">
-                <span class="dot"></span>
-                <div><strong>대표 이미지 1장 이상</strong><p class="subtle">1600px 이상 이미지 5장 확인</p></div>
-                <span class="badge green">OK</span>
-              </div>
-              <div class="check-item">
-                <span class="dot"></span>
-                <div><strong>가격/마진</strong><p class="subtle">수수료·배송비 반영 후 27.4%</p></div>
-                <span class="badge green">OK</span>
-              </div>
-              <div class="check-item">
-                <span class="dot warn"></span>
-                <div><strong>Item specifics</strong><p class="subtle">UPC/EAN 값이 비어 있어 Does not apply로 전송 예정</p></div>
-                <span class="badge amber">주의</span>
-              </div>
-              <div class="check-item">
-                <span class="dot"></span>
-                <div><strong>Business policy</strong><p class="subtle">Payment/Return/Fulfillment policy 연결됨</p></div>
-                <span class="badge green">OK</span>
-              </div>
-            </div>
-          </article>
-
-          <article class="card">
-            <div class="card-head">
-              <div>
-                <h3>가격 계산</h3>
-                <p>eBay 수수료와 배송비를 포함한 미리보기입니다.</p>
-              </div>
-            </div>
-            <div class="card-body price-grid">
-              <div class="price-cell"><span>매입가</span><strong>$28.10</strong></div>
-              <div class="price-cell"><span>예상 수수료</span><strong>$7.58</strong></div>
-              <div class="price-cell"><span>예상 마진</span><strong data-margin-label>27.4%</strong></div>
-            </div>
-          </article>
-        </aside>
+      <section class="registration-entry">
+        <div>
+          <h3>등록 설정은 상품 등록 버튼 이후에만 표시됩니다.</h3>
+          <p>큐에서 상품을 고른 뒤 <strong>상품 등록</strong>을 누르면 카테고리 선택, Item specifics 자동 매칭, 가격 계산, 검증 체크리스트가 하나의 등록 모달 안에서 겹치지 않게 열립니다.</p>
+        </div>
+        <button class="primary" type="button" data-action="open-drawer">선택 상품 등록</button>
       </section>
     </main>
   </div>
@@ -959,22 +909,142 @@
     <section class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title">
       <div class="drawer-head">
         <div>
-          <h2 id="drawer-title">eBay 상품 등록 테스트</h2>
+          <h2 id="drawer-title">eBay 상품 등록 설정</h2>
           <p class="subtle" data-drawer-subtitle>선택한 상품의 전송 전 최종 확인</p>
         </div>
         <button class="ghost" type="button" data-action="close-drawer">✕</button>
       </div>
-      <div class="drawer-body grid">
-        <div class="card">
-          <div class="card-head"><h3>실행 단계</h3></div>
-          <div class="card-body check-list">
-            <div class="check-item"><span class="dot"></span><div><strong>1. Master data snapshot 고정</strong><p class="subtle">현재 제목/옵션/이미지 상태를 batch에 저장</p></div><span class="badge green">ready</span></div>
-            <div class="check-item"><span class="dot warn"></span><div><strong>2. eBay payload dry-run</strong><p class="subtle">실제 API 호출 전 request JSON 확인</p></div><span class="badge amber">required</span></div>
-            <div class="check-item"><span class="dot warn"></span><div><strong>3. 운영자 승인 후 live submit</strong><p class="subtle">이 HTML 프로토타입에서는 live submit 버튼을 비활성 상태로 둠</p></div><span class="badge gray">disabled</span></div>
+
+      <div class="drawer-body">
+        <div class="registration-layout">
+          <div class="registration-panel-stack">
+            <article class="card">
+              <div class="card-head">
+                <div>
+                  <h2>등록 설정</h2>
+                  <p>상품 등록 버튼을 누른 뒤에만 노출되는 eBay listing 설정입니다.</p>
+                </div>
+                <span class="badge blue" data-selected-sku>SKU: LSF-EASY-SET</span>
+              </div>
+              <div class="card-body">
+                <div class="form-grid">
+                  <div class="field full">
+                    <label for="title">eBay 제목</label>
+                    <input id="title" data-title value="LE SSERAFIM EASY 3 Ver SET Official Album Photobook KPOP SEALED" maxlength="80" />
+                    <div class="field-hint"><span data-title-count>69</span>/80자 · eBay title limit 기준</div>
+                  </div>
+                  <div class="field full">
+                    <label for="categorySearch">eBay Category 선택</label>
+                    <div class="category-picker">
+                      <input id="categorySearch" data-category-search placeholder="예: album, photocard, k-pop, memorabilia" />
+                      <div class="category-options" data-category-list role="listbox" aria-label="eBay category candidates"></div>
+                      <div class="field-hint" data-category-meta>카테고리를 선택하면 해당 leaf category의 Item specifics 입력칸이 자동으로 표시됩니다.</div>
+                    </div>
+                  </div>
+                  <div class="field">
+                    <label for="condition">Condition</label>
+                    <select id="condition">
+                      <option>Brand New</option>
+                      <option>Like New</option>
+                      <option>New other</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="payment">Payment policy</label>
+                    <select id="payment">
+                      <option>eBay Managed Payments</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="fulfillment">Fulfillment policy</label>
+                    <select id="fulfillment" data-fulfillment>
+                      <option value="standard">Korea Post / Standard International</option>
+                      <option value="expedited">FedEx / Expedited International</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="price">판매가 USD</label>
+                    <input id="price" data-price type="number" min="1" step="0.01" value="54.90" />
+                  </div>
+                  <div class="field">
+                    <label for="qty">등록 수량</label>
+                    <input id="qty" data-qty type="number" min="1" step="1" value="12" />
+                  </div>
+                  <div class="field full">
+                    <label>Item specifics 자동 표시</label>
+                    <div class="specifics-grid" data-specifics-fields></div>
+                  </div>
+                </div>
+              </div>
+            </article>
           </div>
+
+          <aside class="registration-side-stack">
+            <article class="card">
+              <div class="card-head">
+                <div>
+                  <h3>가격 계산</h3>
+                  <p>상품 등록 단계에서만 확인하는 수수료·배송비 미리보기입니다.</p>
+                </div>
+              </div>
+              <div class="card-body price-grid">
+                <div class="price-cell"><span>매입가</span><strong>$28.10</strong></div>
+                <div class="price-cell"><span>예상 수수료</span><strong>$7.58</strong></div>
+                <div class="price-cell"><span>예상 마진</span><strong data-margin-label>27.4%</strong></div>
+              </div>
+            </article>
+
+            <article class="card">
+              <div class="card-head">
+                <div>
+                  <h3>검증 체크리스트</h3>
+                  <p>실등록 전 막아야 할 항목입니다.</p>
+                </div>
+                <button class="small" type="button" data-action="validate-all">다시 검사</button>
+              </div>
+              <div class="card-body check-list" data-check-list>
+                <div class="check-item">
+                  <span class="dot"></span>
+                  <div><strong>대표 이미지 1장 이상</strong><p class="subtle">1600px 이상 이미지 5장 확인</p></div>
+                  <span class="badge green">OK</span>
+                </div>
+                <div class="check-item">
+                  <span class="dot"></span>
+                  <div><strong>가격/마진</strong><p class="subtle">수수료·배송비 반영 후 27.4%</p></div>
+                  <span class="badge green">OK</span>
+                </div>
+                <div class="check-item">
+                  <span class="dot warn"></span>
+                  <div><strong>Item specifics</strong><p class="subtle">필수값 누락 시 등록 전 차단</p></div>
+                  <span class="badge amber">주의</span>
+                </div>
+                <div class="check-item">
+                  <span class="dot"></span>
+                  <div><strong>Business policy</strong><p class="subtle">Payment/Return/Fulfillment policy 연결됨</p></div>
+                  <span class="badge green">OK</span>
+                </div>
+              </div>
+            </article>
+
+            <article class="card">
+              <div class="card-head">
+                <div>
+                  <h3>Dry-run Payload</h3>
+                  <p>카테고리와 Item specifics가 등록 요청에 어떻게 들어가는지 확인합니다.</p>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="preview-box" data-preview>{
+  "mode": "dry_run",
+  "message": "Dry-run Preview 버튼을 누르면 선택 상품의 eBay payload가 여기에 표시됩니다."
+}</div>
+                <div class="preview-box" data-drawer-preview hidden>{ "selected": "LSF-EASY-SET", "action": "prepare" }</div>
+              </div>
+            </article>
+          </aside>
         </div>
-        <div class="preview-box" data-drawer-preview>{ "selected": "LSF-EASY-SET", "action": "prepare" }</div>
       </div>
+
       <div class="drawer-foot">
         <button type="button" data-action="close-drawer">닫기</button>
         <button type="button" data-action="preview">Dry-run 다시 생성</button>

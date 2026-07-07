@@ -638,13 +638,20 @@
 
     .fee-category-row {
       display: grid;
-      grid-template-columns: minmax(0, 1fr) 100px 100px;
+      grid-template-columns: minmax(0, 1fr) 112px 84px;
       gap: 8px;
       align-items: center;
       padding: 10px;
       border: 1px solid var(--line);
       border-radius: 14px;
       background: #fff;
+    }
+
+    .fee-category-row .badge {
+      white-space: normal;
+      line-height: 1.25;
+      text-align: center;
+      justify-content: center;
     }
 
     .fee-category-row.active {
@@ -1008,7 +1015,7 @@
                 </div>
                 <div class="field">
                   <label for="feeInternational">International Fee %</label>
-                  <input id="feeInternational" data-fee-international type="number" min="0" step="0.01" value="1.45" />
+                  <input id="feeInternational" data-fee-international type="number" min="0" step="0.01" value="1.65" />
                 </div>
                 <div class="field">
                   <label for="feeFixed">Final Value Fee 고정액 USD</label>
@@ -1309,11 +1316,113 @@
     let selectedCategory = ebayCategories[0];
 
     const ebayFeeCategories = [
-      { id: '176984', label: 'Music > CDs', shortLabel: 'Music CDs', rate: 15.30 },
-      { id: '176985', label: 'Music > Vinyl Records', shortLabel: 'Vinyl Records', rate: 15.30 },
-      { id: '108857', label: 'Entertainment Memorabilia > Music Memorabilia > K-Pop Memorabilia', shortLabel: 'K-Pop Memorabilia', rate: 13.25 },
-      { id: '183050', label: 'Collectibles > Non-Sport Trading Cards > Trading Card Singles', shortLabel: 'Trading Card Singles', rate: 13.25 },
-      { id: '155344', label: "Clothing, Shoes & Accessories > Men's Clothing > Shirts", shortLabel: 'Official Apparel', rate: 15.00 }
+      {
+        id: 'most',
+        label: 'Most categories, incl. Parts & Accessories / Automotive Tools & Supplies / Safety & Security Accessories',
+        shortLabel: 'Most categories',
+        sourceCategory: 'Most categories',
+        tiers: [{ upTo: 7500, rate: 13.60 }, { over: 7500, rate: 2.35 }]
+      },
+      {
+        id: '176984',
+        label: 'Books & Magazines / Movies & TV / Music except Vinyl Records and Music NFTs',
+        shortLabel: 'Music CDs / Books / Movies',
+        sourceCategory: 'Books & Magazines; Movies & TV; Music except Vinyl Records and Music NFTs',
+        tiers: [{ upTo: 7500, rate: 15.30 }, { over: 7500, rate: 2.35 }]
+      },
+      {
+        id: 'coins-paper-money',
+        label: 'Coins & Paper Money except Bullion',
+        shortLabel: 'Coins & Paper Money',
+        sourceCategory: 'Coins & Paper Money except Bullion',
+        tiers: [{ upTo: 7500, rate: 13.25 }, { over: 7500, rate: 2.35 }]
+      },
+      {
+        id: 'bullion',
+        label: 'Coins & Paper Money > Bullion',
+        shortLabel: 'Bullion',
+        sourceCategory: 'Coins & Paper Money > Bullion',
+        tiers: [{ upTo: 7500, rate: 13.60 }, { over: 7500, rate: 7.00 }]
+      },
+      {
+        id: 'womens-bags',
+        label: "Clothing, Shoes & Accessories > Women > Women's Bags & Handbags",
+        shortLabel: "Women's Bags & Handbags",
+        sourceCategory: "Clothing, Shoes & Accessories > Women > Women's Bags & Handbags",
+        tiers: [{ upTo: 2000, rate: 15.00 }, { over: 2000, rate: 9.00 }]
+      },
+      {
+        id: '183050',
+        label: 'Select Collectibles: Comic Books & Memorabilia / Non-Sport Trading Cards / Sports Trading Cards / Collectible Card Games',
+        shortLabel: 'Trading Cards / Select Collectibles',
+        sourceCategory: 'Select Collectibles categories incl. Non-Sport Trading Cards',
+        tiers: [{ upTo: 7500, rate: 13.25 }, { over: 7500, rate: 2.35 }]
+      },
+      {
+        id: 'jewelry-watches',
+        label: 'Jewelry & Watches except Watches, Parts & Accessories',
+        shortLabel: 'Jewelry & Watches',
+        sourceCategory: 'Jewelry & Watches except Watches, Parts & Accessories',
+        tiers: [{ upTo: 5000, rate: 15.00 }, { over: 5000, rate: 9.00 }]
+      },
+      {
+        id: 'watches',
+        label: 'Jewelry & Watches > Watches, Parts & Accessories',
+        shortLabel: 'Watches / Parts / Accessories',
+        sourceCategory: 'Jewelry & Watches > Watches, Parts & Accessories',
+        tiers: [{ upTo: 1000, rate: 15.00 }, { upTo: 7500, rate: 6.50 }, { over: 7500, rate: 3.00 }]
+      },
+      {
+        id: 'nft',
+        label: 'NFT categories: Art / CCG / Emerging / Movie / Music / Non-Sport Trading Card / Sport Trading Card NFTs',
+        shortLabel: 'NFT categories',
+        sourceCategory: 'NFT categories listed by eBay',
+        tiers: [{ rate: 5.00 }],
+        perOrderFeeApplies: false
+      },
+      {
+        id: 'business-industrial-special',
+        label: 'Select Business & Industrial: Heavy Equipment / Commercial Printing Presses / Food Trucks, Trailers & Carts',
+        shortLabel: 'Select Business & Industrial',
+        sourceCategory: 'Select Business & Industrial categories',
+        insertionFee: 20,
+        tiers: [{ upTo: 15000, rate: 3.00 }, { over: 15000, rate: 0.50 }]
+      },
+      {
+        id: 'guitars-basses',
+        label: 'Musical Instruments & Gear > Guitars & Basses',
+        shortLabel: 'Guitars & Basses',
+        sourceCategory: 'Musical Instruments & Gear > Guitars & Basses',
+        tiers: [{ upTo: 7500, rate: 6.70 }, { over: 7500, rate: 2.35 }]
+      },
+      {
+        id: 'athletic-shoes',
+        label: "Select Clothing, Shoes & Accessories: Men's Athletic Shoes / Women's Athletic Shoes",
+        shortLabel: 'Athletic Shoes',
+        sourceCategory: 'Select Athletic Shoes categories',
+        tiers: [{ min: 150, rate: 8.00, noPerOrderFee: true }, { below: 150, rate: 13.60 }]
+      },
+      {
+        id: '108857',
+        label: 'K-Pop Memorabilia fallback: use Most categories unless eBay Taxonomy maps it to a listed special category',
+        shortLabel: 'K-Pop Memorabilia fallback',
+        sourceCategory: 'Most categories fallback for prototype',
+        tiers: [{ upTo: 7500, rate: 13.60 }, { over: 7500, rate: 2.35 }]
+      },
+      {
+        id: '155344',
+        label: "Official Apparel fallback: Clothing, Shoes & Accessories non-athletic apparel uses Most categories unless a special bag/shoe category applies",
+        shortLabel: 'Official Apparel fallback',
+        sourceCategory: 'Most categories fallback for non-special apparel',
+        tiers: [{ upTo: 7500, rate: 13.60 }, { over: 7500, rate: 2.35 }]
+      },
+      {
+        id: '176985',
+        label: 'Music > Vinyl Records fallback: not included in Music 15.3% row; use Most categories until a more specific official row is confirmed',
+        shortLabel: 'Vinyl Records fallback',
+        sourceCategory: 'Most categories fallback for Vinyl Records',
+        tiers: [{ upTo: 7500, rate: 13.60 }, { over: 7500, rate: 2.35 }]
+      }
     ];
 
     const statusMap = {
@@ -1378,13 +1487,59 @@
       return `${prefix}₩${Math.round(Math.abs(value)).toLocaleString('ko-KR')}`;
     }
 
+    function feeRateLabel(cat) {
+      if (!cat?.tiers?.length) return '0.00%';
+      if (cat.id === 'athletic-shoes') return '8.00% ≥ $150 / 13.60% < $150';
+      return cat.tiers.map((tier, index) => {
+        const rate = `${tier.rate.toFixed(2)}%`;
+        if (tier.upTo && index === 0) return `${rate} ≤ $${tier.upTo.toLocaleString('en-US')}`;
+        if (tier.upTo) return `${rate} to $${tier.upTo.toLocaleString('en-US')}`;
+        if (tier.over) return `${rate} > $${tier.over.toLocaleString('en-US')}`;
+        return rate;
+      }).join(' / ');
+    }
+
+    function calculateCategoryFee(cat, gross) {
+      const roundCents = (value) => Math.round(value * 100) / 100;
+      if (!cat?.tiers?.length || gross <= 0) return 0;
+      if (cat.id === 'athletic-shoes') {
+        const tier = gross >= 150 ? cat.tiers.find((item) => item.min === 150) : cat.tiers.find((item) => item.below === 150);
+        return roundCents(gross * ((tier?.rate || 13.6) / 100));
+      }
+      let remaining = gross;
+      let previousLimit = 0;
+      let fee = 0;
+      for (const tier of cat.tiers) {
+        if (tier.upTo) {
+          const taxable = Math.max(Math.min(gross, tier.upTo) - previousLimit, 0);
+          fee += taxable * (tier.rate / 100);
+          previousLimit = tier.upTo;
+          remaining = Math.max(gross - previousLimit, 0);
+        } else if (tier.over) {
+          const taxable = Math.max(gross - tier.over, 0);
+          fee += taxable * (tier.rate / 100);
+          remaining = 0;
+        } else {
+          fee += remaining * (tier.rate / 100);
+          remaining = 0;
+        }
+      }
+      return roundCents(fee);
+    }
+
+    function perOrderFixedFee(cat, gross) {
+      if (cat?.perOrderFeeApplies === false) return 0;
+      if (cat?.id === 'athletic-shoes' && gross >= 150) return 0;
+      return gross <= 10 ? 0.30 : 0.40;
+    }
+
     function selectedFeeCategory() {
       return ebayFeeCategories.find((cat) => cat.id === feeCategoryInput?.value) || ebayFeeCategories[0];
     }
 
     function renderFeeSettings() {
       if (!feeCategoryInput) return;
-      feeCategoryInput.innerHTML = ebayFeeCategories.map((cat) => `<option value="${cat.id}">${escapeHtml(cat.shortLabel)} · ${cat.rate.toFixed(2)}%</option>`).join('');
+      feeCategoryInput.innerHTML = ebayFeeCategories.map((cat) => `<option value="${cat.id}">${escapeHtml(cat.shortLabel)} · ${feeRateLabel(cat)}</option>`).join('');
       feeCategoryInput.value = selectedCategory?.id || ebayFeeCategories[0].id;
       renderFeeTable();
       updateFeeCalculation();
@@ -1396,7 +1551,7 @@
       table.innerHTML = ebayFeeCategories.map((cat) => `
         <div class="fee-category-row ${cat.id === feeCategoryInput.value ? 'active' : ''}">
           <div><strong>${escapeHtml(cat.shortLabel)}</strong><div class="subtle">${escapeHtml(cat.label)}</div></div>
-          <span class="badge blue">${cat.rate.toFixed(2)}%</span>
+          <span class="badge blue">${feeRateLabel(cat)}</span>
           <button class="small" type="button" data-fee-pick="${cat.id}">적용</button>
         </div>
       `).join('');
@@ -1408,17 +1563,17 @@
       const gross = Number(feeSaleUsdInput.value || 0);
       const fx = Number(feeFxInput.value || 1460);
       const roundCents = (value) => Math.round(value * 100) / 100;
-      const categoryFee = roundCents(gross * (cat.rate / 100));
+      const categoryFee = calculateCategoryFee(cat, gross);
       const internationalRate = Number(feeInternationalInput.value || 0);
       const internationalFee = roundCents(gross * (internationalRate / 100));
-      const fixedFee = roundCents(Number(feeFixedInput.value || 0));
+      const fixedFee = roundCents(Number(feeFixedInput.value || perOrderFixedFee(cat, gross)));
       const totalFee = roundCents(categoryFee + internationalFee + fixedFee);
       const net = roundCents(gross - totalFee);
-      document.querySelector('[data-fee-rate-badge]').textContent = `${cat.shortLabel} · ${cat.rate.toFixed(2)}%`;
+      document.querySelector('[data-fee-rate-badge]').textContent = cat.shortLabel;
       document.querySelector('[data-fee-breakdown]').innerHTML = `
-        <div class="fee-row"><div><strong>카테고리별 Final Value Fee</strong><div class="fee-note">${escapeHtml(cat.shortLabel)} category percentage</div></div><span>${formatUsd(gross)}</span><span>× ${cat.rate.toFixed(2)}%</span><span class="fee-negative">${formatUsd(-categoryFee)}</span></div>
-        <div class="fee-row"><div><strong>International Fee</strong><div class="fee-note">해외 배송지 주문 기준 정책값</div></div><span>${formatUsd(gross)}</span><span>× ${internationalRate.toFixed(2)}%</span><span class="fee-negative">${formatUsd(-internationalFee)}</span></div>
-        <div class="fee-row"><div><strong>Final Value Fee fixed</strong><div class="fee-note">Order total $10.01+ 고정 금액</div></div><span>-</span><span>fixed</span><span class="fee-negative">${formatUsd(-fixedFee)}</span></div>
+        <div class="fee-row"><div><strong>카테고리별 Final Value Fee</strong><div class="fee-note">${escapeHtml(cat.sourceCategory || cat.shortLabel)}</div></div><span>${formatUsd(gross)}</span><span>${feeRateLabel(cat)}</span><span class="fee-negative">${formatUsd(-categoryFee)}</span></div>
+        <div class="fee-row"><div><strong>International Fee</strong><div class="fee-note">eBay.com 공식 help 기준: 1.65%</div></div><span>${formatUsd(gross)}</span><span>× ${internationalRate.toFixed(2)}%</span><span class="fee-negative">${formatUsd(-internationalFee)}</span></div>
+        <div class="fee-row"><div><strong>Final Value Fee fixed</strong><div class="fee-note">공식 per order fee: $10 이하 $0.30 / 초과 $0.40</div></div><span>-</span><span>fixed</span><span class="fee-negative">${formatUsd(-fixedFee)}</span></div>
         <div class="fee-row"><div><strong>Total fees</strong><div class="fee-note">카테고리 수수료 + International Fee + 고정액</div></div><span></span><span></span><span class="fee-negative">${formatUsd(-totalFee)}</span></div>
       `;
       document.querySelector('[data-fee-gross-usd]').textContent = formatUsd(gross);
@@ -1697,7 +1852,7 @@
         drawer.setAttribute('aria-hidden', 'true');
       }
       if (action === 'preview') buildPreview(true);
-      if (action === 'reset-fees') { feeSaleUsdInput.value = '19.79'; feeFxInput.value = '1460'; feeInternationalInput.value = '1.45'; feeFixedInput.value = '0.40'; feeCategoryInput.value = '176984'; updateFeeCalculation(); showToast('Fee Settings 기본값을 복원했습니다'); }
+      if (action === 'reset-fees') { feeSaleUsdInput.value = '19.79'; feeFxInput.value = '1460'; feeInternationalInput.value = '1.65'; feeFixedInput.value = '0.40'; feeCategoryInput.value = '176984'; updateFeeCalculation(); showToast('Fee Settings 기본값을 복원했습니다'); }
       if (action === 'validate-all') validateAll();
       if (action === 'reset') {
         search.value = '';

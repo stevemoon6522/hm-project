@@ -1003,7 +1003,7 @@
                 <div class="field full">
                   <label for="feeCategory">eBay Category fee</label>
                   <select id="feeCategory" data-fee-category></select>
-                  <div class="field-hint">카테고리별 Final Value Fee percentage는 사전 데이터로 관리합니다.</div>
+                  <div class="field-hint">카테고리 선택 시 수수료율과 정산가격이 자동 적용됩니다.</div>
                 </div>
                 <div class="field">
                   <label for="feeSaleUsd">판매가 USD</label>
@@ -1027,7 +1027,7 @@
                 <div class="card-head">
                   <div>
                     <h3>수수료 산식</h3>
-                    <p>첨부 예시처럼 항목별 차감액과 총 수수료를 분리해서 표시합니다.</p>
+                    <p>판매가 기준 수수료율과 차감 금액만 간단히 표시합니다.</p>
                   </div>
                 </div>
                 <div class="card-body" data-fee-breakdown></div>
@@ -1539,7 +1539,7 @@
 
     function renderFeeSettings() {
       if (!feeCategoryInput) return;
-      feeCategoryInput.innerHTML = ebayFeeCategories.map((cat) => `<option value="${cat.id}">${escapeHtml(cat.shortLabel)} · ${feeRateLabel(cat)}</option>`).join('');
+      feeCategoryInput.innerHTML = ebayFeeCategories.map((cat) => `<option value="${cat.id}">${escapeHtml(cat.shortLabel)}</option>`).join('');
       feeCategoryInput.value = selectedCategory?.id || ebayFeeCategories[0].id;
       renderFeeTable();
       updateFeeCalculation();
@@ -1550,7 +1550,7 @@
       if (!table) return;
       table.innerHTML = ebayFeeCategories.map((cat) => `
         <div class="fee-category-row ${cat.id === feeCategoryInput.value ? 'active' : ''}">
-          <div><strong>${escapeHtml(cat.shortLabel)}</strong><div class="subtle">${escapeHtml(cat.label)}</div></div>
+          <div><strong>${escapeHtml(cat.shortLabel)}</strong></div>
           <span class="badge blue">${feeRateLabel(cat)}</span>
           <button class="small" type="button" data-fee-pick="${cat.id}">적용</button>
         </div>
@@ -1571,10 +1571,10 @@
       const net = roundCents(gross - totalFee);
       document.querySelector('[data-fee-rate-badge]').textContent = cat.shortLabel;
       document.querySelector('[data-fee-breakdown]').innerHTML = `
-        <div class="fee-row"><div><strong>카테고리별 Final Value Fee</strong><div class="fee-note">${escapeHtml(cat.sourceCategory || cat.shortLabel)}</div></div><span>${formatUsd(gross)}</span><span>${feeRateLabel(cat)}</span><span class="fee-negative">${formatUsd(-categoryFee)}</span></div>
-        <div class="fee-row"><div><strong>International Fee</strong><div class="fee-note">eBay.com 공식 help 기준: 1.65%</div></div><span>${formatUsd(gross)}</span><span>× ${internationalRate.toFixed(2)}%</span><span class="fee-negative">${formatUsd(-internationalFee)}</span></div>
-        <div class="fee-row"><div><strong>Final Value Fee fixed</strong><div class="fee-note">공식 per order fee: $10 이하 $0.30 / 초과 $0.40</div></div><span>-</span><span>fixed</span><span class="fee-negative">${formatUsd(-fixedFee)}</span></div>
-        <div class="fee-row"><div><strong>Total fees</strong><div class="fee-note">카테고리 수수료 + International Fee + 고정액</div></div><span></span><span></span><span class="fee-negative">${formatUsd(-totalFee)}</span></div>
+        <div class="fee-row"><div><strong>Category Fee</strong></div><span>${formatUsd(gross)}</span><span>${feeRateLabel(cat)}</span><span class="fee-negative">${formatUsd(-categoryFee)}</span></div>
+        <div class="fee-row"><div><strong>International Fee</strong></div><span>${formatUsd(gross)}</span><span>${internationalRate.toFixed(2)}%</span><span class="fee-negative">${formatUsd(-internationalFee)}</span></div>
+        <div class="fee-row"><div><strong>Fixed Fee</strong></div><span>-</span><span>fixed</span><span class="fee-negative">${formatUsd(-fixedFee)}</span></div>
+        <div class="fee-row"><div><strong>Total fees</strong></div><span></span><span></span><span class="fee-negative">${formatUsd(-totalFee)}</span></div>
       `;
       document.querySelector('[data-fee-gross-usd]').textContent = formatUsd(gross);
       document.querySelector('[data-fee-gross-krw]').textContent = formatKrw(gross * fx);

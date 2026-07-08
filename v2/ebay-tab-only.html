@@ -633,30 +633,54 @@
 
     .fee-table {
       display: grid;
-      gap: 8px;
-    }
-
-    .fee-category-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 112px 84px;
-      gap: 8px;
-      align-items: center;
-      padding: 10px;
+      gap: 0;
       border: 1px solid var(--line);
-      border-radius: 14px;
+      border-radius: 16px;
+      overflow: hidden;
       background: #fff;
     }
 
-    .fee-category-row .badge {
-      white-space: normal;
-      line-height: 1.25;
-      text-align: center;
-      justify-content: center;
+    .fee-table-head,
+    .fee-category-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 108px 96px 68px;
+      gap: 10px;
+      align-items: center;
     }
 
+    .fee-table-head {
+      padding: 10px 12px;
+      background: #f8fafc;
+      color: #64748b;
+      font-size: 11px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .fee-category-row {
+      padding: 11px 12px;
+      border-bottom: 1px solid #eef2f7;
+      background: #fff;
+    }
+
+    .fee-category-row:last-child { border-bottom: 0; }
+    .fee-category-row strong { font-size: 13px; letter-spacing: -.01em; }
+    .fee-category-row .rate-text,
+    .fee-category-row .amount-text {
+      font-size: 12px;
+      font-weight: 900;
+      text-align: right;
+      line-height: 1.3;
+    }
+    .fee-category-row .rate-text { color: #2563eb; }
+    .fee-category-row .amount-text { color: #dc2626; }
+    .fee-category-row .small { min-height: 30px; padding: 6px 10px; }
+
     .fee-category-row.active {
-      border-color: #93c5fd;
       background: #eff6ff;
+      box-shadow: inset 3px 0 0 #2563eb;
     }
 
     .preview-box {
@@ -1053,11 +1077,13 @@
             <article class="card">
               <div class="card-head">
                 <div>
-                  <h3>카테고리별 수수료 데이터</h3>
-                  <p>초기값은 HTML 프로토타입 내 데이터이며, 실제 구현 시 DB에서 관리합니다.</p>
+                  <h3>카테고리별 수수료</h3>
+                  <p>카테고리명, 적용 수수료율, 현재 판매가 기준 수수료만 표시합니다.</p>
                 </div>
               </div>
-              <div class="card-body fee-table" data-fee-table></div>
+              <div class="card-body">
+                <div class="fee-table" data-fee-table></div>
+              </div>
             </article>
           </aside>
         </section>
@@ -1548,13 +1574,18 @@
     function renderFeeTable() {
       const table = document.querySelector('[data-fee-table]');
       if (!table) return;
-      table.innerHTML = ebayFeeCategories.map((cat) => `
-        <div class="fee-category-row ${cat.id === feeCategoryInput.value ? 'active' : ''}">
-          <div><strong>${escapeHtml(cat.shortLabel)}</strong></div>
-          <span class="badge blue">${feeRateLabel(cat)}</span>
-          <button class="small" type="button" data-fee-pick="${cat.id}">적용</button>
-        </div>
-      `).join('');
+      const gross = Number(feeSaleUsdInput?.value || 0);
+      table.innerHTML = `
+        <div class="fee-table-head"><span>Category</span><span>Fee %</span><span>Fee</span><span></span></div>
+        ${ebayFeeCategories.map((cat) => `
+          <div class="fee-category-row ${cat.id === feeCategoryInput.value ? 'active' : ''}">
+            <div><strong>${escapeHtml(cat.shortLabel)}</strong></div>
+            <span class="rate-text">${feeRateLabel(cat)}</span>
+            <span class="amount-text">${formatUsd(-calculateCategoryFee(cat, gross))}</span>
+            <button class="small" type="button" data-fee-pick="${cat.id}">적용</button>
+          </div>
+        `).join('')}
+      `;
     }
 
     function updateFeeCalculation() {
